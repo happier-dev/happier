@@ -6,7 +6,7 @@ import {
 } from '@happier-dev/agents';
 import {
   ExternalSessionsSourceSchema,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
   type RuntimeDescriptorV1,
   type ExternalSessionsSource,
@@ -24,7 +24,7 @@ function normalizeString(value: unknown): string | null {
 }
 
 function readExternalSessionRecord(metadataRecord: Record<string, unknown>): Record<string, unknown> | null {
-  return asRecord(readLinkedExternalSessionV1FromMetadata(metadataRecord));
+  return asRecord(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadataRecord));
 }
 
 function readExternalSessionSource(externalSessionRecord: Record<string, unknown> | null): ExternalSessionsSource | null {

@@ -3,7 +3,7 @@ import {
   normalizeLinkedExternalSessionMetadataV1,
   normalizeCodexBackendMode,
   resolveExternalHistoryImportV1FromMetadata,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveLinkedExternalSessionMetadataV1,
   readRuntimeDescriptorV1FromMetadata,
   type RuntimeDescriptorV1,
@@ -70,7 +70,7 @@ function canonicalizeExternalSessionRuntimeDescriptorIngress(value: unknown): un
   }
 
   const metadata = normalizeLinkedExternalSessionMetadataV1(value) ?? value as Record<string, unknown>;
-  const externalSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  const externalSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   const runtimeDescriptor = resolveSessionRuntimeIdentityFallback({ metadata })
     .runtimeDescriptorV1;
   const canonicalMetadata = applyRuntimeDescriptorSessionStateBinding(
@@ -82,7 +82,7 @@ function canonicalizeExternalSessionRuntimeDescriptorIngress(value: unknown): un
     return canonicalMetadata;
   }
 
-  const externalSessionWithRuntimeDescriptor = readLinkedExternalSessionV1FromMetadata({
+  const externalSessionWithRuntimeDescriptor = readNonAuthoritativeLinkedExternalSessionV1FromMetadata({
     externalSessionV1: applyRuntimeDescriptorSessionStateBinding(
       externalSession,
       runtimeDescriptor,
@@ -180,7 +180,7 @@ function inspectPersistedLinkedExternalSessionFromRaw(params: Readonly<{
       historyImportResolution: ReturnType<
         typeof resolveExternalHistoryImportV1FromMetadata
       >;
-      direct: ReturnType<typeof readLinkedExternalSessionV1FromMetadata>;
+      direct: ReturnType<typeof readNonAuthoritativeLinkedExternalSessionV1FromMetadata>;
     }>
   | Readonly<{
       ok: false;
@@ -241,7 +241,7 @@ function inspectPersistedLinkedExternalSessionFromRaw(params: Readonly<{
     metadata: parsedMetadata,
     linkedMetadataResolution,
     historyImportResolution,
-    direct: readLinkedExternalSessionV1FromMetadata(parsedMetadata),
+    direct: readNonAuthoritativeLinkedExternalSessionV1FromMetadata(parsedMetadata),
   };
 }
 

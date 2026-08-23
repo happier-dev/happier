@@ -231,8 +231,6 @@ describe('runtime provider services', () => {
         runtimeState = await transform(runtimeState);
         return runtimeState;
       }),
-      touch: vi.fn(),
-      flushTouches: vi.fn(async () => runtimeState),
     };
     const getAccountSettingsSnapshot = vi.fn(() => ({
       source: 'cache' as const,
@@ -466,8 +464,6 @@ describe('runtime provider services', () => {
         runtimeState = await transform(runtimeState);
         return runtimeState;
       }),
-      touch: vi.fn(),
-      flushTouches: vi.fn(async () => runtimeState),
     };
     let releaseDemandRefresh!: () => void;
     const demandRefreshGate = new Promise<void>((resolve) => { releaseDemandRefresh = resolve; });
@@ -697,8 +693,6 @@ describe('runtime provider services', () => {
         runtimeState = await transform(runtimeState);
         return runtimeState;
       },
-      touch: () => undefined,
-      flushTouches: async () => runtimeState,
     };
     const services = createRuntimeProviderServices({
       machineId: 'machine-a',

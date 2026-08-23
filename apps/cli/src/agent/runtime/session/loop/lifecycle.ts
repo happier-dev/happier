@@ -408,6 +408,10 @@ export type SessionLoopLifecycleParams = Readonly<{
   }>) => void;
   deps: SessionLoopLifecycleDeps;
   initialResumeId: string;
+  onStrictInitialResumeFailure?: ((params: Readonly<{
+    resumeId: string;
+    error: unknown;
+  }>) => void | Promise<void>) | null;
 }>;
 
 export type RuntimeEventSubscriptionRequiredFailureReason =
@@ -1270,6 +1274,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         params.permissionModeState.releaseRejectedBeforeProviderPromptIdentity(session, message),
       initialResumeId: initialResumeId || undefined,
       strictInitialResume: initialResumeId.length > 0,
+      onStrictInitialResumeFailure: params.onStrictInitialResumeFailure,
       startRuntimeBeforeFirstPrompt: params.config.startRuntimeBeforeFirstPrompt === true,
       pendingQueueDrainMaxPopPerWake: resolveSessionPendingQueueMaxPopPerWake(params.opts.accountSettingsContext?.settings ?? null),
       pendingQueueDeliveryTiming: resolveSessionPendingQueueDeliveryTiming(params.opts.accountSettingsContext?.settings ?? null),

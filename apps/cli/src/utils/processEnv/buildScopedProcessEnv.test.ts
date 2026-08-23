@@ -51,6 +51,20 @@ describe('buildScopedProcessEnv', () => {
     expect(native).toEqual(ambient);
   });
 
+  it('never passes CLI API tokens to a generic child environment', () => {
+    expect(buildScopedProcessEnv({
+      baseEnv: {
+        PATH: '/bin',
+        happier_token: 'hap_v1_ambient_token_secret',
+        happier_cli_api_token_handoff_v1: 'hap_v1_handoff_token_secret',
+      },
+      explicitEnv: {
+        HAPPIER_TOKEN: 'hap_v1_explicit_token_secret',
+        HAPPIER_CLI_API_TOKEN_HANDOFF_V1: 'hap_v1_explicit_handoff_token_secret',
+      },
+    })).toEqual({ PATH: '/bin' });
+  });
+
   it('compacts undefined process values while removing explicitly unset keys', () => {
     const environment: NodeJS.ProcessEnv = {
       PATH: '/bin',

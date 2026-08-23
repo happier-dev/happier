@@ -753,6 +753,9 @@ describe('createCliActionDeps hook dispatch', () => {
           modelId: 'gpt-5',
         },
       },
+      environmentVariables: {
+        TOKEN: 'first-admission-only',
+      },
       title: 'Atomic title',
       initialMessage: 'Inspect the repository',
       actionRequestId: 'spawn-attempt-1',
@@ -790,6 +793,9 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       initialTitle: 'Atomic title',
       initialMessage: 'Inspect the repository',
+      environmentVariables: {
+        TOKEN: 'first-admission-only',
+      },
       machineAdmissionTransport,
       spawnNonce: expect.stringMatching(/^session\.spawn_new\.action:/u),
       sessionCreationCorrespondence: expect.objectContaining({
@@ -814,6 +820,8 @@ describe('createCliActionDeps hook dispatch', () => {
         }),
       }),
     }));
+    expect(JSON.stringify(createSpawnedSession.mock.calls[0]?.[0]?.sessionCreationCorrespondence))
+      .not.toContain('first-admission-only');
     expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('pendingFirstInput');
     expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('tag');
     expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('path');
@@ -1093,6 +1101,72 @@ describe('createCliActionDeps hook dispatch', () => {
     // The recipe travels inside the canonical creation identity, never as a
     // second correspondence recipe field.
     expect(spawnArgs?.sessionCreationTag).toBe(sessionCreationTag);
+  });
+
+  it('rejoins a latest sourceContext attempt without resolving latest a second time', async () => {
+    const sourceContext = {
+      v: 1 as const,
+      kind: 'session_replay' as const,
+      sourceSessionId: 'source-session',
+      forkPoint: { type: 'latest' as const },
+    };
+    const creationKey = SessionCreationKeyV1Schema.parse('resume-source-context-latest');
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey,
+    });
+    callMachineRpc.mockResolvedValue({
+      ok: true,
+      directory: '/repo',
+      directoryCreationRequired: false,
+      checkout: null,
+    });
+    createSpawnedSession.mockResolvedValue({
+      disposition: 'rejoined',
+      sessionId: 'sess-source-context',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'cli-global',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await expect(deps.sessionSpawnNew({
+      creationKey,
+      sessionCreationTag,
+      executionTarget: {
+        serverId: configuration.activeServerId,
+        machineId: 'machine-exact',
+      },
+      directory: '/repo',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
+      sourceContext,
+      actionRequestId: 'resume-source-context-latest-attempt',
+      resumeActionRequest: true,
+      actionCaller: { kind: 'host' },
+    })).resolves.toMatchObject({
+      type: 'success',
+      disposition: 'rejoined',
+      sessionId: 'sess-source-context',
+    });
+
+    expect(fetchSessionByIdCompat).not.toHaveBeenCalled();
+    expect(resolveReplaySeedDraft).not.toHaveBeenCalled();
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      sourceContext,
+      resumeOnly: true,
+    }));
+    expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('replaySeededCreation');
   });
 
   it('refuses a shared sourceContext before it creates a child Session', async () => {
@@ -2122,6 +2196,9 @@ describe('createCliActionDeps hook dispatch', () => {
       permissionModeOverride: 'read_only',
       modelOverride: 'gpt-4o',
       providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+      // A caller-retained durable identity must reach the send seam so a retry
+      // rejoins the same pending input instead of queueing a second message.
+      localId: 'retained-1',
     })).resolves.toEqual({
       ok: true,
       sessionId: 'sess-1',
@@ -2136,6 +2213,7 @@ describe('createCliActionDeps hook dispatch', () => {
       requestedAction: { v: 1, kind: 'steer_if_active' },
       wait: true,
       timeoutMs: 30000,
+      localId: 'retained-1',
       permissionModeOverride: 'read_only',
       modelSelectionInput: {
         providerConnectionId: 'pc_work',
@@ -3933,6 +4011,37 @@ describe('createCliActionDeps session lifecycle bindings', () => {
     });
   }
 
+  /**
+   * `V2SessionRecord.metadata` is a STRING on the wire (plain JSON or
+   * ciphertext) and `metadataLayoutVersion` selects shared-vs-legacy reading.
+   * Owners that open OWNER metadata read through those two fields, so the
+   * loose object above cannot exercise them; handoff source authority is one
+   * such owner and gets the real record shape.
+   */
+  function resolveSessionWithStoredMetadata(
+    active: boolean,
+    metadata: Record<string, unknown>,
+  ) {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'session-1',
+      rawSession: {
+        id: 'session-1',
+        active,
+        machineId: 'machine-source',
+        path: '/repo',
+        seq: 17,
+        metadata: JSON.stringify(metadata),
+        metadataLayoutVersion: 0,
+        ownerMetadata: null,
+        encryptionMode: 'plain',
+      },
+      accountEncryptionCurrentness: { mode: 'plain' },
+      mode: 'plain',
+      ctx: null,
+    });
+  }
+
   function createDeps() {
     return createCliActionDeps({
       token: credentials.token,
@@ -3992,7 +4101,20 @@ describe('createCliActionDeps session lifecycle bindings', () => {
     const signal = new AbortController().signal;
     const deps = createDeps();
 
-    await expect(deps.sessionFork({ sessionId: 'session-1', signal }))
+    await expect(deps.sessionFork({
+      sessionId: 'session-1',
+      forkPoint: { type: 'seq', upToSeqInclusive: 7 },
+      strategy: 'replay',
+      replaySummaryRunner: {
+        v: 1,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'default',
+        permissionMode: 'no_tools',
+      },
+      replayMaxSeedChars: 12_345,
+      requestId: 'fork-request-1',
+      signal,
+    }))
       .resolves.toEqual({ ok: true, childSessionId: 'session-child' });
     const replayInput = {
       directory: '/repo',
@@ -4009,7 +4131,19 @@ describe('createCliActionDeps session lifecycle bindings', () => {
         credentials,
         machineId: 'machine-source',
         method: RPC_METHODS.SESSION_FORK,
-        request: { parentSessionId: 'session-1', forkPoint: { type: 'latest' } },
+        request: {
+          parentSessionId: 'session-1',
+          forkPoint: { type: 'seq', upToSeqInclusive: 7 },
+          strategy: 'replay',
+          replaySummaryRunner: {
+            v: 1,
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            modelId: 'default',
+            permissionMode: 'no_tools',
+          },
+          replayMaxSeedChars: 12_345,
+          requestId: 'fork-request-1',
+        },
         signal,
       })],
       [expect.objectContaining({
@@ -4090,7 +4224,7 @@ describe('createCliActionDeps session lifecycle bindings', () => {
   });
 
   it('host-stamps handoff source facts and routes only the high-level action to its source-machine owner', async () => {
-    resolveSession(true, { path: '/repo' });
+    resolveSessionWithStoredMetadata(true, { path: '/repo' });
     callMachineRpc.mockResolvedValue({ handoffId: 'handoff-1' });
     const signal = new AbortController().signal;
 
@@ -4120,5 +4254,38 @@ describe('createCliActionDeps session lifecycle bindings', () => {
     expect(deps.sessionHandoffPrepareTargetResume).toBeUndefined();
     expect(deps.sessionHandoffCommit).toBeUndefined();
     expect(deps.sessionHandoffAbort).toBeUndefined();
+  });
+
+  /**
+   * `sessionStorageMode` is stamped on the RPC that stops the source and tells
+   * the target which storage to import into. A link that cannot be resolved has
+   * no storage answer, and the read this path used returned the same `null` for
+   * "no link" and "unusable link" — so an unusable link went out as `persisted`.
+   */
+  it('refuses to stamp a handoff start when the source link cannot be resolved', async () => {
+    resolveSessionWithStoredMetadata(true, {
+      path: '/repo',
+      machineId: 'machine-source',
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        machineId: 'machine-source',
+        remoteSessionId: 'remote-1',
+        source: { kind: 'codexHome', home: 'user' },
+        followStatusV1: { v: 1, status: 'not-a-status', updatedAtMs: 10 },
+      },
+    });
+    const signal = new AbortController().signal;
+
+    await expect(createDeps().sessionHandoffStart?.({
+      sessionId: 'session-1',
+      targetMachineId: 'machine-target',
+      signal,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'linked_session_invalid',
+      error: 'linked_session_invalid:canonical_invalid',
+    });
+    expect(callMachineRpc).not.toHaveBeenCalled();
   });
 });

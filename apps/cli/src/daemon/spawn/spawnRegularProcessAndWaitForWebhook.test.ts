@@ -108,6 +108,14 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
           generation: 'generation-1',
         },
       },
+      runnerAgentInvocationContext: Object.freeze({
+        cwd: '/tmp/happier-project',
+        environment: Object.freeze({}),
+        providerBindingActive: true,
+      }),
+      extraEnvForChildWithMessage: {
+        PROVIDER_SECRET: 'must-not-become-daemon-authority',
+      },
     });
 
     await vi.waitFor(() => {
@@ -121,7 +129,15 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
         agentId: 'agent',
         backendId: 'agent',
       },
+      runnerAgentInvocationContext: {
+        cwd: '/tmp/happier-project',
+        environment: {},
+        providerBindingActive: true,
+      },
     });
+    expect(JSON.stringify(tracked)).not.toContain(
+      'must-not-become-daemon-authority',
+    );
     params.pidToAwaiter.get(4242)?.({
       ...tracked,
       happySessionId: 'session-4242',

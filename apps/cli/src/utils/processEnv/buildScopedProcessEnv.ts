@@ -1,3 +1,5 @@
+import { stripCliApiTokenEnvironment } from '@/auth/cliApiToken';
+
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 export function normalizeUnsetEnvKeys(
@@ -58,5 +60,5 @@ export function buildScopedProcessEnv(params: Readonly<{
     }
     scopedEnvironment[key] = value;
   }
-  return scopedEnvironment;
+  return stripCliApiTokenEnvironment(scopedEnvironment);
 }

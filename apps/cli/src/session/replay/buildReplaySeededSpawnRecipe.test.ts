@@ -35,6 +35,7 @@ describe('buildReplaySeededSpawnRecipe', () => {
       cwd: '/repo',
       source: { sourceSessionId: 'parent', forkPoint: { type: 'latest' } },
       agentHintAgentId: 'codex',
+      requestId: 'fork-request-1',
       extraMetadata: { connectedServices: { v: 1 }, forkV1: { v: 1, bogus: true } },
       nowMs: 1000,
     });
@@ -49,6 +50,7 @@ describe('buildReplaySeededSpawnRecipe', () => {
       parentCutoffSeqInclusive: 12,
       createdAtMs: 1000,
       strategy: 'replay',
+      requestId: 'fork-request-1',
       agentHint: { agentId: 'codex' },
     });
     expect(result.recipe.metadata.replaySeedV1).toMatchObject({

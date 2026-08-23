@@ -1,8 +1,6 @@
 import {
   AccountProfileSchema,
   type ConnectedServiceId,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
 
 import type { ConnectedServiceProjectedAuthGroup } from './reconcileConnectedServiceAuthGroupGenerations';
@@ -15,9 +13,6 @@ export type ConnectedServiceProjectionSnapshot = Readonly<{
     profileId: string;
     credentialRevision: string;
   }>>;
-  /** Native Account V4 truth. This is never filtered through the legacy enum. */
-  qualifiedAccounts: readonly QualifiedConnectedAccountProfileV4[];
-  qualifiedGroups: readonly QualifiedConnectedAccountGroupV4[];
   resolveCredentialRevision: (serviceId: ConnectedServiceId, profileId: string) => string | null;
   resolveCredentialPresence: (
     serviceId: ConnectedServiceId,
@@ -49,18 +44,20 @@ function credentialScopeKey(serviceId: ConnectedServiceId, profileId: string): s
   return `${serviceId}\0${profileId}`;
 }
 
+/**
+ * This snapshot exists for the legacy `ConnectedServiceId`-keyed generation and
+ * credential-currentness reconciler. Native qualified Account V4 truth is not projected
+ * here: it has no legacy service id to key on, and its daemon consumers already read it
+ * directly through the V4 list/read, materialization, and invalidation owners.
+ */
 export function parseConnectedServiceProjectionSnapshot(input: Readonly<{
   connectedServicesV2: unknown;
   connectedServiceCredentialRevisionsV1: unknown;
-  connectedAccountsV4?: unknown;
-  connectedAccountGroupsV4?: unknown;
 }>): ConnectedServiceProjectionSnapshot {
   const profile = AccountProfileSchema.parse({
     id: 'connected-service-projection',
     connectedServicesV2: input.connectedServicesV2,
     connectedServiceCredentialRevisionsV1: input.connectedServiceCredentialRevisionsV1,
-    connectedAccountsV4: input.connectedAccountsV4,
-    connectedAccountGroupsV4: input.connectedAccountGroupsV4,
   });
   const revisions = new Map(profile.connectedServiceCredentialRevisionsV1.map((entry) => [
     credentialScopeKey(entry.serviceId, entry.profileId),
@@ -78,8 +75,6 @@ export function parseConnectedServiceProjectionSnapshot(input: Readonly<{
   return {
     groups,
     credentialRevisions: profile.connectedServiceCredentialRevisionsV1,
-    qualifiedAccounts: profile.connectedAccountsV4,
-    qualifiedGroups: profile.connectedAccountGroupsV4,
     resolveCredentialRevision: (serviceId, profileId) => revisions.get(credentialScopeKey(serviceId, profileId)) ?? null,
     resolveCredentialPresence: (serviceId, profileId) => {
       const key = credentialScopeKey(serviceId, profileId);

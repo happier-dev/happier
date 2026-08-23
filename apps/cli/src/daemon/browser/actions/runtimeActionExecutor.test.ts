@@ -242,6 +242,39 @@ describe('daemon browser runtime action executor', () => {
     expect(dispatchCommand).toHaveBeenCalledWith(command);
   });
 
+  it('fails closed before daemon dispatch when a browser Action id carries another command kind', async () => {
+    const mod = await loadRuntimeActionExecutor();
+
+    expect(mod?.createBrowserDaemonRuntimeActionExecutor).toBeTypeOf('function');
+    if (!mod?.createBrowserDaemonRuntimeActionExecutor) return;
+
+    const dispatchCommand = vi.fn(async () => ({
+      v: 1,
+      accepted: true,
+      commandId: 'command_mismatched',
+    }));
+    const execute = mod.createBrowserDaemonRuntimeActionExecutor({
+      control: { dispatchCommand },
+      featureGate: allowAllBrowserGate(),
+    });
+
+    await expect(execute(runtimeArgs({
+      actionId: 'browser.view.focus',
+      input: {
+        kind: 'navigate',
+        commandId: 'command_mismatched',
+        browserSessionId: 'browser_session_1',
+        viewId: 'view_1',
+        url: 'https://browser.example.test/escaped-navigation',
+      } satisfies BrowserCommandV1,
+    }))).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(dispatchCommand).not.toHaveBeenCalled();
+  });
+
   it('fails closed instead of no-oping browser control when no command route is available', async () => {
     const mod = await loadRuntimeActionExecutor();
 

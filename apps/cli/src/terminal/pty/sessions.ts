@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { stripCliApiTokenEnvironment } from '@/auth/cliApiToken';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -286,12 +287,12 @@ function splitByApproxBytesUtf8(input: string, maxBytes: number): string[] {
 
 function resolveTerminalSpawnEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const configuredPromptEolMark = env.HAPPIER_DAEMON_TERMINAL_PROMPT_EOL_MARK;
-  return {
+  return stripCliApiTokenEnvironment({
     ...env,
     PROMPT_EOL_MARK: typeof configuredPromptEolMark === 'string'
       ? configuredPromptEolMark
       : (env.PROMPT_EOL_MARK ?? ''),
-  };
+  });
 }
 
 function isByteCapablePlatform(platform: NodeJS.Platform): boolean {

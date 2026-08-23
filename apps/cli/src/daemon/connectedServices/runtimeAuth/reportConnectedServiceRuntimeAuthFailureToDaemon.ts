@@ -8,6 +8,8 @@ import {
 import { notifyDaemonConnectedServiceRuntimeAuthFailure } from '@/daemon/controlClient';
 import { logger as defaultLogger } from '@/ui/logger';
 
+import { sanitizeConnectedServiceDiagnosticError } from './sanitizeConnectedServiceDiagnosticString';
+
 import {
   resolveConnectedServiceRuntimeAuthFailureStatusMessage,
 } from './resolveConnectedServiceRuntimeAuthFailureStatusMessage';
@@ -217,7 +219,7 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
       }
       return result.status === 'enqueued' ? result.item : null;
     } catch (error) {
-      logger.debug(`${logPrefix} Failed to enqueue connected-service runtime auth failure report outbox item (non-fatal)`, error);
+      logger.debug(`${logPrefix} Failed to enqueue connected-service runtime auth failure report outbox item (non-fatal): ${sanitizeConnectedServiceDiagnosticError(error)}`);
       return null;
     }
   }
@@ -231,7 +233,7 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
         reportKey,
       });
     } catch (error) {
-      logger.debug(`${logPrefix} Failed to snapshot connected-service runtime auth failure report outbox item (non-fatal)`, error);
+      logger.debug(`${logPrefix} Failed to snapshot connected-service runtime auth failure report outbox item (non-fatal): ${sanitizeConnectedServiceDiagnosticError(error)}`);
       return null;
     }
   }
@@ -245,7 +247,7 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
         expectedItem,
       });
     } catch (error) {
-      logger.debug(`${logPrefix} Failed to remove connected-service runtime auth failure report outbox item (non-fatal)`, error);
+      logger.debug(`${logPrefix} Failed to remove connected-service runtime auth failure report outbox item (non-fatal): ${sanitizeConnectedServiceDiagnosticError(error)}`);
     }
   }
 
@@ -306,7 +308,7 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
       } else if (!expectedOutboxItem) {
         await retainOutboxBestEffort(null);
       }
-      logger.debug(`${logPrefix} Failed to report connected-service runtime auth failure to daemon (non-fatal)`, error);
+      logger.debug(`${logPrefix} Failed to report connected-service runtime auth failure to daemon (non-fatal): ${sanitizeConnectedServiceDiagnosticError(error)}`);
       return {
         handled: false,
         report: null,

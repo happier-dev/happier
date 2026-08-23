@@ -183,6 +183,8 @@ function createRuntimeRegistry(
 function createStructuredActionFixture(input: Readonly<{
     id: string;
     placementBindings: NonNullable<ResolvedActionContribution['definition']['placementBindings']>;
+    executionTarget?: 'daemon' | 'client';
+    operation?: NonNullable<ResolvedActionContribution['definition']['operation']>;
 }>): ResolvedActionContribution {
     return {
         provenance: 'external',
@@ -195,7 +197,7 @@ function createStructuredActionFixture(input: Readonly<{
             description: null,
             safety: 'safe',
             dangerLevel: 'safe',
-            execution: { target: 'daemon' },
+            execution: { target: input.executionTarget ?? 'daemon' },
             scopes: ['session', 'message'],
             placements: [],
             slash: null,
@@ -208,7 +210,7 @@ function createStructuredActionFixture(input: Readonly<{
                 mcp: false,
                 cli: false,
                 rpc: false,
-                sdk: false,
+                api: false,
                 plugin: false,
             },
             inputHints: null,
@@ -216,6 +218,7 @@ function createStructuredActionFixture(input: Readonly<{
             outputSchema: { type: 'object', additionalProperties: true },
             contributionSurfaces: ['ui'],
             placementBindings: [...input.placementBindings],
+            ...(input.operation ? { operation: input.operation } : {}),
         },
     };
 }
@@ -441,6 +444,10 @@ function createActionFormTargetInvocationRuntime(input: Readonly<{
             code: input.visible === false ? 'plugin_contribution_not_applicable' : 'plugin_action_available',
             requiresCurrentIntent: false,
         }),
+        prepare: vi.fn<TargetActionInvocationRuntime['prepare']>(async () => ({
+            kind: 'settled',
+            result: { status: 'executed', value: null },
+        })),
         invoke: vi.fn<TargetActionInvocationRuntime['invoke']>(async () => ({
             status: 'executed',
             value: null,
@@ -1697,6 +1704,96 @@ describe('daemon contribution registry projection rpc handler', () => {
         });
     });
 
+    it('observes the normal tracked daemon Action invocation with stable request correlation', async () => {
+        const trackedAction = createStructuredActionFixture({
+            id: 'publish',
+            placementBindings: [],
+            operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+        });
+        const registry = createResolvedContributionRegistry({
+            agents: Object.freeze([]),
+            actions: [trackedAction],
+            immutableGenerationIdsByPluginId: {
+                'acme.preview': 'contributor-generation-current',
+            },
+        });
+        const runtimeRegistry = { ...createRuntimeRegistry(registry), generation: 7 };
+        const { handlers, registrar } = createRegistrar();
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        const observePluginExecution = vi.fn(async ({ execute }) => await execute({
+            signal: new AbortController().signal,
+            operationProgress: { update: vi.fn() },
+        }));
+        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
+            resolveRuntimeRegistry: async () => runtimeRegistry,
+            resolveGeneration: async () => 7,
+            resolveInstalledPackages: async () => [],
+            observePluginExecution,
+        });
+        const run = vi.fn(async () => ({ ok: true, result: { published: true } }));
+        executePluginActionIfAvailableMock.mockReset();
+        executePluginActionIfAvailableMock.mockImplementationOnce(async (params) => {
+            params.context.capturePreparedInvocation({ run });
+            return { matched: true, result: { ok: true, result: null } };
+        });
+        const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+        const signal = new AbortController().signal;
+        const request = {
+            machineId: 'machine-1',
+            expectedGeneration: '7',
+            qualifiedActionId: 'acme.preview/publish',
+            input: { title: 'Ready' },
+            executionSurface: 'ui',
+            expectedContributorImmutableGenerationId: 'contributor-generation-current',
+            requestId: 'request-1',
+        } as const;
+
+        await expect(handler?.(request, { signal })).resolves.toEqual({
+            ok: true,
+            result: { published: true },
+        });
+        expect(executePluginActionIfAvailableMock).toHaveBeenCalledTimes(1);
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(observePluginExecution).toHaveBeenCalledWith(expect.objectContaining({
+            actionId: 'acme.preview/publish',
+            requestId: 'request-1',
+        }));
+    });
+
+    it('forwards operation progress only through the host-local execution context', async () => {
+        const registry = createResolvedContributionRegistry({ agents: Object.freeze([]) });
+        const runtimeRegistry = { ...createRuntimeRegistry(registry), generation: 7 };
+        const operationProgress = { update: vi.fn() };
+        executePluginActionIfAvailableMock.mockReset();
+        executePluginActionIfAvailableMock.mockResolvedValueOnce({
+            matched: true,
+            result: { ok: true, result: { published: true } },
+        });
+        const { handlers, registrar } = createRegistrar();
+        const projectionModule = await import('./daemonContributionRegistryProjection');
+        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
+            resolveRuntimeRegistry: async () => runtimeRegistry,
+            resolveGeneration: async () => 7,
+            resolveInstalledPackages: async () => [],
+        });
+        const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+        const signal = new AbortController().signal;
+
+        await expect(handler?.({
+            machineId: 'machine-1',
+            expectedGeneration: '7',
+            qualifiedActionId: 'acme.preview/publish',
+            input: { title: 'Ready' },
+            executionSurface: 'ui',
+        }, { signal, localActionContext: { operationProgress } })).resolves.toEqual({
+            ok: true,
+            result: { published: true },
+        });
+        expect(executePluginActionIfAvailableMock).toHaveBeenCalledWith(expect.objectContaining({
+            context: expect.objectContaining({ operationProgress }),
+        }));
+    });
+
     // UI-D26: the execution surface decides target-action authorization
     // (`evaluateTargetActionPolicy` compares it against the action's declared
     // `surfaces`). An omitted field previously defaulted to `'agent'` — a value
@@ -2261,7 +2358,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                     mcp: false,
                     cli: false,
                     rpc: false,
-                    sdk: false,
+                    api: false,
                     plugin: true,
                 },
                 inputHints: null,
@@ -4379,7 +4476,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                         mcp: false,
                         cli: false,
                         rpc: false,
-                        sdk: false,
+                        api: false,
                         plugin: true,
                     },
                     inputHints: null,
@@ -4427,7 +4524,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                         mcp: false,
                         cli: false,
                         rpc: false,
-                        sdk: false,
+                        api: false,
                         plugin: true,
                     },
                     inputHints: null,
@@ -6597,7 +6694,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                         mcp: false,
                         cli: false,
                         rpc: false,
-                        sdk: false,
+                        api: false,
                         plugin: false,
                     },
                     inputHints: null,
@@ -6723,7 +6820,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                         mcp: false,
                         cli: false,
                         rpc: false,
-                        sdk: false,
+                        api: false,
                         plugin: false,
                     },
                     inputHints: null,
@@ -6978,7 +7075,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                         mcp: false,
                         cli: false,
                         rpc: false,
-                        sdk: false,
+                        api: false,
                         plugin: false,
                     },
                     inputHints: null,
@@ -6994,6 +7091,10 @@ describe('daemon contribution registry projection rpc handler', () => {
                 code: 'plugin_action_available',
                 requiresCurrentIntent: false,
             }),
+            prepare: vi.fn<TargetActionInvocationRuntime['prepare']>(async () => ({
+                kind: 'settled',
+                result: { status: 'executed', value: null },
+            })),
             invoke: vi.fn(async () => ({ status: 'executed' as const, value: null })),
             refresh: vi.fn(),
             dispose: vi.fn(),

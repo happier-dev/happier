@@ -772,6 +772,7 @@ describe('configured external-session source materializer', () => {
         home: 'user',
         conversationId: 'takeover-current',
       },
+      externalLinkedTakeoverWriterSafety: 'unsupported',
     });
     expect(listCandidates).not.toHaveBeenCalled();
   });

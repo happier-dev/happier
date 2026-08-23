@@ -201,6 +201,62 @@ describe('waitForSessionIdle', () => {
         expect(fetchEncryptedTranscriptPageLatest).toHaveBeenCalledOnce();
     });
 
+    it('seeds socket idle wait from durable pending input before transcript materialization', async () => {
+        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 123 }));
+
+        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+            fetchEncryptedTranscriptPageLatest,
+            fetchEncryptedTranscriptPageAfterSeq,
+        }));
+        vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
+            waitForIdleViaSocket,
+        }));
+        vi.doMock('./resolveSessionTransportContext', () => ({
+            resolveSessionTransportContext: vi.fn(async () => ({
+                ok: true,
+                sessionId: 'sess-1',
+                mode: 'plain',
+                ctx: null,
+                rawSession: {
+                    id: 'sess-1',
+                    active: true,
+                    agentState: null,
+                    latestTurnStatus: null,
+                    pendingCount: 1,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                },
+            })),
+        }));
+
+        const { waitForSessionIdle } = await import('./waitForSessionIdle');
+        const machineKey = new Uint8Array(32).fill(1);
+
+        await expect(waitForSessionIdle({
+            credentials: { token: 'token', encryption: { type: 'dataKey', publicKey: machineKey, machineKey } },
+            idOrPrefix: 'sess-1',
+            timeoutMs: 1_000,
+        })).resolves.toEqual({
+            ok: true,
+            sessionId: 'sess-1',
+            idle: true,
+            observedAt: 123,
+        });
+
+        expect(waitForIdleViaSocket).toHaveBeenCalledWith(expect.objectContaining({
+            initialTurnActivity: {
+                pendingUserTurns: 1,
+                activeTaskInFlight: false,
+                turnInFlight: true,
+            },
+            preferProjectionUpdates: true,
+        }));
+        expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
+        expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
+    });
+
     it('keeps wait-idle scoped to foreground turn activity when runtime activity is active', async () => {
         const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
         const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);

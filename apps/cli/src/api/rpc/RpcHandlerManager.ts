@@ -22,9 +22,11 @@ import {
 } from '@happier-dev/protocol/socketRpc';
 import {
     AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
+    EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
 } from '@happier-dev/protocol';
 import {
+    isSocketRpcActionApiServerOriginAuthorizationContext,
     isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext,
     isSocketRpcSessionServerStartServerOriginAuthorizationContext,
     RPC_ERROR_CODES,
@@ -181,13 +183,19 @@ export class RpcHandlerManager {
         try {
             const isReservedAutomationReplyHandoff = this.isReservedAutomationReplyHandoffRequest(request);
             const isReservedSessionServerStart = this.isReservedSessionServerStartRequest(request);
-            const isReservedServerOriginRequest = isReservedAutomationReplyHandoff || isReservedSessionServerStart;
+            const isReservedActionApi = this.isReservedActionApiRequest(request);
+            const isReservedServerOriginRequest = isReservedAutomationReplyHandoff
+                || isReservedSessionServerStart
+                || isReservedActionApi;
             const isServerOriginAutomationReplyHandoff = isReservedAutomationReplyHandoff
                 && isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext(request.authorization);
             const isServerOriginSessionServerStart = isReservedSessionServerStart
                 && isSocketRpcSessionServerStartServerOriginAuthorizationContext(request.authorization);
+            const isServerOriginActionApi = isReservedActionApi
+                && isSocketRpcActionApiServerOriginAuthorizationContext(request.authorization);
             const isServerOriginReservedRequest = isServerOriginAutomationReplyHandoff
-                || isServerOriginSessionServerStart;
+                || isServerOriginSessionServerStart
+                || isServerOriginActionApi;
             if (isReservedServerOriginRequest && !isServerOriginReservedRequest) {
                 return this.encodeTransportResponse(request, {
                     error: RPC_ERROR_MESSAGES.FORBIDDEN,
@@ -649,9 +657,19 @@ export class RpcHandlerManager {
             && isSocketRpcSessionServerStartServerOriginAuthorizationContext(request.authorization);
     }
 
+    private isReservedActionApiRequest(request: RpcRequest): boolean {
+        return request.method === this.getPrefixedMethod(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1);
+    }
+
+    private isServerOriginActionApiRequest(request: RpcRequest): boolean {
+        return this.isReservedActionApiRequest(request)
+            && isSocketRpcActionApiServerOriginAuthorizationContext(request.authorization);
+    }
+
     private isServerOriginReservedRequest(request: RpcRequest): boolean {
         return this.isServerOriginAutomationReplyHandoffRequest(request)
-            || this.isServerOriginSessionServerStartRequest(request);
+            || this.isServerOriginSessionServerStartRequest(request)
+            || this.isServerOriginActionApiRequest(request);
     }
 
     private areRegistrationMethodsAcknowledged(methods: ReadonlySet<string>): boolean {

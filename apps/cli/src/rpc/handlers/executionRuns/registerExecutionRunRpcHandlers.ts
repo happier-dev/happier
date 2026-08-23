@@ -199,8 +199,14 @@ export function registerExecutionRunRpcHandlers(
                     const agent = engineRegistry.contributions.agents.find((candidate) => (
                       candidate.id === agentId && candidate.pluginId
                     ));
+                    // The durable identity is the Agent's own `identity`; the
+                    // routing id is qualified for installed Agents and must not
+                    // be re-read as a local id.
                     return agent?.pluginId
-                      ? { pluginId: agent.pluginId, localId: agent.definition.id }
+                      ? {
+                        pluginId: agent.identity?.pluginId ?? agent.pluginId,
+                        localId: agent.identity?.localId ?? agent.definition.id,
+                      }
                       : null;
                   },
                   resolvePolicyFacts: ({ agentId }) => resolveInvocationContributionPolicyFacts({

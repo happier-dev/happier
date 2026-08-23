@@ -66,6 +66,46 @@ function createTranscriptExecutor(params: Partial<TranscriptExecutorTestParams>)
 }
 
 describe('createCliActionExecutor transcript actions', () => {
+  it('releases a followed transcript through the canonical Action boundary for abort or iterator cleanup', async () => {
+    const unsubscribe = vi.fn();
+    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 1000 });
+    const executor = createTranscriptExecutor({
+      transcriptStore: createTranscriptStore({
+        readAfter: async () => ({ items: [], nextCursor: 'tail', truncated: false }),
+        subscribe: () => unsubscribe,
+      }),
+      transcriptFollowLeaseRegistry: registry,
+    });
+    const context = { surface: 'rpc' as const, defaultSessionId: 'session-1' };
+
+    await expect(executor.execute('transcript.follow', {
+      sessionId: 'session-1',
+      cursor: 'tail',
+      leaseId: 'lease-1',
+    }, context)).resolves.toMatchObject({
+      ok: true,
+      result: { ok: true, leaseId: 'lease-1' },
+    });
+
+    await expect(executor.execute('transcript.unfollow', {
+      sessionId: 'session-1',
+      leaseId: 'lease-1',
+    }, context)).resolves.toEqual({
+      ok: true,
+      result: { ok: true, released: true },
+    });
+    expect(unsubscribe).toHaveBeenCalledOnce();
+
+    await expect(executor.execute('transcript.unfollow', {
+      sessionId: 'session-1',
+      leaseId: 'lease-1',
+    }, context)).resolves.toEqual({
+      ok: true,
+      result: { ok: true, released: false },
+    });
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
   it('executes transcript page/readAfter/search/follow through bounded transcript stores', async () => {
     const pageOlder = vi.fn(async () => ({
       items: [{ id: 'older', text: 'older row' }],
@@ -324,6 +364,7 @@ describe('createCliActionExecutor transcript actions', () => {
       readAfter: async () => ({ items: [], nextCursor: 'tail-3', truncated: false }),
       subscribe: () => directUnsubscribe,
     });
+    const directRegistry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 16, idleTtlMs: 600_000 });
 
     try {
       await expect(executor.execute('transcript.follow', {
@@ -344,7 +385,10 @@ describe('createCliActionExecutor transcript actions', () => {
         },
         context: { surface: 'rpc', defaultSessionId: 'session-1' },
         defaultSessionId: 'session-1',
-        options: { transcriptStore: directStore },
+        options: {
+          transcriptStore: directStore,
+          transcriptFollowLeaseRegistry: directRegistry,
+        },
       })).resolves.toMatchObject({
         ok: true,
         result: { ok: true, leaseId: 'lease-direct-default-floor' },

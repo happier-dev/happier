@@ -225,8 +225,9 @@ describe('exportSessionHandoffAgentBundle', () => {
 
         expect(resolveSessionHandoffEligibility).toHaveBeenCalledWith({
             sourceMachineId: 'machine_source',
-            externalSessionLinkResolution: expect.objectContaining({
+            externalSessionLinkAuthority: expect.objectContaining({
                 ok: true,
+                transcriptStorage: 'direct',
                 linkedSession: expect.objectContaining({
                     agentId: 'codex',
                     machineId: 'machine_source',

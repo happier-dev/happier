@@ -26,6 +26,35 @@ describe('getAutomationRunInvalidationAction', () => {
       'authoritative-cancellation',
     ],
     [
+      'a cancellation that landed after dispatch permission and can only be reported as uncertain',
+      {
+        t: 'automation-run-state-changed',
+        runId: 'run-active',
+        automationId: 'automation-1',
+        originKind: 'manual',
+        previousState: 'running',
+        currentState: 'outcome_uncertain',
+        transitionedAt: 123,
+        claimedByMachineId: 'machine-1',
+        cause: 'cancelledAfterDispatchPermitted',
+      },
+      'authoritative-cancellation',
+    ],
+    [
+      'an uncertain lifecycle transition with no cancellation cause',
+      {
+        t: 'automation-run-state-changed',
+        runId: 'run-active',
+        automationId: 'automation-1',
+        originKind: 'manual',
+        previousState: 'running',
+        currentState: 'outcome_uncertain',
+        transitionedAt: 123,
+        claimedByMachineId: 'machine-1',
+      },
+      'abort',
+    ],
+    [
       'machine-scoped cancellation for another Run',
       {
         t: 'automation-run-state-changed',

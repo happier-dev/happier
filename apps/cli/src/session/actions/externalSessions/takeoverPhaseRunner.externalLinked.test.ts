@@ -481,6 +481,161 @@ describe('external-linked durable takeover continuation', () => {
     }
   });
 
+  it('recovers a definitively rejected precommit admission instead of stranding it running/admitting', async () => {
+    const activeServerDir = await mkdtemp(
+      join(tmpdir(), 'happier-external-linked-takeover-precommit-rejection-'),
+    );
+    const record = externalLinkedRecord();
+    const operationExclusion = createExternalSessionOperationExclusion({
+      activeServerDir,
+      ownerId: 'external-linked-precommit-rejection-owner',
+    });
+    const admissionWaiter = createPersistedTakeoverAdmissionWaiter();
+    const linked = {
+      rawSession: {
+        id: record.request.sessionId,
+        metadataVersion: 4,
+        seq: 3,
+        pendingVersion: 2,
+        pendingCount: 0,
+        pendingBlockedCount: 0,
+        currentStorageState: 'machine_only',
+        acceptedThroughServerSeq: null,
+        materializationPublicationId: null,
+        materializedThroughSourceAt: null,
+        publishedThroughServerSeq: null,
+        active: true,
+        thinking: false,
+      },
+      metadata: {},
+      sessionPath: '/workspace',
+      agentId: 'example',
+      machineId: record.request.source.machineId,
+      remoteSessionId: record.request.source.remoteSessionId,
+      linkGeneration: record.request.source.linkGeneration,
+      source: { kind: 'jsonl', path: '/tmp/session.jsonl' },
+      codexBackendMode: null,
+    } as never;
+    const prepared = {
+      linked,
+      pluginGeneration: record.request.source.contributionGeneration,
+      quiescenceIdentity: 'verified-source-and-process-1',
+      permitsAdmission: true,
+      hostedOwnerSessionId: null,
+    };
+    // The Server definitively refuses this exact attempt. The admission owner
+    // has already committed refreshed authority evidence at revision + 1, so a
+    // phase runner that marks failure at its own pre-preparation revision CASes
+    // against a stale revision and leaves a live operation stuck.
+    const sendHistoricalCommand = vi.fn(async () => ({
+      v: 1 as const,
+      kind: 'error' as const,
+      errorCode: 'storage_mode_conflict' as const,
+      message: 'The server rejected this exact admission attempt.',
+    }));
+    // One shared monotonic clock: the runner and the admission owner write the
+    // same record, and a non-monotonic test clock would be rejected by the
+    // record store rather than by the behaviour under test.
+    let clock = 38;
+    const nowMs = () => (clock += 1);
+    const admissionOwner = createExternalSessionPersistedTakeoverAdmissionOwner({
+      activeServerDir,
+      admissionWaiter,
+      isFollowSuspended: () => true,
+      suspendFollow: async () => undefined,
+      sendHistoricalCommand,
+      loadExternalLinkedCurrent: async () => prepared,
+      nowMs,
+    });
+    let admitError: unknown = null;
+    const spawnSession = vi.fn(async (options) => {
+      const correlation = options.persistedTakeoverAdmission;
+      if (!correlation || correlation.mode !== 'external_linked') {
+        throw new Error('expected external-linked admission correlation');
+      }
+      await admissionOwner.admit({
+        mode: 'external_linked',
+        sessionId: record.request.sessionId,
+        operationId: correlation.operationId,
+        attemptId: correlation.attemptId,
+        publisherPrecondition: {
+          machineId: record.request.source.machineId,
+          committedFenceMs: 1,
+        },
+      }).catch((error: unknown) => { admitError = error; });
+      return {
+        type: 'success' as const,
+        sessionId: record.request.sessionId,
+      };
+    });
+    try {
+      await writeExternalSessionOperationRecord(activeServerDir, record);
+      const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
+        activeServerDir,
+        operationExclusion,
+        resolveWriterSafety: async () => 'native_prevention',
+        loadCurrent: async () => prepared,
+        followLeaseManager: {
+          suspendSession: async () => true,
+          resumeSession: async () => ({ resumed: true, leaseAcquired: false }),
+        },
+        resolveSpawn: async () => ({
+          ok: true,
+          value: {
+            options: { directory: '/tmp/session' },
+            origin: {
+              agentId: 'example',
+              pluginId: 'example.plugin',
+              generation: record.request.source.contributionGeneration,
+            },
+          },
+        }),
+        spawnResolvedTakeoverSession: async (input) => ({
+          ok: true as const,
+          value: await input.spawnSession({
+            ...input.resolved.options,
+            ...input.options,
+          }),
+        }),
+        spawnSession,
+        admissionWaiter,
+        reconcileRuntimeBindingFailure:
+          admissionOwner.reconcileRuntimeBindingFailure,
+        publishProgress: async () => undefined,
+        createAttemptId: () => 'attempt-a',
+        nowMs,
+      });
+
+      await expect(runner.resume({
+        sessionId: record.request.sessionId,
+        operationId: record.operationId,
+        revision: record.revision,
+      })).resolves.toMatchObject({
+        ok: true,
+        progress: {
+          status: 'failed',
+          phase: 'admitting',
+          retryTargetPhase: 'admitting',
+          error: { code: 'admission_failed', retryable: true },
+        },
+      });
+      expect(admitError).toBeInstanceOf(Error);
+      expect(sendHistoricalCommand).toHaveBeenCalledOnce();
+      await expect(readExternalSessionOperationRecord(
+        activeServerDir,
+        record.operationId,
+      )).resolves.toMatchObject({
+        status: 'failed',
+        phase: 'admitting',
+        retryTargetPhase: 'admitting',
+        bindings: { targetRuntimeAttemptId: 'attempt-a' },
+        error: { code: 'admission_failed', retryable: true },
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps a crash-after-commit attempt noncancellable, then fences late attempt A after fresh Retry', async () => {
     const activeServerDir = await mkdtemp(
       join(tmpdir(), 'happier-external-linked-takeover-runtime-bound-timeout-'),

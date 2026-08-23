@@ -59,11 +59,26 @@ export function readSessionProjectedPendingRequestCount(value: unknown): number 
     return pendingPermissionRequestCount + pendingUserActionRequestCount;
 }
 
+export function readSessionProjectedPendingInputCount(value: unknown): number | null {
+    const record = asRecord(value);
+    if (!record) return null;
+
+    return readNonnegativeInteger(record.pendingCount);
+}
+
 export function detectSessionTurnActivityFromProjection(value: unknown): SessionTurnActivity | null {
     const record = asRecord(value);
     if (!record) return null;
 
     const latestTurnStatus = readSessionProjectedTurnStatus(record.latestTurnStatus);
+    const pendingInputCount = readSessionProjectedPendingInputCount(record);
+    if (pendingInputCount !== null && pendingInputCount > 0) {
+        return {
+            pendingUserTurns: pendingInputCount,
+            activeTaskInFlight: latestTurnStatus === 'in_progress',
+            turnInFlight: true,
+        };
+    }
     const projectedPendingRequestCount = readSessionProjectedPendingRequestCount(record);
     if (!latestTurnStatus || projectedPendingRequestCount === null) {
         return null;

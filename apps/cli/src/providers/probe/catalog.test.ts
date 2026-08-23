@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   createProviderErrorV1,
   createProviderObservationAuthorizationFingerprintV1,
   type ProviderCatalogProbeV1,
@@ -590,6 +591,61 @@ describe('provider catalog service', () => {
     expect(state.catalogs).toEqual([]);
   });
 
+  it('keeps another process’s newer health row when clearing its own transient checking record', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-probe-'));
+    const runtimeStore = createProviderRuntimeStateStore({ happyHomeDir, machineId });
+    const otherProcessStore = createProviderRuntimeStateStore({ happyHomeDir, machineId });
+    const controller = new AbortController();
+    let transportStarted!: () => void;
+    const started = new Promise<void>((resolve) => { transportStarted = resolve; });
+    const service = createProviderCatalogService({
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => ['93.184.216.34'],
+        transport: async (request) => {
+          transportStarted();
+          await new Promise<void>((resolve) => {
+            request.signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          throw new Error('transport must not complete after cancellation');
+        },
+      }),
+      authorization: authPort(),
+      runtimeStore,
+      now: () => 10_000,
+      createObservationId: () => 'observation-a',
+    });
+    const refresh = service.refresh({
+      connectionId,
+      machineId,
+      endpoints,
+      probes: [{ endpointTemplateId: 'openai', path: '/models', parser: 'openai-models' }],
+      signal: controller.signal,
+    });
+    await started;
+
+    // A second daemon/CLI process commits a real observation for the exact same
+    // semantic key while this probe is still in flight.
+    const transient = await runtimeStore.read();
+    const endpointKey = transient.endpointHealth[0]!.key;
+    await otherProcessStore.update((state) => ({
+      ...state,
+      endpointHealth: [{
+        key: endpointKey,
+        state: { status: 'available' as const, activity: 'idle' as const, observedAt: 9_500 },
+        lastAccessedAt: 9_500,
+      }],
+    }));
+
+    controller.abort();
+    await expect(refresh).rejects.toBeTruthy();
+
+    // Read through a fresh store so the assertion observes the durable file rather
+    // than either writer's in-memory copy.
+    const settled = await createProviderRuntimeStateStore({ happyHomeDir, machineId }).read();
+    expect(settled.endpointHealth).toHaveLength(1);
+    expect(settled.endpointHealth[0]?.state).toMatchObject({ status: 'available', observedAt: 9_500 });
+  });
+
   it('publishes transient checking activity without destroying the prior settled result', async () => {
     const runtimeStore = await store();
     let releaseTransport!: () => void;
@@ -633,18 +689,31 @@ describe('provider catalog service', () => {
 
   it('uses one authorized bounded managed runtime and commits no transient endpoint health', async () => {
     const close = vi.fn(async () => {});
-    const authenticatedFetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('http://127.0.0.1:45123/v1/models');
-      expect(new Headers(init?.headers).has('authorization')).toBe(false);
-      return new Response(
-        '{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}',
-        { status: 200, headers: { 'content-type': 'application/json' } },
+    const managedRequest = vi.fn(async (request: Readonly<{
+      pathAndQuery: string;
+      headers: Readonly<Record<string, string>>;
+      timeoutMs: number;
+    }>) => {
+      // The probe reaches the supervised service through the exact handle, so
+      // it hands over a relative path and never a second authenticated URL.
+      expect(request.pathAndQuery).toBe('/v1/models');
+      expect(Object.keys(request.headers).map((name) => name.toLowerCase()))
+        .not.toContain('authorization');
+      expect(request.timeoutMs).toBeLessThanOrEqual(
+        PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
       );
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: new Response(
+          '{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}',
+        ).body,
+      };
     });
     const launch = vi.fn(async () => ({
       ok: true as const,
       endpointUrl: 'http://127.0.0.1:45123/v1',
-      access: { fetch: authenticatedFetch },
+      access: { request: managedRequest },
       isCurrent: () => true,
       close,
     }));
@@ -681,7 +750,7 @@ describe('provider catalog service', () => {
     });
     expect(authorize).toHaveBeenCalledBefore(launch);
     expect(launch).toHaveBeenCalledTimes(1);
-    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+    expect(managedRequest).toHaveBeenCalledTimes(1);
     expect(transport).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
     const state = await runtimeStore.read();
@@ -716,13 +785,13 @@ describe('provider catalog service', () => {
           ok: true as const,
           endpointUrl: 'http://127.0.0.1:45123/v1',
           access: {
-            fetch: async () => new Response(
-              '{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}',
-              {
-                status: 200,
-                headers: { 'content-type': 'application/json' },
-              },
-            ),
+            request: async () => ({
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+              body: new Response(
+                '{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}',
+              ).body,
+            }),
           },
           isCurrent: () => true,
           close,

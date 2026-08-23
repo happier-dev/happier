@@ -1,6 +1,7 @@
 import { logger as defaultLogger } from '@/ui/logger';
 
 import { drainRuntimeAuthFailureReportOutboxToDaemon } from './runtimeAuthFailureReportOutboxDrain';
+import { sanitizeConnectedServiceDiagnosticError } from '../sanitizeConnectedServiceDiagnosticString';
 
 type RuntimeAuthFailureReportOutboxDrainLogger = Readonly<{
   debug: (message: string, error?: unknown) => void;
@@ -72,7 +73,7 @@ async function drainOnce(input: DrainScheduleInput, automaticAttempt: number): P
     shouldRetry = result.retried > 0;
   } catch (error) {
     shouldRetry = true;
-    logger.debug(`${logPrefix} Failed to drain connected-service runtime auth failure report outbox (non-fatal)`, error);
+    logger.debug(`${logPrefix} Failed to drain connected-service runtime auth failure report outbox (non-fatal): ${sanitizeConnectedServiceDiagnosticError(error)}`);
   } finally {
     drainInFlight = false;
   }

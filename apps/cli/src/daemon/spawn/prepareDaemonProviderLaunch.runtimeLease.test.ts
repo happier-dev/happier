@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import type { SpawnPluginRuntimeLease } from './spawnPluginRuntimeLease';
 
 const hoisted = vi.hoisted(() => ({
@@ -32,6 +33,58 @@ vi.mock('./resolveSpawnChildEnvironment', () => ({
 import { prepareDaemonProviderLaunch } from './prepareDaemonProviderLaunch';
 
 describe('prepareDaemonProviderLaunch runtime lease currentness', () => {
+  it('rejects an impossible native mode before acquiring a runtime lease', async () => {
+    hoisted.prepareProviderLaunch.mockReset();
+    hoisted.prepareProviderLaunch.mockResolvedValue({ ok: true, kind: 'native' });
+    const acceptedRegistry = Object.freeze({});
+    const acceptedLease = Object.freeze({
+      registry: acceptedRegistry,
+      source: 'active' as const,
+      release: vi.fn(async () => undefined),
+    }) as unknown as Awaited<ReturnType<SpawnPluginRuntimeLease['acquire']>>;
+    const acquire = vi.fn(async () => acceptedLease);
+    const pluginRuntimeLease = Object.freeze({
+      currentRegistry: acceptedRegistry,
+      acquire,
+      release: vi.fn(async () => undefined),
+    }) as unknown as SpawnPluginRuntimeLease;
+
+    await expect(prepareDaemonProviderLaunch({
+      options: {
+        directory: '/repo',
+        machineId: 'machine-a',
+        agentModeId: 'plan',
+        backendTarget: {
+          kind: 'backend',
+          sourceKind: 'built_in',
+          backendId: 'gemini',
+        },
+      },
+      effectiveBackendTarget: {
+        kind: 'backend',
+        sourceKind: 'built_in',
+        backendId: 'gemini',
+      },
+      catalogAgentId: 'gemini',
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: null,
+      persistedProviderBinding: null,
+      normalizedExistingSessionId: '',
+      pluginRuntimeLease,
+      launchResourceScope: createProviderLaunchResourceScope(),
+      processEnv: {},
+    })).resolves.toMatchObject({
+      ok: false,
+      result: {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      },
+    });
+
+    expect(acquire).not.toHaveBeenCalled();
+    expect(hoisted.prepareProviderLaunch).not.toHaveBeenCalled();
+  });
+
   it('uses one accepted spawn lease for provider authorization and prerequisite hooks', async () => {
     const acceptedRegistry = Object.freeze({});
     // These collaborators only observe lease/registry identity in this boundary test.

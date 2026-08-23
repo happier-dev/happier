@@ -40,6 +40,22 @@ export type ContributionOwnedManagedServiceEndpointReadIdentity = Readonly<{
 }>;
 
 /**
+ * The two admissions a contribution-owned endpoint serves.
+ *
+ * `demand` answers an explicit user request, so the host may own the process
+ * the contribution declares. `attachedOnly` answers passive following, which
+ * carries no user demand for a process: it admits a server the user already
+ * runs and resolves `null` for an owned spawn, leaving the caller on whatever
+ * Session-runner endpoint it already had.
+ */
+export type ContributionOwnedManagedServiceEndpointReadHosts = Readonly<{
+    demand: AgentExternalSessionsManagedEndpointReadHost;
+    attachedOnly: (
+        input: Parameters<AgentExternalSessionsManagedEndpointReadHost>[0],
+    ) => Promise<AgentExternalSessionsManagedEndpointRead | null>;
+}>;
+
+/**
  * Returns `null` when the contribution declares no managed endpoint service, so
  * the caller keeps whatever host it already had rather than gaining an inert
  * second owner.
@@ -51,7 +67,7 @@ export function createContributionOwnedManagedServiceEndpointReadHost(params: Re
     cwd: string;
     isGenerationActive(): boolean;
     retirementSignal: AbortSignal;
-}>): AgentExternalSessionsManagedEndpointReadHost | null {
+}>): ContributionOwnedManagedServiceEndpointReadHosts | null {
     const declare = params.contribution.resolveManagedEndpointService;
     if (typeof declare !== 'function') return null;
 
@@ -73,7 +89,8 @@ export function createContributionOwnedManagedServiceEndpointReadHost(params: Re
 
     let servicesPromise: ReturnType<CreateAgentInvocationServices> | null = null;
     const ensureServices = () => {
-        servicesPromise ??= params.createAgentInvocationServices({
+        if (servicesPromise) return servicesPromise;
+        const pending = params.createAgentInvocationServices({
             pluginId: params.identity.pluginId,
             pluginVersion: params.identity.pluginVersion,
             agentId: params.identity.agentId,
@@ -83,19 +100,32 @@ export function createContributionOwnedManagedServiceEndpointReadHost(params: Re
             signal: acquisition.signal,
             isGenerationCurrent: params.isGenerationActive,
         });
-        return servicesPromise;
+        servicesPromise = pending;
+        // A failed acquisition belongs to the attempt that failed, not to the
+        // generation. Retaining the rejected promise would replay that one
+        // failure on every later browse, so drop it and let the next browse
+        // acquire again.
+        pending.catch(() => {
+            if (servicesPromise === pending) servicesPromise = null;
+        });
+        return pending;
     };
 
     const acquire = async (
         source: AgentExternalSessionSource,
         signal: AbortSignal,
-    ): Promise<ManagedServiceHandle> => {
+        admit: 'ownedOrAttached' | 'attachedOnly',
+    ): Promise<ManagedServiceHandle | null> => {
         const spec = await declare({ source, signal });
         if (!spec) {
             throw new Error(
                 'Agent External Sessions contribution declares no managed endpoint service for this source',
             );
         }
+        // Attaching to a server the user already runs starts nothing, so a
+        // passive follow reaches it exactly like an explicit browse does. An
+        // owned spawn is the only shape passive following must not reach.
+        if (admit === 'attachedOnly' && spec.mode.kind !== 'attach') return null;
         const services = await ensureServices();
         // Supervision is bounded by the generation, not by the browse operation
         // that first needed it. A cold start can outlast one operation deadline;
@@ -106,13 +136,17 @@ export function createContributionOwnedManagedServiceEndpointReadHost(params: Re
         });
     };
 
-    return async (input): Promise<AgentExternalSessionsManagedEndpointRead> => {
+    const read = async (
+        input: Parameters<AgentExternalSessionsManagedEndpointReadHost>[0],
+        admit: 'ownedOrAttached' | 'attachedOnly',
+    ): Promise<AgentExternalSessionsManagedEndpointRead | null> => {
         if (!params.isGenerationActive() || params.retirementSignal.aborted) {
             throw new Error(
                 'Agent External Sessions managed endpoint owner belongs to a retired generation',
             );
         }
-        const handle = await acquire(input.source, input.signal);
+        const handle = await acquire(input.source, input.signal, admit);
+        if (!handle) return null;
         await handle.waitUntilHealthy({ signal: input.signal });
         return Object.freeze(async (request) => {
             const response = await handle.request({
@@ -131,4 +165,17 @@ export function createContributionOwnedManagedServiceEndpointReadHost(params: Re
             });
         });
     };
+
+    return Object.freeze({
+        async demand(input) {
+            const reader = await read(input, 'ownedOrAttached');
+            if (!reader) {
+                throw new Error(
+                    'Agent External Sessions contribution declares no managed endpoint service for this source',
+                );
+            }
+            return reader;
+        },
+        attachedOnly: (input) => read(input, 'attachedOnly'),
+    });
 }

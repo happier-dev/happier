@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { registerMachineExternalSessionsRpcHandlers } from './rpcHandlers.externalSessions';
+
 const registerExternalSessions = vi.hoisted(() => vi.fn<
-  (input: Readonly<Record<string, unknown>>) => Readonly<{
-    dispose(): Promise<void>;
-  }>
+  typeof registerMachineExternalSessionsRpcHandlers
 >(() => ({
+  hostExternalSessionActionExecutor: {
+    execute: async () => ({
+      ok: false as const,
+      errorCode: 'test_fixture_unavailable',
+      error: 'External Action ingress is not exercised by this fixture.',
+    }),
+  },
   dispose: vi.fn(async () => undefined),
 })));
 

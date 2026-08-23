@@ -12,6 +12,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { readPluginManifest, type ReadPluginManifestResult } from '@/plugins/manifest/read';
+import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
 import type { ResolvedVoiceProviderContribution } from '@/plugins/projection/registry/types';
 import {
   createDaemonPluginRawCredentialMaterializer,
@@ -230,7 +231,10 @@ export function createMachineVoiceClientCredentialAuthorizationService(
       ) ?? null;
       if (!rawGrant || !lifecycle?.isCurrent()) throw credentialUnavailable();
       const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
-      const manifest = await readManifest({ manifestPath: provider.manifestPath });
+      const manifest = await readManifest({
+        manifestPath: provider.manifestPath,
+        sourceProvenance: pluginSourceProvenanceForKind(provider.sourceSpec?.kind),
+      });
       signal.throwIfAborted();
       const manifestProvider = manifest.ok
         ? manifest.manifest.contributes.voiceProviders?.find((candidate) => (

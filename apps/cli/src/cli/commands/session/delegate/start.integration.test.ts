@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { handleSessionCommand } from '../handleSessionCommand';
 
 const { mockIo } = vi.hoisted(() => ({
   mockIo: vi.fn(),
@@ -130,8 +131,6 @@ describe('happier session delegate start (integration)', () => {
   });
 
   it('returns a session_delegate_start JSON envelope with per-backend results', async () => {
-    const { handleSessionCommand } = await import('../handleSessionCommand');
-
     const output = captureConsoleJsonOutput();
 
     try {
@@ -141,9 +140,8 @@ describe('happier session delegate start (integration)', () => {
           'delegate',
           'start',
           'sess_integration_delegate_start_123',
-          '--backends',
+          '--agent',
           'codex',
-          '--instructions',
           'Delegate.',
           '--json',
         ],

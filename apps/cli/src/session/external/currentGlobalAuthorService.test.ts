@@ -7,16 +7,25 @@ import {
   ExternalSessionAgentIdSchema,
   ExternalSessionRefSchema,
   PluginAgentContributionV2Schema,
+  resolveExternalSessionOperationTimelineV1,
 } from '@happier-dev/protocol';
+
+import {
+  writeExternalSessionOperationRecord,
+} from '@/session/actions/externalSessions/operationRecordStore';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { HostExternalSessionsAuthorService } from './privateContract';
 import {
   createCurrentGlobalExternalSessionsAuthorBinding,
   createCurrentGlobalExternalSessionsAuthorService,
+  createCurrentGlobalExternalSessionsTakeoverAdapter,
   type CurrentGlobalExternalSessionsAuthorService,
 } from './currentGlobalAuthorService';
 import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvocation';
+import {
+  deriveExternalSessionPluginOperationDurableKey,
+} from './pluginOperationDurableKey';
 import { createExternalSessionHostOperationOwner } from './hostOperationOwner';
 import type { ExternalSessionFollowHostOperation } from './followHostOperation';
 import type { ExternalSessionExecutionSurface } from './providerOps';
@@ -168,7 +177,18 @@ function createCurrentOwner(
     bindAuthorService: () => authorService,
     resolveAuthorSource: vi.fn(async () => Object.freeze({
       source: Object.freeze({ kind: 'testSource' }),
+      externalLinkedTakeoverWriterSafety: 'unsupported' as const,
     })),
+    takeoverSourceOps: Object.freeze({
+      resolveCurrentSource: vi.fn(async () => Object.freeze({
+        source: Object.freeze({ kind: 'testSource' }),
+        externalLinkedTakeoverWriterSafety: 'unsupported' as const,
+      })),
+      ensureLink: vi.fn(async () => Object.freeze({ sessionId: 'test-session' })),
+      deriveTakeoverStartRequest: vi.fn(async () => {
+        throw new Error('unused in this harness');
+      }),
+    }),
     compositionPort: Object.freeze({
       resolveFollowTarget: vi.fn(async () => Object.freeze({
         status: 'unavailable' as const,
@@ -688,6 +708,7 @@ describe('current-global External Sessions takeover source resolution', () => {
         resolveMachineId: () => machineId,
         resolveAgentRuntime: () => Object.freeze({
           generationId: 'generation-1',
+          immutableGenerationId: 'immutable-generation-1',
           retirementSignal: new AbortController().signal,
           isCurrent: () => true,
           surface,
@@ -697,7 +718,12 @@ describe('current-global External Sessions takeover source resolution', () => {
       });
       const author = service.bindCallerAuthorService({
         pluginId: 'synthetic.non-bundled',
-        takeoverStart: startPluginTakeover,
+        contextualTakeover: createCurrentGlobalExternalSessionsTakeoverAdapter({
+          activeServerDir,
+          pluginId: 'synthetic.non-bundled',
+          startDurableTakeover: startPluginTakeover,
+          resolveSourceOps: () => service.takeoverSourceOps,
+        }),
       });
 
       expect(await author.capabilities()).toEqual({
@@ -811,6 +837,7 @@ describe('current-global External Sessions takeover source resolution', () => {
         resolveMachineId: () => 'machine-1',
         resolveAgentRuntime: () => Object.freeze({
           generationId: 'generation-1',
+          immutableGenerationId: 'immutable-generation-1',
           retirementSignal: new AbortController().signal,
           isCurrent: () => true,
           surface,
@@ -820,7 +847,12 @@ describe('current-global External Sessions takeover source resolution', () => {
       });
       const author = service.bindCallerAuthorService({
         pluginId: 'synthetic.non-bundled',
-        takeoverStart: vi.fn(),
+        contextualTakeover: createCurrentGlobalExternalSessionsTakeoverAdapter({
+          activeServerDir,
+          pluginId: 'synthetic.non-bundled',
+          startDurableTakeover: vi.fn(),
+          resolveSourceOps: () => service.takeoverSourceOps,
+        }),
       });
       const capabilities = await author.capabilities();
       const page = await author.list();
@@ -934,6 +966,7 @@ describe('current-global External Sessions takeover source resolution', () => {
         resolveMachineId: () => 'machine-1',
         resolveAgentRuntime: () => Object.freeze({
           generationId: 'generation-1',
+          immutableGenerationId: 'immutable-generation-1',
           retirementSignal: new AbortController().signal,
           isCurrent: () => true,
           surface,
@@ -942,7 +975,12 @@ describe('current-global External Sessions takeover source resolution', () => {
       });
       const author = service.bindCallerAuthorService({
         pluginId: 'synthetic.non-bundled',
-        takeoverStart: startPluginTakeover,
+        contextualTakeover: createCurrentGlobalExternalSessionsTakeoverAdapter({
+          activeServerDir,
+          pluginId: 'synthetic.non-bundled',
+          startDurableTakeover: startPluginTakeover,
+          resolveSourceOps: () => service.takeoverSourceOps,
+        }),
       });
       const listed = await author.list();
       expect(listed.items).toHaveLength(2);
@@ -992,6 +1030,123 @@ describe('current-global External Sessions takeover source resolution', () => {
         expect.anything(),
       );
       service.dispose();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('current-global External Sessions takeover durability without sources', () => {
+  it('replays a committed takeover with zero configured sources and still fails a true miss', async () => {
+    const activeServerDir = await mkdtemp(
+      join(tmpdir(), 'happier-current-global-sourceless-takeover-'),
+    );
+    try {
+      const pluginId = 'synthetic.non-bundled';
+      const callerKey = 'lost-response-key';
+      const durableIdempotencyKey =
+        deriveExternalSessionPluginOperationDurableKey({
+          pluginId,
+          callerKey,
+        });
+      const request = {
+        v: 1 as const,
+        idempotencyKey: durableIdempotencyKey,
+        sessionId: 'linked-session-1',
+        source: {
+          machineId: 'machine-1',
+          remoteSessionId: externalSessionRef.remoteSessionId,
+          qualifiedIdentity: {
+            v: 1 as const,
+            agent: { pluginId: 'happier.codex', localId: 'codex' },
+            source: { kind: 'codexHome', contractVersion: 1 as const },
+          },
+          linkGeneration: 'link-generation-1',
+          sourceGeneration: 'source-generation-1',
+          contributionGeneration: 'contribution-generation-1',
+        },
+        plan: 'takeover' as const,
+        targetStorageMode: 'persisted' as const,
+        targetDirectory: '/local/selected/workspace',
+        targetRuntimeMode: 'terminal' as const,
+      };
+      await writeExternalSessionOperationRecord(activeServerDir, {
+        v: 1,
+        operationId: 'external-takeover:committed-before-source-removal',
+        revision: 4,
+        request,
+        authorIntent: {
+          v: 1,
+          surface: 'plugin',
+          kind: 'takeover',
+          agentId: externalSessionRef.agentId,
+          sourceId: externalSessionRef.sourceId,
+          remoteSessionId: externalSessionRef.remoteSessionId,
+          targetStorageMode: 'persisted',
+        },
+        status: 'awaiting_user_resume',
+        phase: 'validating',
+        timeline: resolveExternalSessionOperationTimelineV1(request),
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        priorStableStorage: { state: 'machine_only' },
+        currentStorageState: 'machine_only',
+        checkpoint: {
+          sourcePagesRead: 0,
+          stagedItemCount: 0,
+          importedItemCount: 0,
+          requiredItemFailures: {
+            total: 0,
+            record: 0,
+            media: 0,
+            conversion: 0,
+            diagnosticsTruncated: false,
+            diagnostics: [],
+          },
+        },
+        bindings: { operationClaimId: 'claim-1' },
+        progressProjection: { acknowledgedRevision: null },
+        canonicalOwnerEvidence: { linkedSessionRevision: 1 },
+        fence: { kind: 'none' },
+        retryTargetPhase: 'validating',
+      });
+
+      const startPluginTakeover = vi.fn();
+      const binding = createCurrentGlobalExternalSessionsAuthorBinding({
+        pluginId,
+        signal: new AbortController().signal,
+        isGenerationCurrent: () => true,
+        activeServerDir,
+        takeoverStart: startPluginTakeover as never,
+        // The last configured External Sessions source was removed, so the
+        // current-global source owner is gone. A committed operation must stay
+        // recoverable regardless.
+        resolveCurrent: () => null,
+        activateConfiguredSources: async () => {},
+      });
+
+      await expect(binding.takeover(externalSessionRef, {
+        targetStorageMode: 'persisted',
+        idempotencyKey: callerKey,
+      })).resolves.toEqual({
+        sessionId: 'linked-session-1',
+        operationId: 'external-takeover:committed-before-source-removal',
+        revision: 4,
+      });
+      expect(startPluginTakeover).not.toHaveBeenCalled();
+
+      // A true miss still needs current source authority and fails closed.
+      await expect(binding.takeover(externalSessionRef, {
+        targetStorageMode: 'persisted',
+        idempotencyKey: 'never-started-key',
+      })).rejects.toMatchObject({
+        code: 'plugin_external_sources_unavailable',
+      });
+      // Every other source-dependent operation stays unavailable.
+      await expect(binding.list()).rejects.toMatchObject({
+        code: 'plugin_external_sources_unavailable',
+      });
+      expect(startPluginTakeover).not.toHaveBeenCalled();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
@@ -1062,6 +1217,7 @@ describe('current-global External Sessions follow lifecycle', () => {
       resolveMachineId: () => 'machine-1',
       resolveAgentRuntime: () => Object.freeze({
         generationId: 'generation-1',
+        immutableGenerationId: 'immutable-generation-1',
         retirementSignal: runtimeRetirement.signal,
         isCurrent: () => true,
         surface,

@@ -58,6 +58,32 @@ const agent = {
     localId: 'fixture',
 } as const;
 const agentId = 'fixture';
+/**
+ * The catalog fact that makes an Agent an External Sessions participant. It is
+ * declared in the manifest and readable without activating the plugin, which is
+ * what lets a never-run Agent still appear in the passive hook inventory.
+ */
+const externalSessionRichDefinition = {
+    provenance: 'external' as const,
+    definition: {
+        surfaces: {
+            externalSession: {
+                sources: [{ sourceKind: 'fixtureSource' }],
+            },
+        },
+    },
+};
+
+function withPlatform<T>(
+    platform: NodeJS.Platform,
+    run: () => Promise<T>,
+): Promise<T> {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
+    return run().finally(() => {
+        Object.defineProperty(process, 'platform', descriptor);
+    });
+}
 const variant = {
     variantId: 'fixture-variant',
     targets: [{
@@ -265,14 +291,20 @@ function createFixture(input: Readonly<{
     const agentDefinitionsById = new Map<string, Readonly<{
         id: string;
         identity: Readonly<{ pluginId: string; localId: string }>;
+        richDefinition: typeof externalSessionRichDefinition;
     }>>([[
         agentId,
-        { id: agentId, identity: agent },
+        {
+            id: agentId,
+            identity: agent,
+            richDefinition: externalSessionRichDefinition,
+        },
     ]]);
     if (unsupported && unsupportedRuntime) {
         agentDefinitionsById.set(unsupported.agentId, {
             id: unsupported.agentId,
             identity: unsupported.identity,
+            richDefinition: externalSessionRichDefinition,
         });
         if (!unsupported.cold) {
             runtimes.set(unsupported.agentId, unsupportedRuntime);
@@ -284,6 +316,7 @@ function createFixture(input: Readonly<{
             {
                 id: 'happier.agent.fixture/agents/duplicate',
                 identity: agent,
+                richDefinition: externalSessionRichDefinition,
             },
         );
     }
@@ -408,27 +441,84 @@ function createFixture(input: Readonly<{
 
 describe('createPluginSessionHookManagementHost', () => {
     it('keeps passive mount and reconnect inventory launch-free', async () => {
+        // Catalog presence, not an already-activated runtime lease, decides who
+        // appears. A never-run Agent still owes the user a truthful row, and
+        // producing it must not start the plugin.
         const cold = createFixture({ cold: true });
-        await expect(cold.host.status({
-            machineId: 'machine-1',
-            intent: 'passive_inventory',
-            agent,
-            limit: 50,
-        })).resolves.toMatchObject({
-            ok: true,
-            rows: [],
-        });
-        await expect(cold.host.status({
-            machineId: 'machine-1',
-            intent: 'passive_inventory',
-            agent,
-            limit: 50,
-        })).resolves.toMatchObject({
-            ok: true,
-            rows: [],
-        });
+        for (const target of [
+            { agent },
+            {},
+        ] as const) {
+            await expect(cold.host.status({
+                machineId: 'machine-1',
+                intent: 'passive_inventory',
+                ...target,
+                limit: 50,
+            })).resolves.toMatchObject({
+                ok: true,
+                rows: [{ agent, status: { state: 'not_installed' } }],
+                nextCursor: null,
+            });
+        }
         expect(cold.activate).not.toHaveBeenCalled();
         expect(cold.detectCliSnapshot).not.toHaveBeenCalled();
+        expect(cold.resolveInstallation).not.toHaveBeenCalled();
+    });
+
+    it('keeps a never-run Agent out of the inventory only when the catalog does not declare External Sessions', async () => {
+        const cold = createFixture({
+            cold: true,
+            dependencyOverrides: {
+                acquireRuntimeRegistryLease: async () => ({
+                    registry: {
+                        contributes: {
+                            agentDefinitionsById: new Map([[
+                                agentId,
+                                { id: agentId, identity: agent },
+                            ]]),
+                        },
+                        agentRuntimesByAgentId: new Map(),
+                        activateContributionsOnDemand: async () => [],
+                    } as unknown as ResolvedExecutablePluginRuntimeRegistry,
+                    release: async () => undefined,
+                }),
+            },
+        });
+
+        await expect(cold.host.status({
+            machineId: 'machine-1',
+            intent: 'passive_inventory',
+            limit: 50,
+        })).resolves.toMatchObject({ ok: true, rows: [] });
+    });
+
+    it('projects durable custody for a never-run Agent as uninstallable unavailable truth', async () => {
+        const cold = createFixture({
+            cold: true,
+            dependencyOverrides: {
+                readInventoryPage: async () => ({
+                    ok: true,
+                    records: [inventoryRecord(fixtureHostInstallationId)],
+                    diagnostics: [],
+                }),
+            },
+        });
+
+        await expect(cold.host.status({
+            machineId: 'machine-1',
+            intent: 'passive_inventory',
+            limit: 50,
+        })).resolves.toMatchObject({
+            ok: true,
+            rows: [{
+                agent,
+                status: {
+                    state: 'unavailable',
+                    installationId: fixtureHostInstallationId,
+                },
+            }],
+        });
+        expect(cold.activate).not.toHaveBeenCalled();
         expect(cold.resolveInstallation).not.toHaveBeenCalled();
     });
 
@@ -544,6 +634,95 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(cold.resolveInstallation).not.toHaveBeenCalled();
     });
 
+    it('refuses a selected variant whose shell dialect the current platform cannot execute', async () => {
+        // The declared dialect selects the host serializer that quotes the
+        // generated command. Installing a POSIX-quoted entry on Windows would
+        // report a ready installation whose hook can never run, so resolution
+        // fails closed before any credential, config, or custody effect.
+        const dialectVariant = (
+            shellDialect: string,
+        ): AgentExternalSessionHookInstallationVariant => ({
+            ...variant,
+            // Fixture boundary: the host's platform table is keyed by the
+            // declared dialect id, which this suite varies independently of
+            // the SDK union currently published to the CLI.
+            events: [{
+                ...variant.events[0]!,
+                command: { kind: 'happier_observation_v1', shellDialect },
+            }],
+        } as unknown as AgentExternalSessionHookInstallationVariant);
+
+        for (const [platform, shellDialect] of [
+            ['win32', 'posix'],
+            ['darwin', 'windows_cmd'],
+            ['darwin', 'powershell_encoded'],
+            ['linux', 'windows_cmd'],
+        ] as const) {
+            const fixture = createFixture({
+                installationVariant: dialectVariant(shellDialect),
+                dependencyOverrides: {
+                    readInstallationRecord: async () => null,
+                },
+            });
+            await withPlatform(platform, async () => {
+                await expect(fixture.host.status({
+                    machineId: 'machine-1',
+                    intent: 'install_preview',
+                    agent,
+                })).resolves.toEqual({
+                    ok: false,
+                    diagnostic: {
+                        code: 'installation_unsupported',
+                        retryable: false,
+                    },
+                });
+                await expect(fixture.host.install({
+                    machineId: 'machine-1',
+                    agent,
+                    expectedPreviewId: fixtureExpectedPreviewId,
+                })).resolves.toEqual({
+                    ok: false,
+                    diagnostic: {
+                        code: 'installation_unsupported',
+                        retryable: false,
+                    },
+                });
+            });
+            expect(fixture.listener.createOrReuseCredential)
+                .not.toHaveBeenCalled();
+            expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
+        }
+
+        for (const [platform, shellDialect] of [
+            ['win32', 'windows_cmd'],
+            ['win32', 'powershell_encoded'],
+            ['darwin', 'posix'],
+            ['linux', 'posix'],
+        ] as const) {
+            const fixture = createFixture({
+                installationVariant: dialectVariant(shellDialect),
+                dependencyOverrides: {
+                    readInstallationRecord: async () => null,
+                },
+            });
+            await withPlatform(platform, async () => {
+                await expect(fixture.host.status({
+                    machineId: 'machine-1',
+                    intent: 'install_preview',
+                    agent,
+                })).resolves.toMatchObject({
+                    ok: true,
+                    rows: [{
+                        status: {
+                            state: 'not_installed',
+                            installPreview: { previewId: expect.any(String) },
+                        },
+                    }],
+                });
+            });
+        }
+    });
+
     it('activates and resolves exactly one cold-Agent install preview and fails closed when activation fails', async () => {
         const cold = createFixture({ cold: true });
         await expect(cold.host.status({
@@ -593,7 +772,12 @@ describe('createPluginSessionHookManagementHost', () => {
                         contributes: {
                             agentDefinitionsById: new Map([[
                                 agentId,
-                                { id: agentId, identity: agent },
+                                {
+                                    id: agentId,
+                                    identity: agent,
+                                    richDefinition:
+                                        externalSessionRichDefinition,
+                                },
                             ]]),
                         },
                         agentRuntimesByAgentId: new Map(),
@@ -2014,7 +2198,12 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(fixture.listener.enable).not.toHaveBeenCalled();
     });
 
-    it('rejects a different expected preview when an otherwise-current installation already exists', async () => {
+    it('answers with the accepted installation, and changes nothing, when a matching custodied record already exists', async () => {
+        // The preview digests the agent configuration's current bytes, so the
+        // preview id the accepted install was admitted with is unreproducible
+        // once its owned entries are in that file. The durable record decides
+        // this case: there is nothing left to apply, so a retryable
+        // `concurrent_edit` would only make the caller retry forever.
         const fixture = createFixture();
 
         await expect(fixture.host.install({
@@ -2022,10 +2211,45 @@ describe('createPluginSessionHookManagementHost', () => {
             agent,
             expectedPreviewId: `hook-install-preview:v1:${'0'.repeat(64)}`,
         })).resolves.toMatchObject({
-            ok: false,
-            diagnostic: { code: 'concurrent_edit', retryable: true },
+            ok: true,
+            status: {
+                state: 'installed_enabled',
+                installationId: fixtureHostInstallationId,
+            },
         });
 
+        expect(fixture.listener.createOrReuseCredential).not.toHaveBeenCalled();
+        expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
+    });
+
+    it('refuses an install replay whose durable custody no longer matches the current installation', async () => {
+        // Durable custody is the accepted install's receipt, so the replay path
+        // must still prove the record describes THIS installation. A record
+        // written against a different Agent binary is a replacement, not a
+        // receipt, and cannot be answered as an accepted install.
+        const fixture = createFixture({
+            dependencyOverrides: {
+                readInstallationRecord: async () => ({
+                    ...installationRecord(),
+                    executableIdentity: digest('agent-executable-v1', [
+                        '/bin/fixture',
+                        '0.9.0',
+                    ]),
+                }),
+            },
+        });
+
+        await expect(fixture.host.install({
+            machineId: 'machine-1',
+            agent,
+            expectedPreviewId: fixtureExpectedPreviewId,
+        })).resolves.toEqual({
+            ok: false,
+            diagnostic: {
+                code: 'installation_replaced',
+                retryable: false,
+            },
+        });
         expect(fixture.listener.createOrReuseCredential).not.toHaveBeenCalled();
         expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
     });
@@ -2375,7 +2599,19 @@ describe('createPluginSessionHookManagementHost', () => {
             ]
         >(async (request) => {
             if (request.action === 'install') {
-                record = installationRecord('disabled');
+                // Installing appends the owned entries to the agent's own
+                // configuration file, and `inputIdentity` is a digest of that
+                // file's bytes. A replay therefore never sees the pre-install
+                // identity again.
+                configInputIdentity = 'input-v1:installed';
+                const installed = installationRecord('disabled');
+                record = {
+                    ...installed,
+                    targets: installed.targets.map((target) => ({
+                        ...target,
+                        inputIdentity: configInputIdentity,
+                    })),
+                };
                 return {
                     ok: true,
                     state: 'installed_disabled',
@@ -2460,7 +2696,7 @@ describe('createPluginSessionHookManagementHost', () => {
             'plugins.sessionHooks.install',
             request,
         );
-        configInputIdentity = 'input-v1:fixture';
+        configInputIdentity = 'input-v1:installed';
         record = {
             ...record!,
             installationIdentity: digest(

@@ -18,6 +18,12 @@ const baseMetadata = {
   permissionMode: 'default',
 } satisfies Metadata;
 
+const providerBindingUpstream = {
+  protocol: 'openai-responses' as const,
+  normalizedUrl: 'https://provider.example/v1',
+  credential: 'apiKey' as const,
+};
+
 describe('applyActiveModelFacts', () => {
   it('publishes an exact initial active model without replacing a newer durable intent', () => {
     const activeTarget = {
@@ -119,6 +125,7 @@ describe('applyActiveModelFacts', () => {
       policy: 'live',
       providerBinding: {
         connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        upstream: providerBindingUpstream,
         model: {
           id: 'claude-opus-5',
           name: 'Opus 5',
@@ -162,6 +169,7 @@ describe('applyActiveModelFacts', () => {
       policy: 'live',
       providerBinding: {
         connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        upstream: providerBindingUpstream,
         model: {
           id: 'provider-model',
           name: 'Provider model',
@@ -213,6 +221,7 @@ describe('applyActiveModelFacts', () => {
       policy: 'live',
       providerBinding: {
         connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        upstream: providerBindingUpstream,
         model: {
           id: 'provider-model',
           name: 'Refreshed Provider model',

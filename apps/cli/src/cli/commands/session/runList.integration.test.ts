@@ -280,7 +280,7 @@ describe('happier session run list (integration)', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'list', 'sess_integration_ctrl_123', '--backend', 'agent:claude', '--status', 'running', '--limit', '1', '--json'],
+        ['run', 'list', 'sess_integration_ctrl_123', '--agent', 'agent:claude', '--status', 'running', '--limit', '1', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -309,7 +309,7 @@ describe('happier session run list (integration)', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'list', 'sess_integration_ctrl_123', '--backend', 'claude,codex', '--json'],
+        ['run', 'list', 'sess_integration_ctrl_123', '--agent', 'claude,codex', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',

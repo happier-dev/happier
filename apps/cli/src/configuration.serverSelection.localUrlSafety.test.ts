@@ -210,7 +210,7 @@ describe('configuration server selection (persisted settings)', () => {
     });
   });
 
-  it('does not let env HAPPIER_ACTIVE_SERVER_ID override the credentialed persisted match for public+local aliases', async () => {
+  it('preserves the explicit runtime server id while resolving persisted public+local aliases', async () => {
     await withTempDir('happier-cli-config-server-selection-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
@@ -257,7 +257,7 @@ describe('configuration server selection (persisted settings)', () => {
         'utf8',
       );
 
-      const serversDir = join(homeDir, 'servers', 's_local');
+      const serversDir = join(homeDir, 'servers', 'env_deadbeef');
       mkdirSync(serversDir, { recursive: true });
       writeFileSync(
         join(serversDir, 'access.key'),
@@ -280,7 +280,7 @@ describe('configuration server selection (persisted settings)', () => {
 
       expect(configMod.configuration.serverUrl).toBe('http://host.lima.internal:53288');
       expect(configMod.configuration.apiServerUrl).toBe('http://127.0.0.1:53288');
-      expect(configMod.configuration.activeServerId).toBe('s_local');
+      expect(configMod.configuration.activeServerId).toBe('env_deadbeef');
 
       const persistence = await import('@/persistence');
       const creds = await persistence.readCredentials();
@@ -288,7 +288,7 @@ describe('configuration server selection (persisted settings)', () => {
     });
   });
 
-  it('reuses the persisted server id for equivalent loopback aliases', async () => {
+  it('preserves an explicit runtime server id for equivalent persisted loopback aliases', async () => {
     await withTempDir('happier-cli-config-loopback-alias-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
@@ -325,7 +325,7 @@ describe('configuration server selection (persisted settings)', () => {
         'utf8',
       );
 
-      const serversDir = join(homeDir, 'servers', 'stack_local');
+      const serversDir = join(homeDir, 'servers', 'env_deadbeef');
       mkdirSync(serversDir, { recursive: true });
       writeFileSync(
         join(serversDir, 'access.key'),
@@ -346,7 +346,7 @@ describe('configuration server selection (persisted settings)', () => {
       const configMod = await import('@/configuration');
       configMod.reloadConfiguration();
 
-      expect(configMod.configuration.activeServerId).toBe('stack_local');
+      expect(configMod.configuration.activeServerId).toBe('env_deadbeef');
       expect(configMod.configuration.serverUrl).toBe('http://happier-stack.localhost:53288');
       expect(configMod.configuration.apiServerUrl).toBe('http://127.0.0.1:53288');
 

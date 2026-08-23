@@ -3108,7 +3108,7 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-fork'));
   });
 
-  it('fails closed without masking the strict initial resume error', async () => {
+  it('keeps a generic initial-resume turn failure on the ordinary loop path', async () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
@@ -3123,10 +3123,127 @@ describe('runPermissionModePromptLoop', () => {
       setPermissionMode: vi.fn(),
       reset: vi.fn(),
     } as any;
+    const onStrictInitialResumeFailure = vi.fn(async () => undefined);
 
     queue.push({ text: 'hello', localId: 'local-6' }, { permissionMode: 'default' });
 
     let shouldExit = false;
+    await expect((runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: 'resume-id',
+      strictInitialResume: true,
+      onStrictInitialResumeFailure,
+      formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
+    })).resolves.toBeUndefined();
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-6'));
+    expect(onStrictInitialResumeFailure).not.toHaveBeenCalled();
+    expect(messageBuffer.getMessages()).not.toContainEqual(expect.objectContaining({
+      content: expect.stringContaining('Resume failed; cannot continue'),
+    }));
+  });
+
+  it('surfaces a generic completion failure without invalidating the requested native identity', async () => {
+    // Prompt transport and a later generic completion error say nothing about
+    // whether this particular provider identity was accepted. Only a provider
+    // classified identity mismatch may invalidate the local native-return
+    // record; otherwise a transient turn failure would erase continuity.
+    const session = createPromptLoopSession();
+    session.__setMetadata(createPromptLoopMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    }));
+    expect(session.__getMetadata()?.replaySeedV1).toBeUndefined();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const identityMismatch = new Error('requested provider session did not resume');
+    let shouldExit = false;
+    runtime.sendTurnPrompt = vi.fn(async () => undefined);
+    runtime.waitForTurnCompletion = vi.fn(async () => {
+      shouldExit = true;
+      throw identityMismatch;
+    }) as any;
+    const onStrictInitialResumeFailure = vi.fn(async () => undefined);
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-strict-completion' }, { permissionMode: 'default' });
+
+    const outcome = await (runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: 'resume-id',
+      strictInitialResume: true,
+      onStrictInitialResumeFailure,
+      formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
+    });
+
+    expect(outcome).toBeUndefined();
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-strict-completion'));
+    expect(onStrictInitialResumeFailure).not.toHaveBeenCalled();
+  });
+
+  it('invalidates a provider-classified native identity mismatch after prompt acceptance', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const identityMismatch = Object.assign(
+      new Error('requested provider session did not resume'),
+      { happierNativeResumeIdentityMismatch: true },
+    );
+    let shouldExit = false;
+    runtime.sendTurnPrompt = vi.fn(async () => undefined);
+    runtime.waitForTurnCompletion = vi.fn(async () => {
+      shouldExit = true;
+      throw identityMismatch;
+    }) as any;
+    const onStrictInitialResumeFailure = vi.fn(async () => undefined);
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-strict-mismatch' }, { permissionMode: 'default' });
+
     const error = await (runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
       providerName: 'Test Provider',
       agentMessageType: 'qwen',
@@ -3149,16 +3266,19 @@ describe('runPermissionModePromptLoop', () => {
       setCurrentPermissionModeUpdatedAt: () => {},
       initialResumeId: 'resume-id',
       strictInitialResume: true,
+      onStrictInitialResumeFailure,
       formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
     }).catch((caught: unknown) => caught as Error);
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).name).toBe('StrictInitialResumeError');
-    expect((error as Error).message).toContain('Strict initial resume failed');
-    expect((error as Error & { cause?: unknown }).cause).toBeInstanceOf(Error);
-    expect(((error as Error & { cause?: Error }).cause as Error).message).toBe('resume failed');
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-6'));
+    expect((error as Error & { cause?: unknown }).cause).toBe(identityMismatch);
+    expect(onStrictInitialResumeFailure).toHaveBeenCalledWith({
+      resumeId: 'resume-id',
+      error: identityMismatch,
+    });
   });
+
   it('resolves composer references into provider context at the dispatch choke point (EU-5, R-10)', async () => {
     // The wiring gate. The resolver being correct in isolation proves nothing if dispatch
     // never calls it, and a `structuredInput` pass-through is exactly the shape that looks

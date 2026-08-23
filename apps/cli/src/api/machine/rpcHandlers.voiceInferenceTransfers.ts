@@ -99,6 +99,11 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
   const uploadStore = new TransferSessionStore({
     ttlMs: sessionTtlMs,
     tempRoot: voiceInferenceTransfersRoot,
+    // Nothing else sweeps this store. A client that vanishes between init and the
+    // first chunk would otherwise hold its descriptor and temp file for the whole
+    // daemon lifetime, so the store owns its own deadline from session creation and
+    // retires the entry, the descriptor and the temp file together.
+    expiryTrigger: 'self',
   });
   const transferLifecycle = createTransferSessionLifecycle({
     store: downloadStore,
@@ -117,7 +122,6 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
   const finalizedUploadReleaseTimerById = new Map<string, ReturnType<typeof setTimeout>>();
   const ttsDownloadReleaseTimerById = new Map<string, ReturnType<typeof setTimeout>>();
   const ttsDownloadFilePathById = new Map<string, string>();
-  const uploadMimeTypeById = new Map<string, string>();
   let disposePromise: Promise<void> | null = null;
 
   function toPublicUploadTempPath(uploadId: string, absoluteUploadPath: string): string {
@@ -137,7 +141,6 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
     }
     const uploaded = finalizedUploadsById.get(uploadId);
     finalizedUploadsById.delete(uploadId);
-    uploadMimeTypeById.delete(uploadId);
     if (options?.deleteFile !== false && uploaded?.path) {
       await rm(uploaded.path, { force: true }).catch(() => undefined);
     }
@@ -373,7 +376,6 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
       recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
       recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
     });
-    uploadMimeTypeById.set(session.uploadId, normalizedInputMimeType);
     return parseTransferLifecycleResponse(DaemonVoiceInferenceSttUploadInitResponseSchema, {
       success: true,
       uploadId: session.uploadId,
@@ -419,14 +421,13 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
       sha256: string;
       inputMimeType: string;
     }> | undefined;
-    const fallbackInputMimeType = uploadMimeTypeById.get(parsed.data.uploadId) ?? 'application/octet-stream';
     const uploadPath = result?.path ?? finalized.finalized.path;
     await clearFinalizedUpload(parsed.data.uploadId, { deleteFile: false });
     finalizedUploadsById.set(parsed.data.uploadId, {
       path: uploadPath,
       sizeBytes: result?.sizeBytes ?? finalized.finalized.sizeBytes,
       sha256: result?.sha256 ?? finalized.sha256,
-      inputMimeType: result?.inputMimeType ?? fallbackInputMimeType,
+      inputMimeType: result?.inputMimeType ?? 'application/octet-stream',
     });
     scheduleFinalizedUploadExpiry(parsed.data.uploadId);
     return parseTransferLifecycleResponse(DaemonVoiceInferenceSttUploadFinalizeResponseSchema, {
@@ -531,7 +532,6 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
         finalizedUploadReleaseTimerById.clear();
         ttsDownloadReleaseTimerById.clear();
         ttsDownloadFilePathById.clear();
-        uploadMimeTypeById.clear();
         await Promise.all([
           downloadStore.dispose(),
           uploadStore.dispose(),

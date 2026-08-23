@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import {
   readExternalHistoryImportV1FromMetadata,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveExternalSessionOperationTimelineV1,
   type AccountEncryptionCurrentnessResponse,
   type ExternalSessionOperationRecordV1,
@@ -269,7 +269,7 @@ describe('strict persisted takeover /session-started admission', () => {
       importedAtMs: 123,
     });
 
-    expect(readLinkedExternalSessionV1FromMetadata(retired)).toBeNull();
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(retired)).toBeNull();
     expect(retired).not.toHaveProperty('externalSessionV1');
     expect(retired).not.toHaveProperty('directSessionV1');
     expect(retired.path).toBe('/tmp/external-session');

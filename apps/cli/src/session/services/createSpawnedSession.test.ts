@@ -405,6 +405,7 @@ describe('createSpawnedSession settlement', () => {
       sessionCreationCorrespondence,
       organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
       legacyMetadataLabel: 'predecessor metadata label',
+      environmentVariables: { TOKEN: 'rejoin-value-that-must-not-dispatch' },
       initialMessage: 'Inspect this repo',
       buildInitialInputAdmission: () => initialInputAdmission,
       machineAdmissionTransport,
@@ -796,6 +797,110 @@ describe('createSpawnedSession settlement', () => {
       code: 'creation_conflict',
       details: { sessionId: 'session-post-spawn-conflict' },
     });
+  });
+
+  it('validates source lineage before input when settlement rejoins a child', async () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'plugin:acme.plugin',
+      creationKey: 'creation-post-settlement-source-conflict',
+    });
+    const sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.parse({
+      v: 1,
+      sessionCreationTag,
+      recipe: {
+        execution: { machineId: 'machine-1', directory: '/repo' },
+        organization: { folderId: null, tagIds: [] },
+        agentTarget: {
+          kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        },
+        modelSelection: null,
+        profileId: null,
+        requestedPermissionMode: null,
+        agentModeId: null,
+        configuration: null,
+        connectedServices: null,
+        mcpSelection: null,
+        transcriptStorage: null,
+        terminal: null,
+        agentSessionStartupInstructionsMarkerV1: null,
+        checkout: null,
+      },
+    });
+    const initialInputAdmission = buildSessionSpawnInitialInputAdmissionV1({
+      actionCaller: { kind: 'host' },
+      callerSurface: 'cli',
+      sessionId: 'session-post-settlement-source-conflict',
+      sessionCreationTag,
+    });
+    callMachineRpc.mockResolvedValue({
+      success: true,
+      sessionId: 'session-post-settlement-source-conflict',
+      sessionCreationOutcome: {
+        disposition: 'rejoined',
+        organizationPlacement: { folderId: null, tagIds: [] },
+      },
+    });
+    fetchSessionById.mockResolvedValue({
+      id: 'session-post-settlement-source-conflict',
+      createdAt: 1,
+      updatedAt: 1,
+      active: true,
+      activeAt: 1,
+      pendingCount: 0,
+      metadataVersion: 1,
+      encryptionMode: 'plain',
+      metadataLayoutVersion: 1,
+      metadata: JSON.stringify({ v: 1 }),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+        SessionOwnerMetadataV1Schema.parse({
+          v: 1,
+          workspace: { path: '/repo', host: 'host' },
+          system: { sessionCreationCorrespondenceV1: sessionCreationCorrespondence },
+          history: {
+            replaySeedV1: {
+              v: 1,
+              seedText: '',
+              sourceSessionId: 'parent-session',
+              sourceCutoffSeqInclusive: 12,
+              createdAtMs: 1,
+            },
+          },
+        }),
+      ),
+    });
+    const baseParams = {
+      credentials,
+      directory: '/repo',
+      machineId: 'machine-1',
+      backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const },
+      sessionCreationTag,
+      sessionCreationCorrespondence,
+      initialMessage: 'Never admit this input to another source',
+      buildInitialInputAdmission: () => initialInputAdmission,
+    } satisfies CreateSpawnedSessionParams;
+
+    await expect(createSpawnedSession({
+      ...baseParams,
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'other-parent-session',
+        forkPoint: { type: 'latest' },
+      },
+    })).rejects.toMatchObject({ code: 'creation_conflict' });
+
+    await expect(createSpawnedSession({
+      ...baseParams,
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'parent-session',
+        forkPoint: { type: 'seq', upToSeqInclusive: 11 },
+      },
+    })).rejects.toMatchObject({ code: 'creation_conflict' });
+
+    expect(sendSessionMessage).not.toHaveBeenCalled();
   });
 
   it('routes an explicit non-Provider target through that exact machine without local fallback', async () => {
@@ -1689,12 +1794,18 @@ describe('createSpawnedSession replay-seeded creation', () => {
     expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
   });
 
-  it('commits a fresh materialization identity when the replay-seeded spawn carries connected bindings', async () => {
+  it('carries one fresh materialization identity from source-context creation into the attached spawn', async () => {
     const directSpawn = vi.fn(async (
       _request: Parameters<NonNullable<CreateSpawnedSessionParams['directTransport']>['spawn']>[0],
     ) => ({ type: 'success', sessionId: 'replay-child' }));
 
     await createSpawnedSession(replaySeededParams({
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'parent-session',
+        forkPoint: { type: 'seq', upToSeqInclusive: 12 },
+      },
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
@@ -1712,11 +1823,13 @@ describe('createSpawnedSession replay-seeded creation', () => {
     }));
 
     const creationCall = getOrCreateSessionByTag.mock.calls[0]?.[0];
-    expect(
-      ConnectedServiceMaterializationIdentityV1Schema.safeParse(
-        creationCall.metadata.connectedServiceMaterializationIdentityV1,
-      ).success,
-    ).toBe(true);
+    const persistedIdentity = ConnectedServiceMaterializationIdentityV1Schema.parse(
+      creationCall.metadata.connectedServiceMaterializationIdentityV1,
+    );
+    const spawnRequest = directSpawn.mock.calls[0]?.[0];
+    expect(ConnectedServiceMaterializationIdentityV1Schema.parse(
+      spawnRequest.connectedServiceMaterializationIdentityV1,
+    )).toEqual(persistedIdentity);
   });
 
   it('does not commit a materialization identity for a native replay-seeded spawn', async () => {
@@ -1851,6 +1964,256 @@ describe('createSpawnedSession replay-seeded creation', () => {
     expect(getOrCreateSessionByTag).not.toHaveBeenCalled();
   });
 
+  it('rejoins a latest sourceContext through persisted lineage without recomputing its cutoff', async () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: 'creation-key-source-context-latest-rejoin',
+    });
+    const sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.parse({
+      v: 1,
+      sessionCreationTag,
+      recipe: {
+        execution: { machineId: 'machine-1', directory: '/repo' },
+        organization: { folderId: null, tagIds: [] },
+        agentTarget: {
+          kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        },
+        modelSelection: null,
+        profileId: null,
+        requestedPermissionMode: null,
+        agentModeId: null,
+        configuration: null,
+        connectedServices: null,
+        mcpSelection: null,
+        transcriptStorage: null,
+        terminal: null,
+        agentSessionStartupInstructionsMarkerV1: null,
+        checkout: null,
+      },
+    });
+    lookupSessionsByTags.mockResolvedValue({
+      state: 'available',
+      tags: [sessionCreationTag],
+      sessions: [{
+        id: 'existing-child',
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify({ v: 1 }),
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+          SessionOwnerMetadataV1Schema.parse({
+            v: 1,
+            workspace: { path: '/repo', host: 'host' },
+            system: { sessionCreationCorrespondenceV1: sessionCreationCorrespondence },
+            history: {
+              replaySeedV1: {
+                v: 1,
+                seedText: '',
+                sourceSessionId: 'parent-session',
+                sourceCutoffSeqInclusive: 12,
+                createdAtMs: 1,
+              },
+            },
+          }),
+        ),
+      }],
+    });
+
+    await expect(createSpawnedSession(replaySeededParams({
+      sessionCreationTag,
+      sessionCreationCorrespondence,
+      replaySeededCreation: undefined,
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'parent-session',
+        forkPoint: { type: 'latest' },
+      },
+      resumeOnly: true,
+    }))).resolves.toMatchObject({
+      disposition: 'rejoined',
+      sessionId: 'existing-child',
+    });
+
+    await expect(createSpawnedSession(replaySeededParams({
+      sessionCreationTag,
+      sessionCreationCorrespondence,
+      replaySeededCreation: undefined,
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'other-parent-session',
+        forkPoint: { type: 'latest' },
+      },
+      resumeOnly: true,
+    }))).rejects.toMatchObject({ code: 'creation_conflict' });
+
+    await expect(createSpawnedSession(replaySeededParams({
+      sessionCreationTag,
+      sessionCreationCorrespondence,
+      replaySeededCreation: undefined,
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'parent-session',
+        forkPoint: { type: 'seq', upToSeqInclusive: 11 },
+      },
+      resumeOnly: true,
+    }))).rejects.toMatchObject({ code: 'creation_conflict' });
+
+    expect(getOrCreateSessionByTag).not.toHaveBeenCalled();
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when atomic get-or-create rejoins a child with a different immutable correspondence', async () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'user',
+      creationKey: 'creation-key-atomic-correspondence-race',
+    });
+    const requestedCorrespondence = SessionCreationCorrespondenceV1Schema.parse({
+      v: 1,
+      sessionCreationTag,
+      recipe: {
+        execution: { machineId: 'machine-1', directory: '/repo' },
+        organization: { folderId: null, tagIds: [] },
+        agentTarget: {
+          kind: 'agent',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        },
+        modelSelection: null,
+        profileId: null,
+        requestedPermissionMode: null,
+        agentModeId: null,
+        configuration: null,
+        connectedServices: null,
+        mcpSelection: null,
+        transcriptStorage: null,
+        terminal: null,
+        agentSessionStartupInstructionsMarkerV1: null,
+        checkout: null,
+      },
+    });
+    const racedCorrespondence = SessionCreationCorrespondenceV1Schema.parse({
+      ...requestedCorrespondence,
+      recipe: {
+        ...requestedCorrespondence.recipe,
+        execution: { machineId: 'machine-1', directory: '/different-repo' },
+      },
+    });
+    // The first tag lookup observed no child. The atomic get-or-create then
+    // joins a concurrently committed row, so it must re-run every immutable
+    // correspondence check before attaching a runner to it.
+    lookupSessionsByTags.mockResolvedValue({ state: 'available', tags: [sessionCreationTag], sessions: [] });
+    getOrCreateSessionByTag.mockResolvedValue({
+      session: {
+        id: 'replay-child',
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify({ v: 1 }),
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+          SessionOwnerMetadataV1Schema.parse({
+            v: 1,
+            workspace: { path: '/different-repo', host: 'host' },
+            system: { sessionCreationCorrespondenceV1: racedCorrespondence },
+            history: {
+              replaySeedV1: {
+                v: 1,
+                seedText: 'Continue this conversation',
+                sourceSessionId: 'parent-session',
+                sourceCutoffSeqInclusive: 12,
+                createdAtMs: 1,
+              },
+            },
+          }),
+        ),
+      },
+      created: false,
+    });
+    const directSpawn = vi.fn(async () => ({ type: 'success', sessionId: 'replay-child' }));
+
+    await expect(createSpawnedSession(replaySeededParams({
+      // This test stops before spawn in the correct branch. Omitting the
+      // otherwise unrelated runtime target keeps the wrong branch observable
+      // without loading the concurrent bundled-plugin catalog fixture.
+      backendTarget: undefined as unknown as CreateSpawnedSessionParams['backendTarget'],
+      sessionCreationTag,
+      sessionCreationCorrespondence: requestedCorrespondence,
+      directTransport: {
+        spawn: directSpawn,
+        resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
+      },
+    }))).rejects.toMatchObject({ code: 'creation_conflict' });
+
+    expect(directSpawn).not.toHaveBeenCalled();
+  });
+
+  it('uses raw source intent after atomic get-or-create rejoins a replay child', async () => {
+    // The initial tag lookup can miss a concurrent creator. The following
+    // get-or-create is still a rejoin boundary, so it must use the caller's
+    // original source intent rather than a later `latest` recipe cutoff.
+    getOrCreateSessionByTag.mockResolvedValue({
+      session: {
+        id: 'replay-child',
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify({ v: 1 }),
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+          SessionOwnerMetadataV1Schema.parse({
+            v: 1,
+            workspace: { path: '/repo', host: 'host' },
+            history: { replaySeedV1: replayMetadata.replaySeedV1 },
+          }),
+        ),
+      },
+      created: false,
+    });
+    const directSpawn = vi.fn(async () => ({ type: 'success', sessionId: 'replay-child' }));
+    const directTransport = {
+      spawn: directSpawn,
+      resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
+    };
+
+    await expect(createSpawnedSession(replaySeededParams({
+      replaySeededCreation: {
+        tag: 'replay:parent-session:12:attempt',
+        flavor: 'codex',
+        metadata: { ...replayMetadata },
+        // A new `latest` read is not the persisted child snapshot.
+        sourceRecipe: { sourceSessionId: 'parent-session', cutoffSeqInclusive: 13 },
+      },
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'parent-session',
+        forkPoint: { type: 'latest' },
+      },
+      directTransport,
+    }))).resolves.toMatchObject({ disposition: 'rejoined', sessionId: 'replay-child' });
+    expect(directSpawn).toHaveBeenCalledTimes(1);
+
+    directSpawn.mockClear();
+    await expect(createSpawnedSession(replaySeededParams({
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'other-parent-session',
+        forkPoint: { type: 'latest' },
+      },
+      directTransport,
+    }))).rejects.toMatchObject({ code: 'creation_conflict' });
+    await expect(createSpawnedSession(replaySeededParams({
+      sourceContext: {
+        v: 1,
+        kind: 'session_replay',
+        sourceSessionId: 'parent-session',
+        forkPoint: { type: 'seq', upToSeqInclusive: 11 },
+      },
+      directTransport,
+    }))).rejects.toMatchObject({ code: 'creation_conflict' });
+
+    expect(directSpawn).not.toHaveBeenCalled();
+  });
+
   it('refuses a replay request to rejoin a matching creation identity without persisted lineage', async () => {
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'user',
@@ -1907,15 +2270,15 @@ describe('createSpawnedSession replay-seeded creation', () => {
   it('settles the orphan once on a definite launch failure and never on an ambiguous one', async () => {
     const definiteSpawn = vi.fn(async () => ({
       type: 'error',
-      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-      errorMessage: 'Runner refused to start',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'Runner rejected spawn validation before admission',
     }));
     await expect(createSpawnedSession(replaySeededParams({
       directTransport: {
         spawn: definiteSpawn,
         resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
       },
-    }))).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED });
+    }))).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED });
     expect(archiveSessionOnceInactive).toHaveBeenCalledTimes(1);
     expect(archiveSessionOnceInactive).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'replay-child' }),
@@ -1933,6 +2296,39 @@ describe('createSpawnedSession replay-seeded creation', () => {
         resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
       },
     }))).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT });
+    expect(archiveSessionOnceInactive).not.toHaveBeenCalled();
+  });
+
+  it('never archives a rejoined child after a definite pre-admission rejection', async () => {
+    getOrCreateSessionByTag.mockResolvedValue({
+      session: {
+        id: 'replay-child',
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify({ v: 1 }),
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+          SessionOwnerMetadataV1Schema.parse({
+            v: 1,
+            workspace: { path: '/repo', host: 'host' },
+            history: { replaySeedV1: replayMetadata.replaySeedV1 },
+          }),
+        ),
+      },
+      created: false,
+    });
+    const directSpawn = vi.fn(async () => ({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'Runner rejected spawn validation before admission',
+    }));
+
+    await expect(createSpawnedSession(replaySeededParams({
+      directTransport: {
+        spawn: directSpawn,
+        resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
+      },
+    }))).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED });
+
     expect(archiveSessionOnceInactive).not.toHaveBeenCalled();
   });
 
@@ -2050,8 +2446,8 @@ describe('createSpawnedSession replay-seeded creation', () => {
     // does, so it takes the same one settlement — and an ambiguous throw still
     // takes none, because the runner may be live.
     const definiteThrow = vi.fn(async () => {
-      const error = new Error('Daemon RPC unavailable') as Error & { code?: string };
-      error.code = SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE;
+      const error = new Error('Daemon rejected spawn validation before admission') as Error & { code?: string };
+      error.code = SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED;
       throw error;
     });
     await expect(createSpawnedSession(replaySeededParams({
@@ -2059,7 +2455,7 @@ describe('createSpawnedSession replay-seeded creation', () => {
         spawn: definiteThrow,
         resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
       },
-    }))).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE });
+    }))).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED });
     expect(archiveSessionOnceInactive).toHaveBeenCalledTimes(1);
     expect(archiveSessionOnceInactive).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'replay-child' }),

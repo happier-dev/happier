@@ -861,7 +861,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(calls).toEqual(['consumer-attached', 'pending-wake']);
   });
 
-  it('does not schedule startup transcript retry after initial catch-up succeeds', async () => {
+  it('schedules the bounded startup transcript retries after initial catch-up succeeds', async () => {
     let startupStarted = false;
     const catchUpSessionMessages = vi.fn(async () => {});
     const scheduleNextStartupMessageCatchUpRetry = vi.fn();
@@ -879,7 +879,7 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     await Promise.resolve();
 
     expect(catchUpSessionMessages).toHaveBeenCalledTimes(1);
-    expect(scheduleNextStartupMessageCatchUpRetry).not.toHaveBeenCalled();
+    expect(scheduleNextStartupMessageCatchUpRetry).toHaveBeenCalledTimes(1);
   });
 
   it('marks startup catch-up as explicit when the attach payload provides an afterSeq cursor', async () => {

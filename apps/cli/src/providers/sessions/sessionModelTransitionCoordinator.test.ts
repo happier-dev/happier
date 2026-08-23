@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  projectAgentSessionProviderBindingV1,
   ProviderConnectionIdSchema,
   type ProviderConnectionId,
   type ProviderBoundModelRef,
@@ -220,9 +221,12 @@ const providerBindingMetadata = (
 const runtimeBinding = (
   connectionId: ProviderConnectionId,
   modelId: string,
-): AgentSessionProviderBinding => ({
-  connectionId,
-  model: { id: modelId, name: modelId },
+  basis = runtimeBindingBasis(connectionId),
+): AgentSessionProviderBinding => projectAgentSessionProviderBindingV1({
+  metadata: {
+    ...providerBindingMetadata(connectionId, modelId),
+    runtimeBindingBasis: basis,
+  },
   materialization: { v: 1, kind: 'spawnEnv' },
 });
 
@@ -2316,6 +2320,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     );
     const initialTarget = {
       ...authorized(active),
+      providerBinding: runtimeBinding(connectionId, active.modelId, basis),
       sessionBindingMetadata: {
         ...providerBindingMetadata(connectionId, active.modelId),
         runtimeBindingBasis: basis,
@@ -2379,6 +2384,11 @@ describe('createSessionModelTransitionCoordinator', () => {
     } satisfies SessionProviderBindingMetadataV1;
     const initialTarget = {
       ...authorized(active),
+      providerBinding: runtimeBinding(
+        connectionId,
+        active.modelId,
+        activeMetadataBasis,
+      ),
       sessionBindingMetadata: activeMetadata,
       runtimeBindingBasis: activeTargetBasis,
     } satisfies AuthorizedSessionModelTransitionTarget;
@@ -2460,6 +2470,11 @@ describe('createSessionModelTransitionCoordinator', () => {
     } satisfies SessionProviderBindingMetadataV1;
     const initialTarget = {
       ...authorized(active),
+      providerBinding: runtimeBinding(
+        connectionId,
+        active.modelId,
+        activeBasis,
+      ),
       sessionBindingMetadata: activeMetadata,
       runtimeBindingBasis: activeBasis,
     } satisfies AuthorizedSessionModelTransitionTarget;

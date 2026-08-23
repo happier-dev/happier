@@ -5,7 +5,7 @@ import {
 } from '@happier-dev/agents';
 import {
   ExternalSessionsAgentIdSchema,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   type ExternalSessionsAgentId,
   type SessionMetadata,
 } from '@happier-dev/protocol';
@@ -69,7 +69,7 @@ function readExternalSessionRemoteSessionId(
   metadata: Readonly<Record<string, unknown>>,
   agentId: ExternalSessionsAgentId,
 ): string | null {
-  const externalSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  const externalSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   if (externalSession?.agentId !== agentId) return null;
   return normalizeNullableString(externalSession.remoteSessionId);
 }

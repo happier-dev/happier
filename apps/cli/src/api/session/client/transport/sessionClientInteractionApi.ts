@@ -643,7 +643,7 @@ export function createSessionClientInteractionApi(
                 void deps.catchUpSessionMessages({
                     afterSeq: startupCatchUpInitialAfterSeq,
                 })
-                    .catch((error) => {
+                    .then(() => true, (error) => {
                         if (isAuthenticationError(error)) {
                             logger.debug('[API] Initial transcript catch-up failed with terminal auth', {
                                 error: serializeAxiosErrorForLog(error),

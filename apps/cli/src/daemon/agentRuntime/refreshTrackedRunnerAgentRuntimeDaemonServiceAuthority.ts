@@ -7,6 +7,7 @@ import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/re
 import {
   readCurrentPluginHardRevocationRevision,
   readCurrentPluginImmutableGenerationIntegrityCurrentness,
+  resolveBundledImmutablePluginArtifact,
 } from '@/plugins/store/registry/generationStore';
 import {
   attachExactRunnerRetainedPluginGenerations,
@@ -31,7 +32,6 @@ import {
   type RunnerManagedDependencyRetentionV1,
   withRunnerManagedProviderAuthorityRetention,
 } from '@/plugins/runtime/runner/runnerManagedDependencyRetention';
-import { isReservedHappierPluginId } from '@happier-dev/protocol';
 
 import {
   publishAgentRuntimeDaemonServiceAuthority,
@@ -60,7 +60,11 @@ function resolveRetainedAgentCurrentnessProof(
     && retainedAgent.kind === 'host_declarative_acp_v1'
     ? Object.freeze({
         retainedManifestAuthority:
-          isReservedHappierPluginId(retainedAgent.pluginId)
+          resolveBundledImmutablePluginArtifact({
+            bundledArtifacts: BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
+            pluginId: retainedAgent.pluginId,
+            immutableGenerationId: retainedAgent.immutableGenerationId,
+          })
             ? 'bundled_first_party' as const
             : 'external' as const,
       })

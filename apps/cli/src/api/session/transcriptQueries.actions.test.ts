@@ -154,6 +154,63 @@ describe('session transcript action query helpers', () => {
 });
 
 describe('session transcript follow leases', () => {
+  it('isolates identical lease ids by canonical session identity', async () => {
+    const sessionOneUnsubscribe = vi.fn();
+    const sessionTwoUnsubscribe = vi.fn();
+    const storeOne = createStore({
+      readAfter: async () => ({ items: [], nextCursor: 'tail-1', truncated: false }),
+      subscribe: () => sessionOneUnsubscribe,
+    });
+    const storeTwo = createStore({
+      readAfter: async () => ({ items: [], nextCursor: 'tail-2', truncated: false }),
+      subscribe: () => sessionTwoUnsubscribe,
+    });
+    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 1000 });
+
+    await expect(followSessionTranscript({
+      store: storeOne,
+      registry,
+      sessionId: 'session-1',
+      input: { leaseId: 'shared-lease', cursor: 'tail' },
+    })).resolves.toMatchObject({ ok: true, leaseId: 'shared-lease' });
+    await expect(followSessionTranscript({
+      store: storeTwo,
+      registry,
+      sessionId: 'session-2',
+      input: { leaseId: 'shared-lease', cursor: 'tail' },
+    })).resolves.toMatchObject({ ok: true, leaseId: 'shared-lease' });
+
+    await expect(registry.release({ sessionId: 'session-1', leaseId: 'shared-lease' })).resolves.toBe(true);
+    expect(sessionOneUnsubscribe).toHaveBeenCalledOnce();
+    expect(sessionTwoUnsubscribe).not.toHaveBeenCalled();
+    expect(registry.activeCount()).toBe(1);
+
+    await expect(registry.release({ sessionId: 'session-2', leaseId: 'shared-lease' })).resolves.toBe(true);
+    expect(sessionTwoUnsubscribe).toHaveBeenCalledOnce();
+    expect(registry.activeCount()).toBe(0);
+  });
+
+  it('deletes a lease before awaiting disposal so a second release is idempotent', async () => {
+    const disposal = createDeferred<void>();
+    const release = vi.fn(() => disposal.promise);
+    const registry = createSessionTranscriptFollowLeaseRegistry({ maxLeases: 1, idleTtlMs: 1000 });
+
+    expect(registry.retain({
+      sessionId: 'session-1',
+      leaseId: 'lease-1',
+      idleTtlMs: 1000,
+      release,
+    })).toBe(true);
+
+    const firstRelease = registry.release({ sessionId: 'session-1', leaseId: 'lease-1' });
+    expect(registry.activeCount()).toBe(0);
+    await expect(registry.release({ sessionId: 'session-1', leaseId: 'lease-1' })).resolves.toBe(false);
+    expect(release).toHaveBeenCalledOnce();
+
+    disposal.resolve();
+    await expect(firstRelease).resolves.toBe(true);
+  });
+
   it('caps retained leases and releases idempotently', async () => {
     const unsubscribes: Array<() => void> = [];
     const store = createStore({
@@ -168,16 +225,18 @@ describe('session transcript follow leases', () => {
     await expect(followSessionTranscript({
       store,
       registry,
+      sessionId: 'session-1',
       input: { leaseId: 'lease-1', cursor: 'tail' },
     })).resolves.toMatchObject({ ok: true, leaseId: 'lease-1' });
     await expect(followSessionTranscript({
       store,
       registry,
+      sessionId: 'session-1',
       input: { leaseId: 'lease-2', cursor: 'tail' },
     })).resolves.toMatchObject({ ok: false, errorCode: 'follow_lease_limit_exceeded' });
 
-    await registry.release('lease-1');
-    await registry.release('lease-1');
+    await registry.release({ sessionId: 'session-1', leaseId: 'lease-1' });
+    await registry.release({ sessionId: 'session-1', leaseId: 'lease-1' });
     expect(registry.activeCount()).toBe(0);
   });
 
@@ -196,6 +255,7 @@ describe('session transcript follow leases', () => {
     await expect(followSessionTranscript({
       store,
       registry,
+      sessionId: 'session-1',
       input: { leaseId: 'failed-lease', cursor: 'tail' },
     })).rejects.toBe(initialReadError);
 
@@ -204,6 +264,7 @@ describe('session transcript follow leases', () => {
     await expect(followSessionTranscript({
       store,
       registry,
+      sessionId: 'session-1',
       input: { leaseId: 'replacement-capacity', cursor: 'tail' },
     })).resolves.toMatchObject({ ok: true, leaseId: 'replacement-capacity' });
     expect(registry.activeCount()).toBe(1);
@@ -228,11 +289,13 @@ describe('session transcript follow leases', () => {
     const staleFollow = followSessionTranscript({
       store,
       registry,
+      sessionId: 'session-1',
       input: { leaseId: 'shared-lease', cursor: 'tail-stale' },
     });
     await expect(followSessionTranscript({
       store,
       registry,
+      sessionId: 'session-1',
       input: { leaseId: 'shared-lease', cursor: 'tail-current' },
     })).resolves.toMatchObject({ ok: true, leaseId: 'shared-lease' });
 
@@ -258,7 +321,12 @@ describe('session transcript follow leases', () => {
         hostPolicy: { idleTtlMs: 10 },
       });
 
-      await followSessionTranscript({ store, registry, input: { leaseId: 'lease-1', cursor: 'tail' } });
+      await followSessionTranscript({
+        store,
+        registry,
+        sessionId: 'session-1',
+        input: { leaseId: 'lease-1', cursor: 'tail' },
+      });
       await vi.advanceTimersByTimeAsync(11);
 
       expect(unsubscribe).toHaveBeenCalledTimes(1);
@@ -299,6 +367,7 @@ describe('session transcript follow leases', () => {
     await followSessionTranscript({
       store,
       registry,
+      sessionId: 'session-1',
       input: { leaseId: 'lease-1', cursor: 'tail' },
       onUpdate: async (update) => {
         const firstItem = update.items[0];

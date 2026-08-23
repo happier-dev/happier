@@ -13,6 +13,9 @@ import type {
 import type {
   AgentRuntimeDaemonServiceAuthorityExpectedInput,
 } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import {
+  EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
+} from '@/session/external/hostOperationOwner';
 import type {
   ExternalSessionHostOperationPort,
 } from '@/session/external/hostOperationOwner';
@@ -84,9 +87,6 @@ type ActiveFollow = Readonly<{
   close(acknowledgeEventId?: string): Promise<void>;
   retire(): Promise<void>;
 }>;
-
-const EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS =
-  6_000;
 
 function responseError(
   code: string,

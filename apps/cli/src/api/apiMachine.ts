@@ -4,6 +4,7 @@
  */
 
 import axios from 'axios';
+import { randomBytes } from 'node:crypto';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readStoredCredentials } from '@/persistence';
 import {
@@ -12,6 +13,8 @@ import {
 } from '@/api/session/messageActionReference';
 import {
     createAccountScopedCryptoMaterialSnapshotV1,
+    sealAccountScopedBlobCiphertext,
+    ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1,
     type ConnectedServiceExecutionAuthorityV1,
 } from '@happier-dev/protocol';
 import { fetchAccountProfile } from './accountProfile';
@@ -25,6 +28,13 @@ import type { SocketRpcCallResponse } from './types';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { registerAutomationReplyHandoffRpcHandler } from '@/rpc/handlers/automationReplyHandoff';
 import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/createCliActionExecutor';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import {
+    createTrackedSessionHandoffCoordinator,
+    createHostActionOperationRuntime,
+    type HostActionOperationRuntime,
+} from '@/daemon/actionOperations';
 import {
     registerDaemonLocalServicePreviewSnapshotHandler,
 } from '@/rpc/handlers/daemonLocalServicePreviewSnapshot';
@@ -122,6 +132,7 @@ import {
     type MachineRpcHandlers,
     type MachineRpcLifecycleRegistration,
 } from './machine/rpcHandlers';
+import type { ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
 import {
     createMachineContentCodec,
     type MachineContentCodec,
@@ -368,6 +379,7 @@ export class ApiMachineClient {
     }>;
     private readonly lifecycleDependencies: ApiMachineClientLifecycleDependencies;
     private readonly machineContentCodec: MachineContentCodec;
+    private readonly actionOperationRuntime: HostActionOperationRuntime;
 
     private async requirePlainMachineCompatibility(): Promise<void> {
         if (this.machine.encryptionMode !== 'plain') return;
@@ -579,6 +591,46 @@ export class ApiMachineClient {
                 });
             },
         });
+        this.actionOperationRuntime = createHostActionOperationRuntime({
+            machineId: this.machine.id,
+            resolveAccountId: async () => await this.getAccountId(),
+            publishSnapshot: (() => {
+                let pending = Promise.resolve();
+                return (snapshot) => {
+                    pending = pending.then(async () => {
+                        const credentials = await readStoredCredentials().catch(() => null);
+                        if (!credentials?.encryption) return;
+                        const material = credentials.encryption.type === 'legacy'
+                            ? { type: 'legacy' as const, secret: credentials.encryption.secret }
+                            : { type: 'dataKey' as const, machineKey: credentials.encryption.machineKey };
+                        const ciphertext = sealAccountScopedBlobCiphertext({
+                            kind: 'action_operation_snapshot',
+                            material,
+                            payload: snapshot,
+                            randomBytes: (length) => new Uint8Array(randomBytes(length)),
+                        });
+                        this.socket?.emit(ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1, {
+                            v: 1,
+                            machineId: this.machine.id,
+                            ciphertext,
+                        });
+                    }).catch((error) => {
+                        logger.warn('Failed to publish Action operation snapshot', { error });
+                    });
+                };
+            })(),
+            supportsCoreCancellation: (actionId, input) => {
+                if (actionId !== 'session.spawn_new') return true;
+                if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+                const executionTarget = (input as Readonly<Record<string, unknown>>).executionTarget;
+                return Boolean(
+                    executionTarget
+                    && typeof executionTarget === 'object'
+                    && !Array.isArray(executionTarget)
+                    && (executionTarget as Readonly<Record<string, unknown>>).machineId === this.machine.id,
+                );
+            },
+        });
 
         this.machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();
         this.filesystemAccessPolicy = resolveFilesystemAccessPolicy();
@@ -608,6 +660,7 @@ export class ApiMachineClient {
                 resolveCurrentTarget: async ({ signal }) => await resolveCurrentMachineExecutionOriginContext(signal),
             },
             daemonContributionRegistryProjection: {
+                observePluginExecution: this.actionOperationRuntime.observePluginExecution,
                 resolveServerFeaturesSnapshot: async () => await fetchServerFeaturesSnapshot({
                     serverUrl: configuration.serverUrl,
                     timeoutMs: 1_500,
@@ -750,7 +803,9 @@ export class ApiMachineClient {
         directPeerTransfer,
         directTransferImport,
         directTransferExport,
-    }: MachineRpcHandlers, deps?: MachineRpcHandlerDeps): MachineRpcLifecycleRegistration {
+    }: MachineRpcHandlers, deps?: Omit<MachineRpcHandlerDeps, 'externalAction'> & Readonly<{
+        externalActionIngressOwner?: ExternalActionIngressOwner;
+    }>): MachineRpcLifecycleRegistration {
         this.sessionSpawnV1OutcomeRequired = sessionSpawnV1OutcomeRequired === true;
         this.agentCatalogObservation = deps?.agentCatalogObservation ?? null;
         const machineRpcLifecycleRegistration = registerMachineRpcHandlers({
@@ -777,6 +832,29 @@ export class ApiMachineClient {
             },
             deps: {
                 ...deps,
+                ...(deps?.externalActionIngressOwner
+                    ? {
+                        externalAction: {
+                            ...deps.externalActionIngressOwner,
+                            machineId: this.machine.id,
+                            resolveAccountId: async (signal) => await this.getAccountId(signal),
+                        },
+                    }
+                    : {}),
+                actionOperations: {
+                    handlers: this.actionOperationRuntime.handlers,
+                    observeExecution: this.actionOperationRuntime.observeExecution,
+                },
+                sessionHandoffCoordinator: createTrackedSessionHandoffCoordinator({
+                    readCredentials: async () => await readStoredCredentials().catch(() => null),
+                    callMachine: async (input) => input.machineId === this.machine.id
+                        ? await this.rpcHandlerManager.invokeLocal(
+                            input.method,
+                            input.request,
+                            input.signal ? { signal: input.signal } : undefined,
+                        )
+                        : await callMachineRpc(input),
+                }),
                 ...(this.lifecycleDependencies.createCapabilitiesApiClient
                     ? {
                         createCapabilitiesApiClient:
@@ -2146,30 +2224,27 @@ export class ApiMachineClient {
         opts: { reason: 'connect' | 'reconnect' | 'live' },
         signal: AbortSignal = new AbortController().signal,
     ): Promise<void> {
-        // A live committed account update may update already-running group-bound runtimes.
-        // Startup/reconnect remain passive and cannot manufacture provider input or restart work.
+        // Startup/reconnect recover the full projection; live wakes classify the changes page first.
         const executionAuthority = opts.reason === 'live'
             ? 'runtime_recovery' as const
             : 'passive_projection' as const;
         signal.throwIfAborted();
-        try {
-            await this.reconcileConnectedServicesProjection({
-                source: opts.reason === 'connect'
-                    ? 'startup'
-                    : opts.reason === 'live'
-                        ? 'live'
-                        : 'reconnect',
-                executionAuthority,
-            }, signal);
-        } catch (error) {
-            if (handleRequestAuthenticationFailure({
-                supervisor: this.connectionSupervisor,
-                error,
-                hadAuth: true,
-            })) {
-                return;
+        if (opts.reason !== 'live') {
+            try {
+                await this.reconcileConnectedServicesProjection({
+                    source: opts.reason === 'connect' ? 'startup' : 'reconnect',
+                    executionAuthority,
+                }, signal);
+            } catch (error) {
+                if (handleRequestAuthenticationFailure({
+                    supervisor: this.connectionSupervisor,
+                    error,
+                    hadAuth: true,
+                })) {
+                    return;
+                }
+                throw error;
             }
-            throw error;
         }
 
         const enabled = (() => {

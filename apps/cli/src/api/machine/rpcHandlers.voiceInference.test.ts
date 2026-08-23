@@ -16,7 +16,7 @@ import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { registerMachineVoiceInferenceRpcHandlers } from './rpcHandlers.voiceInference';
 import { createDiagnosticsControllerWithRemovalFailure } from '../../daemon/voiceDiagnostics/controller.testkit';
 
-type Handler = (data: any) => Promise<any>;
+type Handler = (data: any, context?: any) => Promise<any>;
 
 type VoiceInferenceWorkerHandleLike = Readonly<{
   stop: () => Promise<void> | void;
@@ -27,7 +27,7 @@ type VoiceInferenceWorkerHandleLike = Readonly<{
   }>>;
   listModels: () => Promise<readonly DaemonVoiceInferenceModelStatus[]>;
   getModelsStatus: (packIds?: readonly string[] | null) => Promise<readonly DaemonVoiceInferenceModelStatus[]>;
-  installModel: (input: Readonly<{ packId: string }>) => Promise<DaemonVoiceInferenceModelStatus>;
+  installModel: (input: Readonly<{ packId: string; signal?: AbortSignal | null }>) => Promise<DaemonVoiceInferenceModelStatus>;
   acceptModelPackLicense?: (input: Readonly<Record<string, string>>) => Promise<DaemonVoiceInferenceModelStatus>;
   removeModel: (packId: string) => Promise<void>;
   synthesizeTts: (input: Readonly<{
@@ -235,11 +235,21 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     await expect(modelsList?.({})).resolves.toEqual({ ok: true, models });
     await expect(modelsStatus?.({ packIds: ['kokoro-82m-v1.0-onnx-q8-wasm'] })).resolves.toEqual({ ok: true, models });
 
-    await expect(modelsInstall?.({ packId: 'kokoro-82m-v1.0-onnx-q8-wasm' })).resolves.toEqual({
+    const installRequest = new AbortController();
+    await expect(modelsInstall?.(
+      { packId: 'kokoro-82m-v1.0-onnx-q8-wasm' },
+      { signal: installRequest.signal },
+    )).resolves.toEqual({
       ok: true,
       model: models[0],
     });
-    expect(installModel).toHaveBeenCalledWith({ packId: 'kokoro-82m-v1.0-onnx-q8-wasm' });
+    // The request's own lifetime bounds the install: caller cancellation, a
+    // caller-declared deadline and transport loss all abort this signal, and an
+    // installer that never sees it keeps downloading and still publishes.
+    expect(installModel).toHaveBeenCalledWith({
+      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      signal: installRequest.signal,
+    });
 
     const licenseBinding = {
       qualifiedPackId: 'acme.speech/english',

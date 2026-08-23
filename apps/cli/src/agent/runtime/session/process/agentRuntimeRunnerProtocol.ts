@@ -18,6 +18,7 @@ import {
   ComposerContentHandleV1Schema,
   ComposerReferenceCandidateV1Schema,
   ComposerReferenceResolutionV1Schema,
+  ConnectedServicesProviderStateSharingPolicyV1Schema,
   ModelSelectionApplyPolicySchema,
   PluginContributionIdentityV1Schema,
   PluginActionAvailabilityV2Schema,
@@ -64,6 +65,13 @@ export const ComposerStagedMediaAdmissionSettlementV1Schema = z.object({
   v: z.literal(1),
   releaseIntents: z.array(ComposerStagedMediaReleaseIntentV1Schema).max(64),
   createdWorkspaceRelativePaths: z.array(BoundedPathSchema).max(64),
+  /**
+   * The workspace the finalizer actually wrote `createdWorkspaceRelativePaths` into. It
+   * travels with the receipt because the settlement outlives the tracked Session process:
+   * a definitive admission failure that lands after teardown still has to delete exactly
+   * the media this Message created, and by then no live Session can name its directory.
+   */
+  workingDirectory: BoundedPathSchema,
 }).strict();
 export type ComposerStagedMediaAdmissionSettlementV1 = z.infer<
   typeof ComposerStagedMediaAdmissionSettlementV1Schema
@@ -449,6 +457,7 @@ const AgentSessionOpenBaseSchema = z.object({
   mcpServers:
     z.record(BoundedIdSchema, McpLaunchConfigSchema).optional(),
   providerBinding: AgentSessionProviderBindingV1Schema.optional(),
+  stateSharing: ConnectedServicesProviderStateSharingPolicyV1Schema.optional(),
 });
 
 export const AgentRuntimeDaemonSessionOpenRequestV1Schema =
@@ -461,6 +470,7 @@ export const AgentRuntimeDaemonSessionOpenRequestV1Schema =
     AgentSessionOpenBaseSchema.extend({
       kind: z.literal('resume'),
       providerSessionId: BoundedIdSchema,
+      strictNativeResumeIdentity: z.literal(true).optional(),
       startupInstructions:
         AgentSessionStartupInstructionsV1Schema.optional(),
     }).strict(),
@@ -479,9 +489,9 @@ export const AgentRuntimeDaemonSessionOpenRequestV1Schema =
   ]);
 
 /**
- * Durable runner-open evidence deliberately excludes the transient startup
- * text. The marker owns the retained identity; the provider receives the
- * text only during the one open attempt.
+ * Durable runner-open evidence deliberately excludes transient startup text
+ * and native-resume identity. The marker owns the retained identity; the
+ * provider receives those facts only during the one open attempt.
  */
 export const AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema =
   z.discriminatedUnion('kind', [
@@ -517,6 +527,16 @@ export function projectAgentRuntimeDaemonSessionOpenAttestationRequestV1(
   if (parsed.kind === 'fork') {
     return AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema.parse(
       parsed,
+    );
+  }
+  if (parsed.kind === 'resume') {
+    const {
+      startupInstructions: _startupInstructions,
+      strictNativeResumeIdentity: _strictNativeResumeIdentity,
+      ...attestation
+    } = parsed;
+    return AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema.parse(
+      attestation,
     );
   }
   const { startupInstructions: _startupInstructions, ...attestation } = parsed;

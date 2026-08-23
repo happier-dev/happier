@@ -575,7 +575,16 @@ describe('registerMachineRpcHandlers', () => {
     const sessionHandoff = await import('./sessionHandoff/handlers');
     const registerExternalSessionsSpy = vi
       .spyOn(externalSessions, 'registerMachineExternalSessionsRpcHandlers')
-      .mockImplementation(() => ({ dispose: async () => {} }));
+      .mockImplementation(() => ({
+        hostExternalSessionActionExecutor: {
+          execute: async () => ({
+            ok: false as const,
+            errorCode: 'test_fixture_unavailable',
+            error: 'External Action ingress is not exercised by this fixture.',
+          }),
+        },
+        dispose: async () => {},
+      }));
     const registerSessionHandoffSpy = vi
       .spyOn(sessionHandoff, 'registerMachineSessionHandoffRpcHandlers')
       .mockImplementation(() => {});

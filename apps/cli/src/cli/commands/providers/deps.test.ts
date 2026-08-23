@@ -124,8 +124,6 @@ function createProviderCliProbeRuntime(initialSnapshot: ActiveAccountSettingsSna
       runtimeState = await transform(runtimeState);
       return runtimeState;
     }),
-    touch: vi.fn(),
-    flushTouches: vi.fn(async () => runtimeState),
   };
   const transport = vi.fn(async () => ({
     status: 200,
@@ -167,8 +165,6 @@ describe('Provider CLI active account snapshot', () => {
         runtimeState = await transform(runtimeState);
         return runtimeState;
       }),
-      touch: vi.fn(),
-      flushTouches: vi.fn(async () => runtimeState),
     };
     const transport = vi.fn(async () => ({
       status: 200,

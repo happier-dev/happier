@@ -402,6 +402,9 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
             // account/HostAccess authority per operation and must never retain
             // raw launch-time secret bytes as reusable service authority.
             environment: Object.freeze({}),
+            ...(claimed.invocationContext.agentCliLaunch
+              ? { agentCliLaunch: claimed.invocationContext.agentCliLaunch }
+              : {}),
             providerBindingActive: false,
           });
         if (

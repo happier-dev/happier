@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ok } from '@happier-dev/cli-common/output';
 
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
+import { cmdSessionHistory } from './history';
+import { handleSessionCommand } from './handleSessionCommand';
 
-const execute = vi.fn();
-const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const { execute, createCliActionExecutorFromCredentials } = vi.hoisted(() => {
+  const execute = vi.fn();
+  return {
+    execute,
+    createCliActionExecutorFromCredentials: vi.fn(() => ({ execute })),
+  };
+});
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
   createCliActionExecutorFromCredentials,
@@ -13,6 +21,161 @@ describe('happier session history (action executor)', () => {
   afterEach(() => {
     execute.mockReset();
     createCliActionExecutorFromCredentials.mockClear();
+  });
+
+  it('rejects --follow with --json before reading transcript history', async () => {
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionHistory(['history', 'sess-1', '--follow', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(output.json()).toEqual(expect.objectContaining({
+        ok: false,
+        kind: 'session_history',
+        error: expect.objectContaining({ code: 'invalid_arguments' }),
+      }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it.each([
+    ['--tail', ['history', 'sess-1', '--follow', '--tail', '10', '--jsonl']],
+    ['--tail=10', ['history', 'sess-1', '--follow', '--tail=10', '--jsonl']],
+    ['--limit', ['history', 'sess-1', '--follow', '--limit', '10', '--jsonl']],
+    ['--limit=10', ['history', 'sess-1', '--follow', '--limit=10', '--jsonl']],
+  ])('rejects %s with --follow before reading credentials or transcript actions', async (_flag, argv) => {
+    const readCredentialsFn = vi.fn(async () => {
+      throw new Error('credentials must not be read for invalid arguments');
+    });
+
+    await expect(cmdSessionHistory(argv, { readCredentialsFn }))
+      .rejects.toThrow(expect.objectContaining({
+        code: 'invalid_arguments',
+        message: '--tail and --limit are only supported for snapshot history.',
+      }));
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('follows through finite transcript actions and emits normalized JSONL rows', async () => {
+    execute
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-1', items: [], nextCursor: 'cursor-1', truncated: false },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, session: { id: 'sess-1', active: false } },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          ok: true,
+          leaseId: 'lease-1',
+          items: [{
+            id: 'row-1',
+            seq: 1,
+            createdAt: 123,
+            role: 'assistant',
+            kind: 'assistant_message',
+            raw: { role: 'agent', content: { type: 'text', text: 'final message' } },
+          }],
+          nextCursor: 'cursor-2',
+          truncated: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-1', items: [], nextCursor: 'cursor-2', truncated: false },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, released: true },
+      });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionHistory(['history', 'sess-1', '--follow', '--jsonl'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenNthCalledWith(
+        1,
+        'transcript.follow',
+        expect.objectContaining({ sessionId: 'sess-1', cursor: 'tail' }),
+        { surface: 'cli', defaultSessionId: null },
+      );
+      expect(execute).toHaveBeenNthCalledWith(
+        2,
+        'session.status.get',
+        { sessionId: 'sess-1' },
+        { surface: 'cli', defaultSessionId: null },
+      );
+      expect(execute).toHaveBeenNthCalledWith(
+        5,
+        'transcript.unfollow',
+        { sessionId: 'sess-1', leaseId: expect.any(String) },
+        { surface: 'cli', defaultSessionId: null },
+      );
+      expect(output.logs.map((line) => JSON.parse(line))).toEqual([
+        {
+          id: 'row-1',
+          seq: 1,
+          createdAt: 123,
+          role: 'agent',
+          kind: 'text',
+          text: 'final message',
+        },
+      ]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('maps a follow failure to one JSONL family envelope and releases the lease once', async () => {
+    execute
+      .mockResolvedValueOnce({
+        ok: false,
+        errorCode: 'server_unreachable',
+        error: 'daemon unavailable',
+      })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['history', 'sess-1', '--follow', '--jsonl'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute).toHaveBeenNthCalledWith(
+        2,
+        'transcript.unfollow',
+        { sessionId: 'sess-1', leaseId: expect.any(String) },
+        { surface: 'cli', defaultSessionId: null },
+      );
+      expect(output.logs.map((line) => JSON.parse(line))).toEqual([{
+        v: 1,
+        ok: false,
+        kind: 'session_history',
+        error: { code: 'server_unreachable', message: 'daemon unavailable' },
+      }]);
+    } finally {
+      output.restore();
+    }
   });
 
   it('routes through ActionExecutor and normalizes compact transcript items to legacy messages', async () => {
@@ -87,6 +250,142 @@ describe('happier session history (action executor)', () => {
           ],
         },
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('treats --tail as the user-facing synonym for --limit with identical JSON output', async () => {
+    const result = {
+      ok: true,
+      result: {
+        ok: true,
+        sessionId: 'sess-1',
+        items: [],
+        nextCursor: null,
+        hasMore: false,
+        diagnostics: { rawRowsScanned: 0, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 },
+      },
+    };
+    execute.mockResolvedValue(result);
+
+    async function run(argv: string[]): Promise<string> {
+      const output = captureConsoleJsonOutput();
+      try {
+        await cmdSessionHistory(argv, {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+          }),
+        });
+        return output.logs.join('\n');
+      } finally {
+        output.restore();
+      }
+    }
+
+    const limitOutput = await run(['history', 'sess-1', '--limit', '10', '--json']);
+    const tailOutput = await run(['history', 'sess-1', '--tail', '10', '--json']);
+
+    expect(tailOutput).toBe(limitOutput);
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      'session.transcript.get',
+      expect.objectContaining({ sessionId: 'sess-1', limit: 10 }),
+      { surface: 'cli', defaultSessionId: null },
+    );
+  });
+
+  it.each([
+    ['separate values', ['history', 'sess-1', '--tail', '10', '--limit', '20', '--json']],
+    ['inline values', ['history', 'sess-1', '--tail=10', '--limit=20', '--json']],
+  ])('rejects conflicting --tail and --limit %s before Action dispatch', async (_label, argv) => {
+    await expect(cmdSessionHistory(argv, {
+      readCredentialsFn: async () => ({
+        token: 'token_test',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      }),
+    })).rejects.toMatchObject({ code: 'invalid_arguments' });
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('prints compact transcript lines and a concise count without dumping transcript JSON', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        ok: true,
+        sessionId: 'sess-1',
+        items: [{
+          id: 'row-1',
+          seq: 7,
+          createdAt: 123,
+          role: 'assistant',
+          kind: 'assistant_message',
+          raw: { role: 'agent', content: { type: 'text', text: 'OK' } },
+        }],
+        nextCursor: null,
+        hasMore: false,
+        diagnostics: { rawRowsScanned: 1, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 },
+      },
+    });
+
+    const output = captureConsoleText();
+    try {
+      await cmdSessionHistory(['history', 'sess-1'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.text()).toBe([
+        'agent: OK',
+        ok('History fetched (1 messages)'),
+      ].join('\n'));
+      expect(output.text()).not.toContain('"sessionId"');
+      expect(output.text()).not.toContain('"messages"');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('keeps provider payloads visible in human --raw output', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        ok: true,
+        sessionId: 'sess-1',
+        items: [{
+          id: 'row-1',
+          seq: 7,
+          createdAt: 123,
+          role: 'assistant',
+          kind: 'assistant_message',
+          raw: {
+            role: 'agent',
+            content: { type: 'text', text: 'OK' },
+            meta: { provider: { traceId: 'trace-1' } },
+          },
+        }],
+        nextCursor: null,
+        hasMore: false,
+        diagnostics: { rawRowsScanned: 1, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 },
+      },
+    });
+
+    const output = captureConsoleText();
+    try {
+      await cmdSessionHistory(['history', 'sess-1', '--raw', '--include-meta'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.text()).toContain(ok('History fetched (1 messages)'));
+      expect(output.text()).toContain('"raw"');
+      expect(output.text()).toContain('"traceId": "trace-1"');
     } finally {
       output.restore();
     }

@@ -68,7 +68,16 @@ export type VoiceInferenceWorkerLifecycleHandle = Readonly<{
   }>>;
   listModels: () => Promise<readonly DaemonVoiceInferenceModelStatus[]>;
   getModelsStatus: (packIds?: readonly string[] | null) => Promise<readonly DaemonVoiceInferenceModelStatus[]>;
-  installModel: (input: Readonly<{ packId: string }>) => Promise<DaemonVoiceInferenceModelStatus>;
+  installModel: (input: Readonly<{
+    packId: string;
+    /**
+     * The requesting caller's lifetime. An install legitimately runs for
+     * minutes, so the caller giving up has to reach the installer: without it
+     * the download keeps running and still publishes the pack and its metadata
+     * long after nobody is waiting for it.
+     */
+    signal?: AbortSignal | null;
+  }>) => Promise<DaemonVoiceInferenceModelStatus>;
   acceptModelPackLicense: (input: Parameters<DaemonPublicVoiceModelPackRuntime['acceptLicense']>[0]) => Promise<DaemonVoiceInferenceModelStatus>;
   removeModel: (packId: string) => Promise<void>;
   warmModelPack: (packId: string) => Promise<void>;
@@ -519,7 +528,11 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       const targetPackIds = packIds && packIds.length > 0 ? [...new Set(packIds)] : await listKnownPackIds();
       return await Promise.all(targetPackIds.map(async (packId) => await buildModelStatus(packId)));
     },
-    installModel: async ({ packId }) => {
+    installModel: async ({ packId, signal: callerSignal }) => {
+      // Daemon shutdown and caller abandonment both cancel this install.
+      const installSignal = callerSignal
+        ? AbortSignal.any([stopScopedController.signal, callerSignal])
+        : stopScopedController.signal;
       const normalizedPackId = normalizePackId(packId);
       if (!normalizedPackId) {
         throw createVoiceInferenceError('internal_error', 'voice_inference_pack_missing');
@@ -537,7 +550,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
         stopScopedPackIds.add(normalizedPackId);
         try {
           return await concurrencyCoordinator.runLifecycleExclusive(normalizedPackId, async () => {
-            const signal = stopScopedController.signal;
+            const signal = installSignal;
             await installBookkeeping.install({
               modelId: normalizedPackId,
               version: descriptor.contribution!.manifest.version,
@@ -550,7 +563,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
             });
             await clearWarmRuntimeForPack(normalizedPackId);
             return await buildModelStatus(normalizedPackId);
-          }, { signal: stopScopedController.signal });
+          }, { signal: installSignal });
         } finally {
           stopScopedPackIds.delete(normalizedPackId);
         }
@@ -566,7 +579,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       stopScopedPackIds.add(safePackId);
       try {
         return await concurrencyCoordinator.runLifecycleExclusive(safePackId, async () => {
-          const signal = stopScopedController.signal;
+          const signal = installSignal;
           const manifest = await fetchManifest({ packId: safePackId, signal });
           if (enforceCatalogRuntimeManifest) {
             assertDaemonVoiceRuntimeManifestCompatible(safePackId, manifest);
@@ -588,7 +601,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
           });
           await clearWarmRuntimeForPack(safePackId);
           return await buildModelStatus(safePackId);
-        }, { signal: stopScopedController.signal });
+        }, { signal: installSignal });
       } finally {
         stopScopedPackIds.delete(safePackId);
       }

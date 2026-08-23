@@ -3384,10 +3384,10 @@ export function createRunnerManagedServicesClient(input: Readonly<{
                         ? endpointUrls.get(endpointTemplateId) ?? null
                         : null;
                 },
-                async fetch(): Promise<Response> {
+                async request(): Promise<never> {
                     return fail(
                         'plugin_managed_service_unavailable',
-                        'Managed Provider endpoint fetch remains runner-local',
+                        'Managed Provider endpoint requests remain runner-local',
                     );
                 },
             }),

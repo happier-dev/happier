@@ -61,10 +61,25 @@ export type ProviderProbeHttpCredentialLease = Readonly<{
   close(): void;
 }>;
 
-export type ProviderProbeAuthenticatedFetch = (
-  input: string | URL,
-  init?: RequestInit,
-) => Promise<Response>;
+/**
+ * Host-private transport for a managed Provider endpoint the daemon supervises.
+ * It is the exact `ManagedServiceHandle.request` for that service, so the probe
+ * never opens a second connection with its own auth and timeout rules.
+ */
+export type ProviderProbeManagedServiceRequest = (
+  request: Readonly<{
+    pathAndQuery: string;
+    method: 'GET' | 'POST';
+    headers: Readonly<Record<string, string>>;
+    body?: Uint8Array;
+    timeoutMs: number;
+    signal: AbortSignal;
+  }>,
+) => Promise<Readonly<{
+  status: number;
+  headers: Readonly<Record<string, string>>;
+  body: ReadableStream<Uint8Array> | null;
+}>>;
 
 export type ProviderCatalogGetRequest = Readonly<{
   endpointUrl: string;
@@ -77,9 +92,9 @@ export type ProviderCatalogGetRequest = Readonly<{
    */
   contributedCatalogParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>;
   publicHeaders: Readonly<Record<string, string>>;
-  /** Host-private authenticated transport. Credential material remains with
+  /** Host-private managed-service transport. Credential material remains with
    * the endpoint owner and is never projected into this request. */
-  authenticatedFetch?: ProviderProbeAuthenticatedFetch;
+  managedRequest?: ProviderProbeManagedServiceRequest;
   resolveCredential?: () => Promise<ProviderProbeHttpCredentialLease>;
   credentialPolicy?: 'none' | 'optional' | 'required';
   authorizeDestination(destination: AssessedProviderEndpoint): Promise<void>;
@@ -232,6 +247,139 @@ async function defaultTransport(input: ProviderProbeTransportRequest): Promise<P
   };
 }
 
+/**
+ * One rejection shared by every await in a bounded request, so a transport that
+ * ignores its `signal` still cannot outlive the deadline.
+ */
+function rejectOnAbort(signal: AbortSignal): Readonly<{
+  promise: Promise<never>;
+  dispose(): void;
+}> {
+  let onAbort: (() => void) | null = null;
+  const promise = new Promise<never>((_resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error('provider_probe_deadline'));
+      return;
+    }
+    onAbort = () => reject(new Error('provider_probe_deadline'));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  // The race loser is always unobserved; keep it from surfacing as an
+  // unhandled rejection.
+  promise.catch(() => undefined);
+  return {
+    promise,
+    dispose: () => {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+      onAbort = null;
+    },
+  };
+}
+
+/**
+ * Applies the Provider endpoint deadlines the pinned transport already owns to
+ * a host-private authenticated transport: one wall budget covering pre-dispatch
+ * resolution, establishment and the complete body, plus one idle budget between
+ * body chunks. Either breach cancels the response body, so the endpoint owner's
+ * connection and the probe scheduler slot are released instead of being held
+ * until an external lifecycle transition.
+ */
+async function readManagedServiceResponseWithProviderProbeDeadlines(input: Readonly<{
+  managedRequest: ProviderProbeManagedServiceRequest;
+  requestUrl: string;
+  method: 'GET' | 'POST';
+  headers: Readonly<Record<string, string>>;
+  body?: Uint8Array;
+  signal: AbortSignal;
+  wallTimeMs: number;
+  idleTimeMs: number;
+  maxResponseBodyBytes: number;
+}>): Promise<ProviderProbeTransportResponse> {
+  const deadline = new AbortController();
+  const wallTimer = setTimeout(
+    () => deadline.abort(new Error('provider_probe_wall_timeout')),
+    input.wallTimeMs,
+  );
+  wallTimer.unref?.();
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearIdle = (): void => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = null;
+  };
+  const resetIdle = (): void => {
+    clearIdle();
+    idleTimer = setTimeout(
+      () => deadline.abort(new Error('provider_probe_idle_timeout')),
+      input.idleTimeMs,
+    );
+    idleTimer.unref?.();
+  };
+  const bounded = AbortSignal.any([input.signal, deadline.signal]);
+  const aborted = rejectOnAbort(bounded);
+  try {
+    const target = new URL(input.requestUrl);
+    const establishment = input.managedRequest({
+      pathAndQuery: `${target.pathname}${target.search}`,
+      method: input.method,
+      headers: { ...input.headers },
+      ...(input.body === undefined ? {} : { body: input.body }),
+      timeoutMs: input.wallTimeMs,
+      signal: bounded,
+    });
+    // A transport that resolves after the deadline still owns a live body; drop
+    // it rather than leaving the endpoint owner holding an open response.
+    establishment.then(
+      (late) => {
+        if (bounded.aborted) void late.body?.cancel().catch(() => undefined);
+      },
+      () => undefined,
+    );
+    const fetched = await Promise.race([establishment, aborted.promise]);
+    // The idle budget bounds the gaps between body chunks, exactly as the
+    // pinned transport arms it once response headers arrive. Establishment
+    // stays bounded by the wall budget alone.
+    resetIdle();
+    const chunks: Uint8Array[] = [];
+    let encodedBytes = 0;
+    const reader = fetched.body?.getReader();
+    if (reader) {
+      try {
+        for (;;) {
+          resetIdle();
+          let next: Awaited<ReturnType<
+            ReadableStreamDefaultReader<Uint8Array>['read']
+          >>;
+          try {
+            next = await Promise.race([reader.read(), aborted.promise]);
+          } catch (error) {
+            await reader.cancel().catch(() => undefined);
+            throw error;
+          }
+          if (next.done) break;
+          encodedBytes += next.value.byteLength;
+          if (encodedBytes > input.maxResponseBodyBytes) {
+            await reader.cancel().catch(() => undefined);
+            throw new Error('Provider probe response limit');
+          }
+          chunks.push(next.value);
+        }
+      } finally {
+        clearIdle();
+        reader.releaseLock();
+      }
+    }
+    return {
+      status: fetched.status,
+      headers: Object.freeze({ ...fetched.headers }),
+      body: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))),
+    };
+  } finally {
+    clearTimeout(wallTimer);
+    clearIdle();
+    aborted.dispose();
+  }
+}
+
 export function createProviderProbeHttpClient(dependencies: Readonly<{
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
   transport?: ProviderProbeTransport;
@@ -251,7 +399,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     maxResponseBodyBytes: number;
     signal?: AbortSignal;
     authorizeDestination(destination: AssessedProviderEndpoint): Promise<void>;
-    authenticatedFetch?: ProviderProbeAuthenticatedFetch;
+    managedRequest?: ProviderProbeManagedServiceRequest;
   }>): Promise<Readonly<{
     response: ProviderProbeTransportResponse;
     credential: ProviderProbeCredential | undefined;
@@ -290,40 +438,18 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         const requestBody = input.body === undefined
           ? undefined
           : new Uint8Array(input.body);
-        const response = input.authenticatedFetch
-          ? await (async (): Promise<ProviderProbeTransportResponse> => {
-              const fetched = await input.authenticatedFetch!(requestUrl, {
-                method: input.method,
-                headers,
-                ...(requestBody === undefined ? {} : { body: requestBody }),
-                signal,
-                redirect: 'manual',
-              });
-              const chunks: Uint8Array[] = [];
-              let encodedBytes = 0;
-              const reader = fetched.body?.getReader();
-              if (reader) {
-                try {
-                  for (;;) {
-                    const next = await reader.read();
-                    if (next.done) break;
-                    encodedBytes += next.value.byteLength;
-                    if (encodedBytes > input.maxResponseBodyBytes) {
-                      await reader.cancel();
-                      throw new Error('Provider probe response limit');
-                    }
-                    chunks.push(next.value);
-                  }
-                } finally {
-                  reader.releaseLock();
-                }
-              }
-              return {
-                status: fetched.status,
-                headers: Object.freeze(Object.fromEntries(fetched.headers)),
-                body: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))),
-              };
-            })()
+        const response = input.managedRequest
+          ? await readManagedServiceResponseWithProviderProbeDeadlines({
+              managedRequest: input.managedRequest,
+              requestUrl,
+              method: input.method,
+              headers,
+              ...(requestBody === undefined ? {} : { body: requestBody }),
+              signal,
+              wallTimeMs: input.wallTimeMs,
+              idleTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs,
+              maxResponseBodyBytes: input.maxResponseBodyBytes,
+            })
           : await transport({
               url: requestUrl,
               hostname: assessed.hostname,
@@ -361,19 +487,27 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
       let resolveCredential = input.resolveCredential;
       let redirectPublicHeaders: Readonly<Record<string, string>> = publicHeaders;
       let redirects = 0;
+      // One wall budget for the catalog read, spent across every redirect hop.
+      // A per-hop budget would let the declared redirect chain multiply the
+      // advertised ceiling by `maxRedirects + 1`.
+      const wallDeadlineAtMs = now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs;
       while (true) {
+        const remainingWallTimeMs = wallDeadlineAtMs - now();
+        if (remainingWallTimeMs <= 0) {
+          throw new ProviderProbeClientError('provider_endpoint_unreachable');
+        }
         const headers: Record<string, string> = { ...redirectPublicHeaders, accept: 'application/json' };
         const dispatched = await dispatchSafeRequest({
           currentUrl,
           publicHeaders: headers,
           ...(resolveCredential ? { resolveCredential } : {}),
           method: 'GET',
-          wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+          wallTimeMs: remainingWallTimeMs,
           maxResponseBodyBytes: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes,
           ...(input.signal ? { signal: input.signal } : {}),
           authorizeDestination: input.authorizeDestination,
-          ...(input.authenticatedFetch
-            ? { authenticatedFetch: input.authenticatedFetch }
+          ...(input.managedRequest
+            ? { managedRequest: input.managedRequest }
             : {}),
         });
         const { response, credential } = dispatched;

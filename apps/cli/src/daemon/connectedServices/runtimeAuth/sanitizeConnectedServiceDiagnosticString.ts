@@ -50,3 +50,35 @@ export function sanitizeConnectedServiceDiagnosticString(
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, CONNECTED_SERVICE_SECRET_REDACTION_MARKER)
     .slice(0, maxLength);
 }
+
+/**
+ * Reduce an unknown thrown value to one bounded, redacted diagnostic for
+ * retained daemon logs. Node filesystem and network errors carry the affected
+ * absolute path in `message` and local source paths in `stack`, so the stack
+ * and cause are never serialized and the remaining text always passes through
+ * this module's redaction owner.
+ */
+export function sanitizeConnectedServiceDiagnosticError(
+  error: unknown,
+  params: Readonly<{
+    maxLength?: number;
+    redactedValues?: readonly string[];
+  }> = {},
+): string {
+  if (error instanceof Error) {
+    const code = (error as Readonly<{ code?: unknown }>).code;
+    const message = error.message.trim();
+    return sanitizeConnectedServiceDiagnosticString(
+      [
+        error.name,
+        ...(typeof code === 'string' && code.trim() ? [`(${code.trim()})`] : []),
+        ...(message ? [`: ${message}`] : []),
+      ].join(''),
+      params,
+    );
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return sanitizeConnectedServiceDiagnosticString(error, params);
+  }
+  return 'unknown error';
+}

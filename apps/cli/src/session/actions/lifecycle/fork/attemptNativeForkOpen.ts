@@ -24,6 +24,7 @@ import {
     cleanupForkChildBestEffort,
     fetchForkChildSessionOrThrow,
 } from './forkChildSessionRecovery';
+import { resolveEstablishedForkLineageCutoff } from './resolveEstablishedForkLineageCutoff';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type {
     ForkBackendResolution,
@@ -91,6 +92,8 @@ export async function attemptNativeForkOpen(params: Readonly<{
     forkPoint: ForkPoint;
     targetSeqInclusive: number;
     effectiveCutoffSeqInclusive: number;
+    signal?: AbortSignal;
+    requestId?: string | null;
     spawnNonce: string;
     forkBackendResolution: ForkBackendResolution;
     inheritedForkOverrides: ForkInheritedOverrides;
@@ -193,12 +196,21 @@ export async function attemptNativeForkOpen(params: Readonly<{
     }
 
     const childSessionId = result.sessionId;
+    const requestId = typeof params.requestId === 'string'
+        && params.requestId.trim().length > 0
+        ? params.requestId.trim()
+        : null;
     try {
         if (!params.awaitAgentSessionOpen) {
             throw new Error('Native fork runtime-open attestation is unavailable');
         }
         const openAttestation = await params.awaitAgentSessionOpen({
             sessionId: childSessionId,
+            // The provider/runtime lifecycle, not this generic observer, owns
+            // native-fork completion. A generic deadline would abandon the
+            // only path that can later persist authoritative lineage.
+            timeoutMs: null,
+            ...(params.signal ? { signal: params.signal } : {}),
         });
         if (openAttestation.status === 'timeout') {
             return {
@@ -206,6 +218,9 @@ export async function attemptNativeForkOpen(params: Readonly<{
                 errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
                 errorMessage: 'Native fork outcome is unknown. Check the existing child session before retrying.',
             };
+        }
+        if (openAttestation.status === 'runner_exited') {
+            throw new Error('Child runner exited before native fork open attestation');
         }
         const openMismatch = describeNativeForkOpenMismatch(
             openAttestation,
@@ -231,9 +246,15 @@ export async function attemptNativeForkOpen(params: Readonly<{
                 forkV1: {
                     v: 1,
                     parentSessionId: params.parentSessionId,
-                    parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+                    parentCutoffSeqInclusive: resolveEstablishedForkLineageCutoff({
+                        metadata,
+                        parentSessionId: params.parentSessionId,
+                        requestId,
+                        fallbackCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+                    }),
                     createdAtMs: Date.now(),
                     strategy: 'provider_native',
+                    ...(requestId ? { requestId } : {}),
                     agentHint: {
                         agentId: params.forkBackendResolution.agentHintAgentId,
                     },
@@ -242,6 +263,13 @@ export async function attemptNativeForkOpen(params: Readonly<{
             maxAttempts: 6,
         });
     } catch (error) {
+        if (
+            params.signal?.aborted === true
+            && error instanceof Error
+            && error.name === 'AbortError'
+        ) {
+            throw error;
+        }
         await cleanupForkChildBestEffort({
             credentials: params.credentials,
             fallbackStopSession: params.stopSession,

@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 import { configuration } from '@/configuration';
 
@@ -19,7 +22,62 @@ type LockPayload = Readonly<{
   acquiredAtMs: number;
   processCommandHash?: string;
   processStartTimeMs?: number;
+  processInstanceFingerprint?: string;
 }>;
+
+type ProcessExitEmitter = Readonly<{
+  once: (event: 'exit', listener: () => void) => unknown;
+  off: (event: 'exit', listener: () => void) => unknown;
+}>;
+
+export type SessionRunnerProcessPresence = 'absent' | 'present' | 'recoverable_stopped' | 'unknown';
+
+export type SessionRunnerProcessInstanceFingerprintReader = (
+  pid: number,
+  expectedFingerprint: string,
+) => string | null;
+
+function isValidProcessCommandHash(value: string | null | undefined): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+
+/** Canonical lock-holder evidence decision shared by acquisition and resume fencing. */
+export function classifySessionRunnerProcessPresence(params: Readonly<{
+  runState: ProcessRunState | null;
+  storedProcessStartTimeMs?: number;
+  observedProcessStartTimeMs?: number;
+  storedProcessInstanceFingerprint?: string;
+  observedProcessInstanceFingerprint?: string;
+  storedProcessCommandHash?: string;
+  observedProcessCommandHash?: string;
+}>): SessionRunnerProcessPresence {
+  if (params.runState === 'dead' || params.runState === 'zombie') return 'absent';
+  if (params.runState === null) return 'unknown';
+
+  if (processGenerationProvesReuse(params.storedProcessStartTimeMs, params.observedProcessStartTimeMs)) {
+    return 'absent';
+  }
+  const storedFingerprint = String(params.storedProcessInstanceFingerprint ?? '').trim();
+  const observedFingerprint = String(params.observedProcessInstanceFingerprint ?? '').trim();
+  if (storedFingerprint && observedFingerprint && storedFingerprint !== observedFingerprint) {
+    return 'absent';
+  }
+
+  if (params.runState !== 'stopped') return 'present';
+  if (processGenerationMatches(params.storedProcessStartTimeMs, params.observedProcessStartTimeMs)) {
+    return 'recoverable_stopped';
+  }
+  if (storedFingerprint && observedFingerprint === storedFingerprint) {
+    return 'recoverable_stopped';
+  }
+  if (
+    isValidProcessCommandHash(params.storedProcessCommandHash)
+    && params.observedProcessCommandHash === params.storedProcessCommandHash
+  ) {
+    return 'recoverable_stopped';
+  }
+  return 'unknown';
+}
 
 function normalizeSessionId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -82,6 +140,9 @@ function safeParseLockPayload(raw: string): LockPayload | null {
       && processStartTimeMsRaw >= 0
       ? processStartTimeMsRaw
       : undefined;
+    const processInstanceFingerprint = typeof parsed?.processInstanceFingerprint === 'string'
+      ? parsed.processInstanceFingerprint.trim() || undefined
+      : undefined;
     if (!sessionId) return null;
     if (!Number.isFinite(pid) || pid <= 0) return null;
     if (!Number.isFinite(acquiredAtMs) || acquiredAtMs <= 0) return null;
@@ -91,6 +152,7 @@ function safeParseLockPayload(raw: string): LockPayload | null {
       acquiredAtMs: Math.floor(acquiredAtMs),
       ...(processCommandHash ? { processCommandHash } : {}),
       ...(processStartTimeMs !== undefined ? { processStartTimeMs } : {}),
+      ...(processInstanceFingerprint ? { processInstanceFingerprint } : {}),
     };
   } catch {
     return null;
@@ -110,6 +172,62 @@ export type AcquireSessionRunnerLockResult =
   | Readonly<{ ok: false; reason: 'already_running'; heldByPid: number }>
   | Readonly<{ ok: false; reason: 'io_error'; errorMessage: string }>;
 
+function releaseSessionRunnerLockSync(params: Readonly<{
+  lockPath: string;
+  sessionId: string;
+  pid: number;
+  acquiredAtMs: number;
+}>): void {
+  try {
+    const existing = safeParseLockPayload(readFileSync(params.lockPath, 'utf8'));
+    if (
+      existing?.sessionId !== params.sessionId
+      || existing.pid !== params.pid
+      || existing.acquiredAtMs !== params.acquiredAtMs
+    ) return;
+    unlinkSync(params.lockPath);
+  } catch {
+    // Best-effort. A surviving lock is adjudicated by the stale-holder classifier.
+  }
+}
+
+function createAcquiredSessionRunnerLock(params: Readonly<{
+  happyHomeDir: string;
+  lockPath: string;
+  sessionId: string;
+  pid: number;
+  acquiredAtMs: number;
+  processExitEmitter: ProcessExitEmitter;
+}>): Extract<AcquireSessionRunnerLockResult, { ok: true }> {
+  let released = false;
+  const ownsCurrentProcess = params.pid === process.pid;
+  const onProcessExit = (): void => {
+    if (released) return;
+    released = true;
+    releaseSessionRunnerLockSync(params);
+  };
+  if (ownsCurrentProcess) params.processExitEmitter.once('exit', onProcessExit);
+
+  return {
+    ok: true,
+    sessionId: params.sessionId,
+    pid: params.pid,
+    acquiredAtMs: params.acquiredAtMs,
+    lockPath: params.lockPath,
+    release: async () => {
+      if (released) return;
+      released = true;
+      if (ownsCurrentProcess) params.processExitEmitter.off('exit', onProcessExit);
+      await releaseSessionRunnerLock({
+        happyHomeDir: params.happyHomeDir,
+        sessionId: params.sessionId,
+        pid: params.pid,
+        acquiredAtMs: params.acquiredAtMs,
+      }).catch(() => {});
+    },
+  };
+}
+
 export async function acquireSessionRunnerLock(params: Readonly<{
   sessionId: string;
   pid?: number;
@@ -118,7 +236,9 @@ export async function acquireSessionRunnerLock(params: Readonly<{
   readProcessRunState?: (pid: number) => Promise<ProcessRunState>;
   getCurrentProcessCommandHash?: (pid: number) => Promise<string | null>;
   readProcessIdentityByPid?: typeof readProcessIdentityByPid;
+  readProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
   killWedgedPid?: (pid: number) => void;
+  processExitEmitter?: ProcessExitEmitter;
 }>): Promise<AcquireSessionRunnerLockResult> {
   const sessionId = normalizeSessionId(params.sessionId);
   if (!sessionId) return { ok: false, reason: 'invalid_session_id' };
@@ -155,6 +275,7 @@ export async function acquireSessionRunnerLock(params: Readonly<{
     ...(processStartTimeMs !== undefined ? { processStartTimeMs } : {}),
   };
   const serialized = JSON.stringify(payload, null, 2) + '\n';
+  const processExitEmitter = params.processExitEmitter ?? process;
 
   const tryCreate = async (): Promise<boolean> => {
     try {
@@ -169,16 +290,14 @@ export async function acquireSessionRunnerLock(params: Readonly<{
   try {
     const created = await tryCreate();
     if (created) {
-      return {
-        ok: true,
+      return createAcquiredSessionRunnerLock({
+        happyHomeDir,
+        lockPath,
         sessionId,
         pid,
         acquiredAtMs: nowMs,
-        lockPath,
-        release: async () => {
-          await releaseSessionRunnerLock({ happyHomeDir, sessionId, pid, acquiredAtMs: nowMs }).catch(() => {});
-        },
-      };
+        processExitEmitter,
+      });
     }
   } catch (e) {
     return { ok: false, reason: 'io_error', errorMessage: e instanceof Error ? e.message : String(e) };
@@ -194,6 +313,8 @@ export async function acquireSessionRunnerLock(params: Readonly<{
 
   const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
   const killWedgedPid = params.killWedgedPid ?? killWedgedPidDefault;
+  const readProcessInstanceFingerprint = params.readProcessInstanceFingerprint
+    ?? ((pidToRead, expectedFingerprint) => readProcessInstanceFingerprintSync(pidToRead, { expectedFingerprint }));
   const readHolderRunState = async (pid: number): Promise<ProcessRunState> =>
     await readProcessRunState(pid).catch<ProcessRunState>(() => 'servable');
 
@@ -207,51 +328,37 @@ export async function acquireSessionRunnerLock(params: Readonly<{
 
   if (existing?.pid) {
     const holderState = await readHolderRunState(existing.pid);
-    if (holderState === 'dead' || holderState === 'zombie') {
-      // Dead or defunct: cannot serve, safe to break below (a zombie needs no kill).
-    } else if (existing.processStartTimeMs !== undefined) {
-      const observedIdentity = await readProcessIdentity(existing.pid).catch(() => null);
-      if (processGenerationProvesReuse(
-        existing.processStartTimeMs,
-        observedIdentity?.processStartTimeMs,
-      )) {
-        // Exact process generation changed: the OS reused the PID, so the lock is stale.
-      } else if (
-        holderState === 'stopped'
-        && processGenerationMatches(
-          existing.processStartTimeMs,
-          observedIdentity?.processStartTimeMs,
-        )
-      ) {
-        try {
-          killWedgedPid(existing.pid);
-        } catch {
-          return { ok: false, reason: 'already_running', heldByPid: existing.pid };
-        }
-      } else {
+    const shouldReadIdentity = holderState !== 'dead' && holderState !== 'zombie'
+      && existing.processStartTimeMs !== undefined;
+    const observedIdentity = shouldReadIdentity
+      ? await readProcessIdentity(existing.pid).catch(() => null)
+      : null;
+    const observedFingerprint = existing.processInstanceFingerprint
+      && holderState !== 'dead' && holderState !== 'zombie'
+      ? readProcessInstanceFingerprint(existing.pid, existing.processInstanceFingerprint)
+      : null;
+    const observedCommandHash = holderState === 'stopped'
+      && existing.processStartTimeMs === undefined
+      && !existing.processInstanceFingerprint
+      ? await getCurrentProcessCommandHash(existing.pid).catch(() => null)
+      : null;
+    const presence = classifySessionRunnerProcessPresence({
+      runState: holderState,
+      storedProcessStartTimeMs: existing.processStartTimeMs,
+      observedProcessStartTimeMs: observedIdentity?.processStartTimeMs,
+      storedProcessInstanceFingerprint: existing.processInstanceFingerprint,
+      observedProcessInstanceFingerprint: observedFingerprint ?? undefined,
+      storedProcessCommandHash: existing.processCommandHash,
+      observedProcessCommandHash: observedCommandHash ?? undefined,
+    });
+
+    if (presence === 'recoverable_stopped') {
+      try {
+        killWedgedPid(existing.pid);
+      } catch {
         return { ok: false, reason: 'already_running', heldByPid: existing.pid };
       }
-    } else if (existing.processCommandHash) {
-      const currentHash = await getCurrentProcessCommandHash(existing.pid).catch(() => null);
-      const currentHashValid = typeof currentHash === 'string' && /^[a-f0-9]{64}$/.test(currentHash);
-      if (holderState === 'stopped' && currentHashValid && currentHash === existing.processCommandHash) {
-        // Proven same runner image but SIGSTOPped: it holds the lock and serves nothing
-        // (incident 2026-06-12 "already running" refusal while wedged). Kill it so a
-        // later SIGCONT cannot revive a duplicate, then break the lock.
-        try {
-          killWedgedPid(existing.pid);
-        } catch {
-          // Best-effort: if the kill fails we still cannot trust the holder to serve;
-          // fail closed and keep the lock.
-          return { ok: false, reason: 'already_running', heldByPid: existing.pid };
-        }
-      } else {
-        // Legacy locks have no immutable process-generation witness. Command drift
-        // cannot prove PID reuse, so a live holder remains authoritative.
-        return { ok: false, reason: 'already_running', heldByPid: existing.pid };
-      }
-    } else {
-      // Fail closed: this legacy lock has neither a generation nor command witness.
+    } else if (presence !== 'absent') {
       return { ok: false, reason: 'already_running', heldByPid: existing.pid };
     }
   }
@@ -272,16 +379,14 @@ export async function acquireSessionRunnerLock(params: Readonly<{
       }
       return { ok: false, reason: 'io_error', errorMessage: 'Lock acquisition raced and could not read existing lock' };
     }
-    return {
-      ok: true,
+    return createAcquiredSessionRunnerLock({
+      happyHomeDir,
+      lockPath,
       sessionId,
       pid,
       acquiredAtMs: nowMs,
-      lockPath,
-      release: async () => {
-        await releaseSessionRunnerLock({ happyHomeDir, sessionId, pid, acquiredAtMs: nowMs }).catch(() => {});
-      },
-    };
+      processExitEmitter,
+    });
   } catch (e) {
     return { ok: false, reason: 'io_error', errorMessage: e instanceof Error ? e.message : String(e) };
   }

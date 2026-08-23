@@ -1,4 +1,5 @@
 import {
+  PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
   TargetActionApprovalRequestV1Schema,
   type PluginLocalizedStringV2,
   type TargetActionApprovalRequestV1,
@@ -18,7 +19,8 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
 }>): (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> {
   const coordinator = getSharedBlockingApprovalCoordinator();
   return async ({ action, fingerprint, surface, invocationSurface, signal }) => {
-    if (!action.confirmation) {
+    const approvalRequiredByActionSettings = action.approvalRequiredByActionSettings === true;
+    if (!action.confirmation && !approvalRequiredByActionSettings) {
       return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
     }
     const requestedSurface = invocationSurface ?? surface;
@@ -30,8 +32,10 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       ...(action.accountId ? { accountId: action.accountId } : {}), ...(action.resourceId ? { resourceId: action.resourceId } : {}),
       generation: action.generation, policyFingerprint: action.policyFingerprint,
       subjectFingerprint: fingerprint,
-      summary: resolveLocalizedConfirmationText(action.confirmation.title),
-      ...(action.confirmation.body
+      summary: action.confirmation
+        ? resolveLocalizedConfirmationText(action.confirmation.title)
+        : 'Action approval required',
+      ...(action.confirmation?.body
         ? { detail: resolveLocalizedConfirmationText(action.confirmation.body) }
         : {}),
     } as const;
@@ -50,6 +54,6 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
     }
     return result.decision === 'approve'
       ? { status: 'approved', fingerprint }
-      : { status: 'rejected', code: 'plugin_action_current_intent_rejected' };
+      : { status: 'rejected', code: PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE };
   };
 }

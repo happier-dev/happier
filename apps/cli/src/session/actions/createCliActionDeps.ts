@@ -31,7 +31,6 @@ import {
   isSessionCreationOrganizationInvalidSpawnErrorDetail,
   supportsMachineOperationProtocolCapabilityV1,
   ProviderConnectionIdSchema,
-  readLinkedExternalSessionV1FromMetadata,
   resolveExplicitSessionSpawnMachineTarget,
   resolveSessionModelSelectionInputRefV1,
   mergeSpawnConfigOptionAliases,
@@ -89,6 +88,7 @@ import {
   type DirectSpawnedSessionTransport,
   type ReplaySeededSessionCreationV1,
 } from '@/session/services/createSpawnedSession';
+import { resolveSessionHandoffSourceAuthority } from '@/session/handoff/resolveSessionHandoffSourceAuthority';
 import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import { resolveReplaySourceContextAuthority } from '@/session/replay/resolveReplaySourceContextAuthority';
 import {
@@ -407,6 +407,15 @@ export type SessionSpawnDirectTargetTransport = Readonly<{
   spawnedSession: DirectSpawnedSessionTransport;
 }>;
 
+export type MachineActionDirectTargetTransport = Readonly<{
+  machineId: string;
+  invoke: (
+    method: string,
+    request: unknown,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ) => Promise<unknown>;
+}>;
+
 type CurrentMachineControlIdentity = Readonly<{
   machineId: string | null;
   host: string | null;
@@ -631,6 +640,7 @@ export function createCliActionDeps(params: Readonly<{
     Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
   >;
   sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+  machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
 }> & SessionStoredContentCryptoContext): ActionExecutorDeps {
   const inventoryDeps = createCliActionInventoryDeps(params);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials }) : null;
@@ -685,6 +695,28 @@ export function createCliActionDeps(params: Readonly<{
 
   const sessionTransportCache = new Map<string, ResolvedSessionTransport>();
   const ambiguousSpawnActionRequestIds = new Set<string>();
+  const callMachineAction = async (input: Readonly<{
+    machineId: string;
+    method: string;
+    request: unknown;
+    signal?: AbortSignal;
+  }>): Promise<unknown> => {
+    const direct = params.machineActionDirectTargetTransport;
+    if (direct?.machineId === input.machineId) {
+      return await direct.invoke(
+        input.method,
+        input.request,
+        input.signal ? { signal: input.signal } : undefined,
+      );
+    }
+    return await callMachineRpc({
+      credentials: params.credentials!,
+      machineId: input.machineId,
+      method: input.method,
+      request: input.request,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  };
 
   const readCurrentSessionMetadata = async (): Promise<Record<string, unknown> | null> => {
     if (currentSessionMetadata) return currentSessionMetadata;
@@ -1543,18 +1575,17 @@ export function createCliActionDeps(params: Readonly<{
           },
           input.signal ? { signal: input.signal } : undefined,
         )
-        : await callMachineRpc({
-          credentials: params.credentials,
-          machineId: input.executionTarget.machineId,
-          method: RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
-          request: {
-            directory: input.directory,
-            ...(input.checkoutCreationDraft !== undefined
-              ? { checkoutCreationDraft: input.checkoutCreationDraft }
-              : {}),
-          },
-          ...(input.signal ? { signal: input.signal } : {}),
-        });
+        : await callMachineAction({
+            machineId: input.executionTarget.machineId,
+            method: RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
+            request: {
+              directory: input.directory,
+              ...(input.checkoutCreationDraft !== undefined
+                ? { checkoutCreationDraft: input.checkoutCreationDraft }
+                : {}),
+            },
+            ...(input.signal ? { signal: input.signal } : {}),
+          });
     } catch (error) {
       if (input.signal?.aborted) {
         return {
@@ -2093,7 +2124,15 @@ export function createCliActionDeps(params: Readonly<{
         ? { ok: true, status: 'opened', sessionId: transport.sessionId }
         : { ok: false, errorCode: resumed.code, error: resumed.message };
     },
-    sessionFork: async ({ sessionId, signal }) => {
+    sessionFork: async ({
+      sessionId,
+      forkPoint,
+      strategy,
+      replaySummaryRunner,
+      replayMaxSeedChars,
+      requestId,
+      signal,
+    }) => {
       if (!params.credentials) return notSupported();
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
@@ -2105,11 +2144,17 @@ export function createCliActionDeps(params: Readonly<{
       if (!machineId) {
         return { ok: false, errorCode: 'machine_not_found', error: 'machine_not_found' };
       }
-      return await callMachineRpc({
-        credentials: params.credentials,
+      return await callMachineAction({
         machineId,
         method: RPC_METHODS.SESSION_FORK,
-        request: { parentSessionId: transport.sessionId, forkPoint: { type: 'latest' } },
+        request: {
+          parentSessionId: transport.sessionId,
+          forkPoint,
+          ...(strategy ? { strategy } : {}),
+          ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
+          ...(replayMaxSeedChars !== undefined ? { replayMaxSeedChars } : {}),
+          ...(requestId ? { requestId } : {}),
+        },
         ...(signal ? { signal } : {}),
       });
     },
@@ -2164,21 +2209,27 @@ export function createCliActionDeps(params: Readonly<{
       if (!transport.ok) {
         return { ok: false, errorCode: transport.code, error: transport.code };
       }
-      const metadata = readSessionMetadata({ ...transport, rawSession: transport.rawSession }) ?? {};
-      const sourceMachineId = normalizeStringValue(transport.rawSession.machineId)
-        ?? normalizeStringValue(metadata.machineId);
-      if (!sourceMachineId) {
-        return { ok: false, errorCode: 'machine_not_found', error: 'machine_not_found' };
-      }
-      return await callMachineRpc({
+      // One owner for the handoff source facts, shared with the daemon's tracked
+      // coordinator: machine custody and transcript-storage authority both come
+      // from OWNER metadata, and an unresolved link refuses here rather than
+      // being stamped as `persisted` on a request that stops the source.
+      const source = resolveSessionHandoffSourceAuthority({
         credentials: params.credentials,
+        rawSession: transport.rawSession,
+        accountEncryptionMode: transport.accountEncryptionCurrentness.mode,
+      });
+      if (!source.ok) {
+        return { ok: false, errorCode: source.errorCode, error: source.error };
+      }
+      const sourceMachineId = source.sourceMachineId;
+      return await callMachineAction({
         machineId: sourceMachineId,
         method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START,
         request: {
           sessionId: transport.sessionId,
           sourceMachineId,
           targetMachineId,
-          sessionStorageMode: readLinkedExternalSessionV1FromMetadata(metadata) ? 'direct' : 'persisted',
+          sessionStorageMode: source.sessionStorageMode,
           ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
           preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
           ...(workspaceTransfer ? { workspaceTransfer } : {}),
@@ -2237,6 +2288,7 @@ export function createCliActionDeps(params: Readonly<{
       agentTarget,
       modelSelection,
       profileId,
+      environmentVariables,
       permissionMode,
       agentModeId,
       configuration: configurationSnapshot,
@@ -2449,7 +2501,7 @@ export function createCliActionDeps(params: Readonly<{
       // exact cutoff before any Session row exists, and a failure creates no
       // child so the authoring draft and its chip stay intact.
       let replaySeededCreation: ReplaySeededSessionCreationV1 | undefined;
-      if (sourceContext) {
+      if (sourceContext && resumeActionRequest !== true) {
         let sourceAuthority: Awaited<ReturnType<typeof resolveReplaySourceContextAuthority>>;
         try {
           sourceAuthority = await resolveReplaySourceContextAuthority({
@@ -2510,12 +2562,14 @@ export function createCliActionDeps(params: Readonly<{
           backendTarget,
           sessionCreationTag,
           ...(replaySeededCreation ? { replaySeededCreation } : {}),
+          ...(sourceContext ? { sourceContext } : {}),
           approvedNewDirectoryCreation: preparedTarget.directoryCreationRequired,
           ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
           sessionCreationCorrespondence: correspondence,
           organizationPlacement: normalizedPlacement,
           ...(resolvedModelSelection ? { modelSelection: resolvedModelSelection } : {}),
           ...(profileId ? { profileId } : {}),
+          ...(environmentVariables ? { environmentVariables } : {}),
           ...(resolvedPermissionMode ? { permissionMode: resolvedPermissionMode } : {}),
           ...(resolvedAgentModeId ? { agentModeId: resolvedAgentModeId } : {}),
           ...(normalizedConfigurationOverrides
@@ -2558,6 +2612,11 @@ export function createCliActionDeps(params: Readonly<{
             : {}),
           ...(directTargetTransport
             ? { directTransport: directTargetTransport.spawnedSession }
+            : {}),
+          ...(params.machineActionDirectTargetTransport?.machineId === executionTarget.machineId
+            ? {
+                machineActionTransport: params.machineActionDirectTargetTransport.invoke,
+              }
             : {}),
           ...(agentSessionStartupInstructionsV1
             ? { agentSessionStartupInstructionsV1 }
@@ -2618,6 +2677,7 @@ export function createCliActionDeps(params: Readonly<{
       requestedAction,
       actionCaller,
       idempotencyKey,
+      localId,
       source,
       wait,
       timeoutSeconds,
@@ -2762,6 +2822,10 @@ export function createCliActionDeps(params: Readonly<{
         requestedAction,
         wait: normalizedWait,
         timeoutMs: normalizedTimeoutSeconds * 1000,
+        // A caller-retained localId makes an ambiguous send retryable: the
+        // durable pending queue is keyed by it, so resubmitting rejoins the
+        // existing input instead of enqueuing a second message.
+        ...(typeof localId === 'string' && localId.trim().length > 0 ? { localId } : {}),
         ...(normalizedPermissionModeOverride ? { permissionModeOverride: normalizedPermissionModeOverride } : {}),
         ...(modelSelectionInput ? { modelSelectionInput } : {}),
         ...(signal ? { signal } : {}),
@@ -3443,17 +3507,6 @@ export function createCliActionDeps(params: Readonly<{
       }
       return { ok: true, sessionId: res.sessionId, modeId: normalizedModeId, updatedAt };
     },
-    sessionTargetPrimarySet: async ({ sessionId }) => {
-      const normalized = typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
-      return { ok: true, sessionId: normalized };
-    },
-    sessionTargetTrackedSet: async ({ sessionIds }) => {
-      const trackedSessionIds = Array.isArray(sessionIds)
-        ? sessionIds.map((id) => String(id ?? '').trim()).filter(Boolean)
-        : [];
-      return { ok: true, sessionIds: trackedSessionIds };
-    },
-
     sessionList: async ({ limit, cursor, activeOnly, archivedOnly, includeSystem, resumableOnly, includeRows, includeLastMessagePreview }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

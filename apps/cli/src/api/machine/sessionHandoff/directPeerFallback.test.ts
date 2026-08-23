@@ -409,7 +409,7 @@ function requireFileTransferPayloadSourcePath(
                 handoffId: 'handoff_direct_peer_legacy_only_adapter',
             })).resolves.toEqual({
                 ok: false,
-                errorCode: 'awaiting_recovery',
+                errorCode: 'direct_peer_transfer_unavailable',
                 error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
             });
         });
@@ -479,7 +479,7 @@ function requireFileTransferPayloadSourcePath(
                 handoffId: 'handoff_direct_peer_failed_no_fallback',
             })).resolves.toEqual({
                 ok: false,
-                errorCode: 'awaiting_recovery',
+                errorCode: 'direct_peer_transfer_unavailable',
                 error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
             });
         });
@@ -574,7 +574,7 @@ function requireFileTransferPayloadSourcePath(
                 handoffId: 'handoff_direct_peer_cached_retry_a',
             })).resolves.toEqual({
                 ok: false,
-                errorCode: 'awaiting_recovery',
+                errorCode: 'direct_peer_transfer_unavailable',
                 error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
             });
         });
@@ -694,7 +694,7 @@ function requireFileTransferPayloadSourcePath(
                 handoffId: 'handoff_direct_peer_route_cache_reset_a',
             })).resolves.toEqual({
                 ok: false,
-                errorCode: 'awaiting_recovery',
+                errorCode: 'direct_peer_transfer_unavailable',
                 error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
             });
         });
@@ -806,7 +806,7 @@ function requireFileTransferPayloadSourcePath(
                 handoffId: 'handoff_direct_peer_unknown_server_a',
             })).resolves.toEqual({
                 ok: false,
-                errorCode: 'awaiting_recovery',
+                errorCode: 'direct_peer_transfer_unavailable',
                 error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
             });
         });
@@ -946,7 +946,7 @@ function requireFileTransferPayloadSourcePath(
                 await vi.waitFor(async () => {
                     await expect(resultGet!({ handoffId })).resolves.toEqual({
                         ok: false,
-                        errorCode: 'awaiting_recovery',
+                        errorCode: 'direct_peer_transfer_unavailable',
                         error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
                     });
                 }, {
@@ -1866,7 +1866,7 @@ function requireFileTransferPayloadSourcePath(
         handoffId: 'handoff_direct_peer_server_scoped_cache_server_a',
       })).resolves.toEqual({
         ok: false,
-        errorCode: 'awaiting_recovery',
+        errorCode: 'direct_peer_transfer_unavailable',
         error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
       });
     });

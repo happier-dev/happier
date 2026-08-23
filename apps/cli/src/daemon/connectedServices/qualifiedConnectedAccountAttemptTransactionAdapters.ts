@@ -2,10 +2,11 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
-  EncryptedStringV1Schema,
-  decryptSecretStringV1,
-  deriveAccountMachineKeyFromRecoverySecret,
-  encryptSecretStringV1,
+  StoredJsonContentEnvelopeSchema,
+  isStoredJsonContentEnvelopeModeCompatible,
+  openQualifiedConnectedAccountContentEnvelope,
+  sealQualifiedConnectedAccountContentEnvelope,
+  type StoredJsonContentEnvelope,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
@@ -14,8 +15,9 @@ import {
   type ConnectedAccountAttemptTransactionRecord,
   type ConnectedAccountAttemptTransactionStoreApi,
 } from '@/api/client/connectedAccountAttemptTransactionApi';
+import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import { generatePkceCodes } from '@/cloud/pkce';
-import type { Credentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type {
   ConnectedAccountDeviceTransactionSnapshot,
   ConnectedAccountOAuthCallbackCompletion,
@@ -23,8 +25,11 @@ import type {
   ConnectedAccountOAuthTransactionOwner,
   ConnectedAccountOAuthTransactionSnapshot,
 } from '@/plugins/runtime/connectedAccounts/authenticationAttemptOwner';
-import { deriveKey } from '@/utils/deriveKey';
 
+import {
+  requireConnectedAccountCryptoMaterial,
+  resolveConnectedAccountCryptoMaterial,
+} from './accountScopedCryptoMaterial';
 import type {
   QualifiedConnectedAccountAttemptTransactionAdapters,
 } from './qualifiedConnectedAccountDaemonPersistence';
@@ -222,7 +227,13 @@ function transactionExpiresAt(input: Readonly<{
 
 export function createQualifiedConnectedAccountAttemptTransactionAdapters(
   params: Readonly<{
-    credentials: Credentials;
+    credentials: StoredCredentials;
+    /**
+     * Persisted `Account.encryptionMode` is the sole representation authority. Attempt
+     * durability is installed for every Account, plaintext included, and the mode —
+     * never key presence — decides whether content is sealed or stored plainly.
+     */
+    getAccountEncryptionMode: () => Promise<ConnectedServiceAccountEncryptionMode>;
     api?: ConnectedAccountAttemptTransactionStoreApi;
     randomBytes?: (length: number) => Uint8Array;
     callbackUrl?: string;
@@ -247,58 +258,75 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(
   ) {
     throw new Error('Connected-account attempt transaction TTL is invalid');
   }
-  const keyPromise = deriveKey(
-    params.credentials.encryption.type === 'dataKey'
-      ? params.credentials.encryption.machineKey
-      : deriveAccountMachineKeyFromRecoverySecret(
-          params.credentials.encryption.secret,
-        ),
-    'Happy Connected Account Attempts',
-    ['transactions', 'v1'],
-  );
+  const material = resolveConnectedAccountCryptoMaterial(params.credentials);
 
-  async function seal(payload: OAuthPayload | DevicePayload): Promise<string> {
-    const encrypted = encryptSecretStringV1(
-      JSON.stringify(payload),
-      await keyPromise,
-      randomBytes,
-    );
-    return JSON.stringify(encrypted);
+  async function resolveAccountMode(): Promise<'plain' | 'e2ee'> {
+    const mode = await params.getAccountEncryptionMode();
+    if (mode === 'unknown') {
+      throw new Error(
+        'Connected-account attempt transaction account encryption mode is unavailable',
+      );
+    }
+    return mode;
+  }
+
+  async function seal(
+    payload: OAuthPayload | DevicePayload,
+  ): Promise<StoredJsonContentEnvelope> {
+    const accountMode = await resolveAccountMode();
+    return accountMode === 'plain'
+      ? sealQualifiedConnectedAccountContentEnvelope({
+        kind: 'attempt',
+        accountMode: 'plain',
+        payload,
+        randomBytes,
+      })
+      : sealQualifiedConnectedAccountContentEnvelope({
+        kind: 'attempt',
+        accountMode: 'e2ee',
+        material: requireConnectedAccountCryptoMaterial(
+          params.credentials,
+          material,
+        ),
+        payload,
+        randomBytes,
+      });
   }
 
   async function open(
     record: ConnectedAccountAttemptTransactionRecord,
   ): Promise<unknown> {
-    let envelope: unknown;
-    try {
-      envelope = JSON.parse(record.ciphertext);
-    } catch {
+    const accountMode = await resolveAccountMode();
+    const envelope = StoredJsonContentEnvelopeSchema.parse(record.content);
+    // The persisted Account mode and the stored envelope kind must agree before any
+    // content is disclosed. A mismatch is an inconsistent record, never a reason to
+    // try the other branch.
+    if (!isStoredJsonContentEnvelopeModeCompatible(accountMode, envelope)) {
       throw new Error(
-        'Connected-account attempt transaction ciphertext is invalid',
+        'Connected-account attempt transaction content does not match the persisted Account encryption mode',
       );
     }
-    const parsedEnvelope = EncryptedStringV1Schema.safeParse(envelope);
-    if (!parsedEnvelope.success) {
+    const opened = accountMode === 'plain'
+      ? openQualifiedConnectedAccountContentEnvelope({
+        kind: 'attempt',
+        accountMode: 'plain',
+        envelope,
+      })
+      : openQualifiedConnectedAccountContentEnvelope({
+        kind: 'attempt',
+        accountMode: 'e2ee',
+        material: requireConnectedAccountCryptoMaterial(
+          params.credentials,
+          material,
+        ),
+        envelope,
+      });
+    if (opened === null) {
       throw new Error(
-        'Connected-account attempt transaction ciphertext is invalid',
+        'Connected-account attempt transaction content is unavailable for the current account mode',
       );
     }
-    const plaintext = decryptSecretStringV1(
-      parsedEnvelope.data,
-      await keyPromise,
-    );
-    if (plaintext === null) {
-      throw new Error(
-        'Connected-account attempt transaction cannot be decrypted',
-      );
-    }
-    try {
-      return JSON.parse(plaintext);
-    } catch {
-      throw new Error(
-        'Connected-account attempt transaction payload is invalid',
-      );
-    }
+    return opened;
   }
 
   async function readOAuthPayload(input: Readonly<{
@@ -363,7 +391,7 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(
           kind: 'oauth',
           attemptId: snapshot.attemptId,
           expectedRevision: record.revision,
-          ciphertext: await seal(nextPayload),
+          content: await seal(nextPayload),
           expiresAtMs: Math.min(
             record.expiresAtMs,
             snapshot.expiresAtMs ?? record.expiresAtMs,
@@ -393,7 +421,7 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(
           kind: 'oauth',
           attemptId: payload.snapshot.attemptId,
           expectedRevision: record.revision,
-          ciphertext: await seal(nextPayload),
+          content: await seal(nextPayload),
           expiresAtMs: record.expiresAtMs,
         });
         payload = nextPayload;
@@ -440,7 +468,7 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(
       const record = await api.create({
         kind: 'oauth',
         attemptId: input.attemptId,
-        ciphertext: await seal(payload),
+        content: await seal(payload),
         expiresAtMs: transactionExpiresAt({
           now: now(),
           ttlMs: transactionTtlMs,
@@ -476,7 +504,7 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(
           await api.create({
             kind: 'device',
             attemptId: snapshot.attemptId,
-            ciphertext: await seal(payload),
+            content: await seal(payload),
             expiresAtMs: transactionExpiresAt({
               now: now(),
               ttlMs: transactionTtlMs,
@@ -494,7 +522,7 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(
           kind: 'device',
           attemptId: snapshot.attemptId,
           expectedRevision: current.revision,
-          ciphertext: await seal(payload),
+          content: await seal(payload),
           expiresAtMs: Math.min(current.expiresAtMs, snapshot.expiresAtMs),
         });
       },

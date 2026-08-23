@@ -101,6 +101,28 @@ describe('requestSessionStop', () => {
     });
   });
 
+  it('returns an identity-resolution failure before attempting any physical stop', async () => {
+    resolveSessionIdOrPrefixMock.mockResolvedValue({
+      ok: false,
+      code: 'session_id_ambiguous',
+      candidates: ['sess-a', 'sess-b'],
+    });
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+    await expect(requestSessionStop({
+      credentials: { token: 'token_test', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      idOrPrefix: 'sess',
+    })).resolves.toEqual({
+      ok: false,
+      code: 'session_id_ambiguous',
+      candidates: ['sess-a', 'sess-b'],
+    });
+
+    expect(callMachineRpcMock).not.toHaveBeenCalled();
+    expect(stopDaemonSessionMock).not.toHaveBeenCalled();
+    expect(listSessionMarkersMock).not.toHaveBeenCalled();
+  });
+
   it('routes a stop only to the exact machine recorded by the session', async () => {
     const sessionId = 'sess_remote_machine_stop';
     const credentials = {

@@ -4,7 +4,7 @@ import {
   isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1,
   projectExternalSessionOperationProgressV1,
   resolveExternalHistoryImportV1FromMetadata,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveLinkedExternalSessionMetadataV1,
   type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
   type ExternalSessionOperationActionResponseV1,
@@ -71,6 +71,9 @@ import {
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
 } from './operationRecordStore';
+import {
+  recoverExternalSessionTakeoverPrecommitAdmission,
+} from './takeoverPrecommitAdmissionRecovery';
 import {
   resolveExternalSessionSourceKeyOwner,
 } from '@/session/external/resolveExternalSessionSourceKeyOwner';
@@ -251,7 +254,7 @@ export async function loadCurrentExternalSessionExternalLinkedTakeoverSource(
     machineId: record.request.source.machineId,
   });
   const sourceIdentity = quiescence.protocolResult?.sourceIdentity ?? null;
-  const currentLink = readLinkedExternalSessionV1FromMetadata(linked.metadata);
+  const currentLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(linked.metadata);
   if (
     sourceIdentity
     && (
@@ -365,12 +368,30 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
         },
       };
     });
-    return failed
-      ? operationSuccess(failed)
-      : operationFailure(
-        'stale_revision',
-        'External-linked takeover operation revision is stale.',
-      );
+    if (failed) return operationSuccess(failed);
+    if (code === 'admission_failed') {
+      // The admission owner commits refreshed authority evidence at
+      // `revision + 1` before the Server command, so a definitive pre-commit
+      // rejection always leaves this CAS stale. Recover at the canonical owner
+      // instead of stranding a live operation at running/admitting.
+      const recovered =
+        await recoverExternalSessionTakeoverPrecommitAdmission({
+          activeServerDir: dependencies.activeServerDir,
+          targetStorageMode: 'external-linked',
+          sessionId: record.request.sessionId,
+          operationId: record.operationId,
+          attemptId: record.bindings.targetRuntimeAttemptId,
+          message,
+          nowMs: nowMs(),
+        });
+      if (recovered) return operationSuccess(await publishBestEffort(
+        recovered as ExternalLinkedTakeoverRecord,
+      ));
+    }
+    return operationFailure(
+      'stale_revision',
+      'External-linked takeover operation revision is stale.',
+    );
   };
 
   const reconcileCommittedRuntimeBindingFailure = async (
@@ -1147,7 +1168,7 @@ function currentSourceMatchesRequest(
   linked: LoadedLinkedExternalSession,
   request: TakeoverRequest,
 ): boolean {
-  const currentLink = readLinkedExternalSessionV1FromMetadata(linked.metadata);
+  const currentLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(linked.metadata);
   return linked.machineId === request.source.machineId
     && linked.remoteSessionId === request.source.remoteSessionId
     && linked.linkGeneration === request.source.linkGeneration
@@ -1362,7 +1383,7 @@ export async function loadCurrentExternalSessionPersistedTakeoverSource(
         : 'Persisted takeover quiescence could not be verified.',
     );
   }
-  const currentLink = readLinkedExternalSessionV1FromMetadata(
+  const currentLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(
     linked.metadata,
   );
   const sourceIdentity = quiescence.protocolResult.sourceIdentity;

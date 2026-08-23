@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/agent/catalog/ids';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import {
+  bindApiSessionSocketMock,
+  createAvailableSessionSpawnMachineSnapshot,
+  createApiSessionSocketStub,
+  respondToExactMachineSessionSpawnRpc,
+} from '@/testkit/backends/apiSessionSocketHarness';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
@@ -23,27 +28,43 @@ describe('happier session create plaintext sessions (integration)', () => {
   let server: Server | null = null;
   let happyHomeDir = '';
   let observedMetadataUpdateCallCount = 0;
+  let observedSpawnBody: Record<string, unknown> | null = null;
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-create-plain-');
     observedMetadataUpdateCallCount = 0;
+    observedSpawnBody = null;
 
     const sessionId = 'sess_integration_create_plain_123';
     let metadataJson = JSON.stringify({ path: process.cwd(), host: 'spawn-host' });
     let metadataVersion = 0;
-    let observedSpawnBody: Record<string, unknown> | null = null;
-
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
 
-      if (req.method === 'POST' && url.pathname === `/spawn-session`) {
-        const chunks: Buffer[] = [];
-        for await (const c of req) chunks.push(Buffer.from(c));
-        observedSpawnBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
-
+      if (req.method === 'GET' && url.pathname === '/v1/machines/machine_integration') {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ success: true, sessionId }));
+        res.end(JSON.stringify({ machine: createAvailableSessionSpawnMachineSnapshot('machine_integration') }));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v2/sessions/lookup-by-tags') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ sessions: [] }));
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'plain',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 1,
+        }));
         return;
       }
 
@@ -104,20 +125,32 @@ describe('happier session create plaintext sessions (integration)', () => {
 
     const socket = createApiSessionSocketStub({
       emit: (event: string, args: unknown[]) => {
+        if (respondToExactMachineSessionSpawnRpc({
+          event,
+          args,
+          machineId: 'machine_integration',
+          sessionId,
+          onSpawnRequest: (request) => {
+            observedSpawnBody = { ...request };
+            metadataJson = JSON.stringify({
+              path: process.cwd(),
+              host: 'spawn-host',
+              sessionCreationCorrespondenceV1: request.sessionCreationCorrespondence,
+            });
+          },
+        })) {
+          return;
+        }
+
         if (event !== 'update-metadata') return;
         const [data, callback] = args as [any, ((value: unknown) => void) | undefined];
         observedMetadataUpdateCallCount += 1;
         expect(data?.expectedVersion).toBe(metadataVersion);
         const decrypted = JSON.parse(String(data?.metadata ?? '{}'));
-        expect(decrypted?.tag).toBe('MyTag');
+        expect(decrypted?.tag).toBeUndefined();
         if (decrypted?.summary !== undefined) {
           expect(decrypted?.summary?.text).toBe('My Title');
         }
-        expect(observedSpawnBody).toEqual(expect.objectContaining({
-          directory: process.cwd(),
-          backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
-          spawnNonce: expect.any(String),
-        }));
         metadataJson = String(data.metadata);
         metadataVersion += 1;
         callback?.({ result: 'success', version: metadataVersion, metadata: metadataJson });
@@ -146,7 +179,7 @@ describe('happier session create plaintext sessions (integration)', () => {
     reloadConfiguration();
   });
 
-  it('returns a spawned plaintext session summary when metadata updates stay plaintext', async () => {
+  it('returns the spawned plaintext session envelope through exact-machine dispatch', async () => {
     const { handleSessionCommand } = await import('./index');
 
     const machineKeySeed = new Uint8Array(32).fill(8);
@@ -154,7 +187,7 @@ describe('happier session create plaintext sessions (integration)', () => {
     const output = captureConsoleJsonOutput();
 
     try {
-      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--json'], {
+      await handleSessionCommand(['create', '--machine-id', 'machine_integration', '--title', 'My Title', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -171,11 +204,14 @@ describe('happier session create plaintext sessions (integration)', () => {
       expect(parsed.kind).toBe('session_create');
       expect(parsed.data?.created).toBe(true);
       expect(parsed.data?.session?.id).toBe('sess_integration_create_plain_123');
-      expect(parsed.data?.session?.tag).toBe('MyTag');
-      expect(parsed.data?.session?.title).toBe('My Title');
-      expect(parsed.data?.session?.active).toBe(true);
-      expect(parsed.data?.session?.encryptionMode).toBe('plain');
-      expect(observedMetadataUpdateCallCount).toBeGreaterThanOrEqual(1);
+      expect(observedSpawnBody).toEqual(expect.objectContaining({
+        directory: process.cwd(),
+        machineId: 'machine_integration',
+        backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
+        initialTitle: 'My Title',
+        spawnNonce: expect.any(String),
+      }));
+      expect(observedMetadataUpdateCallCount).toBe(0);
     } finally {
       output.restore();
     }

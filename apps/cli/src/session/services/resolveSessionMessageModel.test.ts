@@ -283,4 +283,69 @@ describe('resolveSessionMessageModel', () => {
       legacyModelOverride: null,
     })).toBe('');
   });
+
+  it('refuses an omitted-connection prompt when the active binding is unreadable', () => {
+    // A corrupted applied binding is not evidence of a native runner. Inferring
+    // native here would send the prompt to the Agent's own catalog under a
+    // model id the Session never authorized for it.
+    expect(() => resolveSessionMessageModel({
+        metadata: {
+            flavor: 'codex',
+            providerBindingV1: {
+                v: 1,
+                connectionId: 'pc_active',
+                contributionKey: null,
+                connectionRevision: 'not-a-number',
+                model: { id: 'active-model', name: 'Active model' },
+                protocol: 'openai-responses',
+                materialization: 'engineConfig',
+                compatibilityFingerprint: 'compatibility:v1:active',
+                bindingSecurityFingerprint: 'binding-security:v1:active',
+                displaySnapshot: {
+                    providerName: 'Gateway',
+                    connectionName: 'Active',
+                    connectionRole: 'named',
+                    connectionDisplayNameMode: 'custom',
+                },
+            },
+        },
+        sessionActive: true,
+        modelSelectionInput: { modelId: 'per-message-model' },
+        nowMs: 42,
+    })).toThrowError(expect.objectContaining({
+        code: 'model_selection_session_provider_state_unreadable',
+    }));
+  });
+
+  it('refuses an omitted-connection prompt when the persisted intent is unreadable', () => {
+    expect(() => resolveSessionMessageModel({
+        metadata: {
+            flavor: 'codex',
+            modelSelectionIntentV1: { selection: { providerConnectionId: 'pc_work' } },
+        },
+        sessionActive: false,
+        modelSelectionInput: { modelId: 'per-message-model' },
+        nowMs: 42,
+    })).toThrowError(expect.objectContaining({
+        code: 'model_selection_session_provider_state_unreadable',
+    }));
+  });
+
+  it('still honours an explicitly named connection over unreadable ambient state', () => {
+    // An explicit choice never consults ambient state, so corruption elsewhere
+    // in the Session must not block the caller's own complete selection.
+    expect(resolveSessionMessageModel({
+        metadata: {
+            flavor: 'codex',
+            modelSelectionIntentV1: { selection: { providerConnectionId: 'pc_work' } },
+        },
+        sessionActive: false,
+        modelSelectionInput: { providerConnectionId: 'pc_explicit', modelId: 'explicit-model' },
+        nowMs: 42,
+    }).selection?.ref).toEqual({
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_explicit',
+        modelId: 'explicit-model',
+    });
+  });
 });

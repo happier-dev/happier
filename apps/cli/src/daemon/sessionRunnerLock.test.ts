@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -39,6 +40,33 @@ describe('sessionRunnerLock', () => {
 
     await res.release();
     await expect(readFile(lockPath, 'utf8')).rejects.toThrow();
+  });
+
+  it('releases its owned lock synchronously when the runner process exits', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-runner-lock-'));
+    const processExitEmitter = new EventEmitter();
+    const res = await acquireSessionRunnerLock({
+      happyHomeDir,
+      sessionId: 'sess_process_exit',
+      pid: process.pid,
+      nowMs: 10_001,
+      processExitEmitter,
+      getCurrentProcessCommandHash: async () => 'a'.repeat(64),
+      readProcessRunState: async () => 'servable',
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const lockPath = sessionRunnerLockPathForSessionId({ happyHomeDir, sessionId: 'sess_process_exit' });
+    expect(lockPath).not.toBeNull();
+    if (!lockPath) return;
+
+    try {
+      processExitEmitter.emit('exit', 0);
+      await expect(readFile(lockPath, 'utf8')).rejects.toThrow();
+    } finally {
+      await res.release();
+    }
   });
 
   it('uses a hashed lock filename when sessionId is too long', async () => {
@@ -169,6 +197,36 @@ describe('sessionRunnerLock', () => {
       getCurrentProcessCommandHash: async () => 'b'.repeat(64),
       readProcessRunState: async () => 'servable',
       readProcessIdentityByPid: async (pid) => ({ pid, processStartTimeMs: pid === 999 ? 2_000 : 3_000, command: 'changed' }),
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(JSON.parse(await readFile(lockPath, 'utf8')).pid).toBe(123);
+  });
+
+  it('breaks a predecessor lock when its process fingerprint proves PID reuse', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-runner-lock-'));
+    const lockPath = sessionRunnerLockPathForSessionId({ happyHomeDir, sessionId: 'sess_predecessor_generation' });
+    expect(lockPath).not.toBeNull();
+    if (!lockPath) return;
+    await mkdir(dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, JSON.stringify({
+      sessionId: 'sess_predecessor_generation',
+      pid: 999,
+      acquiredAtMs: 1,
+      processCommandHash: 'a'.repeat(64),
+      processInstanceFingerprint: 'darwin-ps:old',
+    }, null, 2), 'utf8');
+
+    const res = await acquireSessionRunnerLock({
+      happyHomeDir,
+      sessionId: 'sess_predecessor_generation',
+      pid: 123,
+      nowMs: 10_000,
+      getCurrentProcessCommandHash: async () => 'b'.repeat(64),
+      readProcessRunState: async () => 'servable',
+      readProcessInstanceFingerprint: (_pid, expectedFingerprint) =>
+        expectedFingerprint === 'darwin-ps:old' ? 'darwin-ps:new' : null,
     });
 
     expect(res.ok).toBe(true);

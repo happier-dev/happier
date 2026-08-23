@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -79,6 +80,63 @@ describe('TransferSessionStore temp-root ownership', () => {
       store.cleanupExpiredBestEffort(first.expiresAt);
       expect(store.getUploadSession(first.uploadId)).toBeNull();
       expect(store.getNextExpiryAt()).toBeNull();
+    } finally {
+      await store.dispose();
+    }
+  });
+  it('retires an abandoned session on its own when it owns its expiry trigger', async () => {
+    vi.useFakeTimers();
+    const baseRoot = await mkdtemp(join(tmpdir(), 'happier-transfer-store-autoexpiry-'));
+    rootsToRemove.push(baseRoot);
+    const store = new TransferSessionStore({
+      ttlMs: 1_000,
+      tempRoot: baseRoot,
+      expiryTrigger: 'self',
+    });
+    try {
+      const sourcePath = join(baseRoot, 'artifact.wav');
+      await writeFile(sourcePath, 'audio', 'utf8');
+      const session = await store.createDownloadSession({
+        filePath: sourcePath,
+        deleteFileOnClose: false,
+        chunkSizeBytes: 4,
+      });
+      expect(store.getDownloadSession(session.downloadId)).toBe(session);
+
+      // No further RPC arrives: the client died right after init. Only the
+      // store's own deadline can release the descriptor it is holding.
+      await vi.advanceTimersByTimeAsync(1_500);
+      await store.settleClosures();
+
+      expect(store.getDownloadSession(session.downloadId)).toBeNull();
+      await expect(session.file.stat()).rejects.toMatchObject({ code: 'EBADF' });
+    } finally {
+      vi.useRealTimers();
+      await store.dispose();
+    }
+  });
+
+  it('resolves cleanupExpired only after every expired descriptor is closed', async () => {
+    const baseRoot = await mkdtemp(join(tmpdir(), 'happier-transfer-store-cleanup-await-'));
+    rootsToRemove.push(baseRoot);
+    const store = new TransferSessionStore({ ttlMs: 1_000, tempRoot: baseRoot });
+    try {
+      const sourcePath = join(baseRoot, 'artifact.wav');
+      await writeFile(sourcePath, 'audio', 'utf8');
+      const session = await store.createDownloadSession({
+        filePath: sourcePath,
+        deleteFileOnClose: true,
+        chunkSizeBytes: 4,
+      });
+
+      await store.cleanupExpired(session.expiresAt);
+
+      // Asserted with no intervening await: a caller that deletes retention's
+      // files next relies on close-then-unlink having already completed when
+      // cleanupExpired resolves, not merely having been started.
+      expect(existsSync(sourcePath)).toBe(false);
+      expect(store.getDownloadSession(session.downloadId)).toBeNull();
+      await expect(session.file.stat()).rejects.toMatchObject({ code: 'EBADF' });
     } finally {
       await store.dispose();
     }

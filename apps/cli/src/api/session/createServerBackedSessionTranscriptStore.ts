@@ -83,6 +83,14 @@ function limitItemsByEncodedBytes(
     return { items: limited, truncated: false };
 }
 
+function cursorForSequence(seq: unknown): string | null {
+    return typeof seq === 'number' && Number.isFinite(seq) ? String(seq) : null;
+}
+
+function cursorForLastEmittedItem(items: readonly SessionTranscriptActionItem[]): string | null {
+    return cursorForSequence(items.at(-1)?.seq);
+}
+
 export function createServerBackedSessionTranscriptStore(
     params: ServerBackedSessionTranscriptStoreParams,
 ): FileBackedTranscriptSessionStore<SessionTranscriptActionItem> {
@@ -115,10 +123,13 @@ export function createServerBackedSessionTranscriptStore(
                 rowsToTranscriptItems(page.messages),
                 maxBytes,
             );
+            const emittedCursor = cursorForLastEmittedItem(limited.items);
             return {
                 items: limited.items,
-                nextCursor: typeof page.nextBeforeSeq === 'number' ? String(page.nextBeforeSeq) : null,
-                hasMore: page.hasMore,
+                nextCursor: limited.truncated
+                    ? emittedCursor ?? (typeof page.nextBeforeSeq === 'number' ? String(page.nextBeforeSeq) : null)
+                    : typeof page.nextBeforeSeq === 'number' ? String(page.nextBeforeSeq) : null,
+                hasMore: page.hasMore || limited.truncated,
                 tailCursor,
                 truncated: page.hasMore || limited.truncated,
             };
@@ -133,7 +144,7 @@ export function createServerBackedSessionTranscriptStore(
                     sessionId: params.sessionId,
                     limit: 1,
                 });
-                tailCursor = typeof page.nextAfterSeq === 'number' ? String(page.nextAfterSeq) : tailCursor;
+                tailCursor = cursorForSequence(page.messages[0]?.seq) ?? '0';
                 return {
                     items: [],
                     nextCursor: tailCursor,
@@ -152,9 +163,12 @@ export function createServerBackedSessionTranscriptStore(
                 rowsToTranscriptItems(page.messages),
                 maxBytes,
             );
+            const emittedCursor = cursorForLastEmittedItem(limited.items);
             return {
                 items: limited.items,
-                nextCursor: typeof page.nextAfterSeq === 'number' ? String(page.nextAfterSeq) : null,
+                nextCursor: limited.truncated
+                    ? emittedCursor ?? (typeof page.nextAfterSeq === 'number' ? String(page.nextAfterSeq) : null)
+                    : typeof page.nextAfterSeq === 'number' ? String(page.nextAfterSeq) : emittedCursor,
                 truncated: page.hasMore || limited.truncated,
             };
         },

@@ -6,6 +6,8 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
 export type RpcActionExecutorContext = ActionExecutorContext & Readonly<{
     signal?: AbortSignal;
+    operationProgress?: NonNullable<RpcLocalActionContext['operationProgress']>;
+    operationOwnerUpdate?: NonNullable<RpcLocalActionContext['operationOwnerUpdate']>;
 }>;
 
 export type RpcActionExecutor = Readonly<{
@@ -54,6 +56,12 @@ export function buildActionExecutorContextForRpc(
         ...(defaultSessionId ? { defaultSessionId } : {}),
         ...(serverId ? { serverId } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
+        ...(localActionContext?.operationProgress
+            ? { operationProgress: localActionContext.operationProgress }
+            : {}),
+        ...(localActionContext?.operationOwnerUpdate
+            ? { operationOwnerUpdate: localActionContext.operationOwnerUpdate }
+            : {}),
         surface: localActionContext?.surface ?? 'rpc',
         ...(hasLocalCallerPermissionMode
             ? { callerPermissionMode: localActionContext?.callerPermissionMode ?? null }

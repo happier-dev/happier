@@ -7,7 +7,10 @@ import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRe
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 
-export type SessionLifecycleActionHandler = (rawParams: unknown) => Promise<unknown>;
+export type SessionLifecycleActionHandler = (
+    rawParams: unknown,
+    context?: Readonly<{ signal: AbortSignal }>,
+) => Promise<unknown>;
 
 export type SessionLifecycleMachineHandlers = Readonly<{
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
@@ -21,9 +24,11 @@ export type SessionLifecycleMachineDeps = Readonly<{
     ) => Promise<BackendExecutionSurfaces>;
     awaitAgentSessionOpen?: (input: Readonly<{
         sessionId: string;
-        timeoutMs?: number;
+        timeoutMs?: number | null;
+        signal?: AbortSignal;
     }>) => Promise<
         | Readonly<{ status: 'opened'; request: AgentSessionOpenRequest }>
+        | Readonly<{ status: 'runner_exited' }>
         | Readonly<{ status: 'timeout' }>
     >;
 }>;

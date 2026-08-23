@@ -67,6 +67,7 @@ import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
 import { isBun } from './runtime';
+import { stripCliApiTokenEnvironment } from '@/auth/cliApiToken';
 import { createRequire } from 'node:module';
 import { resolveJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/resolveJavaScriptRuntimeExecutable';
 import { buildMissingJavaScriptRuntimeMessage } from '@/packagedRuntime/js/buildMissingJavaScriptRuntimeMessage';
@@ -1159,8 +1160,12 @@ export function spawnHappyCLI(
   logger.debug(`[SPAWN HAPPIER CLI] Spawning: ${fullCommand} in ${directory}`);
 
   const launchSpec = buildHappyCliSubprocessLaunchSpec(args, launchOptions);
-  const spawnOptions: SpawnOptions = launchSpec.env
-    ? { ...options, env: { ...(options.env ?? process.env), ...launchSpec.env } }
-    : options;
+  const spawnOptions: SpawnOptions = {
+    ...options,
+    env: stripCliApiTokenEnvironment({
+      ...(options.env ?? process.env),
+      ...(launchSpec.env ?? {}),
+    }),
+  };
   return spawn(launchSpec.filePath, launchSpec.args, spawnOptions);
 }

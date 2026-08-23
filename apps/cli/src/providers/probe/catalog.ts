@@ -36,7 +36,7 @@ import {
   type ProviderCatalogGetRequest,
   type ProviderCatalogGetResult,
 } from './client';
-import type { ProviderProbeAuthenticatedFetch } from './client';
+import type { ProviderProbeManagedServiceRequest } from './client';
 import { providerProbeFailureHealthState, providerProbeSuccessHealthState } from './health';
 
 export type ProviderProbeEndpoint = Readonly<{
@@ -69,7 +69,7 @@ export type ProviderManagedCatalogRuntimePort<TTicket> = Readonly<{
     | Readonly<{
         ok: true;
         endpointUrl: string;
-        access: Readonly<{ fetch: ProviderProbeAuthenticatedFetch }>;
+        access: Readonly<{ request: ProviderProbeManagedServiceRequest }>;
         isCurrent: () => boolean;
         close: () => Promise<void>;
       }>
@@ -379,7 +379,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               : {}),
             publicHeaders: input.managedSource.publicHeaders,
             credentialPolicy: 'required',
-            authenticatedFetch: launched.access.fetch,
+            managedRequest: launched.access.request,
             authorizeDestination: async (destination: AssessedProviderEndpoint) => {
               const expectedOrigin = new URL(launched.endpointUrl).origin;
               if (
@@ -559,7 +559,16 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               serializeProviderRuntimeStateRecordKey('endpointHealth', candidate) === serializedEndpointKey);
             if (!previous) return state;
             if (previous.state.activity === 'idle') return state;
-            if (createdCheckingRecord) {
+            // Another process can commit a real observation for this same semantic key
+            // while this probe is in flight. The durable file carries no `activity`, so
+            // the live overlay makes that newer row look like this process's transient
+            // one. Remove the row only while it is still the exact synthetic placeholder
+            // this process inserted; otherwise keep the other writer's verdict and only
+            // drop the local activity.
+            const ownsSyntheticRecord = createdCheckingRecord
+              && previous.state.status === 'not_checked'
+              && previous.lastAccessedAt === checkingAt;
+            if (ownsSyntheticRecord) {
               return {
                 ...state,
                 endpointHealth: state.endpointHealth.filter((candidate) =>

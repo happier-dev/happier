@@ -64,6 +64,33 @@ describe('createAcpRuntime (native lower-operation surface)', () => {
     expect(startSession).not.toHaveBeenCalled();
   });
 
+  it('rejects an ACP backend that explicitly returns a different resumed identity', async () => {
+    const sendPrompt = vi.fn(async () => undefined);
+    const backend = createFakeAcpRuntimeBackend({ sendPrompt });
+    backend.loadSession = vi.fn(async () => ({ sessionId: 'different-session' }));
+    const runtime = createAcpRuntime({
+      provider: 'account-configured-acp',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      sessionOpenIntent: {
+        kind: 'resume',
+        providerSessionId: 'requested-session',
+        importHistory: false,
+      },
+    });
+
+    await expect(runtime.sendTurnPrompt('hello')).rejects.toMatchObject({
+      name: 'AcpRuntimeResumeIdentityMismatchError',
+      happierNativeResumeIdentityMismatch: true,
+    });
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
   it('uses the reset successor intent on the next prompt with a new backend', async () => {
     const firstBackend = createFakeAcpRuntimeBackend({ sessionId: 'resumed-session' });
     firstBackend.loadSession = vi.fn(async () => ({ sessionId: 'resumed-session' }));

@@ -1,7 +1,7 @@
 import {
     ExternalAgentObservationResourceGroupingV1Schema,
     PluginBackendExternalSessionSourceDeclarationV1Schema,
-    readLinkedExternalSessionV1FromMetadata,
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     type PluginBackendExternalSessionSourceDeclarationV1,
     type ExternalAgentObservationTargetV1,
 } from '@happier-dev/protocol';
@@ -104,7 +104,7 @@ async function readCurrentAccountProjection(
 export async function resolveExternalSessionObservationLinkInput(
     params: ResolveExternalSessionObservationLinkInputParams,
 ): Promise<ExternalSessionObservationLinkInput | null> {
-    const persistedLink = readLinkedExternalSessionV1FromMetadata(params.linked.metadata);
+    const persistedLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(params.linked.metadata);
     if (!persistedLink) return null;
 
     const runtimeRegistryLease = await acquireAuthoritativePluginRuntimeRegistryLease()

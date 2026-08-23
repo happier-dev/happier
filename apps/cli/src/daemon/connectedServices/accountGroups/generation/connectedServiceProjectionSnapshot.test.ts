@@ -6,50 +6,21 @@ import {
 } from './connectedServiceProjectionSnapshot';
 
 describe('parseConnectedServiceProjectionSnapshot', () => {
-  it('retains novel qualified Account V4 truth without downconverting it into the legacy service projection', () => {
-    const service = {
-      pluginId: 'acme.connected-accounts',
-      localId: 'external-service',
-    } as const;
-    const account = {
-      ref: { service, accountId: 'external-account' },
-      status: 'connected',
-      authenticationModeId: 'manual',
-      revisionSemantics: 'revisioned',
-      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
-      configurationReady: false,
-      configurationRevision: null,
-      displayName: 'External account',
-      scopes: [],
-    } as const;
-    const group = {
-      v: 1,
-      ref: { service, groupId: 'external-fallbacks' },
-      incarnation: 'qualified-group-row-external-fallbacks',
-      displayName: null,
-      policy: {},
-      activeConnectedAccountId: 'external-account',
-      generation: 4,
-      runtimeStateRevision: 2,
-      state: {},
-      createdAt: 1,
-      updatedAt: 1,
-      members: [],
-    } as const;
-    const projection = {
+  it('projects nothing for a service that has no legacy connected-service id', () => {
+    // The legacy generation/currentness reconciler is `ConnectedServiceId`-keyed, so a
+    // novel qualified service cannot appear in it. Its daemon consumers read V4 truth
+    // through the direct V4 owners instead of a second projection here.
+    const snapshot = parseConnectedServiceProjectionSnapshot({
       connectedServicesV2: [],
       connectedServiceCredentialRevisionsV1: [],
-      connectedAccountsV4: [account],
-      connectedAccountGroupsV4: [group],
-    };
-
-    const snapshot = parseConnectedServiceProjectionSnapshot(projection);
+    });
 
     expect(snapshot.groups).toEqual([]);
-    expect(snapshot).toMatchObject({
-      qualifiedAccounts: [account],
-      qualifiedGroups: [group],
-    });
+    expect(snapshot.credentialRevisions).toEqual([]);
+    expect(snapshot.resolveCredentialPresence(
+      'anthropic',
+      'external-account',
+    )).toEqual({ status: 'absent' });
   });
 
   it('keeps credential revision separate from group generation and distinguishes absent from legacy unfenced credentials', () => {

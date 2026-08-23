@@ -9,15 +9,8 @@ import {
   serializeProviderEndpointRuntimeStateKeyV1,
   serializeProviderInstallationRuntimeStateKeyV1,
   serializeProviderModelLoadRuntimeStateKeyV1,
-  type ProviderCatalogRuntimeStateKeyV1,
   type ProviderRuntimeStateFileV1,
 } from '@happier-dev/protocol';
-
-export type ProviderCatalogObservationReferenceV1 = Readonly<{
-  machineId: string;
-  connectionId: string;
-  catalogObservationId: string;
-}>;
 
 export type ProviderRuntimeStatePruneBudget = Readonly<{
   maxEndpointRecords: number;
@@ -29,9 +22,6 @@ export type ProviderRuntimeStatePruneBudget = Readonly<{
 }>;
 
 export type ProviderRuntimeStatePruneContext = Readonly<{
-  currentCatalogKeys?: readonly ProviderCatalogRuntimeStateKeyV1[];
-  grantedConnectionIds?: readonly string[];
-  referencedCatalogObservations?: readonly ProviderCatalogObservationReferenceV1[];
   budget?: ProviderRuntimeStatePruneBudget;
 }>;
 
@@ -52,7 +42,11 @@ const DEFAULT_BUDGET: ProviderRuntimeStatePruneBudget = {
   maxEncodedBytes: PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes,
 };
 
-function observationKey(input: ProviderCatalogObservationReferenceV1): string {
+function observationKey(input: Readonly<{
+  machineId: string;
+  connectionId: string;
+  catalogObservationId: string;
+}>): string {
   return JSON.stringify([input.machineId, input.connectionId, input.catalogObservationId]);
 }
 
@@ -124,15 +118,22 @@ function assertPositiveBudget(budget: ProviderRuntimeStatePruneBudget): void {
 }
 
 function assertPrunableState(input: ProviderRuntimeStateFileV1): void {
-  const rawArrayLimits = [
-    ['endpointHealth', input.endpointHealth, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEndpointRecords],
-    ['catalogs', input.catalogs, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxCatalogRecords],
-    ['installationChecks', input.installationChecks, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxInstallationRecords],
-    ['modelLoadStates', input.modelLoadStates, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxModelLoadRecords],
+  // This owner only ever sees an already-materialized mutation candidate built
+  // from bounded in-memory state (`commitUnlocked`). Raw persisted bytes are
+  // bounded separately by the file parse/recovery owner, so an over-cap family
+  // here is a normal insertion that LRU pruning below is designed to repair —
+  // it must not be refused. Only defects pruning cannot repair (wrong shape,
+  // cross-machine records, duplicate keys, ambiguous generations) reject, and
+  // the canonical caps are enforced on the pruned result.
+  const rawArrays = [
+    ['endpointHealth', input.endpointHealth],
+    ['catalogs', input.catalogs],
+    ['installationChecks', input.installationChecks],
+    ['modelLoadStates', input.modelLoadStates],
   ] as const;
-  for (const [name, records, limit] of rawArrayLimits) {
-    if (!Array.isArray(records) || records.length > limit) {
-      throw new TypeError(`Provider runtime-state ${name} exceeds its raw record limit`);
+  for (const [name, records] of rawArrays) {
+    if (!Array.isArray(records)) {
+      throw new TypeError(`Provider runtime-state ${name} must be an array`);
     }
   }
   input.endpointHealth.forEach((record) => ProviderEndpointRuntimeStateRecordV1Schema.parse(record));
@@ -308,34 +309,13 @@ export function pruneProviderRuntimeStateV1(
     modelLoadStates: [...input.modelLoadStates],
   });
 
-  const currentCatalogKeys = new Set((context.currentCatalogKeys ?? [])
-    .map((key) => serializeProviderCatalogRuntimeStateKeyV1(key)));
-  const currentConnections = new Set((context.currentCatalogKeys ?? []).map((key) => key.connectionId));
-  state = removeCatalogs(state, new Set(state.catalogs.flatMap((record) => {
-    const key = serializeProviderCatalogRuntimeStateKeyV1(record.key);
-    return currentConnections.has(record.key.connectionId) && !currentCatalogKeys.has(key) ? [key] : [];
-  })));
-
-  if (context.grantedConnectionIds !== undefined) {
-    const granted = new Set(context.grantedConnectionIds);
-    state = removeCatalogs(state, new Set(state.catalogs.flatMap((record) =>
-      granted.has(record.key.connectionId) ? [] : [serializeProviderCatalogRuntimeStateKeyV1(record.key)])));
-  }
-
-  const referenced = new Set((context.referencedCatalogObservations ?? []).map(observationKey));
-  const removalOrder = [...state.catalogs].sort((left, right) => {
-    const leftReferenced = catalogObservationKey(left);
-    const rightReferenced = catalogObservationKey(right);
-    const referenceRank = Number(leftReferenced !== null && referenced.has(leftReferenced))
-      - Number(rightReferenced !== null && referenced.has(rightReferenced));
-    if (referenceRank !== 0) return referenceRank;
-    return left.lastAccessedAt - right.lastAccessedAt
-      || observedAt(left) - observedAt(right)
-      || compareCanonicalStrings(
-        serializeProviderCatalogRuntimeStateKeyV1(left.key),
-        serializeProviderCatalogRuntimeStateKeyV1(right.key),
-      );
-  });
+  const removalOrder = [...state.catalogs].sort((left, right) =>
+    left.lastAccessedAt - right.lastAccessedAt
+    || observedAt(left) - observedAt(right)
+    || compareCanonicalStrings(
+      serializeProviderCatalogRuntimeStateKeyV1(left.key),
+      serializeProviderCatalogRuntimeStateKeyV1(right.key),
+    ));
   if (catalogStructuralBudgetExceeded(state, budget)) {
     const loadCountByGeneration = new Map<string, number>();
     state.modelLoadStates.forEach((record) => {

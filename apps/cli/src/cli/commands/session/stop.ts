@@ -6,11 +6,18 @@ import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
+import { assertSessionCommandArguments } from './shared/assertSessionCommandArguments';
 
 export async function cmdSessionStop(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
+  assertSessionCommandArguments(argv, {
+    usage: 'Usage: happier session stop <session-id-or-prefix> [--json]',
+    startIndex: 1,
+    booleanFlags: ['--json'],
+    maxPositionals: 1,
+  });
   const json = wantsJson(argv);
   const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1 });
   if (!idOrPrefix) {

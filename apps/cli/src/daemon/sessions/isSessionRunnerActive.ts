@@ -1,8 +1,17 @@
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+
 import type { TrackedSession } from '../types';
 import { readProcessRunState as readProcessRunStateDefault, type ProcessRunState } from '../processRunState';
-import { readSessionRunnerLockStatus, type SessionRunnerLockStatus } from '../sessionRunnerLock';
+import {
+  classifySessionRunnerProcessPresence,
+  readSessionRunnerLockStatus,
+  type SessionRunnerLockStatus,
+  type SessionRunnerProcessInstanceFingerprintReader,
+  type SessionRunnerProcessPresence,
+} from '../sessionRunnerLock';
 
-import { processGenerationProvesReuse, readProcessIdentityByPid } from '../processIdentity';
+import { readProcessIdentityByPid } from '../processIdentity';
+import { hashProcessCommand } from '../sessionRegistry';
 
 function normalizeSessionId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -19,82 +28,85 @@ function trackedSessionMatchesSessionId(tracked: TrackedSession, sessionId: stri
 
 type ReadProcessRunState = (pid: number) => Promise<ProcessRunState>;
 
-/** Process-presence evidence for duplicate-spawn fencing, not exact-session RPC serviceability. */
-async function isPidPresentForDuplicateFence(pid: number, readProcessRunState: ReadProcessRunState): Promise<boolean> {
-  const state = await readProcessRunState(pid).catch<ProcessRunState>(() => 'servable');
-  return state === 'servable';
-}
-
-async function processGenerationProvesPidReuseForPid(params: {
-  storedProcessStartTimeMs: number | undefined;
+async function classifyStoredProcessPresence(params: {
+  runState: ProcessRunState | null;
+  storedProcessStartTimeMs?: number;
+  storedProcessInstanceFingerprint?: string;
+  storedProcessCommandHash?: string;
   pid: number;
   readProcessIdentityByPid: typeof readProcessIdentityByPid;
-}): Promise<boolean> {
-  const currentIdentity = await params.readProcessIdentityByPid(params.pid).catch(() => null);
-  return processGenerationProvesReuse(
-    params.storedProcessStartTimeMs,
-    currentIdentity?.processStartTimeMs,
-  );
+  readProcessInstanceFingerprint: SessionRunnerProcessInstanceFingerprintReader;
+}): Promise<SessionRunnerProcessPresence> {
+  const shouldReadIdentity = params.runState !== 'dead' && params.runState !== 'zombie'
+    && (
+      params.storedProcessStartTimeMs !== undefined
+      || (params.runState === 'stopped' && Boolean(params.storedProcessCommandHash))
+    );
+  const currentIdentity = shouldReadIdentity
+    ? await params.readProcessIdentityByPid(params.pid).catch(() => null)
+    : null;
+  const observedFingerprint = params.storedProcessInstanceFingerprint
+    && params.runState !== 'dead' && params.runState !== 'zombie'
+    ? params.readProcessInstanceFingerprint(params.pid, params.storedProcessInstanceFingerprint)
+    : null;
+  const observedCommandHash = params.runState === 'stopped' && currentIdentity?.command
+    ? hashProcessCommand(currentIdentity.command)
+    : undefined;
+  return classifySessionRunnerProcessPresence({
+    runState: params.runState,
+    storedProcessStartTimeMs: params.storedProcessStartTimeMs,
+    observedProcessStartTimeMs: currentIdentity?.processStartTimeMs,
+    storedProcessInstanceFingerprint: params.storedProcessInstanceFingerprint,
+    observedProcessInstanceFingerprint: observedFingerprint ?? undefined,
+    storedProcessCommandHash: params.storedProcessCommandHash,
+    observedProcessCommandHash: observedCommandHash,
+  });
 }
 
-async function isLockActive(params: {
+async function classifyLockPresence(params: {
   sessionId: string;
   readProcessRunState: ReadProcessRunState;
   readProcessIdentityByPid: typeof readProcessIdentityByPid;
+  readProcessInstanceFingerprint: SessionRunnerProcessInstanceFingerprintReader;
   readSessionRunnerLockStatus: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
-}): Promise<boolean> {
+}): Promise<SessionRunnerProcessPresence> {
   const status = await params.readSessionRunnerLockStatus({ sessionId: params.sessionId }).catch(() => null);
-  if (!status || !status.ok) return false;
+  if (!status) return 'unknown';
+  if (!status.ok) return status.reason === 'not_found' ? 'absent' : 'unknown';
 
   const pid = status.lock.pid;
-  if (!(await isPidPresentForDuplicateFence(pid, params.readProcessRunState))) return false;
-
-  // If the lock PID is alive but its command hash is provably different, the OS reused
-  // the PID for another process. Treat it as inactive so acquisition can break the stale lock.
-  if (
-    await processGenerationProvesPidReuseForPid({
-      storedProcessStartTimeMs: status.lock.processStartTimeMs,
-      pid,
-      readProcessIdentityByPid: params.readProcessIdentityByPid,
-    })
-  ) {
-    return false;
-  }
-
-  // Fail-closed: a lock with a present PID is treated as active unless we can prove PID reuse.
-  return true;
+  const runState = await params.readProcessRunState(pid).catch(() => null);
+  return await classifyStoredProcessPresence({
+    runState,
+    storedProcessStartTimeMs: status.lock.processStartTimeMs,
+    storedProcessInstanceFingerprint: status.lock.processInstanceFingerprint,
+    storedProcessCommandHash: status.lock.processCommandHash,
+    pid,
+    readProcessIdentityByPid: params.readProcessIdentityByPid,
+    readProcessInstanceFingerprint: params.readProcessInstanceFingerprint,
+  });
 }
 
-async function isTrackedSessionActive(params: {
+async function classifyTrackedSessionPresence(params: {
   sessionId: string;
   tracked: TrackedSession;
   readProcessRunState: ReadProcessRunState;
   readProcessIdentityByPid: typeof readProcessIdentityByPid;
-}): Promise<boolean> {
-  if (!trackedSessionMatchesSessionId(params.tracked, params.sessionId)) return false;
+  readProcessInstanceFingerprint: SessionRunnerProcessInstanceFingerprintReader;
+}): Promise<SessionRunnerProcessPresence> {
+  if (!trackedSessionMatchesSessionId(params.tracked, params.sessionId)) return 'absent';
 
   const childPid = typeof params.tracked.childProcess?.pid === 'number' ? params.tracked.childProcess.pid : null;
   const pidToCheck = childPid ?? params.tracked.pid;
-
-  if (!(await isPidPresentForDuplicateFence(pidToCheck, params.readProcessRunState))) return false;
-
-  // If the daemon has a live ChildProcess handle, treat the runner as active even if process inspection is flaky.
-  // This avoids spawning duplicates due to transient ps/command-line inspection failures.
-  if (childPid) return true;
-
-  // If this is only daemon bookkeeping, a matching live PID is not enough: the OS may have
-  // reused the PID after the original runner exited. Only a valid hash mismatch proves that.
-  if (
-    await processGenerationProvesPidReuseForPid({
-      storedProcessStartTimeMs: params.tracked.processStartTimeMs,
-      pid: pidToCheck,
-      readProcessIdentityByPid: params.readProcessIdentityByPid,
-    })
-  ) {
-    return false;
-  }
-
-  return true;
+  const runState = await params.readProcessRunState(pidToCheck).catch(() => null);
+  return await classifyStoredProcessPresence({
+    runState,
+    storedProcessStartTimeMs: params.tracked.processStartTimeMs,
+    storedProcessCommandHash: params.tracked.processCommandHash,
+    pid: pidToCheck,
+    readProcessIdentityByPid: params.readProcessIdentityByPid,
+    readProcessInstanceFingerprint: params.readProcessInstanceFingerprint,
+  });
 }
 
 export async function isSessionRunnerActive(params: Readonly<{
@@ -102,6 +114,7 @@ export async function isSessionRunnerActive(params: Readonly<{
   trackedSessions: Iterable<TrackedSession>;
   readProcessRunState?: ReadProcessRunState;
   readProcessIdentityByPid?: typeof readProcessIdentityByPid;
+  readProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
   readSessionRunnerLockStatus?: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
 }>): Promise<boolean> {
   const sessionId = normalizeSessionId(params.sessionId);
@@ -109,13 +122,27 @@ export async function isSessionRunnerActive(params: Readonly<{
 
   const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
   const readProcessIdentity = params.readProcessIdentityByPid ?? readProcessIdentityByPid;
+  const readProcessInstanceFingerprint = params.readProcessInstanceFingerprint
+    ?? ((pid, expectedFingerprint) => readProcessInstanceFingerprintSync(pid, { expectedFingerprint }));
   const readLockStatus = params.readSessionRunnerLockStatus ?? readSessionRunnerLockStatus;
 
   for (const tracked of params.trackedSessions) {
-    if (await isTrackedSessionActive({ sessionId, tracked, readProcessRunState, readProcessIdentityByPid: readProcessIdentity })) return true;
+    if (await classifyTrackedSessionPresence({
+      sessionId,
+      tracked,
+      readProcessRunState,
+      readProcessIdentityByPid: readProcessIdentity,
+      readProcessInstanceFingerprint,
+    }) === 'present') return true;
   }
 
-  return await isLockActive({ sessionId, readProcessRunState, readProcessIdentityByPid: readProcessIdentity, readSessionRunnerLockStatus: readLockStatus });
+  return await classifyLockPresence({
+    sessionId,
+    readProcessRunState,
+    readProcessIdentityByPid: readProcessIdentity,
+    readProcessInstanceFingerprint,
+    readSessionRunnerLockStatus: readLockStatus,
+  }) === 'present';
 }
 
 export type SessionRunnerServiceability =
@@ -145,47 +172,46 @@ export async function probeSessionRunnerServiceability(params: Readonly<{
   probeCapability: () => Promise<SessionRunnerServiceability>;
   readProcessRunState?: ReadProcessRunState;
   readProcessIdentityByPid?: typeof readProcessIdentityByPid;
+  readProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
   readSessionRunnerLockStatus?: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
 }>): Promise<SessionRunnerServiceabilityProbe> {
   const sessionId = normalizeSessionId(params.sessionId);
   const trackedSessions = Array.from(params.trackedSessions);
   const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
   const readLockStatus = params.readSessionRunnerLockStatus ?? readSessionRunnerLockStatus;
-  let lockStatusPromise: Promise<SessionRunnerLockStatus> | null = null;
-  const readLockStatusOnce = async (input: { sessionId: string }): Promise<SessionRunnerLockStatus> => {
-    lockStatusPromise ??= readLockStatus(input).catch((error: unknown) => ({
-      ok: false,
-      reason: 'io_error',
-      errorMessage: error instanceof Error ? error.message : String(error),
-    }));
-    return await lockStatusPromise;
-  };
-  const runnerPresent = await isSessionRunnerActive({
-    ...params,
-    trackedSessions,
-    readProcessRunState,
-    readSessionRunnerLockStatus: readLockStatusOnce,
-  });
-  if (!runnerPresent) {
-    for (const tracked of trackedSessions) {
-      if (!trackedSessionMatchesSessionId(tracked, sessionId)) continue;
-      const childPid = typeof tracked.childProcess?.pid === 'number' ? tracked.childProcess.pid : null;
-      const runState = await readProcessRunState(childPid ?? tracked.pid).catch(() => null);
-      if (runState !== 'dead' && runState !== 'zombie') {
-        return { state: 'runner_unknown', reason: 'runner_presence_unproven' };
-      }
-    }
+  const readProcessIdentity = params.readProcessIdentityByPid ?? readProcessIdentityByPid;
+  const readProcessInstanceFingerprint = params.readProcessInstanceFingerprint
+    ?? ((pid, expectedFingerprint) => readProcessInstanceFingerprintSync(pid, { expectedFingerprint }));
 
-    const lockStatus = await readLockStatusOnce({ sessionId });
-    if (!lockStatus.ok) {
-      return lockStatus.reason === 'not_found'
-        ? { state: 'runner_absent' }
-        : { state: 'runner_unknown', reason: 'runner_presence_unproven' };
+  for (const tracked of trackedSessions) {
+    if (!trackedSessionMatchesSessionId(tracked, sessionId)) continue;
+    const presence = await classifyTrackedSessionPresence({
+      sessionId,
+      tracked,
+      readProcessRunState,
+      readProcessIdentityByPid: readProcessIdentity,
+      readProcessInstanceFingerprint,
+    });
+    if (presence === 'present') {
+      return { state: 'runner_present', control: await params.probeCapability() };
     }
-    const lockRunState = await readProcessRunState(lockStatus.lock.pid).catch(() => null);
-    return lockRunState === 'dead' || lockRunState === 'zombie'
-      ? { state: 'runner_absent' }
-      : { state: 'runner_unknown', reason: 'runner_presence_unproven' };
+    if (presence !== 'absent') {
+      return { state: 'runner_unknown', reason: 'runner_presence_unproven' };
+    }
   }
-  return { state: 'runner_present', control: await params.probeCapability() };
+
+  const lockPresence = await classifyLockPresence({
+    sessionId,
+    readProcessRunState,
+    readProcessIdentityByPid: readProcessIdentity,
+    readProcessInstanceFingerprint,
+    readSessionRunnerLockStatus: readLockStatus,
+  });
+  if (lockPresence === 'present') {
+    return { state: 'runner_present', control: await params.probeCapability() };
+  }
+  if (lockPresence === 'absent' || lockPresence === 'recoverable_stopped') {
+    return { state: 'runner_absent' };
+  }
+  return { state: 'runner_unknown', reason: 'runner_presence_unproven' };
 }

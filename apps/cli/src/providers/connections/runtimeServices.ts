@@ -11,9 +11,12 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import {
-  requireAccountSettingsMutationSuccess,
   updateAccountSettingsV2WithRetry,
 } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+
+import {
+  requireProviderConnectionAccountSettingsMutationSuccess,
+} from './accountSettingsMutationRefusal';
 
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
 import { createPublicManagedProviderRuntimeStartOperation } from './publicManagedRuntimeStart';
@@ -106,8 +109,9 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
       };
     },
     updateAccountSettings: async (mutate) => {
-      const result = requireAccountSettingsMutationSuccess(
+      const result = requireProviderConnectionAccountSettingsMutationSuccess(
         await updateAccountSettingsV2WithRetry({ credentials: input.credentials, mutate }),
+        { machineId: input.machineId },
       );
       const refreshed = await refreshAccountSettingsForMinimumVersion({
         credentials: input.credentials,

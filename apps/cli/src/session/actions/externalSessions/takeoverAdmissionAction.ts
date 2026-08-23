@@ -30,6 +30,9 @@ import {
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
 } from './operationRecordStore';
+import {
+  recoverExternalSessionTakeoverPrecommitAdmission,
+} from './takeoverPrecommitAdmissionRecovery';
 
 type TakeoverRequest = Extract<
   ExternalSessionOperationRecordV1['request'],
@@ -207,42 +210,22 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
   const recoverPrecommitAdmissionFailure = async (
     record: PersistedTakeoverRecord,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
-    let recovered: ExternalSessionOperationRecordV1 | null = null;
-    try {
-      const failed = await mutateExternalSessionOperationRecordAtRevision(
-        dependencies.activeServerDir,
-        record.operationId,
-        record.revision,
-        (fresh) => {
-          const {
-            acceptedThroughServerSeq: _acceptedThroughServerSeq,
-            acknowledgedBatchId: _acknowledgedBatchId,
-            ...checkpoint
-          } = fresh.checkpoint;
-          return {
-            ...fresh,
-            revision: fresh.revision + 1,
-            status: 'failed',
-            phase: 'admitting',
-            checkpoint,
-            updatedAtMs: nowMs(),
-            retryTargetPhase: 'admitting',
-            error: {
-              code: 'admission_failed',
-              message: 'Persisted takeover admission did not complete.',
-              retryable: true,
-              occurredAtMs: nowMs(),
-            },
-          };
-        },
-      );
-      recovered = failed.ok
-        ? failed.record
-        : await readExternalSessionOperationRecord(
-          dependencies.activeServerDir,
-          record.operationId,
-        );
-    } catch {
+    // The admission owner commits refreshed authority evidence at
+    // `revision + 1` before it sends the Server command, so `record.revision`
+    // is already stale by the time a definitive pre-commit rejection lands
+    // here. The shared recovery owner rereads the exact attempt and CASes
+    // whatever revision the admission owner left behind.
+    let recovered: ExternalSessionOperationRecordV1 | null =
+      await recoverExternalSessionTakeoverPrecommitAdmission({
+        activeServerDir: dependencies.activeServerDir,
+        targetStorageMode: 'persisted',
+        sessionId: record.request.sessionId,
+        operationId: record.operationId,
+        attemptId: record.bindings.targetRuntimeAttemptId,
+        message: 'Persisted takeover admission did not complete.',
+        nowMs: nowMs(),
+      });
+    if (!recovered) {
       recovered = await readExternalSessionOperationRecord(
         dependencies.activeServerDir,
         record.operationId,

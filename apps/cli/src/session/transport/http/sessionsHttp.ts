@@ -712,7 +712,7 @@ export type SessionAgentTransitionCurrentViewWriteV1 =
  * ambiguity, where the daemon cannot establish whether the write landed.
  */
 export type ApplySessionAgentTransitionCutoverHttpResult =
-  | Readonly<{ ok: true; dividerSeq: number; dividerVerificationRequired?: true }>
+  | Readonly<{ ok: true; dividerSeq: number }>
   | Readonly<{
       ok: false;
       effect: 'none';
@@ -735,16 +735,7 @@ export type ApplySessionAgentTransitionCutoverHttpResult =
 const SessionAgentTransitionCutoverSuccessSchema = z.object({
   success: z.literal(true),
   dividerSeq: z.number().int().min(0),
-  /**
-   * The server found an unreadable row already occupying the reserved divider
-   * localId and could not establish that this operation wrote it. Only this
-   * daemon holds the key, so the coordinator must verify the row before acting
-   * on the divider. An older server never sends it, which reads as "verified by
-   * the server" — correct, because an older server only reached this arm after
-   * comparing plaintext itself.
-   */
-  dividerVerificationRequired: z.literal(true).optional(),
-}).passthrough();
+}).strict();
 
 const SessionAgentTransitionCutoverNoEffectErrorSchema = z.enum([
   'invalid-params',
@@ -817,9 +808,6 @@ export async function applySessionAgentTransitionCutover(params: Readonly<{
       ? {
           ok: true,
           dividerSeq: success.data.dividerSeq,
-          ...(success.data.dividerVerificationRequired
-            ? { dividerVerificationRequired: true as const }
-            : {}),
         }
       : { ok: false, effect: 'unknown', error: 'transport' };
   }

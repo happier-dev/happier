@@ -32,7 +32,13 @@ type ServerRelayHandler = (
             to: (room: string) => Readonly<{
                 emit: (event: string, payload: unknown) => unknown;
             }>;
+            local: Readonly<{
+                to: (room: string) => Readonly<{
+                    emit: (event: string, payload: unknown) => unknown;
+                }>;
+            }>;
         }>;
+        coordinator: unknown;
         relayAuthorizationTrustRoots?: readonly Readonly<{
             keyId: string;
             publicKeyBase64Url: string;
@@ -42,6 +48,61 @@ type ServerRelayHandler = (
         allowedPorts?: readonly number[];
     }>,
 ) => void;
+
+type RelayTestIo = Readonly<{
+    to: (room: string) => Readonly<{
+        emit: (event: string, payload: unknown) => unknown;
+    }>;
+}>;
+
+type RelayTestCoordinatorAdmission = Readonly<{
+    tunnelKey: string;
+    grantId: string;
+    machineId: string;
+}>;
+
+/**
+ * CLI-side Socket.IO harness for the server relay boundary. It models only the
+ * coordinator contract exercised by this CLI/server test: one consumed
+ * grant and one exact-machine attachment per tunnel.
+ */
+function createRelayTestCoordinator(io: RelayTestIo, accountId: string) {
+    const attachmentsByTunnelKey = new Map<string, Readonly<{
+        machineId: string;
+    }>>();
+    const consumedGrantIds = new Set<string>();
+
+    return {
+        admit: async (input: RelayTestCoordinatorAdmission) => {
+            if (consumedGrantIds.has(input.grantId)) {
+                return { status: 'rejected' as const, reason: 'grant_already_consumed' as const };
+            }
+            consumedGrantIds.add(input.grantId);
+            attachmentsByTunnelKey.set(input.tunnelKey, {
+                machineId: input.machineId,
+            });
+            return { status: 'attached' as const };
+        },
+        routeMachineEnvelope: (input: Readonly<{ tunnelKey: string }>) => (
+            attachmentsByTunnelKey.has(input.tunnelKey) ? 'local_exact' as const : 'rejected' as const
+        ),
+        routeOwnerEnvelope: (input: Readonly<{ tunnelKey: string; envelope: unknown }>) => {
+            const attachment = attachmentsByTunnelKey.get(input.tunnelKey);
+            if (!attachment) return false;
+            io.to(`machine:${attachment.machineId}:${accountId}`).emit(
+                PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+                input.envelope,
+            );
+            return true;
+        },
+        release: (tunnelKey: string) => {
+            attachmentsByTunnelKey.delete(tunnelKey);
+        },
+        close: async () => {
+            attachmentsByTunnelKey.clear();
+        },
+    };
+}
 
 async function loadServerRegisterRelayHandler(): Promise<ServerRelayHandler | null> {
     const modulePath =
@@ -319,20 +380,23 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
             },
         };
         const userDeliveries: unknown[] = [];
-        const io = {
-            to: (room: string) => ({
-                emit: (event: string, payload: unknown) => {
-                    if (room === 'machine:machine_1:user_1') {
-                        scheduleDelivery(daemonHandlers.get(event)?.(payload));
-                    } else {
-                        userDeliveries.push(payload);
-                    }
-                },
-            }),
-        };
+        const emitToRoom = (room: string) => ({
+            emit: (event: string, payload: unknown) => {
+                if (room === 'machine:machine_1:user_1') {
+                    scheduleDelivery(daemonHandlers.get(event)?.(payload));
+                } else {
+                    userDeliveries.push(payload);
+                }
+            },
+        });
+        const io = { to: emitToRoom, local: { to: emitToRoom } };
+        // The server relay handler requires its cluster coordinator: it owns grant
+        // consumption, exact-machine attachment and owner->machine delivery.
+        const coordinator = createRelayTestCoordinator(io, 'user_1');
         const registerServerSocket = (socket: ServerRelaySocket): void => {
             registerServerRelay('user_1', socket, {
                 io,
+                coordinator,
                 nowMs: () => 2_000,
                 serverRoutedEnabled: true,
                 allowedPorts: [3000],

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
+  AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS,
   AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
   AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
   AutomationRunExecutionInputV1Schema,
@@ -23,7 +24,6 @@ import {
 } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { decodeBase64, decryptLegacy } from '@/api/encryption';
 
-const MAX_TEMPLATE_CIPHERTEXT_CHARS = 220_000;
 const MAX_EXECUTION_INPUT_ENVELOPE_CHARS = MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES;
 const UTF8_ENCODER = new TextEncoder();
 
@@ -183,7 +183,7 @@ export function parseAutomationTemplateExecution(
   payload: AutomationClaimedRunPayload,
   encryption?: AutomationTemplateEncryption,
 ): AutomationTemplateExecutionParseResult {
-  if (payload.automation.templateCiphertext.length > MAX_TEMPLATE_CIPHERTEXT_CHARS) {
+  if (payload.automation.templateCiphertext.length > AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS) {
     return invalidAutomationTemplate('Invalid automation template: envelope too large');
   }
 

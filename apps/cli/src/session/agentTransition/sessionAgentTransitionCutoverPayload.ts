@@ -5,7 +5,6 @@ import {
   SessionStoredMessageContentSchema,
   buildSessionAgentTransitionDividerLocalId,
   type AccountEncryptionCurrentnessResponse,
-  type SessionAgentTransitionDividerV1,
   type SessionStoredMessageContent,
 } from '@happier-dev/protocol';
 
@@ -15,6 +14,7 @@ import {
   readSessionMetadataTupleWriterSnapshot,
 } from '@/session/metadata/updateSessionMetadataWithRetry';
 import {
+  encryptSessionPayload,
   encryptStoredSessionPayload,
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -103,7 +103,6 @@ export async function sealSessionAgentTransitionCurrentView(
 
 export type SessionAgentTransitionDividerPayload = Readonly<{
   localId: string;
-  sidecar: SessionAgentTransitionDividerV1;
   content: SessionStoredMessageContent;
 }>;
 
@@ -113,9 +112,9 @@ export type SessionAgentTransitionDividerPayload = Readonly<{
  * arm with the strict `sessionAgentTransitionV1` sidecar, so a released older
  * reader still renders truthful prose.
  *
- * Content is a pure function of the committed target view, which is exactly
- * what makes a retry byte-identical and therefore idempotent at the canonical
- * message owner.
+ * The canonical sealer binds this full payload together with the encryption
+ * variant and stable reserved localId. An exact retry is therefore
+ * byte-identical, while any changed payload seals differently.
  */
 export function buildSessionAgentTransitionDividerPayload(
   params: Readonly<{
@@ -151,7 +150,6 @@ export function buildSessionAgentTransitionDividerPayload(
     returningAgentLastSeenSeqInclusive: number | null;
   }> & SessionStoredContentCryptoContext,
 ): SessionAgentTransitionDividerPayload {
-  const cryptoContext: SessionStoredContentCryptoContext = params;
   const localId = buildSessionAgentTransitionDividerLocalId(params.submittedLocalId);
   const sidecar = SessionAgentTransitionDividerV1Schema.parse({
     v: 1,
@@ -179,8 +177,12 @@ export function buildSessionAgentTransitionDividerPayload(
       ? { t: 'plain', v: payload }
       : {
           t: 'encrypted',
-          c: encryptStoredSessionPayload({ ...cryptoContext, payload }),
+          c: encryptSessionPayload({
+            ctx: params.ctx,
+            payload,
+            idempotencyKey: localId,
+          }),
         },
   );
-  return { localId, sidecar, content };
+  return { localId, content };
 }

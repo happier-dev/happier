@@ -250,79 +250,9 @@ describe('provider runtime-state store', () => {
     expect(JSON.parse(await readFile(store.path, 'utf8'))).toEqual(fileWithEndpoint(endpointRecord('first', 1)));
   });
 
-  it('coalesces explicit touches into one durable write and never invents a cache row', async () => {
-    const happyHomeDir = await tempHome();
-    const writer = vi.fn(writeJsonAtomic);
-    const store = createProviderRuntimeStateStore({
-      happyHomeDir, machineId: 'machine_a', writeJsonAtomic: writer,
-    });
-    await store.update(() => fileWithEndpoint(endpointRecord('responses', 1)));
-    store.touch({ kind: 'endpointHealth', key: endpointRecord('responses', 1).key, lastAccessedAt: 2 });
-    store.touch({ kind: 'endpointHealth', key: endpointRecord('responses', 1).key, lastAccessedAt: 3 });
-    store.touch({ kind: 'endpointHealth', key: endpointRecord('missing', 1).key, lastAccessedAt: 99 });
-    expect(writer).toHaveBeenCalledTimes(1);
-    await store.flushTouches();
-    expect(writer).toHaveBeenCalledTimes(2);
-    const state = await store.read();
-    expect(state.endpointHealth).toHaveLength(1);
-    expect(state.endpointHealth[0]?.lastAccessedAt).toBe(3);
-  });
 
-  it('snapshots a queued touch so later caller mutation cannot retarget it', async () => {
-    const happyHomeDir = await tempHome();
-    const store = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
-    await store.update(() => ({
-      ...fileWithEndpoint(),
-      endpointHealth: [endpointRecord('a', 1), endpointRecord('b', 1)],
-    }));
-    const touch = {
-      kind: 'endpointHealth' as const,
-      key: structuredClone(endpointRecord('a', 1).key),
-      lastAccessedAt: 2,
-    };
-    store.touch(touch);
-    touch.key.endpointTemplateId = 'b';
-    touch.lastAccessedAt = 99;
 
-    await store.flushTouches();
 
-    const state = await store.read();
-    expect(state.endpointHealth.map((record) => [record.key.endpointTemplateId, record.lastAccessedAt]))
-      .toEqual([['a', 2], ['b', 1]]);
-  });
-
-  it('does not write when every coalesced touch is a cache miss', async () => {
-    const happyHomeDir = await tempHome();
-    const writer = vi.fn(writeJsonAtomic);
-    const store = createProviderRuntimeStateStore({
-      happyHomeDir, machineId: 'machine_a', writeJsonAtomic: writer,
-    });
-    await store.read();
-    store.touch({ kind: 'endpointHealth', key: endpointRecord('missing', 1).key, lastAccessedAt: 2 });
-    await store.flushTouches();
-    expect(writer).not.toHaveBeenCalled();
-    await expect(readFile(store.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('restores coalesced touches after a failed flush', async () => {
-    const happyHomeDir = await tempHome();
-    let fail = false;
-    const writer = vi.fn(async (path: string, value: unknown) => {
-      if (fail) throw new Error('touch write failed');
-      await writeJsonAtomic(path, value);
-    });
-    const store = createProviderRuntimeStateStore({
-      happyHomeDir, machineId: 'machine_a', writeJsonAtomic: writer,
-    });
-    await store.update(() => fileWithEndpoint(endpointRecord('responses', 1)));
-    store.touch({ kind: 'endpointHealth', key: endpointRecord('responses', 1).key, lastAccessedAt: 5 });
-    fail = true;
-    await expect(store.flushTouches()).rejects.toThrow(/touch write failed/u);
-    expect((await store.read()).endpointHealth[0]?.lastAccessedAt).toBe(1);
-    fail = false;
-    await store.flushTouches();
-    expect((await store.read()).endpointHealth[0]?.lastAccessedAt).toBe(5);
-  });
 
   it('repairs permissive existing directory/file modes on write', async () => {
     if (process.platform === 'win32') return;
@@ -374,32 +304,4 @@ describe('provider runtime-state store', () => {
       .toEqual(['completions', 'responses']);
   });
 
-  it('applies a queued touch over another process store\'s newer record', async () => {
-    const happyHomeDir = await tempHome();
-    const daemonStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
-    const foregroundStore = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
-    await daemonStore.update((state) => ({
-      ...state,
-      endpointHealth: [endpointRecord('responses', 1)],
-    }));
-    await foregroundStore.read();
-    await daemonStore.update((state) => ({
-      ...state,
-      endpointHealth: [...state.endpointHealth, endpointRecord('completions', 2)],
-    }));
-
-    foregroundStore.touch({
-      kind: 'endpointHealth',
-      key: endpointRecord('responses', 1).key,
-      lastAccessedAt: 9,
-    });
-    await foregroundStore.flushTouches();
-
-    const observer = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
-    const persisted = await observer.read();
-    expect(persisted.endpointHealth.map((record) => [
-      record.key.endpointTemplateId,
-      record.lastAccessedAt,
-    ]).sort()).toEqual([['completions', 2], ['responses', 9]]);
-  });
 });

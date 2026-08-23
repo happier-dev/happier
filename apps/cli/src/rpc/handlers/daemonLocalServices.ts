@@ -6,6 +6,8 @@ import {
     DaemonLocalServiceInventoryRefreshResponseV1Schema,
     DaemonLocalServiceInventorySnapshotRequestV1Schema,
     DaemonLocalServiceInventorySnapshotResponseV1Schema,
+    DaemonLocalServiceInventoryWatchRequestV1Schema,
+    DaemonLocalServiceInventoryWatchResponseV1Schema,
     DaemonLocalServiceLauncherHistoryClearResponseV1Schema,
     DaemonLocalServiceLauncherLeafRequestV1Schema,
     DaemonLocalServiceLauncherOpenPreviewResponseV1Schema,
@@ -28,6 +30,7 @@ import {
     type DaemonLocalServiceActionExecuteResponseV1,
     type DaemonLocalServiceInventoryRefreshResponseV1,
     type DaemonLocalServiceInventorySnapshotResponseV1,
+    type DaemonLocalServiceInventoryWatchResponseV1,
     type DaemonLocalServiceLauncherHistoryClearResponseV1,
     type DaemonLocalServiceLauncherOpenPreviewResponseV1,
     type DaemonLocalServiceLauncherRegisterPreviewResponseV1,
@@ -49,7 +52,10 @@ import type { LocalServicePublicPreviewRoutes } from '@/daemon/local/services/pu
 import { registerDaemonLocalServicePreviewSnapshotHandler } from './daemonLocalServicePreviewSnapshot';
 
 export type DaemonLocalServicesMachineRpcRoutes = Readonly<{
-    localServicesInventory?: Pick<LocalServiceInventoryRoutes, 'getSnapshot' | 'refreshSnapshot'> | null;
+    localServicesInventory?:
+        & Pick<LocalServiceInventoryRoutes, 'getSnapshot' | 'refreshSnapshot'>
+        & Partial<Pick<LocalServiceInventoryRoutes, 'watchSnapshot'>>
+        | null;
     localServicesLauncher?: Pick<LocalServiceLauncherRoutes, 'getSnapshot'> & Partial<Pick<LocalServiceLauncherRoutes, 'startTarget' | 'leaves'>> | null;
     localServicesManaged?: Readonly<{ getSnapshot(): Promise<DaemonLocalServiceManagedSnapshotResponseV1['snapshot']> }> | null;
     localServicesPreview?: LocalServicePreviewRoutes | null;
@@ -59,7 +65,7 @@ export type DaemonLocalServicesMachineRpcRoutes = Readonly<{
 
 function requireInventoryRoutes(
     options: DaemonLocalServicesMachineRpcRoutes,
-): Pick<LocalServiceInventoryRoutes, 'getSnapshot' | 'refreshSnapshot'> {
+): NonNullable<DaemonLocalServicesMachineRpcRoutes['localServicesInventory']> {
     if (!options.localServicesInventory) {
         throw new Error('Local service inventory runtime is unavailable');
     }
@@ -148,6 +154,32 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                 });
             },
         );
+
+        // The push half of local-service freshness (G10): a parked read that answers when the
+        // daemon's inventory registry actually changes. Clients keep exactly one of these
+        // outstanding per mounted surface and re-arm on the answer, so nothing polls.
+        if (options.localServicesInventory.watchSnapshot) {
+            rpc.registerHandler(
+                RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
+                async (raw: unknown): Promise<DaemonLocalServiceInventoryWatchResponseV1> => {
+                    const request = DaemonLocalServiceInventoryWatchRequestV1Schema.parse(raw);
+                    const watchSnapshot = requireInventoryRoutes(options).watchSnapshot;
+                    if (!watchSnapshot) {
+                        throw new Error('Local service inventory watch runtime is unavailable');
+                    }
+                    const result = await watchSnapshot(
+                        request.sinceGeneratedAt === undefined
+                            ? {}
+                            : { sinceGeneratedAt: request.sinceGeneratedAt },
+                    );
+                    return DaemonLocalServiceInventoryWatchResponseV1Schema.parse(
+                        result.changed
+                            ? { protocolVersion: 1, changed: true, snapshot: result.snapshot }
+                            : { protocolVersion: 1, changed: false },
+                    );
+                },
+            );
+        }
     }
 
     if (options.localServicesLauncher) {

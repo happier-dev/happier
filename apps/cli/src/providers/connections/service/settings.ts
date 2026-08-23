@@ -1,10 +1,10 @@
 import {
   AccountSettingsSavedSecretMutationError,
-  ProviderSettingsV1Schema,
   SavedSecretSchema,
   applyAccountSettingsSavedSecretMutation,
   createProviderErrorV1,
-  readProviderSettingsFromAccountSettingsV1,
+  readProviderSettingsMutationBasisV1,
+  writeProviderSettingsToAccountSettingsV1,
   type ProviderErrorV1,
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
@@ -32,17 +32,22 @@ export function redactProviderSettingsDiagnostic(
   };
 }
 
+/**
+ * The CLI projection of the shared Provider-settings mutation basis. The
+ * decision itself lives in Protocol so the encrypted client CAS paths — which
+ * cannot call into the CLI at all — refuse exactly the same diagnostic state.
+ */
 export function readSettings(
   raw: Readonly<Record<string, unknown>>,
   errorContext?: Readonly<{ connectionId?: string; machineId?: string }>,
 ): ProviderSettingsV1 {
-  const read = readProviderSettingsFromAccountSettingsV1(raw);
-  if (read.diagnostics.length > 0) {
+  const basis = readProviderSettingsMutationBasisV1(raw);
+  if (basis.status === 'refused') {
     throw errorContext
       ? createProviderErrorV1('provider_settings_invalid', errorContext)
       : createProviderErrorV1('provider_settings_invalid');
   }
-  return read.settings;
+  return basis.settings;
 }
 
 export class ProviderConnectionValidationError extends Error {}
@@ -51,7 +56,7 @@ export function replaceSettings(
   raw: Readonly<Record<string, unknown>>,
   settings: ProviderSettingsV1,
 ): Record<string, unknown> {
-  return { ...raw, providerSettingsV1: ProviderSettingsV1Schema.parse(settings) };
+  return writeProviderSettingsToAccountSettingsV1(raw, settings);
 }
 
 export function savedSecretExists(raw: Readonly<Record<string, unknown>>, id: string): boolean {

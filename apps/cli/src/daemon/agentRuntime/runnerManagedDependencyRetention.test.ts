@@ -254,6 +254,7 @@ describe('live Runner Agent managed-dependency retention', () => {
       await writeFile(
         join(root, 'plugin-generation.v1.json'),
         JSON.stringify({
+          sourceProvenance: 'registryCustodied',
           t: 'happier_plugin_generation_v1',
           schemaVersion: 1,
           pluginId,

@@ -1,8 +1,10 @@
 import {
   BrowserAutomationActionRequestV1Schema,
   BrowserAutomationActionResultV1Schema,
+  BrowserAutomationCancelActiveResultV1Schema,
   getActionSpec,
   type BrowserAutomationActionResultV1,
+  type BrowserAutomationCancelActiveResultV1,
   type BrowserAutomationTimelineV1,
   type RuntimeActionIdV1,
 } from '@happier-dev/protocol';
@@ -18,6 +20,7 @@ export type BrowserAutomationRouteFailure = Readonly<{
 
 export type BrowserAutomationRouteResult =
   | BrowserAutomationActionResultV1
+  | BrowserAutomationCancelActiveResultV1
   | BrowserAutomationTimelineV1
   | BrowserAutomationRouteFailure;
 
@@ -95,11 +98,15 @@ export function createBrowserAutomationRoutes(input: Readonly<{
         const requesterRef = readRequesterRef(rawInput) ?? { kind: 'agent', id: `${view.browserSessionId}` };
         const canceled = input.service.cancelActive({ ...view, requesterRef });
         return canceled.ok
-          ? syntheticResult({ view, status: 'succeeded' })
-          : syntheticResult({
-              view,
-              status: 'failed',
-              errorCode: canceled.errorCode === 'owner_mismatch' ? 'owner_mismatch' : 'unsupported_action',
+          ? BrowserAutomationCancelActiveResultV1Schema.parse({
+              v: 1,
+              outcome: 'canceled',
+              canceledCount: 1,
+            })
+          : BrowserAutomationCancelActiveResultV1Schema.parse({
+              v: 1,
+              outcome: canceled.errorCode === 'owner_mismatch' ? 'owner_mismatch' : 'no_active',
+              canceledCount: 0,
             });
       }
 

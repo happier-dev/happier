@@ -17,6 +17,7 @@ import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/re
 import {
   readCurrentPluginHardRevocationRevision,
   readCurrentPluginImmutableGenerationIntegrityCurrentness,
+  resolveBundledImmutablePluginArtifact,
 } from '@/plugins/store/registry/generationStore';
 import {
   attachExactRunnerRetainedPluginGenerations,
@@ -339,6 +340,9 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
   tracked.runnerAgentInvocationContext = Object.freeze({
     cwd: input.invocationContext.cwd,
     environment: Object.freeze({}),
+    ...(input.invocationContext.agentCliLaunch
+      ? { agentCliLaunch: input.invocationContext.agentCliLaunch }
+      : {}),
     providerBindingActive: false,
   });
   delete tracked.agentRuntimeRunnerRestartDisposition;

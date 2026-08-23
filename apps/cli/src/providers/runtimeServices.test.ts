@@ -349,6 +349,37 @@ describe('runtime Provider operation production boundary', () => {
     });
   });
 
+  it('returns a committed model load instead of reporting the caller cancellation that lost the race', async () => {
+    const machineServices = createMachineServices();
+    let commitLoad: (() => void) | undefined;
+    vi.mocked(machineServices.loadModel).mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { commitLoad = resolve; });
+      return { status: 'loaded', source: 'requested' };
+    });
+    const invocation = currentBinding();
+    const operations = createRuntimeProviderOperationsProducer({
+      machineId: 'machine-a',
+      machineServices,
+      featureGate: providersEnabledFeatureGate,
+    }).bind(invocation.binding);
+    const caller = new AbortController();
+
+    const pending = operations.catalog.setModelLoad({
+      action: 'load',
+      connectionId: ProviderConnectionIdSchema.parse('pc_1'),
+      modelId: 'model-a',
+    }, { signal: caller.signal });
+    await vi.waitFor(() => expect(machineServices.loadModel).toHaveBeenCalledOnce());
+
+    // The caller gives up, but the machine owner still commits the load. The
+    // committed outcome is authoritative: reporting cancellation here would
+    // make an identical retry duplicate work the daemon already performed.
+    caller.abort();
+    commitLoad?.();
+
+    await expect(pending).resolves.toEqual({ status: 'loaded', source: 'requested' });
+  });
+
   it('composes model-load cancellation into the canonical owner signal and preserves providerMayContinue', async () => {
     const machineServices = createMachineServices();
     let ownerSignal: AbortSignal | undefined;

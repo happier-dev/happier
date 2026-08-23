@@ -24,6 +24,7 @@ import {
 
 export type ActionSpecRpcHandlerSpec = Readonly<{
     id: string;
+    operation?: unknown;
     surfaces?: Readonly<{ rpc?: boolean }>;
     bindings?: Readonly<{ rpcMethod?: string | null; rpcMethodAliases?: readonly string[] }>;
     surfaceBindings?: ActionSpecSurfaceBindings;
@@ -52,6 +53,16 @@ export type RegisterActionSpecRpcHandlersParams = Readonly<{
     actionIds?: readonly string[];
     methods?: readonly string[];
     scopes?: readonly ActionSpecRpcRegistrationScope[];
+    observeExecution?: (request: Readonly<{
+        actionId: string;
+        input: unknown;
+        sessionId?: string;
+        execute: (context: Readonly<{
+            signal: AbortSignal;
+            operationProgress: NonNullable<RpcHandlerContext['localActionContext']>['operationProgress'];
+            operationOwnerUpdate: NonNullable<RpcHandlerContext['localActionContext']>['operationOwnerUpdate'];
+        }>) => Promise<ActionExecuteResult>;
+    }>) => Promise<ActionExecuteResult>;
     mapResponseForMethod?: (context: Readonly<{
         actionId: ActionId;
         method: string;
@@ -229,16 +240,45 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
                 }
             }
             const executor = await resolveActionExecutor(params);
-            const result = await dispatchActionFromRpc({
+            const execute = async (execution: Readonly<{
+                signal?: AbortSignal;
+                operationProgress?: NonNullable<RpcHandlerContext['localActionContext']>['operationProgress'];
+                operationOwnerUpdate?: NonNullable<RpcHandlerContext['localActionContext']>['operationOwnerUpdate'];
+            }>): Promise<ActionExecuteResult> => await dispatchActionFromRpc({
                 actionId: typedActionId,
                 input: semanticInput,
                 ...buildActionExecutorContextHints(semanticInput),
-                ...(context?.signal ? { signal: context.signal } : {}),
-                ...(context?.localActionContext
-                  ? { localActionContext: context.localActionContext }
-                  : {}),
+                ...(execution.signal ? { signal: execution.signal } : {}),
+                ...(
+                    context?.localActionContext || execution.operationProgress || execution.operationOwnerUpdate
+                      ? {
+                          localActionContext: {
+                              ...context?.localActionContext,
+                              ...(execution.operationProgress
+                                ? { operationProgress: execution.operationProgress }
+                                : {}),
+                              ...(execution.operationOwnerUpdate
+                                ? { operationOwnerUpdate: execution.operationOwnerUpdate }
+                                : {}),
+                          },
+                        }
+                      : {}
+                ),
                 executor,
             });
+            const sessionId = readDefaultSessionIdFromRpcInput(semanticInput);
+            const result = params.observeExecution && spec.operation
+                ? await params.observeExecution({
+                    actionId,
+                    input: semanticInput,
+                    ...(sessionId ? { sessionId } : {}),
+                    execute: async ({ signal, operationProgress, operationOwnerUpdate }) => await execute({
+                        signal,
+                        operationProgress,
+                        operationOwnerUpdate,
+                    }),
+                })
+                : await execute({ ...(context?.signal ? { signal: context.signal } : {}) });
             if (!result.ok || !rpcBinding) {
                 return unwrapActionResultForRpc(typedActionId, result);
             }

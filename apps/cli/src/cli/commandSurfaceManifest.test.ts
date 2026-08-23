@@ -25,7 +25,7 @@ describe('CLI command-surface manifest', () => {
     await primeProjectedCommandSurfaceEntries();
     const entries = listRootHelpCommands();
     const commands = entries.map((entry) => entry.command);
-    expect(commands.slice(0, 22)).toEqual([
+    expect(commands.slice(0, 29)).toEqual([
       null,
       'setup',
       'auth',
@@ -47,9 +47,16 @@ describe('CLI command-surface manifest', () => {
       'self',
       'self-update',
       'session',
+      'spawn',
+      'list',
+      'send',
+      'history',
+      'wait',
+      'stop',
+      'delegate',
       'resume',
     ]);
-    expect(new Set(commands.slice(22))).toEqual(new Set([
+    expect(new Set(commands.slice(29))).toEqual(new Set([
       'claude',
       'opencode',
       'antigravity',
@@ -83,6 +90,10 @@ describe('CLI command-surface manifest', () => {
     expect(entries.find((entry) => entry.command === 'session')).toMatchObject({
       rootHelpLabel: 'happier session',
       rootHelpDescription: 'Manage sessions and execution runs',
+    });
+    expect(entries.find((entry) => entry.command === 'spawn')).toMatchObject({
+      rootHelpLabel: 'happier spawn [options]',
+      rootHelpDescription: 'Create a session',
     });
     expect(entries.find((entry) => entry.command === 'resume')).toMatchObject({
       rootHelpLabel: 'happier resume [<session-id-or-prefix>]',

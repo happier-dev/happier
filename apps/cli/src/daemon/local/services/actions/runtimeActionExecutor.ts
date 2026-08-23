@@ -14,6 +14,7 @@ import {
     redactLocalServicePublicPreviewCreateResponseForAgentEgress,
     redactLocalServicePublicPreviewRevokeResponseForAgentEgress,
     redactLocalServicePublicPreviewSnapshotForAgentEgress,
+    resolveLocalServiceActionKindForRuntimeActionId,
     resolveRuntimeActionExecutionFamily,
     type RuntimeActionExecute,
     type RuntimeActionExecuteArgs,
@@ -369,7 +370,13 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
                 return disabledResult('local_services_action_routes_unavailable');
             }
             const request = LocalServiceActionRequestV1Schema.safeParse(parsed.input);
-            return request.success ? await routes.execute(request.data) : invalidParametersResult;
+            if (
+                !request.success
+                || resolveLocalServiceActionKindForRuntimeActionId(args.actionId) !== request.data.action
+            ) {
+                return invalidParametersResult;
+            }
+            return await routes.execute(request.data);
         }
 
         return disabledResult('local_services_runtime_action_unbacked');

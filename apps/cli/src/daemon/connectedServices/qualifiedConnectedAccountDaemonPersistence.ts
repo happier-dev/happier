@@ -15,7 +15,6 @@ import {
   applyAccountSettingsSavedSecretMutation,
   accountSettingsParse,
   decryptSecretValueWithKeysV1,
-  encryptSecretStringV1,
   parseBuiltInLegacyConnectedServiceCredentialRecordV1,
   parseConnectedAccountServiceConfigurationsV1,
   parseQualifiedConnectedAccountCredentialPlaintextV1,
@@ -31,6 +30,7 @@ import {
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import {
   QualifiedConnectedAccountCompatibilityError,
+  QualifiedConnectedAccountCredentialConflictError,
   executeQualifiedConnectedAccountNegotiatedOperation,
   resolveQualifiedConnectedAccountOperationTransport,
   mutateQualifiedConnectedAccountConfigurationV4,
@@ -69,7 +69,6 @@ import {
   indexSavedSecretsByIdFromAccountSettings,
 } from '@/settings/secrets/indexSavedSecretsById';
 import {
-  deriveSettingsSecretsKeyForCredentials,
   deriveSettingsSecretsReadKeysForCredentials,
 } from '@/settings/secrets/settingsSecretsKey';
 import {
@@ -105,6 +104,37 @@ type OAuthTransaction = Awaited<ReturnType<
   ConnectedAccountDaemonPersistence['attempts']['oauth']['create']
 >>;
 type OAuthCompletion = Parameters<OAuthTransaction['acceptCompletion']>[0];
+/**
+ * Projects the server's named credential-refusal cause onto the settlement
+ * contract. Only the causes that mean something different to the caller are
+ * named here; an ordinary CAS race stays on the shared settlement-conflict path
+ * so the existing reconciliation read-back still runs.
+ */
+function readQualifiedConnectedAccountCredentialSettlementCause(
+  error: unknown,
+): Readonly<{ status: 'conflict' | 'rejected'; code: string }> | null {
+  if (!(error instanceof QualifiedConnectedAccountCredentialConflictError)) return null;
+  switch (error.code) {
+    case 'connect_connected_account_capacity_exhausted':
+      return Object.freeze({
+        status: 'rejected' as const,
+        code: 'connected_account_credential_capacity_exhausted',
+      });
+    case 'connect_reconnect_provider_identity_mismatch':
+      return Object.freeze({
+        status: 'conflict' as const,
+        code: 'connected_account_reconnect_provider_identity_mismatch',
+      });
+    case 'connect_authentication_mode_mismatch':
+      return Object.freeze({
+        status: 'conflict' as const,
+        code: 'connected_account_authentication_mode_mismatch',
+      });
+    default:
+      return null;
+  }
+}
+
 type SettlementRequest = Parameters<
   ConnectedAccountDaemonPersistence['attempts']['settlement']['settle']
 >[0];
@@ -1061,10 +1091,6 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                 'Connected-account service configuration capacity is exhausted',
               );
             }
-            const writeKey =
-              deriveSettingsSecretsKeyForCredentials(
-                requireAccountEncryptionCredentials(params.credentials),
-              );
             let nextSettings = settings;
             const secretRefs: Record<string, string> = {
               ...input.currentSecretRefs,
@@ -1081,14 +1107,13 @@ export function createQualifiedConnectedAccountDaemonPersistence(
                 id: secretId,
                 name: `Connected Account ${fieldId}`.slice(0, 100),
                 kind: 'other',
-                encryptedValue: {
-                  _isSecretValue: true,
-                  encryptedValue: encryptSecretStringV1(
-                    value,
-                    writeKey,
-                    randomBytes,
-                  ),
-                },
+                // The Account Settings write owner applies the Account's actual encryption
+                // mode to every SavedSecret on its way to the envelope: E2EE Accounts get the
+                // canonical sealed form, plaintext Accounts — which correctly hold no Account
+                // data-encryption material — get the canonical plain envelope. Encrypting here
+                // would make this adapter a second decision-maker and would fail closed for
+                // every plaintext Account.
+                encryptedValue: { _isSecretValue: true, value },
                 createdAt: timestamp,
                 updatedAt: timestamp,
               });
@@ -1804,6 +1829,8 @@ export function createQualifiedConnectedAccountDaemonPersistence(
               }
               throw error.cause;
             }
+            const namedCause = readQualifiedConnectedAccountCredentialSettlementCause(error);
+            if (namedCause) return namedCause;
             const reconciliationConflict =
               readHttpStatus(error) === 409
               && reconciliation;

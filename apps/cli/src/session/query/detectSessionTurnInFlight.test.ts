@@ -38,6 +38,35 @@ describe('detectSessionTurnActivity', () => {
         expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
     });
 
+    it('treats a durable pending input as in flight before it is materialized into the transcript', async () => {
+        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+            fetchEncryptedTranscriptPageLatest,
+            fetchEncryptedTranscriptPageAfterSeq,
+        }));
+
+        const { detectSessionTurnActivity } = await import('./detectSessionTurnInFlight');
+
+        await expect(detectSessionTurnActivity({
+            token: 'token',
+            sessionId: 'sess-1',
+            encryptionMode: 'plain',
+            encryptionKey: new Uint8Array(32).fill(1),
+            encryptionVariant: 'dataKey',
+            sessionProjection: {
+                latestTurnStatus: null,
+                pendingCount: 1,
+            },
+        })).resolves.toEqual({
+            pendingUserTurns: 1,
+            activeTaskInFlight: false,
+            turnInFlight: true,
+        });
+        expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
+        expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
+    });
+
     it('trusts a complete idle projection over transcript task lifecycle rows', async () => {
         const fetchEncryptedTranscriptPageLatest = vi.fn(async () => [
             {

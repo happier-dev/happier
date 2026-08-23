@@ -15,7 +15,7 @@ describe('createServerBackedSessionTranscriptStore', () => {
     fetchEncryptedTranscriptMessagesPageMock.mockReset();
   });
 
-  it('treats the tail cursor as current end instead of replaying historical messages', async () => {
+  it('uses the newest returned sequence as the tail cursor when the server omits nextAfterSeq', async () => {
     fetchEncryptedTranscriptMessagesPageMock.mockResolvedValue({
       messages: [
         {
@@ -24,9 +24,9 @@ describe('createServerBackedSessionTranscriptStore', () => {
           content: { t: 'plain', v: { type: 'agent_message', text: 'historical' } },
         },
       ],
-      hasMore: true,
-      nextBeforeSeq: 41,
-      nextAfterSeq: 42,
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
     });
     const store = createServerBackedSessionTranscriptStore({
       token: 'token',
@@ -36,13 +36,201 @@ describe('createServerBackedSessionTranscriptStore', () => {
 
     await expect(store.readAfter({ cursor: 'tail', maxItems: 100, maxBytes: 64 * 1024 })).resolves.toEqual({
       items: [],
-      nextCursor: '42',
+      nextCursor: '41',
       truncated: false,
     });
     expect(fetchEncryptedTranscriptMessagesPageMock).toHaveBeenCalledWith({
       token: 'token',
       sessionId: 'session-1',
       limit: 1,
+    });
+  });
+
+  it('starts an empty tail at zero so a later row can be read after it', async () => {
+    fetchEncryptedTranscriptMessagesPageMock
+      .mockResolvedValueOnce({
+        messages: [],
+        hasMore: false,
+        nextBeforeSeq: null,
+        nextAfterSeq: null,
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            seq: 1,
+            createdAt: 1,
+            content: { t: 'plain', v: { type: 'agent_message', text: 'newly appended' } },
+          },
+        ],
+        hasMore: false,
+        nextBeforeSeq: null,
+        nextAfterSeq: null,
+      });
+    const store = createServerBackedSessionTranscriptStore({
+      token: 'token',
+      sessionId: 'session-1',
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
+    });
+
+    const tail = await store.readAfter({ cursor: 'tail', maxItems: 100, maxBytes: 64 * 1024 });
+
+    expect(tail).toEqual({
+      items: [],
+      nextCursor: '0',
+      truncated: false,
+    });
+    await expect(store.readAfter({ cursor: tail.nextCursor, maxItems: 100, maxBytes: 64 * 1024 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ seq: 1 })],
+      nextCursor: '1',
+      truncated: false,
+    });
+    expect(fetchEncryptedTranscriptMessagesPageMock).toHaveBeenLastCalledWith({
+      token: 'token',
+      sessionId: 'session-1',
+      limit: 100,
+      afterSeq: 0,
+    });
+  });
+
+  it('continues from the last emitted sequence when byte limiting a forward server page', async () => {
+    const oversizedText = 'x'.repeat(64 * 1024);
+    fetchEncryptedTranscriptMessagesPageMock.mockImplementation(async ({ afterSeq }: { afterSeq?: number }) => {
+      if (afterSeq === 0) {
+        return {
+          messages: [
+            {
+              seq: 1,
+              createdAt: 1,
+              content: { t: 'plain', v: { type: 'agent_message', text: oversizedText } },
+            },
+            {
+              seq: 2,
+              createdAt: 2,
+              content: { t: 'plain', v: { type: 'agent_message', text: oversizedText } },
+            },
+          ],
+          hasMore: true,
+          nextBeforeSeq: null,
+          nextAfterSeq: 2,
+        };
+      }
+      if (afterSeq === 1) {
+        return {
+          messages: [
+            {
+              seq: 2,
+              createdAt: 2,
+              content: { t: 'plain', v: { type: 'agent_message', text: oversizedText } },
+            },
+          ],
+          hasMore: false,
+          nextBeforeSeq: null,
+          nextAfterSeq: null,
+        };
+      }
+      return {
+        messages: [],
+        hasMore: false,
+        nextBeforeSeq: null,
+        nextAfterSeq: null,
+      };
+    });
+    const store = createServerBackedSessionTranscriptStore({
+      token: 'token',
+      sessionId: 'session-1',
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
+    });
+
+    const first = await store.readAfter({ cursor: '0', maxItems: 100, maxBytes: 64 * 1024 });
+
+    expect(first).toMatchObject({
+      items: [expect.objectContaining({ seq: 1 })],
+      nextCursor: '1',
+      truncated: true,
+    });
+
+    await expect(store.readAfter({ cursor: first.nextCursor, maxItems: 100, maxBytes: 64 * 1024 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ seq: 2 })],
+      nextCursor: '2',
+      truncated: false,
+    });
+    expect(fetchEncryptedTranscriptMessagesPageMock).toHaveBeenLastCalledWith({
+      token: 'token',
+      sessionId: 'session-1',
+      limit: 100,
+      afterSeq: 1,
+    });
+  });
+
+  it('continues an older page from the last emitted sequence when byte limiting', async () => {
+    const oversizedText = 'x'.repeat(64 * 1024);
+    fetchEncryptedTranscriptMessagesPageMock.mockImplementation(async ({ beforeSeq }: { beforeSeq?: number }) => {
+      if (beforeSeq === undefined) {
+        return {
+          messages: [
+            {
+              seq: 2,
+              createdAt: 2,
+              content: { t: 'plain', v: { type: 'agent_message', text: oversizedText } },
+            },
+            {
+              seq: 1,
+              createdAt: 1,
+              content: { t: 'plain', v: { type: 'agent_message', text: oversizedText } },
+            },
+          ],
+          hasMore: false,
+          nextBeforeSeq: null,
+          nextAfterSeq: null,
+        };
+      }
+      if (beforeSeq === 2) {
+        return {
+          messages: [
+            {
+              seq: 1,
+              createdAt: 1,
+              content: { t: 'plain', v: { type: 'agent_message', text: oversizedText } },
+            },
+          ],
+          hasMore: false,
+          nextBeforeSeq: null,
+          nextAfterSeq: null,
+        };
+      }
+      return {
+        messages: [],
+        hasMore: false,
+        nextBeforeSeq: null,
+        nextAfterSeq: null,
+      };
+    });
+    const store = createServerBackedSessionTranscriptStore({
+      token: 'token',
+      sessionId: 'session-1',
+      ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
+    });
+
+    const first = await store.pageOlder({ maxItems: 100, maxBytes: 64 * 1024 });
+
+    expect(first).toMatchObject({
+      items: [expect.objectContaining({ seq: 2 })],
+      nextCursor: '2',
+      hasMore: true,
+      truncated: true,
+    });
+
+    await expect(store.pageOlder({ cursor: first.nextCursor, maxItems: 100, maxBytes: 64 * 1024 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ seq: 1 })],
+      nextCursor: null,
+      hasMore: false,
+      truncated: false,
+    });
+    expect(fetchEncryptedTranscriptMessagesPageMock).toHaveBeenLastCalledWith({
+      token: 'token',
+      sessionId: 'session-1',
+      limit: 100,
+      beforeSeq: 2,
     });
   });
 

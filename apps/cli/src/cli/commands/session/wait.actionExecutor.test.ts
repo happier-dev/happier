@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ok } from '@happier-dev/cli-common/output';
 
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
@@ -39,6 +40,30 @@ describe('happier session wait (action executor)', () => {
         kind: 'session_wait',
         data: { sessionId: 'sess-1', idle: true, observedAt: 123 },
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('prints concise human success output without dumping the Action result', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: true, sessionId: 'sess-1', observedAt: 123 },
+    });
+
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const output = captureConsoleText();
+    try {
+      await handleSessionCommand(['wait', 'sess-1'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.text()).toBe(ok('Session idle'));
+      expect(output.text()).not.toContain('"sessionId"');
+      expect(output.text()).not.toContain('"observedAt"');
     } finally {
       output.restore();
     }

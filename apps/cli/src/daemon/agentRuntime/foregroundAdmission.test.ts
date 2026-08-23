@@ -349,6 +349,15 @@ describe('foreground Agent runtime admission', () => {
               environment: {
                 PROVIDER_SECRET: 'secret-value',
               },
+              agentCliLaunch: {
+                localAgentId: 'codex',
+                spec: {
+                  source: 'override' as const,
+                  resolvedPath: '/workspace/.profile/bin/codex',
+                  command: '/workspace/.profile/bin/codex',
+                  args: [],
+                },
+              },
               providerBindingActive: true,
             },
             authority: {
@@ -379,6 +388,15 @@ describe('foreground Agent runtime admission', () => {
       invocationContext: {
         cwd: '/workspace',
         environment: {},
+        agentCliLaunch: {
+          localAgentId: 'codex',
+          spec: {
+            source: 'override',
+            resolvedPath: '/workspace/.profile/bin/codex',
+            command: '/workspace/.profile/bin/codex',
+            args: [],
+          },
+        },
         providerBindingActive: false,
       },
     });

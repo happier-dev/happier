@@ -30,6 +30,7 @@ import type {
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 import { MemorySettingsSecretsUnavailableError } from '@/settings/memorySettings';
 import type { DaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
+import type { ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
 
 type BootstrapRuntime = Omit<
   Parameters<typeof startDaemonMachineRegistration>[0]['bootstrapRuntime'],
@@ -106,6 +107,7 @@ export function createDaemonMachineBootstrapRuntime(
     installExternalSessionHostOperations?: (
       operations: ExternalSessionHostOperationSet,
     ) => Promise<ExternalSessionHostOperationInstallation>;
+    externalActionIngressOwner?: ExternalActionIngressOwner;
   }>,
 ): BootstrapRuntime {
   let connectedApiMachine: ApiMachineClient | null = null;
@@ -267,6 +269,9 @@ export function createDaemonMachineBootstrapRuntime(
           installExternalSessionHostOperations:
             params.installExternalSessionHostOperations,
         }
+      : {}),
+    ...(params.externalActionIngressOwner
+      ? { externalActionIngressOwner: params.externalActionIngressOwner }
       : {}),
   };
 }

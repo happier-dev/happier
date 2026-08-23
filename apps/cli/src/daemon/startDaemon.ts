@@ -92,6 +92,9 @@ import { readRetainedConnectedServiceMaterializationKeys } from './connectedServ
 import { resolveConnectedServicesMaterializationBaseDir } from './connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
 import { createDaemonMachineRpcRouteAttachmentCache } from './machineRpcRouteAttachments';
 import { createPersistedTakeoverAdmissionWaiter } from './spawn/persistedTakeoverAdmission';
+import { readAccountIdFromToken } from './machineIdentity/resolveMachineRegistrationIdentity';
+import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import type {
   ExternalSessionPersistedTakeoverAdmissionOwner,
 } from '@/session/actions/externalSessions/persistedTakeoverAdmission';
@@ -251,6 +254,10 @@ export async function startDaemon(
     const api = bootstrapContext.api;
     const preferredHost = bootstrapContext.preferredHost;
     const metadataForRegistration: MachineMetadata = bootstrapContext.metadataForRegistration;
+    // This is the Account subject of the daemon's currently authenticated
+    // connection, not a request claim or a persisted Account projection. An
+    // opaque/malformed connection credential leaves public PAT ingress off.
+    const externalActionAccountId = readAccountIdFromToken(credentials.token);
     let preflightMachineRegistration = bootstrapContext.preflightMachineRegistration;
     let machineId = bootstrapContext.machineId;
     const deviceLocalSecretStorage = bootstrapContext.deviceLocalSecretStorage;
@@ -346,6 +353,9 @@ export async function startDaemon(
     let providerOperationsProducer: RuntimeProviderOperationsProducer | null = null;
     let externalSessionPluginAdmissionOwner:
       ExternalSessionPluginAdmissionOwner | null = null;
+    let externalSessionHostActionExecutor: RpcActionExecutor | null = null;
+    let sessionSpawnDirectTargetTransport:
+      SessionSpawnDirectTargetTransport | null = null;
     const pluginAdmissionOwner: ExternalSessionPluginAdmissionOwner =
       Object.freeze({
         async materializeStart(input) {
@@ -754,14 +764,15 @@ export async function startDaemon(
             ?? null,
         legacyCredentialApi: api,
         secrets: createActiveAccountSettingsConnectedAccountSecrets(),
-        ...(credentials.encryption
-          ? {
-            attemptTransactions:
-              createQualifiedConnectedAccountAttemptTransactionAdapters({
-                credentials,
-              }),
-          }
-          : {}),
+        // Attempt durability is Account-mode aware, so a plaintext Account keeps the
+        // same OAuth/device restart recovery as an E2EE one. Key presence never
+        // decides installation.
+        attemptTransactions:
+          createQualifiedConnectedAccountAttemptTransactionAdapters({
+            credentials,
+            getAccountEncryptionMode: async () =>
+              await api.getAccountEncryptionMode(),
+          }),
       });
     const establishedConnectedAccountRuntimeOwner =
       createQualifiedConnectedAccountEstablishedRuntimeOwner({
@@ -879,6 +890,7 @@ export async function startDaemon(
         resolveCurrentMachineId: () => machineId,
         timeoutMs: 1_500,
       });
+    const browserRuntimeActionExecute = api.createBrowserRuntimeActionExecutor();
     const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       happyHomeDir: configuration.happyHomeDir,
       daemonDatabaseLimits: DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY,
@@ -927,7 +939,7 @@ export async function startDaemon(
         establishedConnectedAccountRuntimeOwner,
       reconcileConnectedAccountPurposePublication:
         connectedAccountPurposeBindingRuntime.reconcileRegistryPublication,
-      runtimeActionExecute: api.createBrowserRuntimeActionExecutor(),
+      runtimeActionExecute: browserRuntimeActionExecute,
       managedEndpointRead: async (input) => {
         const host = managedServiceEndpointReadHost;
         if (!host) {
@@ -1047,11 +1059,28 @@ export async function startDaemon(
       awaitAgentSessionOpen,
       installExternalSessionHostOperations,
       providerAccountUsageStore,
+      flushProviderAccountUsagePersistence,
       connectedServiceRuntimeQuotaSnapshots,
       createAgentCatalogObservation,
+      externalActionIngressOwner,
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
     } = await startDaemonSessionControlRuntime({
       machineId,
+      externalActionAccountId,
+      runtimeActionExecute: browserRuntimeActionExecute,
+      currentMachineHost: metadataForRegistration.host,
+      currentMachineHomeDir: metadataForRegistration.homeDir,
+      resolveExternalSessionHostAction: () => {
+        const executor = externalSessionHostActionExecutor;
+        if (!executor) return undefined;
+        return async ({ actionId, input, context, signal }) =>
+          await executor.execute(actionId, input, {
+            ...context,
+            ...(signal ? { signal } : {}),
+          });
+      },
+      resolveSessionSpawnDirectTargetTransport: () =>
+        sessionSpawnDirectTargetTransport ?? undefined,
       externalSessionHostOperationOwner,
       runtimeId,
       credentials,
@@ -1391,6 +1420,7 @@ export async function startDaemon(
           await refreshServerFeaturesAndBrowserRouteOwners();
           pluginRuntimeOwner.reportCurrentAvailability();
           await connectedServiceQuotasCoordinator?.flushInBandQuotaPersistence(0);
+          await flushProviderAccountUsagePersistence(0);
         },
         reconcileConnectedServicesProjection: reconcileConnectedServicesProjectionForPluginConsumers,
         subscribeConnectedAccountInvalidations:
@@ -1422,6 +1452,9 @@ export async function startDaemon(
           machineRpcRouteAttachments.prepareApiMachineForSessions,
         persistedTakeoverAdmissionWaiter,
         attachPersistedTakeoverAdmissionOwner,
+        ...(externalActionIngressOwner
+          ? { externalActionIngressOwner }
+          : {}),
       }),
       onMachineSyncRuntime: async (machineSyncRuntime) => {
         cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop =
@@ -1523,6 +1556,10 @@ export async function startDaemon(
           machineSyncRuntime.providerOperationsProducer;
         const attemptedExternalSessionPluginAdmissionOwner =
           machineSyncRuntime.externalSessionPluginAdmissionOwner ?? null;
+        const attemptedExternalSessionHostActionExecutor =
+          machineSyncRuntime.externalSessionHostActionExecutor ?? null;
+        const attemptedSessionSpawnDirectTargetTransport =
+          machineSyncRuntime.sessionSpawnDirectTargetTransport ?? null;
         try {
           apiMachine = attemptedApiMachine;
           apiMachineForSessions = attemptedApiMachineForSessions;
@@ -1530,6 +1567,10 @@ export async function startDaemon(
           providerOperationsProducer = attemptedProviderOperationsProducer;
           externalSessionPluginAdmissionOwner =
             attemptedExternalSessionPluginAdmissionOwner;
+          externalSessionHostActionExecutor =
+            attemptedExternalSessionHostActionExecutor;
+          sessionSpawnDirectTargetTransport =
+            attemptedSessionSpawnDirectTargetTransport;
           resolveMachineProviderBindingSettled();
           await pluginRuntimeInitialization;
           if (!pluginWebhookWorker) {
@@ -1576,6 +1617,18 @@ export async function startDaemon(
             === attemptedExternalSessionPluginAdmissionOwner
           ) {
             externalSessionPluginAdmissionOwner = null;
+          }
+          if (
+            externalSessionHostActionExecutor
+            === attemptedExternalSessionHostActionExecutor
+          ) {
+            externalSessionHostActionExecutor = null;
+          }
+          if (
+            sessionSpawnDirectTargetTransport
+            === attemptedSessionSpawnDirectTargetTransport
+          ) {
+            sessionSpawnDirectTargetTransport = null;
           }
           throw error;
         }

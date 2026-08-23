@@ -3,8 +3,6 @@ import { randomUUID } from 'node:crypto';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
 import { SessionMessageContentSchema } from '@/api/types';
 import {
-    DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
-    createSessionTranscriptFollowLeaseRegistry,
     followSessionTranscript,
     importSessionTranscript,
     pageSessionTranscript,
@@ -29,6 +27,7 @@ const TRANSCRIPT_ACTION_IDS = new Set<ActionId>([
     'transcript.page',
     'transcript.readAfter',
     'transcript.follow',
+    'transcript.unfollow',
     'transcript.import',
     'transcript.search',
 ]);
@@ -158,6 +157,24 @@ export async function executeCliTranscriptAction(
         return { ok: true, result: await tailSessionLog({ input, resolvedPath: validation.resolvedPath }) };
     }
 
+    const registry = params.options.transcriptFollowLeaseRegistry;
+    if (params.actionId === 'transcript.unfollow') {
+        if (!registry) {
+            return unsupported(params.actionId, 'transcript_follow_lease_registry_unavailable');
+        }
+        const leaseId = readOptionalString(input, 'leaseId');
+        if (!leaseId) {
+            return unsupported(params.actionId, 'invalid_transcript_follow_lease');
+        }
+        return {
+            ok: true,
+            result: {
+                ok: true,
+                released: await registry.release({ sessionId, leaseId }),
+            },
+        };
+    }
+
     const store = await resolveStore({ options: params.options, sessionId });
     if (!store) {
         return unsupported(params.actionId, 'transcript_store_unavailable');
@@ -170,12 +187,10 @@ export async function executeCliTranscriptAction(
         return { ok: true, result: await readSessionTranscriptAfter({ store, input }) };
     }
     if (params.actionId === 'transcript.follow') {
-        const registry = params.options.transcriptFollowLeaseRegistry
-            ?? createSessionTranscriptFollowLeaseRegistry({
-                maxLeases: 16,
-                idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
-            });
-        const result = await followSessionTranscript({ store, registry, input });
+        if (!registry) {
+            return unsupported(params.actionId, 'transcript_follow_lease_registry_unavailable');
+        }
+        const result = await followSessionTranscript({ store, registry, sessionId, input });
         if (!result.ok) {
             return {
                 ok: false,

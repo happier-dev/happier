@@ -17,6 +17,7 @@ import {
     fetchForkChildSessionOrThrow,
 } from './forkChildSessionRecovery';
 import { normalizeForkProviderSessionId } from './forkProviderSessionId';
+import { resolveEstablishedForkLineageCutoff } from './resolveEstablishedForkLineageCutoff';
 import type {
     ForkBackendResolution,
     ForkBridgeSurface,
@@ -40,6 +41,8 @@ export async function attemptProviderNativeFork(params: Readonly<{
     forkPoint: ForkPoint;
     targetSeqInclusive: number;
     effectiveCutoffSeqInclusive: number;
+    signal?: AbortSignal;
+    requestId?: string | null;
     spawnNonce: string;
     forkBackendResolution: ForkBackendResolution;
     inheritedForkOverrides: ForkInheritedOverrides;
@@ -72,6 +75,7 @@ export async function attemptProviderNativeFork(params: Readonly<{
             forkPoint: params.forkPoint.type === 'seq'
                 ? { type: 'seq', upToSeqInclusive: params.targetSeqInclusive }
                 : { type: 'latest' },
+            ...(params.signal ? { signal: params.signal } : {}),
         });
 
         if (!nativeFork) return null;
@@ -133,6 +137,10 @@ export async function attemptProviderNativeFork(params: Readonly<{
         if (childSessionId === params.parentSessionId) {
             return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
         }
+        const requestId = typeof params.requestId === 'string'
+            && params.requestId.trim().length > 0
+            ? params.requestId.trim()
+            : null;
         try {
             const childRaw = await fetchForkChildSessionOrThrow({ token: params.credentials.token, sessionId: childSessionId });
             await updateSessionMetadataWithRetry({
@@ -148,9 +156,15 @@ export async function attemptProviderNativeFork(params: Readonly<{
                     forkV1: {
                         v: 1,
                         parentSessionId: params.parentSessionId,
-                        parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+                        parentCutoffSeqInclusive: resolveEstablishedForkLineageCutoff({
+                            metadata,
+                            parentSessionId: params.parentSessionId,
+                            requestId,
+                            fallbackCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+                        }),
                         createdAtMs: Date.now(),
                         strategy: 'provider_native',
+                        ...(requestId ? { requestId } : {}),
                         agentHint,
                     },
                 }),
@@ -176,6 +190,13 @@ export async function attemptProviderNativeFork(params: Readonly<{
         }
         return { ok: true, childSessionId };
     } catch (error) {
+        if (
+            params.signal?.aborted === true
+            && error instanceof Error
+            && error.name === 'AbortError'
+        ) {
+            throw error;
+        }
         if (isAuthenticationError(error)) throw error;
         return {
             ok: false,

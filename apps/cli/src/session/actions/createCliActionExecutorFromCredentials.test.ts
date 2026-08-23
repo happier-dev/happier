@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { createSessionTranscriptFollowLeaseRegistry } from '@/api/session/transcriptQueries';
+import type { SessionSpawnDirectTargetTransport } from './createCliActionDeps';
 import type { createCliActionExecutor as CreateCliActionExecutor } from './createCliActionExecutor';
 
 type CreateCliActionExecutorOptions = Parameters<typeof CreateCliActionExecutor>[0];
 
 const execute = vi.fn();
-const createCliActionExecutor = vi.fn((_options: CreateCliActionExecutorOptions) => ({ execute }));
+const prepare = vi.fn();
+const createCliActionExecutor = vi.fn((_options: CreateCliActionExecutorOptions) => ({ execute, prepare }));
 const ensureCliActionPolicySettings = vi.fn();
 const importHistoricalSessionTranscript = vi.fn();
 
@@ -32,7 +36,7 @@ describe('createCliActionExecutorFromCredentials', () => {
     });
     execute.mockImplementationOnce(async () => {
       events.push('execute');
-      return { ok: true, result: { ok: true } };
+      return { ok: true, result: { childSessionId: 'legacy-terminal-child' } };
     });
 
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
@@ -44,11 +48,44 @@ describe('createCliActionExecutorFromCredentials', () => {
     const executor = createCliActionExecutorFromCredentials({ credentials });
 
     expect(ensureCliActionPolicySettings).not.toHaveBeenCalled();
-    await executor.execute('session.status.get', { sessionId: 'sess-1' }, { surface: 'cli' });
+    await expect(executor.execute(
+      'session.status.get',
+      { sessionId: 'sess-1' },
+      { surface: 'cli' },
+    )).resolves.toEqual({ ok: true, result: { childSessionId: 'legacy-terminal-child' } });
 
     expect(createCliActionExecutor).toHaveBeenCalledTimes(1);
     expect(ensureCliActionPolicySettings).toHaveBeenCalledWith(credentials);
     expect(events).toEqual(['settings', 'execute']);
+  });
+
+  it('loads action policy settings before preparation and preserves the prepared invocation', async () => {
+    const events: string[] = [];
+    const invocation = { run: vi.fn(async () => ({ ok: true as const, result: { childSessionId: 'child-1' } })) };
+    ensureCliActionPolicySettings.mockImplementationOnce(async () => {
+      events.push('settings');
+    });
+    prepare.mockImplementationOnce(async () => {
+      events.push('prepare');
+      return { kind: 'ready', invocation };
+    });
+
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const credentials = {
+      token: 'token_test',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const executor = createCliActionExecutorFromCredentials({ credentials });
+    const executeCallsBeforePrepare = execute.mock.calls.length;
+
+    await expect(executor.prepare(
+      'session.fork',
+      { sessionId: 'sess-1' },
+      { surface: 'rpc', authority: 'present_user', actionCaller: { kind: 'host' } },
+    )).resolves.toEqual({ kind: 'ready', invocation });
+    expect(events).toEqual(['settings', 'prepare']);
+    expect(execute).toHaveBeenCalledTimes(executeCallsBeforePrepare);
+    expect(invocation.run).not.toHaveBeenCalled();
   });
 
   it('passes the live registered prompt adapter reader to the canonical CLI action deps', async () => {
@@ -90,6 +127,38 @@ describe('createCliActionExecutorFromCredentials', () => {
     }));
   });
 
+  it('preserves the daemon-owned contributed, external-session, and exact-spawn Action seams', async () => {
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const credentials = {
+      token: 'token_test',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const invokeContributedAction = vi.fn<NonNullable<ActionExecutorDeps['invokeContributedAction']>>();
+    const hostExternalSessionAction = vi.fn<NonNullable<ActionExecutorDeps['hostExternalSessionAction']>>();
+    const sessionSpawnDirectTargetTransport = {
+      machineId: 'machine-local',
+      prepare: vi.fn(),
+      start: vi.fn(),
+    } as unknown as SessionSpawnDirectTargetTransport;
+
+    createCliActionExecutorFromCredentials({
+      credentials,
+      invokeContributedAction,
+      hostExternalSessionAction,
+      sessionSpawnDirectTargetTransport,
+    } as Parameters<typeof createCliActionExecutorFromCredentials>[0] & Readonly<{
+      invokeContributedAction: NonNullable<ActionExecutorDeps['invokeContributedAction']>;
+      hostExternalSessionAction: NonNullable<ActionExecutorDeps['hostExternalSessionAction']>;
+      sessionSpawnDirectTargetTransport: SessionSpawnDirectTargetTransport;
+    }>);
+
+    expect(createCliActionExecutor).toHaveBeenLastCalledWith(expect.objectContaining({
+      invokeContributedAction,
+      hostExternalSessionAction,
+      sessionSpawnDirectTargetTransport,
+    }));
+  });
+
   it('routes transcript.import through one historical batch request', async () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const credentials = {
@@ -115,6 +184,31 @@ describe('createCliActionExecutorFromCredentials', () => {
       sessionId: 'session-1',
       items,
     });
+  });
+
+  it('preserves an injected process-lifetime transcript lease registry for bound invocations', async () => {
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const credentials = {
+      token: 'token_test',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const transcriptFollowLeaseRegistry = createSessionTranscriptFollowLeaseRegistry({
+      maxLeases: 16,
+      idleTtlMs: 1_000,
+    });
+    const executorCreationsBefore = createCliActionExecutor.mock.calls.length;
+
+    const executor = createCliActionExecutorFromCredentials({
+      credentials,
+      transcriptFollowLeaseRegistry,
+    });
+    const controller = new AbortController();
+    executor.bindInvocation(controller.signal);
+
+    expect(createCliActionExecutor.mock.calls.slice(executorCreationsBefore)).toHaveLength(2);
+    for (const [options] of createCliActionExecutor.mock.calls.slice(executorCreationsBefore)) {
+      expect(options).toEqual(expect.objectContaining({ transcriptFollowLeaseRegistry }));
+    }
   });
 
   it('uses one current credential snapshot per daemon plugin action and fails closed after logout', async () => {

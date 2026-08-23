@@ -301,6 +301,41 @@ describe('daemon local-services runtime action executor', () => {
         expect(actionRoutes.execute).toHaveBeenCalledWith(request);
     });
 
+    it('rejects a local-service request whose action does not match its Action id', async () => {
+        const mod = await import('./runtimeActionExecutor').catch(() => null);
+
+        expect(mod?.createLocalServicesDaemonRuntimeActionExecutor).toBeTypeOf('function');
+        if (!mod?.createLocalServicesDaemonRuntimeActionExecutor) return;
+
+        const actionRoutes: Pick<LocalServiceActionRoutes, 'execute'> = {
+            execute: vi.fn(async () => actionResult),
+        };
+        const execute = mod.createLocalServicesDaemonRuntimeActionExecutor({
+            featureGate: allowAllFeatureGate,
+            routes: { actionRoutes },
+        });
+
+        await expect(execute(runtimeArgs({
+            actionId: 'localServices.actions.copyUrl',
+            input: {
+                requestId: 'request_stop',
+                target: {
+                    kind: 'managed_service',
+                    managedServiceId: 'managed_1',
+                    machineId: 'machine_1',
+                },
+                action: 'stop_managed',
+                confirmationNonce: 'confirmation_1',
+                force: false,
+            },
+        }))).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_parameters',
+            error: 'invalid_parameters',
+        });
+        expect(actionRoutes.execute).not.toHaveBeenCalled();
+    });
+
     it('routes localServices.launcher.start through the daemon launcher start route', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 

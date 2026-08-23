@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
+import { sanitizeConnectedServiceDiagnosticError } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import type { AgentMessage, McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -102,7 +103,7 @@ async function readRuntimeAuthStatusError(params: Readonly<{
         classification,
       });
     } catch (error) {
-      logger.debug(`[${params.provider}] Runtime auth failure hook failed (non-fatal)`, error);
+      logger.debug(`[${params.provider}] Runtime auth failure hook failed (non-fatal): ${sanitizeConnectedServiceDiagnosticError(error)}`);
     }
   })();
   return {

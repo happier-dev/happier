@@ -118,6 +118,9 @@ import type {
 } from '@/session/external/hostOperationOwner';
 import type { SessionLifecycleMachineDeps } from '@/session/actions/lifecycle/sessionLifecycleTypes';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
+import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import type { ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
 
 function readAccountSettingsChangedHintVersion(update: unknown): number | null {
   if (!update || typeof update !== 'object') return null;
@@ -150,6 +153,7 @@ function projectAutomationRunStateChangedHostEvent(
       currentState: body.data.currentState,
       transitionedAt: body.data.transitionedAt,
       claimedByMachineId: body.data.claimedByMachineId,
+      ...(body.data.cause === undefined ? {} : { cause: body.data.cause }),
     },
   );
   const registryLease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -385,6 +389,8 @@ function resolvePeerTcpTunnelRelayTrustRoots(input: Readonly<{
 
 export type BootstrapMachineSyncRuntimeResult = Readonly<{
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
+  externalSessionHostActionExecutor?: RpcActionExecutor;
+  sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
   apiMachine: ApiMachineClient | null;
   apiMachineForSessions: ApiMachineClient | null;
   automationWorker: AutomationWorkerHandle | null;
@@ -543,6 +549,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   installExternalSessionHostOperations?: (
     operations: ExternalSessionHostOperationSet,
   ) => Promise<ExternalSessionHostOperationInstallation>;
+  externalActionIngressOwner?: ExternalActionIngressOwner;
 }>;
 
 export async function bootstrapMachineSyncRuntime(
@@ -570,6 +577,8 @@ export async function bootstrapMachineSyncRuntime(
   let automationWorker: AutomationWorkerHandle | null = null;
   let externalSessionPluginAdmissionOwner:
     ExternalSessionPluginAdmissionOwner | undefined;
+  let externalSessionHostActionExecutor: RpcActionExecutor | undefined;
+  let sessionSpawnDirectTargetTransport: SessionSpawnDirectTargetTransport | undefined;
   let providerOperationsProducer: RuntimeProviderOperationsProducer | null = null;
   let memoryWorker: MemoryWorkerHandle | null = null;
   let voiceInferenceWorker: VoiceInferenceWorkerHandle | null = null;
@@ -1011,6 +1020,9 @@ export async function bootstrapMachineSyncRuntime(
         installExternalSessionHostOperations:
           params.installExternalSessionHostOperations,
         currentMachineId: params.machineId,
+        ...(params.externalActionIngressOwner
+          ? { externalActionIngressOwner: params.externalActionIngressOwner }
+          : {}),
         ...(params.awaitAgentSessionOpen
           ? { awaitAgentSessionOpen: params.awaitAgentSessionOpen }
           : {}),
@@ -1073,6 +1085,10 @@ export async function bootstrapMachineSyncRuntime(
     );
     externalSessionPluginAdmissionOwner =
       machineRpcLifecycleRegistration.externalSessionPluginAdmissionOwner;
+    externalSessionHostActionExecutor =
+      machineRpcLifecycleRegistration.externalSessionHostActionExecutor;
+    sessionSpawnDirectTargetTransport =
+      machineRpcLifecycleRegistration.sessionSpawnDirectTargetTransport;
     voiceBinaryAppendConsumer =
       machineRpcLifecycleRegistration?.voiceInference?.voiceInferenceStreaming.appendSttStreamBinaryFrame;
     voiceBinaryTerminalConsumer =
@@ -1466,6 +1482,12 @@ export async function bootstrapMachineSyncRuntime(
   }
 
   return {
+    ...(sessionSpawnDirectTargetTransport
+      ? { sessionSpawnDirectTargetTransport }
+      : {}),
+    ...(externalSessionHostActionExecutor
+      ? { externalSessionHostActionExecutor }
+      : {}),
     ...(externalSessionPluginAdmissionOwner
       ? {
           externalSessionPluginAdmissionOwner,

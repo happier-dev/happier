@@ -1,7 +1,7 @@
 import {
     readExternalSessionFollowPolicyV1,
     readExternalSessionsSettingsV1,
-    readLinkedExternalSessionV1FromMetadata,
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
 } from '@happier-dev/protocol';
 
 import { readStoredCredentials } from '@/persistence';
@@ -114,6 +114,7 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
     }>> = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
+    let boundedInventory = false;
 
     for (let pageIndex = 0; pageIndex < PASSIVE_OBSERVATION_MAX_PAGES; pageIndex += 1) {
         if (params.signal.aborted) return [];
@@ -135,7 +136,7 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
                 rawSession,
                 accountEncryptionMode: accountEncryptionCurrentness.mode,
             });
-            const persisted = readLinkedExternalSessionV1FromMetadata(metadata);
+            const persisted = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
             if (!persisted || persisted.machineId !== params.machineId) continue;
             if (
                 readExternalSessionFollowPolicyV1(persisted.followPolicyV1)?.policy
@@ -153,12 +154,16 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
                     source: persisted.source,
                 },
             });
-            if (linked.length > PASSIVE_OBSERVATION_MAX_POLICIES) {
-                throw new Error(
-                    `External Session passive observation inventory exceeded its ${PASSIVE_OBSERVATION_MAX_POLICIES}-policy bound`,
-                );
+            if (linked.length >= PASSIVE_OBSERVATION_MAX_POLICIES) {
+                // Restore the owner's bounded set instead of refusing the whole
+                // inventory. The only consumer of this inventory swallows a
+                // rejection, so throwing here turned one policy over the bound
+                // into zero restored background follows for every session.
+                boundedInventory = true;
+                break;
             }
         }
+        if (boundedInventory) break;
         if (!page.hasNext) break;
         const nextCursor = page.nextCursor?.trim();
         if (!nextCursor || seenCursors.has(nextCursor)) {
@@ -169,6 +174,16 @@ export async function listCurrentExternalSessionPassivePolicies(params: Readonly
         if (pageIndex === PASSIVE_OBSERVATION_MAX_PAGES - 1) {
             throw new Error('External Session passive observation inventory exceeded its page bound');
         }
+    }
+
+    if (boundedInventory) {
+        // Incompleteness is a fact the operator can see, not a silent trim.
+        logExternalSessionsInternalError(
+            'external_session.passive_observation_inventory_bounded',
+            new Error(
+                `External Session passive observation restored its ${PASSIVE_OBSERVATION_MAX_POLICIES}-policy bound and left later persisted policies unrestored`,
+            ),
+        );
     }
 
     const resolved: ExternalSessionPassivePolicy[] = [];
@@ -292,7 +307,7 @@ export function startExternalSessionPassiveObservation(params: Readonly<{
                     ? { state: 'missing' }
                     : { state: 'unavailable' };
             }
-            const persistedLink = readLinkedExternalSessionV1FromMetadata(
+            const persistedLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(
                 persistedLoad.session.metadata,
             );
             const backgroundFollow =

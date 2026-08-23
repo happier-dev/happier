@@ -198,7 +198,7 @@ async function buildControlContext(params: Readonly<{
       },
     },
     pluginId: params.lease.pluginId,
-    contributionId: params.lease.agentId,
+    contributionId: params.lease.localAgentId,
     agentId: params.lease.agentId,
     generationId: params.lease.generation,
     declarations: readAgentSessionCapabilities(
@@ -213,8 +213,8 @@ async function buildControlContext(params: Readonly<{
   const baseContext = Object.freeze({
     plugin: Object.freeze({ id: params.lease.pluginId, version: params.lease.pluginVersion }),
     contribution: Object.freeze({
-      id: params.lease.agentId,
-      qualifiedId: `${params.lease.pluginId}/agents/${params.lease.agentId}`,
+      id: params.lease.localAgentId,
+      qualifiedId: `${params.lease.pluginId}/agents/${params.lease.localAgentId}`,
     }),
     surface: 'agent' as const,
     signal,

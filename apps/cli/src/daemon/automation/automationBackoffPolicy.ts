@@ -1,40 +1,30 @@
-import { readHttpStatus } from '@/api/client/httpStatusError';
-import { readNormalizedErrorCode } from '@/api/offline/serverConnectionErrors';
+import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
 
 export type AutomationWorkerErrorClass = 'transient' | 'permanent';
 
 const PERMANENT_RETRY_DELAY_MS = 300_000;
-const TRANSIENT_ERROR_CODES = new Set([
-  'ECONNABORTED',
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EAI_AGAIN',
-  'ENOTFOUND',
-  'ETIMEDOUT',
-]);
 
-function getErrorCode(error: unknown): string {
-  return readNormalizedErrorCode(error) ?? '';
+/**
+ * The Automation worker owns cadence, not semantics. Every endpoint failure it
+ * sees is classified by the one daemon server-work classifier, so an auth
+ * failure, a generation conflict, a rate limit and a network fault mean the
+ * same thing here as they do in every other daemon server call.
+ *
+ * `protocol_error` is the classifier's "nothing recognised this" result rather
+ * than a positive statement that retrying is pointless. The claim loop is the
+ * worker's only liveness path, so an unrecognised failure keeps the ordinary
+ * backoff curve instead of dropping to the long permanent cadence.
+ */
+function isRetryableAutomationWorkerFailure(
+  classification: ReturnType<typeof classifyDaemonServerWorkError>,
+): boolean {
+  return classification.retryable || classification.kind === 'protocol_error';
 }
 
 export function classifyAutomationWorkerError(error: unknown): AutomationWorkerErrorClass {
-  const status = readHttpStatus(error);
-  if (status !== null) {
-    if (status >= 500 || status === 408 || status === 425 || status === 429) {
-      return 'transient';
-    }
-    if (status >= 400 && status < 500) {
-      return 'permanent';
-    }
-  }
-
-  const code = getErrorCode(error);
-  if (code && TRANSIENT_ERROR_CODES.has(code)) {
-    return 'transient';
-  }
-
-  // Unknown errors are retried as transient to preserve liveness.
-  return 'transient';
+  return isRetryableAutomationWorkerFailure(classifyDaemonServerWorkError(error))
+    ? 'transient'
+    : 'permanent';
 }
 
 export function nextAutomationBackoffMs(failureCount: number): number {
@@ -48,9 +38,17 @@ export function nextAutomationRetryDelayMs(params: {
   failureCount: number;
   error: unknown;
 }): number {
-  const errorClass = classifyAutomationWorkerError(params.error);
-  if (errorClass === 'permanent') {
+  const classification = classifyDaemonServerWorkError(params.error);
+  if (!isRetryableAutomationWorkerFailure(classification)) {
     return PERMANENT_RETRY_DELAY_MS;
   }
-  return nextAutomationBackoffMs(params.failureCount);
+  const backoff = nextAutomationBackoffMs(params.failureCount);
+  if (classification.retryAfterMs === undefined) return backoff;
+  // An authoritative server wait outranks the worker's own curve, but the
+  // worker still never polls faster than its backoff and never idles longer
+  // than the cadence it already uses for a hopeless endpoint.
+  return Math.min(
+    PERMANENT_RETRY_DELAY_MS,
+    Math.max(backoff, classification.retryAfterMs),
+  );
 }

@@ -14,6 +14,7 @@ const {
     resolveExternalSessionSourceKeyOwnerMock,
     resolveCurrentExternalSessionAgentIdentityMock,
     fetchSessionsPageMock,
+    lookupSessionsByTagsMock,
     fetchAccountEncryptionCurrentnessMock,
 } = vi.hoisted(() => ({
     readCredentialsMock: vi.fn(),
@@ -24,6 +25,7 @@ const {
     resolveExternalSessionSourceKeyOwnerMock: vi.fn(),
     resolveCurrentExternalSessionAgentIdentityMock: vi.fn(),
     fetchSessionsPageMock: vi.fn(),
+    lookupSessionsByTagsMock: vi.fn(),
     fetchAccountEncryptionCurrentnessMock: vi.fn(),
 }));
 
@@ -33,6 +35,8 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
         ...actual,
         fetchSessionsPage: (...args: Parameters<typeof actual.fetchSessionsPage>) =>
             fetchSessionsPageMock(...args),
+        lookupSessionsByTags: (...args: Parameters<typeof actual.lookupSessionsByTags>) =>
+            lookupSessionsByTagsMock(...args),
     };
 });
 
@@ -132,6 +136,9 @@ describe('executeExternalSessionLinkEnsureAction', () => {
         resolveCurrentExternalSessionAgentIdentityMock.mockResolvedValue(null);
         fetchAccountEncryptionCurrentnessMock.mockResolvedValue({ mode: 'plain' });
         fetchSessionsPageMock.mockResolvedValue({ sessions: [], nextCursor: null, hasNext: false });
+        // This account's server does not serve the indexed tag route, so annotation
+        // keeps using the bounded page scan these cases assert against.
+        lookupSessionsByTagsMock.mockResolvedValue({ state: 'unavailable' });
     });
 
     it('annotates a complete candidate generation but never a partial preparation page', async () => {

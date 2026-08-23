@@ -24,7 +24,10 @@ import {
   readQualifiedConnectedAccountConfigurationV4,
   readQualifiedConnectedAccountCredentialV4,
 } from '@/api/client/qualifiedConnectedAccountApi';
-import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
+import {
+  requireConnectedAccountCryptoMaterial as requireCryptoMaterial,
+  resolveConnectedAccountCryptoMaterial as resolveCryptoMaterial,
+} from './accountScopedCryptoMaterial';
 import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { ConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import {
@@ -221,31 +224,6 @@ function configurationTarget(
   });
 }
 
-function resolveCryptoMaterial(
-  credentials: StoredCredentials,
-): AccountScopedCryptoMaterial | null {
-  if (!credentials.encryption) return null;
-  return credentials.encryption.type === 'legacy'
-    ? Object.freeze({
-        type: 'legacy' as const,
-        secret: credentials.encryption.secret,
-      })
-    : Object.freeze({
-        type: 'dataKey' as const,
-        machineKey: credentials.encryption.machineKey,
-      });
-}
-
-function requireCryptoMaterial(
-  credentials: StoredCredentials,
-  material: AccountScopedCryptoMaterial | null,
-): AccountScopedCryptoMaterial {
-  if (material) return material;
-  requireAccountEncryptionCredentials(credentials);
-  throw new Error(
-    'Account encryption credentials unexpectedly resolved without crypto material',
-  );
-}
 
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (!signal?.aborted) return;

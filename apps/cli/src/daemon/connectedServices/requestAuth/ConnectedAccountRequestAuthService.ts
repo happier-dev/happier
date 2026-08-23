@@ -281,6 +281,16 @@ function leaseKey(
 }
 
 /**
+ * A completed bearer is account/revision scoped, but an in-flight cold fill runs under
+ * exactly one subject's live authority: its materializer refuses once that subject
+ * retires. Sharing the operation across subjects would let a retiring subject fail a
+ * still-current one, so an in-flight fill is keyed by its owning subject as well.
+ */
+function fillKey(subjectId: string, cacheKey: string): string {
+    return JSON.stringify([subjectId, cacheKey]);
+}
+
+/**
  * Bearer reuse is intentionally account/revision scoped. Recovery, however, can mutate
  * a group-bound binding, so its in-flight operation must remain scoped to the exact group
  * generation that observed the failure.
@@ -483,13 +493,14 @@ export function createConnectedAccountRequestAuthService(
         }
         if (existing) leases.delete(key);
 
-        const pending = fills.get(key);
+        const pendingKey = fillKey(subject.subjectId, key);
+        const pending = fills.get(pendingKey);
         if (pending && !pending.signal.aborted) {
             return await awaitSharedOperation(pending, signal, () => {
-                if (fills.get(key) === pending) fills.delete(key);
+                if (fills.get(pendingKey) === pending) fills.delete(pendingKey);
             });
         }
-        if (pending && fills.get(key) === pending) fills.delete(key);
+        if (pending && fills.get(pendingKey) === pending) fills.delete(pendingKey);
 
         const fill = createSharedOperation(async (ownerSignal) => {
             const material = await startRequestAuthOperation(
@@ -543,11 +554,11 @@ export function createConnectedAccountRequestAuthService(
             }
             return cached;
         }, (operation) => {
-            if (fills.get(key) === operation) fills.delete(key);
+            if (fills.get(pendingKey) === operation) fills.delete(pendingKey);
         });
-        fills.set(key, fill);
+        fills.set(pendingKey, fill);
         return await awaitSharedOperation(fill, signal, () => {
-            if (fills.get(key) === fill) fills.delete(key);
+            if (fills.get(pendingKey) === fill) fills.delete(pendingKey);
         });
     };
 

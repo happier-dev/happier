@@ -1,4 +1,5 @@
 import {
+  type ProviderNativeForkHandler,
   type ProviderNativeForkPoint,
   toForkPointV1,
 } from '@/session/fork/providerNativeForkHandler';
@@ -55,11 +56,14 @@ export function buildForkSessionMetadata(
 }
 
 export async function dispatchProviderNativeFork(params: Readonly<{
-  forkSurface: ForkSurfaceV1 | null;
+  forkSurface: (Omit<ForkSurfaceV1, 'fork'> & Readonly<{
+    fork?: ProviderNativeForkHandler;
+  }>) | null;
   parentSessionId: string;
   parentMetadata: Record<string, unknown>;
   directory: string;
   forkPoint: ProviderNativeForkPoint;
+  signal?: AbortSignal;
 }>): Promise<ForkResultV1 | null> {
   if (!params.forkSurface?.fork) {
     return null;
@@ -69,6 +73,7 @@ export async function dispatchProviderNativeFork(params: Readonly<{
     parentMetadata: buildForkSessionMetadata(params.parentMetadata),
     directory: params.directory,
     forkPoint: toForkPointV1(params.forkPoint),
+    ...(params.signal ? { signal: params.signal } : {}),
   });
   return result ?? null;
 }

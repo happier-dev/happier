@@ -3,7 +3,7 @@ import {
     writeExternalAgentObservationSessionState,
 } from '@happier-dev/agents';
 import {
-    readLinkedExternalSessionV1FromMetadata,
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     reserveExternalSessionCompletedBoundaryV1,
     type ExternalAgentObservationSnapshotV1,
     type SessionMetadata,
@@ -56,7 +56,7 @@ function hasSameDurableObservationLink(
     metadata: SessionMetadata,
     candidate: ExternalAgentObservationSnapshotV1,
 ): boolean {
-    const currentLink = readLinkedExternalSessionV1FromMetadata(metadata);
+    const currentLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
     if (
         !currentLink
         || currentLink.linkedAtMs === undefined

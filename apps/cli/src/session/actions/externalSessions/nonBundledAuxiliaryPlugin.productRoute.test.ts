@@ -7,7 +7,7 @@ import {
   deriveExternalSessionsAutoLinkSourcePolicyIdV1,
   ExternalSessionsAgentIdSchema,
   ExternalSessionTakeoverStartInputV1Schema,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveExternalSessionOperationTimelineV1,
 } from '@happier-dev/protocol';
 import type {
@@ -1522,7 +1522,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       });
 
       const persistedMetadata = getOrCreateSessionByTagMock.mock.calls[0]?.[0]?.metadata;
-      const persistedLink = readLinkedExternalSessionV1FromMetadata(persistedMetadata);
+      const persistedLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(persistedMetadata);
       if (!persistedLink?.qualifiedIdentity) {
         throw new Error('Expected the linked session to persist a qualified identity');
       }

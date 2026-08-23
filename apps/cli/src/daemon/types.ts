@@ -20,6 +20,9 @@ import type {
 import type {
   RunnerManagedDependencyRetentionV1,
 } from '@/plugins/runtime/runner/runnerManagedDependencyRetention';
+import type {
+  BoundAgentCliLaunchSpec,
+} from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 
 export type DaemonSpawnStartupReadinessFailure = Extract<
   SpawnSessionResult,
@@ -32,6 +35,8 @@ export type RunnerAgentInvocationContext = Readonly<{
   cwd: string;
   /** Stable daemon-service context only; launch-time secret material is never retained here. */
   environment: Readonly<Record<string, string>>;
+  /** Exact non-secret Agent CLI launch selected during spawn/admission. */
+  agentCliLaunch?: BoundAgentCliLaunchSpec;
   /** Provider launch binding is runner-owned and is rematerialized by live daemon service owners. */
   providerBindingActive: boolean;
 }>;

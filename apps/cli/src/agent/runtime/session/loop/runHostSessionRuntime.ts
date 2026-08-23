@@ -21,6 +21,7 @@ import {
   buildBackendTargetKeyV2,
   applySessionProviderBindingMetadataV1,
   convertBackendTargetRefV2ToV1,
+  projectAgentSessionProviderBindingV1,
   readBackendTargetRefV2,
   SessionCreationCorrespondenceV1Schema,
   SessionCreationTagV1Schema,
@@ -135,14 +136,24 @@ import type { SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import type { MetadataUpdatePort, SessionStateFacet, SessionStateSyncEngine } from '@happier-dev/agents';
 import {
   getAgentModelConfig,
+  readProviderSessionIdSessionState,
   resolveModelSelectionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
-import { applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import { createModelIntentMetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
+import { applyProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import {
+  applyDisplayTitleSessionMetadata,
+  createModelIntentMetadataCasCandidate,
+} from '@happier-dev/agents/session/state/metadataWriters';
 import type { RuntimeCheckpointToolProtocolV1 } from '@happier-dev/agents/session/controls/checkpoints';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { buildScopedProcessEnv, normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
 import { isAgentSessionContinuationUnreachableError } from '@/session/shared/spawnSessionContract';
+import {
+  createLocalAgentNativeResumeRecordStore,
+  hasMatchingAgentNativeReturnIdentity,
+  invalidateFailedAgentNativeReturnIdentity,
+  isAgentNativeResumeIdentityMismatchError,
+} from '@/session/agentTransition/agentNativeReturn';
 import {
   consumeProviderBindingLaunchHandoffFromEnvironments,
   type ProviderBindingLaunchHandoffV1,
@@ -342,6 +353,8 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   mcpServers: Record<string, McpServerConfig>;
   accountSettings?: AccountSettings | null;
   providerBindingMaterialization?: AgentProviderBindingLaunchMaterializationV1;
+  /** True only for the exact matching local cross-agent native-return record. */
+  strictNativeResumeIdentity?: boolean;
   pendingQueueDrainMaxPopPerWake?: number;
   pendingQueueDeliveryTiming?: AccountSettings['sessionPendingQueueDeliveryTiming'];
   permissionHandler: ProviderEnforcedPermissionHandler;
@@ -1708,6 +1721,51 @@ export async function runHostSessionRuntime(
   });
   sessionStateMetadataObserverForConstructionCleanup =
     sessionStateMetadataObserver;
+  const initialResumeId = (() => {
+    const explicitResumeId = typeof runtimeOpts.resume === 'string' ? runtimeOpts.resume.trim() : '';
+    if (explicitResumeId) return explicitResumeId;
+    return config.resolveInitialResumeId?.({ opts: runtimeOpts, session, metadata: runtimeMetadata })?.trim() ?? '';
+  })();
+  const nativeReturnRecordStore = initialResumeId
+    ? createLocalAgentNativeResumeRecordStore()
+    : null;
+  const isTrackedNativeReturn = nativeReturnRecordStore !== null
+    && await hasMatchingAgentNativeReturnIdentity({
+      store: nativeReturnRecordStore,
+      sessionId: currentLifecycleSession.sessionId,
+      targetAgentId: policyAgentId,
+      vendorResumeId: initialResumeId,
+    });
+  const strictInitialResumeMetadataKey = typeof config.providerSessionMetadataKey === 'string'
+    && config.providerSessionMetadataKey.trim().length > 0
+    ? config.providerSessionMetadataKey.trim()
+    : null;
+  const clearTrackedNativeReturnIdentity = async (): Promise<void> => {
+    if (!isTrackedNativeReturn || !initialResumeId) return;
+    await currentLifecycleSession.updateMetadataAsCurrentPublisher((metadata) => {
+      const current = metadata as Record<string, unknown>;
+      const currentProviderSessionId = strictInitialResumeMetadataKey
+        ? (typeof current[strictInitialResumeMetadataKey] === 'string'
+          ? current[strictInitialResumeMetadataKey].trim()
+          : '')
+        : readProviderSessionIdSessionState(metadata).value ?? '';
+      if (currentProviderSessionId !== initialResumeId) return metadata;
+      return applyProviderSessionIdSessionMetadata(current, {
+        metadataKey: strictInitialResumeMetadataKey,
+        value: null,
+      }) as typeof metadata;
+    });
+  };
+  const invalidateTrackedNativeReturnIdentity = async (resumeId: string): Promise<void> => {
+    if (!nativeReturnRecordStore || !isTrackedNativeReturn) return;
+    await invalidateFailedAgentNativeReturnIdentity({
+      store: nativeReturnRecordStore,
+      sessionId: currentLifecycleSession.sessionId,
+      targetAgentId: policyAgentId,
+      vendorResumeId: resumeId,
+    });
+    await clearTrackedNativeReturnIdentity();
+  };
   const sessionRuntimeParams: HostSessionRuntimeFactoryParams = {
     directory: runtimeDirectory,
     metadata: runtimeMetadata,
@@ -1720,6 +1778,7 @@ export async function runHostSessionRuntime(
     mcpServers,
     accountSettings: runnerMcpAccountSettings,
     ...(providerBindingMaterialization ? { providerBindingMaterialization } : {}),
+    ...(isTrackedNativeReturn ? { strictNativeResumeIdentity: true } : {}),
     pendingQueueDrainMaxPopPerWake,
     pendingQueueDeliveryTiming,
     permissionHandler,
@@ -1763,7 +1822,18 @@ export async function runHostSessionRuntime(
   if (!config.createSessionRuntime) {
     throw new Error('Host session runtime config must define createSessionRuntime');
   }
-  createdRuntime = await config.createSessionRuntime(sessionRuntimeParams);
+  // Only a genuine same-machine native return removes its old projection while
+  // the provider decides whether it can accept that exact id. Other resumes
+  // retain their durable identity and log-path metadata unchanged.
+  await clearTrackedNativeReturnIdentity();
+  try {
+    createdRuntime = await config.createSessionRuntime(sessionRuntimeParams);
+  } catch (error) {
+    if (isAgentNativeResumeIdentityMismatchError(error)) {
+      await invalidateTrackedNativeReturnIdentity(initialResumeId);
+    }
+    throw error;
+  }
   const {
     runtime,
     nativeRuntime,
@@ -1813,18 +1883,14 @@ export async function runHostSessionRuntime(
   } else if (activeProviderBindingHandoff) {
     throw new Error('Native model selection cannot include a provider binding handoff');
   }
-  const activeProviderBindingModel =
-    activeProviderBindingHandoff?.sessionBindingMetadata.model;
   const initialActiveTargetBasis: AuthorizedSessionModelTransitionTarget = {
     selection: initialActiveSelection,
     policy: 'live',
-    providerBinding: activeProviderBindingHandoff && activeProviderBindingModel
-      ? {
-          connectionId:
-            activeProviderBindingHandoff.sessionBindingMetadata.connectionId,
-          model: activeProviderBindingModel,
+    providerBinding: activeProviderBindingHandoff
+      ? projectAgentSessionProviderBindingV1({
+          metadata: activeProviderBindingHandoff.sessionBindingMetadata,
           materialization: activeProviderBindingHandoff.materialization,
-        }
+        })
       : null,
     sessionBindingMetadata:
       activeProviderBindingHandoff?.sessionBindingMetadata ?? null,
@@ -2226,18 +2292,17 @@ export async function runHostSessionRuntime(
       throw new Error('Runtime replacement requires an active model transition coordinator');
     }
     const activeTarget = coordinator.readActiveTarget();
-    const model = assertProviderBindingHandoffMatchesSelection({
+    assertProviderBindingHandoffMatchesSelection({
       selection: activeTarget.selection,
       handoff,
     });
     const admittedTarget = authorizeModelTransition.bindCurrentAuthorizationProof({
       selection: activeTarget.selection,
       policy: activeTarget.policy,
-      providerBinding: {
-        connectionId: handoff.sessionBindingMetadata.connectionId,
-        model,
+      providerBinding: projectAgentSessionProviderBindingV1({
+        metadata: handoff.sessionBindingMetadata,
         materialization: handoff.materialization,
-      },
+      }),
       sessionBindingMetadata: handoff.sessionBindingMetadata,
       runtimeBindingBasis:
         handoff.sessionBindingMetadata.runtimeBindingBasis ?? null,
@@ -2483,11 +2548,10 @@ export async function runHostSessionRuntime(
           runtime: loopParams.runtime,
         }),
       },
-      initialResumeId: (() => {
-        const explicitResumeId = typeof runtimeOpts.resume === 'string' ? runtimeOpts.resume.trim() : '';
-        if (explicitResumeId) return explicitResumeId;
-        return config.resolveInitialResumeId?.({ opts: runtimeOpts, session, metadata: runtimeMetadata })?.trim() ?? '';
-      })(),
+      initialResumeId,
+      onStrictInitialResumeFailure: async ({ resumeId }) => {
+        await invalidateTrackedNativeReturnIdentity(resumeId);
+      },
     });
   } finally {
     await modelTransitionCoordinator.dispose();

@@ -1,7 +1,7 @@
 import {
   doesExternalSessionDestructiveQuiescencePermitAdmissionV1,
   ExternalSessionDestructiveQuiescenceResultV1Schema,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   type ExternalSessionDestructiveQuiescenceResultV1,
   type ExternalSessionDestructiveQuiescenceStatusV1,
   type ExternalSessionTakeoverResultV1,
@@ -60,7 +60,7 @@ export async function inspectExternalSessionDestructiveQuiescence(params: Readon
   });
 
   if (params.machineId !== params.linked.machineId) return unknown(null);
-  const persistedLink = readLinkedExternalSessionV1FromMetadata(params.linked.metadata);
+  const persistedLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(params.linked.metadata);
   if (!persistedLink?.qualifiedIdentity) return unknown(null);
   const sourceKey = params.linked.canonicalResolvedSourceKey ?? null;
   if (!sourceKey) return unknown(null);

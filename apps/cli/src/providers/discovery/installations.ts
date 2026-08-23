@@ -84,43 +84,60 @@ export function createProviderLocalInstallationReader(input: ProviderLocalToolRe
     const cached = state.installationChecks.find((record) =>
       serializeProviderInstallationRuntimeStateKeyV1(record.key) === serializedKey);
     if (cached && now() < cached.state.observedAt + ttlMs) return cached.state.status === 'present';
+    const persistPresence = async (present: boolean): Promise<void> => {
+      const observedAt = now();
+      const record = ProviderInstallationRuntimeStateRecordV1Schema.parse({
+        key,
+        state: { status: present ? 'present' : 'absent', observedAt },
+        lastAccessedAt: observedAt,
+      });
+      await input.runtimeStore.update((current) => ({
+        ...current,
+        installationChecks: [...replaceProviderRuntimeStateRecord(
+          'installationChecks', current.installationChecks, record,
+        )],
+      }));
+    };
+
+    // The declared installation lookup reaches an OS filesystem/PATH boundary
+    // with no abort handle, so a waiter timeout never stops it. Custody of the
+    // single-flight key therefore follows the underlying operation, not the
+    // waiter: an expired cached absence must join the same lookup rather than
+    // start a second one that the first is already performing.
     let pending = inFlight.get(serializedKey);
     if (!pending) {
-      pending = (async () => {
-        let timeout: ReturnType<typeof setTimeout> | undefined;
-        const installed = await Promise.race([
-          resolveDeclaredProviderInstallation({
-            toolId: `provider-installation:${params.contributionKey}`,
-            lookupNames: params.installedCheck.lookupNames,
-          }, input).catch(() => ({ status: 'absent' as const })),
-          new Promise<typeof INSTALLATION_RESOLUTION_TIMED_OUT>((resolve) => {
-            timeout = setTimeout(() => resolve(INSTALLATION_RESOLUTION_TIMED_OUT), installationResolutionTimeoutMs);
-          }),
-        ]).finally(() => {
-          if (timeout) clearTimeout(timeout);
-        });
-        const observedAt = now();
-        const record = ProviderInstallationRuntimeStateRecordV1Schema.parse({
-          key,
-          state: {
-            status: installed !== INSTALLATION_RESOLUTION_TIMED_OUT && installed.status === 'present'
-              ? 'present'
-              : 'absent',
-            observedAt,
-          },
-          lastAccessedAt: observedAt,
-        });
-        await input.runtimeStore.update((current) => ({
-          ...current,
-          installationChecks: [...replaceProviderRuntimeStateRecord(
-            'installationChecks', current.installationChecks, record,
-          )],
-        }));
-        return installed !== INSTALLATION_RESOLUTION_TIMED_OUT && installed.status === 'present';
-      })().finally(() => inFlight.delete(serializedKey));
-      inFlight.set(serializedKey, pending);
+      const started = (async () => {
+        const installed = await resolveDeclaredProviderInstallation({
+          toolId: `provider-installation:${params.contributionKey}`,
+          lookupNames: params.installedCheck.lookupNames,
+        }, input).catch(() => ({ status: 'absent' as const }));
+        const present = installed.status === 'present';
+        await persistPresence(present);
+        return present;
+      })();
+      void started.catch(() => undefined).finally(() => {
+        if (inFlight.get(serializedKey) === started) inFlight.delete(serializedKey);
+      });
+      inFlight.set(serializedKey, started);
+      pending = started;
     }
-    return pending;
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const observed = await Promise.race([
+      pending,
+      new Promise<typeof INSTALLATION_RESOLUTION_TIMED_OUT>((resolve) => {
+        timeout = setTimeout(() => resolve(INSTALLATION_RESOLUTION_TIMED_OUT), installationResolutionTimeoutMs);
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+    if (observed === INSTALLATION_RESOLUTION_TIMED_OUT) {
+      // Fail this advisory read closed and cache the absence so the projection
+      // stops asking while the underlying lookup remains outstanding.
+      await persistPresence(false);
+      return false;
+    }
+    return observed;
   };
 
   return Object.freeze({

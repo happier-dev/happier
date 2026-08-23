@@ -163,7 +163,7 @@ describe('waitForIdleViaSocket', () => {
       ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
       sessionEncryptionMode: 'plain',
       timeoutMs: 1_000,
-      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: true, turnInFlight: true },
+      initialTurnActivity: { pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true },
       recheckTurnActivity: async () => ({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false }),
       initialAgentStateCiphertextBase64: JSON.stringify({ controlledByUser: false, requests: { r1: { createdAt: 1 } } }),
     });
@@ -197,6 +197,235 @@ describe('waitForIdleViaSocket', () => {
     });
 
     await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
+  });
+
+  it('waits through pending-input materialization until the successor turn reaches a terminal projection', async () => {
+    vi.useFakeTimers();
+
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocket: () => socket,
+    }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById: vi.fn().mockResolvedValue({ agentState: null }),
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false },
+      initialAgentStateSummary: { pendingRequestsCount: 0 },
+      initialAgentStateCiphertextBase64: null,
+      preferProjectionUpdates: true,
+    });
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+
+    socket.emit('update', {
+      id: 'u_pending_input',
+      seq: 1,
+      createdAt: Date.now(),
+      body: {
+        t: 'pending-changed',
+        sid: 'sess-1',
+        sessionId: 'sess-1',
+        pendingCount: 1,
+        pendingVersion: 1,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(settled).toBe(false);
+
+    socket.emit('update', {
+      id: 'u_pending_materialized',
+      seq: 2,
+      createdAt: Date.now(),
+      body: {
+        t: 'pending-changed',
+        sid: 'sess-1',
+        sessionId: 'sess-1',
+        pendingCount: 0,
+        pendingVersion: 2,
+      },
+    });
+    socket.emit('update', {
+      id: 'u_successor_task_started',
+      seq: 3,
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess-1',
+        message: {
+          id: 'msg-successor-task-started',
+          seq: 3,
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: { type: 'task_started', id: 'task-successor' },
+              },
+            },
+          },
+        },
+      },
+    });
+    socket.emit('update', {
+      id: 'u_successor_active',
+      seq: 4,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'sess-1',
+        latestTurnStatus: 'in_progress',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(settled).toBe(false);
+
+    socket.emit('update', {
+      id: 'u_successor_completed',
+      seq: 5,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'sess-1',
+        latestTurnStatus: 'completed',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      },
+    });
+
+    await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
+  });
+
+  it('does not let a pending-input recheck resolve through delivery before the successor turn starts', async () => {
+    vi.useFakeTimers();
+
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocket: () => socket,
+    }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById: vi.fn().mockResolvedValue({
+        agentState: null,
+        latestTurnStatus: null,
+        pendingCount: 0,
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      }),
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true },
+      recheckTurnActivity: async () => ({ pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false }),
+      initialAgentStateSummary: { pendingRequestsCount: 0 },
+      initialAgentStateCiphertextBase64: null,
+      preferProjectionUpdates: true,
+    });
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+
+    // The server clears queued pending count when the row is claimed for delivery; no successor
+    // lifecycle projection exists yet. That is not idle evidence.
+    socket.emit('update', {
+      id: 'u_pending_claimed',
+      seq: 1,
+      createdAt: Date.now(),
+      body: {
+        t: 'pending-changed',
+        sid: 'sess-1',
+        sessionId: 'sess-1',
+        pendingCount: 0,
+        pendingVersion: 2,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(settled).toBe(false);
+
+    socket.emit('update', {
+      id: 'u_successor_task_started_after_claim',
+      seq: 2,
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess-1',
+        message: {
+          id: 'msg-successor-task-started-after-claim',
+          seq: 2,
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: { type: 'task_started', id: 'task-successor-after-claim' },
+              },
+            },
+          },
+        },
+      },
+    });
+    socket.emit('update', {
+      id: 'u_successor_active_after_claim',
+      seq: 3,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'sess-1',
+        latestTurnStatus: 'in_progress',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(settled).toBe(false);
+
+    socket.emit('update', {
+      id: 'u_successor_completed_after_claim',
+      seq: 4,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'sess-1',
+        latestTurnStatus: 'completed',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      },
+    });
 
     await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
   });
@@ -553,57 +782,6 @@ describe('waitForIdleViaSocket', () => {
     await vi.advanceTimersByTimeAsync(1_500);
 
     await rejection;
-    expect(recheckTurnActivity).toHaveBeenCalled();
-  });
-
-  it('resolves projection-only completion after fresh transcript idle recheck', async () => {
-    vi.useFakeTimers();
-
-    const socket = createSocketStub();
-    const recheckTurnActivity = vi.fn(async () => ({
-      pendingUserTurns: 0,
-      activeTaskInFlight: false,
-      turnInFlight: false,
-    }));
-    vi.doMock('@/api/session/sockets', () => ({
-      createSessionScopedSocket: () => socket,
-    }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
-      fetchSessionById: vi.fn().mockResolvedValue({
-        agentState: null,
-      }),
-    }));
-
-    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
-
-    const promise = waitForIdleViaSocket({
-      token: 'token',
-      sessionId: 'sess-1',
-      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
-      sessionEncryptionMode: 'plain',
-      timeoutMs: 1_000,
-      initialTurnActivity: { pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true },
-      recheckTurnActivity,
-      initialAgentStateSummary: { pendingRequestsCount: 0 },
-      initialAgentStateCiphertextBase64: null,
-      preferProjectionUpdates: true,
-      initialTurnActivityRequiresTranscriptIdleEvidence: true,
-    });
-
-    socket.emit('update', {
-      id: 'u_completed_projection',
-      seq: 1,
-      createdAt: Date.now(),
-      body: {
-        t: 'update-session',
-        id: 'sess-1',
-        latestTurnStatus: 'completed',
-        pendingPermissionRequestCount: 0,
-        pendingUserActionRequestCount: 0,
-      },
-    });
-
-    await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
     expect(recheckTurnActivity).toHaveBeenCalled();
   });
 

@@ -6,7 +6,7 @@ import {
   type ConnectedAccountAttemptTransactionRecord,
   type ConnectedAccountAttemptTransactionStoreApi,
 } from '@/api/client/connectedAccountAttemptTransactionApi';
-import type { Credentials } from '@/persistence';
+import type { Credentials, StoredCredentials } from '@/persistence';
 import type {
   ConnectedAccountDeviceTransactionSnapshot,
   ConnectedAccountOAuthTransactionSnapshot,
@@ -38,7 +38,7 @@ function createTransactionApi(): ConnectedAccountAttemptTransactionStoreApi & {
       }
       const record = Object.freeze({
         revision: 1,
-        ciphertext: input.ciphertext,
+        content: input.content,
         expiresAtMs: input.expiresAtMs,
       });
       records.set(key, record);
@@ -57,7 +57,7 @@ function createTransactionApi(): ConnectedAccountAttemptTransactionStoreApi & {
       }
       const record = Object.freeze({
         revision: current.revision + 1,
-        ciphertext: input.ciphertext,
+        content: input.content,
         expiresAtMs: input.expiresAtMs,
       });
       records.set(key, record);
@@ -85,6 +85,20 @@ function credentials(fill: number): Credentials {
       machineKey: new Uint8Array(32).fill(fill),
     },
   };
+}
+
+/** A genuinely keyless Account credential: a bearer token and zero Account material. */
+function tokenOnlyCredentials(): StoredCredentials {
+  return { token: 'account-token', encryption: null };
+}
+
+const e2eeAccount = { getAccountEncryptionMode: async () => 'e2ee' as const };
+const plainAccount = { getAccountEncryptionMode: async () => 'plain' as const };
+
+function storedContentJson(
+  record: ConnectedAccountAttemptTransactionRecord | undefined,
+): string {
+  return JSON.stringify(record?.content ?? null);
 }
 
 const service = Object.freeze({
@@ -150,6 +164,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const api = createTransactionApi();
     const first = createQualifiedConnectedAccountAttemptTransactionAdapters({
       credentials: credentials(7),
+      ...e2eeAccount,
       api,
       now: () => 5_000,
       randomBytes: (length) => new Uint8Array(length).fill(3),
@@ -167,14 +182,16 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const persisted = api.records.get('oauth:oauth-attempt');
 
     expect(persisted).toBeDefined();
-    expect(persisted!.ciphertext).not.toContain('super-secret-access-token');
-    expect(persisted!.ciphertext).not.toContain('super-secret-configuration');
-    expect(persisted!.ciphertext).not.toContain(original.request.state);
-    expect(persisted!.ciphertext).not.toContain('verifier');
+    expect(persisted!.content.t).toBe('encrypted');
+    expect(storedContentJson(persisted)).not.toContain('super-secret-access-token');
+    expect(storedContentJson(persisted)).not.toContain('super-secret-configuration');
+    expect(storedContentJson(persisted)).not.toContain(original.request.state);
+    expect(storedContentJson(persisted)).not.toContain('verifier');
 
     const afterRestart =
       createQualifiedConnectedAccountAttemptTransactionAdapters({
         credentials: credentials(7),
+        ...e2eeAccount,
         api,
         now: () => 5_000,
         randomBytes: (length) => new Uint8Array(length).fill(4),
@@ -210,8 +227,8 @@ describe('qualified Connected Account attempt transaction adapters', () => {
       phase: 'outcomeUnknown',
     });
     const consumed = api.records.get('oauth:oauth-attempt');
-    expect(consumed?.ciphertext).not.toContain(completion.state);
-    expect(consumed?.ciphertext).not.toContain('authorization-code');
+    expect(storedContentJson(consumed)).not.toContain(completion.state);
+    expect(storedContentJson(consumed)).not.toContain('authorization-code');
 
     await restored!.close();
     await expect(afterRestart.oauth!.read!(initial.attemptId)).resolves.toBeNull();
@@ -222,6 +239,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const initial = deviceSnapshot();
     const first = createQualifiedConnectedAccountAttemptTransactionAdapters({
       credentials: credentials(8),
+      ...e2eeAccount,
       api,
       now: () => 5_000,
       randomBytes: (length) => new Uint8Array(length).fill(5),
@@ -229,12 +247,14 @@ describe('qualified Connected Account attempt transaction adapters', () => {
 
     await first.device!.acknowledge(initial);
     const persisted = api.records.get('device:device-attempt');
-    expect(persisted?.ciphertext).not.toContain('super-secret-refresh-token');
-    expect(persisted?.ciphertext).not.toContain('super-secret-tenant');
+    expect(persisted?.content.t).toBe('encrypted');
+    expect(storedContentJson(persisted)).not.toContain('super-secret-refresh-token');
+    expect(storedContentJson(persisted)).not.toContain('super-secret-tenant');
 
     const afterRestart =
       createQualifiedConnectedAccountAttemptTransactionAdapters({
         credentials: credentials(8),
+        ...e2eeAccount,
         api,
         now: () => 5_000,
         randomBytes: (length) => new Uint8Array(length).fill(6),
@@ -265,6 +285,7 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const api = createTransactionApi();
     const first = createQualifiedConnectedAccountAttemptTransactionAdapters({
       credentials: credentials(9),
+      ...e2eeAccount,
       api,
       now: () => 5_000,
       randomBytes: (length) => new Uint8Array(length).fill(7),
@@ -274,17 +295,104 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     const wrongAccount =
       createQualifiedConnectedAccountAttemptTransactionAdapters({
         credentials: credentials(10),
+        ...e2eeAccount,
         api,
         now: () => 5_000,
       });
     await expect(
       wrongAccount.device!.read('device-attempt'),
-    ).rejects.toThrow('cannot be decrypted');
+    ).rejects.toThrow('content is unavailable for the current account mode');
+  });
+
+  it('gives a keyless plaintext Account the same durable custody through a plain envelope', async () => {
+    const api = createTransactionApi();
+    const initial = deviceSnapshot();
+    const first = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: tokenOnlyCredentials(),
+      ...plainAccount,
+      api,
+      now: () => 5_000,
+      randomBytes: (length) => new Uint8Array(length).fill(5),
+    });
+
+    await first.device!.acknowledge(initial);
+    const persisted = api.records.get('device:device-attempt');
+    expect(persisted?.content.t).toBe('plain');
+
+    const afterRestart =
+      createQualifiedConnectedAccountAttemptTransactionAdapters({
+        credentials: tokenOnlyCredentials(),
+        ...plainAccount,
+        api,
+        now: () => 5_000,
+      });
+    await expect(afterRestart.device!.read(initial.attemptId)).resolves.toEqual(
+      initial,
+    );
+
+    const oauthInitial = oauthSnapshot();
+    const created = await afterRestart.oauth!.create({
+      attemptId: oauthInitial.attemptId,
+      service: oauthInitial.service,
+      snapshot: oauthInitial,
+    });
+    expect(api.records.get('oauth:oauth-attempt')?.content.t).toBe('plain');
+    await expect(afterRestart.oauth!.read!(oauthInitial.attemptId))
+      .resolves.toMatchObject({
+        snapshot: oauthInitial,
+        request: created.request,
+      });
+  });
+
+  it('refuses a stored envelope whose kind disagrees with the persisted Account mode', async () => {
+    const api = createTransactionApi();
+    const sealedByE2ee =
+      createQualifiedConnectedAccountAttemptTransactionAdapters({
+        credentials: credentials(12),
+        ...e2eeAccount,
+        api,
+        now: () => 5_000,
+        randomBytes: (length) => new Uint8Array(length).fill(5),
+      });
+    await sealedByE2ee.device!.acknowledge(deviceSnapshot());
+
+    // The Account transitioned to plain while the sealed row stayed encrypted.
+    const readAsPlain =
+      createQualifiedConnectedAccountAttemptTransactionAdapters({
+        credentials: credentials(12),
+        ...plainAccount,
+        api,
+        now: () => 5_000,
+      });
+    await expect(readAsPlain.device!.read('device-attempt')).rejects.toThrow(
+      'does not match the persisted Account encryption mode',
+    );
+
+    const plainApi = createTransactionApi();
+    const sealedByPlain =
+      createQualifiedConnectedAccountAttemptTransactionAdapters({
+        credentials: tokenOnlyCredentials(),
+        ...plainAccount,
+        api: plainApi,
+        now: () => 5_000,
+      });
+    await sealedByPlain.device!.acknowledge(deviceSnapshot());
+    const readAsE2ee =
+      createQualifiedConnectedAccountAttemptTransactionAdapters({
+        credentials: credentials(12),
+        ...e2eeAccount,
+        api: plainApi,
+        now: () => 5_000,
+      });
+    await expect(readAsE2ee.device!.read('device-attempt')).rejects.toThrow(
+      'does not match the persisted Account encryption mode',
+    );
   });
 
   it('rejects snapshots that omit the immutable credential-configuration CAS basis', async () => {
     const adapters = createQualifiedConnectedAccountAttemptTransactionAdapters({
       credentials: credentials(11),
+      ...e2eeAccount,
       api: createTransactionApi(),
       now: () => 5_000,
     });

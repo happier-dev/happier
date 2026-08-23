@@ -6,7 +6,6 @@ import {
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import type { SessionLifecycleActionHandler } from '@/session/actions/lifecycle/sessionLifecycleTypes';
-import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import type { SpawnSessionNonceResolver } from '@/session/services/awaitSpawnedSessionId';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 
@@ -14,7 +13,7 @@ import {
     registerSessionServerStartRpcHandler,
     type SessionServerStartRpcRegistrationOptions,
 } from './sessionServerStart';
-import { createMachineSessionServerStartSpawnLifecycleTransport } from './sessionServerStartLifecycleAdapter';
+import { createMachineSessionDirectTargetTransport } from './sessionServerStartLifecycleAdapter';
 
 export type MachineSessionServerStartRpcRegistrationOptions = Readonly<{
     machineId: string;
@@ -40,7 +39,14 @@ export type MachineSessionServerStartRpcRegistrationOptions = Readonly<{
 export function registerMachineSessionServerStartRpcHandler(
     rpc: Parameters<typeof registerSessionServerStartRpcHandler>[0],
     options: MachineSessionServerStartRpcRegistrationOptions,
-): void {
+): SessionSpawnDirectTargetTransport {
+    const directTargetTransport = createMachineSessionDirectTargetTransport({
+        machineId: options.machineId,
+        spawnLifecycleHandler: options.spawnLifecycleHandler,
+        ...(options.resolveSpawnSessionByNonce
+            ? { resolveSpawnSessionByNonce: options.resolveSpawnSessionByNonce }
+            : {}),
+    });
     registerSessionServerStartRpcHandler(rpc, {
         machineId: options.machineId,
         resolveAccountId: options.resolveAccountId,
@@ -71,20 +77,6 @@ export function registerMachineSessionServerStartRpcHandler(
             if (context.signal.aborted) {
                 return { type: 'error', code: 'cancelled', retryable: true };
             }
-            const directTargetTransport: SessionSpawnDirectTargetTransport = {
-                machineId: options.machineId,
-                prepare: async (request, prepareOptions) =>
-                    await prepareSessionCreationTarget({
-                        request,
-                        ...(prepareOptions?.signal ? { signal: prepareOptions.signal } : {}),
-                    }),
-                spawnedSession: createMachineSessionServerStartSpawnLifecycleTransport({
-                    spawnLifecycleHandler: options.spawnLifecycleHandler,
-                    ...(options.resolveSpawnSessionByNonce
-                        ? { resolveSpawnSessionByNonce: options.resolveSpawnSessionByNonce }
-                        : {}),
-                }),
-            };
             const executor = createCliActionExecutor({
                 token: credentials.token,
                 credentials,
@@ -118,4 +110,5 @@ export function registerMachineSessionServerStartRpcHandler(
             }
         },
     });
+    return directTargetTransport;
 }

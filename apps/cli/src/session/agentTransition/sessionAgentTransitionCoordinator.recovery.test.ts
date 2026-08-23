@@ -102,7 +102,7 @@ describe('section 7.5 recovery projection', () => {
     });
   });
 
-  it('row 3 — target current, divider absent: divider_missing', async () => {
+  it('row 3 — target current, divider absent: divider_unavailable', async () => {
     const harness = createTransitionDepsHarness();
     harness.setMetadata({ ...TARGET_CURRENT_METADATA });
 
@@ -110,7 +110,7 @@ describe('section 7.5 recovery projection', () => {
       type: 'partially_applied',
       localId: TEST_LOCAL_ID,
       applied: 'current_view_committed',
-      code: 'divider_missing',
+      code: 'divider_unavailable',
     });
   });
 
@@ -175,7 +175,7 @@ describe('section 7.5 recovery projection', () => {
         type: 'partially_applied',
         localId: TEST_LOCAL_ID,
         applied: 'current_view_committed',
-        code: 'divider_unknown',
+        code: 'divider_unavailable',
       });
     }
   });
@@ -218,7 +218,7 @@ describe('section 7.5 recovery projection', () => {
       type: 'partially_applied',
       localId: TEST_LOCAL_ID,
       applied: 'current_view_committed',
-      code: 'divider_conflict',
+      code: 'divider_unavailable',
     });
     expect(harness.deps.applySessionAgentTransitionCutover).not.toHaveBeenCalled();
     expect(harness.deps.sendSessionMessage).not.toHaveBeenCalled();
@@ -254,7 +254,7 @@ describe('section 7.5 recovery projection', () => {
     expect(attempts).toHaveLength(2);
   });
 
-  it('reports a committed view with a refused divider as divider_conflict, not divider_missing', async () => {
+  it('reports a committed view with a refused divider as divider_unavailable', async () => {
     const harness = createTransitionDepsHarness({
       applySessionAgentTransitionCutover: vi.fn(async () => ({
         ok: false as const,
@@ -264,14 +264,14 @@ describe('section 7.5 recovery projection', () => {
     });
 
     // A row EXISTS at the reserved localId carrying a different payload. Naming
-    // it `divider_missing` would send the client into resume-and-send recovery,
+    // it as available would send the client into resume-and-send recovery,
     // let a retry re-derive the same conflict forever, and let the bounded
     // context pass trust a divider naming the wrong target.
     expect(await runTransition(harness)).toEqual({
       type: 'partially_applied',
       localId: TEST_LOCAL_ID,
       applied: 'current_view_committed',
-      code: 'divider_conflict',
+      code: 'divider_unavailable',
     });
   });
 
@@ -294,11 +294,11 @@ describe('section 7.5 recovery projection', () => {
       type: 'partially_applied',
       localId: TEST_LOCAL_ID,
       applied: 'current_view_committed',
-      code: 'divider_unknown',
+      code: 'divider_unavailable',
     });
   });
 
-  it('still reports a genuinely failed divider write as divider_missing', async () => {
+  it('reports a genuinely failed divider write as divider_unavailable', async () => {
     const harness = createTransitionDepsHarness({
       applySessionAgentTransitionCutover: vi.fn(async () => ({
         ok: false as const,
@@ -311,7 +311,7 @@ describe('section 7.5 recovery projection', () => {
       type: 'partially_applied',
       localId: TEST_LOCAL_ID,
       applied: 'current_view_committed',
-      code: 'divider_missing',
+      code: 'divider_unavailable',
     });
   });
 });

@@ -5,7 +5,6 @@ import {
 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
-import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvocation';
 import type {
     ExternalSessionFollowHostOperation,
     ExternalSessionFollowHostOperationRequest,
@@ -136,7 +135,15 @@ type OwnerGeneration = {
 
 const MAX_ACTIVE_FOLLOWS_PER_BINDING = 64;
 const MAX_FOLLOW_EVENT_SERIALIZED_BYTES = 1024 * 1024;
-const EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS = 5_000;
+export const EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS = 5_000;
+/**
+ * Transport bound for a follow-close request, one round trip of slack over the
+ * dispose boundary this owner promises. Every carrier that closes a follow over
+ * a runner/daemon transport uses it, so no carrier can wait on the platform
+ * default (minutes) while a caller believes disposal is bounded.
+ */
+export const EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS =
+    EXTERNAL_SESSION_FOLLOW_DISPOSE_TIMEOUT_MS + 1_000;
 
 function fail(code: string): never {
     throw new PluginError({ code, message: code });
@@ -163,20 +170,11 @@ function readResolvedFollowTarget(
     }
     const parsedRef = ExternalSessionRefSchema.safeParse(target.ref);
     if (!parsedRef.success) return null;
+    // The canonical source parser already enforces the strict-JSON shape and
+    // the serialized-byte budget this owner used to re-measure, so a second
+    // walk here can only ever agree with it.
     const parsedSource = ExternalSessionsSourceSchema.safeParse(target.source);
     if (!parsedSource.success) return null;
-    try {
-        const serialized = JSON.stringify(parsedSource.data);
-        if (
-            serialized === undefined
-            || Buffer.byteLength(serialized, 'utf8')
-                > EXTERNAL_SESSIONS_INVOCATION_POLICY.sourceMaxSerializedBytes
-        ) {
-            return null;
-        }
-    } catch {
-        return null;
-    }
     return Object.freeze({
         status: 'resolved',
         ref: Object.freeze(parsedRef.data),
@@ -431,12 +429,17 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                     }
 
                     let disposal: Promise<void> | null = null;
-                    let subscription:
-                        Extract<
-                            HostExternalTranscriptFollowResult,
-                            { status: 'following' }
-                        >['subscription']
-                        | null = null;
+                    type FollowSubscription = Extract<
+                        HostExternalTranscriptFollowResult,
+                        { status: 'following' }
+                    >['subscription'];
+                    let subscription: FollowSubscription | null = null;
+                    /**
+                     * The handle the newest settled disposal actually released.
+                     * `null` after a disposal that ran before acquisition had one,
+                     * which is how a late acquisition is recognized.
+                     */
+                    let disposedSubscription: FollowSubscription | null = null;
                     let disposed = false;
                     let explicitDisposePending = false;
                     let disposedAcknowledgementSeen = false;
@@ -447,48 +450,77 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                             ? [request.options.signal]
                             : []),
                     ]);
+                    const startDisposal = (
+                        admitDisposedAcknowledgement: boolean,
+                    ): Promise<void> => {
+                        explicitDisposePending = admitDisposedAcknowledgement;
+                        if (!admitDisposedAcknowledgement) {
+                            disposed = true;
+                        }
+                        const attempt = (async () => {
+                            activeSignal.removeEventListener(
+                                'abort',
+                                onLifecycleAbort,
+                            );
+                            const currentSubscription = subscription;
+                            try {
+                                await disposeFollowSubscriptionBounded(
+                                    currentSubscription
+                                        ? () => currentSubscription.dispose()
+                                        : undefined,
+                                );
+                                // Recorded after the bounded wait so a
+                                // timeout-detach also surrenders the handle,
+                                // while a pre-ceiling rejection does not.
+                                disposedSubscription = currentSubscription;
+                            } finally {
+                                disposed = true;
+                                explicitDisposePending = false;
+                            }
+                            // Ownership is surrendered only once cleanup has
+                            // actually settled. A rejecting disposer keeps this
+                            // follow discoverable through the owner so binding
+                            // and generation retirement retry the exact same
+                            // cleanup instead of losing custody of it.
+                            bindingFollows.delete(active);
+                            generation.activeFollows.delete(active);
+                        })();
+                        disposal = attempt;
+                        return attempt;
+                    };
                     const settleDisposal = async (
                         admitDisposedAcknowledgement: boolean,
                     ): Promise<void> => {
-                        if (!disposal) {
-                            explicitDisposePending =
-                                admitDisposedAcknowledgement;
-                            if (!admitDisposedAcknowledgement) {
-                                disposed = true;
-                            }
-                            disposal = (async () => {
-                                activeSignal.removeEventListener(
-                                    'abort',
-                                    onLifecycleAbort,
-                                );
-                                const currentSubscription = subscription;
-                                try {
-                                    await disposeFollowSubscriptionBounded(
-                                        currentSubscription
-                                            ? () => currentSubscription.dispose()
-                                            : undefined,
-                                    );
-                                } finally {
-                                    disposed = true;
-                                    explicitDisposePending = false;
+                        for (;;) {
+                            const attempt = disposal
+                                ?? startDisposal(admitDisposedAcknowledgement);
+                            try {
+                                await attempt;
+                            } catch (error) {
+                                if (disposal === attempt) {
+                                    disposal = null;
                                 }
-                                // Ownership is surrendered only once cleanup has
-                                // actually settled. A rejecting disposer keeps this
-                                // follow discoverable through the owner so binding
-                                // and generation retirement retry the exact same
-                                // cleanup instead of losing custody of it.
-                                bindingFollows.delete(active);
-                                generation.activeFollows.delete(active);
-                            })();
-                        }
-                        const disposalAttempt = disposal;
-                        try {
-                            await disposalAttempt;
-                        } catch (error) {
-                            if (disposal === disposalAttempt) {
-                                disposal = null;
+                                throw error;
                             }
-                            throw error;
+                            if (
+                                disposal !== attempt
+                                || subscription === null
+                                || disposedSubscription === subscription
+                            ) {
+                                return;
+                            }
+                            // Retirement can settle while acquisition is still in
+                            // flight, in which case that disposal had no handle to
+                            // release. The subscription acquisition then hands back
+                            // is still this follow's to clean up, so it is admitted
+                            // back into the same state machine instead of being
+                            // disposed outside the owner. The decision is made only
+                            // once the previous attempt has settled, so a concurrent
+                            // caller joins that attempt instead of starting a second
+                            // physical disposal of the same handle.
+                            disposal = null;
+                            bindingFollows.add(active);
+                            generation.activeFollows.add(active);
                         }
                     };
                     const active: ActiveFollow = Object.freeze({
@@ -582,9 +614,11 @@ export function createExternalSessionHostOperationOwner(): ExternalSessionHostOp
                         || activeSignal.aborted
                         || !isBindingCurrent()
                     ) {
-                        await disposeFollowSubscriptionBounded(
-                            () => resolvedSubscription.dispose(),
-                        );
+                        // Late settlement is retired through `ActiveFollow`, not
+                        // disposed beside it: a pre-ceiling cleanup rejection then
+                        // keeps the exact handle discoverable through the owner for
+                        // retry instead of dropping it.
+                        await active.retire();
                         return unavailableFollow(
                             listenerFailed
                                 ? 'plugin_external_follow_listener_failed'

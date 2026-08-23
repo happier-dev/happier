@@ -18,7 +18,7 @@ export async function cmdSessionActionsList(
     surface: 'cli',
     isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'cli', placement: null }),
   });
-  const actionSpecs = availableSpecs.map(serializeActionSpec);
+  const actionSpecs = availableSpecs.map((spec) => serializeActionSpec(spec));
 
   if (json) {
     await printJsonEnvelope({ ok: true, kind: 'session_actions_list', data: { actionSpecs } });

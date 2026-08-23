@@ -33,6 +33,9 @@ import {
   resetActiveAccountSettingsSnapshotForTests,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import {
+  QualifiedConnectedAccountCredentialConflictError,
+} from '@/api/client/qualifiedConnectedAccountApi';
 
 import {
   createQualifiedConnectedAccountDaemonPersistence,
@@ -1167,7 +1170,23 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         secretRefs: { clientSecret: 'connected-account-secret-1' },
       }],
     });
-    expect(JSON.stringify(settings)).not.toContain('never-return-this');
+    // This harness replaces the Account Settings owner with an in-memory stub, so the
+    // only thing it can witness is what the adapter hands that owner. A plaintext
+    // Account is genuinely keyless (`docs/encryption.md`, Account-mode invariant), so
+    // the adapter must pass the canonical SavedSecret input through and must not
+    // fabricate Account encryption material of its own. Which persisted form the owner
+    // then writes is proven against the real seam by 'writes Connected Account service
+    // configuration secrets for a plaintext Account'.
+    const stagedSecrets = settings.secrets as readonly Readonly<{
+      id: string;
+      encryptedValue: Readonly<{ value?: unknown; encryptedValue?: unknown }>;
+    }>[];
+    expect(stagedSecrets).toHaveLength(1);
+    expect(stagedSecrets[0]).toMatchObject({
+      id: 'connected-account-secret-1',
+      encryptedValue: { _isSecretValue: true, value: 'never-return-this' },
+    });
+    expect(stagedSecrets[0]?.encryptedValue.encryptedValue).toBeUndefined();
 
     const attemptTarget = Object.freeze({
       kind: 'attempt' as const,
@@ -1879,6 +1898,73 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     expect(mutateCredential).toHaveBeenCalledOnce();
     expect(mutateConfiguration).not.toHaveBeenCalled();
     expect(updateAccountSettings).not.toHaveBeenCalled();
+  });
+
+  it('preserves the server-named credential refusal instead of one settlement conflict', async () => {
+    // Capacity exhaustion and an identity/authentication-mode mismatch are not
+    // CAS races: the caller must be able to tell them apart from a stale write.
+    for (const [serverCode, expected] of [
+      [
+        'connect_connected_account_capacity_exhausted',
+        { status: 'rejected', code: 'connected_account_credential_capacity_exhausted' },
+      ],
+      [
+        'connect_reconnect_provider_identity_mismatch',
+        { status: 'conflict', code: 'connected_account_reconnect_provider_identity_mismatch' },
+      ],
+      [
+        'connect_authentication_mode_mismatch',
+        { status: 'conflict', code: 'connected_account_authentication_mode_mismatch' },
+      ],
+    ] as const) {
+      const updateAccountSettings = vi.fn();
+      const mutateConfiguration = vi.fn();
+      const readCredential = vi.fn(async () => null);
+      const mutateCredential = vi.fn(async () => {
+        throw new QualifiedConnectedAccountCredentialConflictError(serverCode);
+      });
+      const persistence = createQualifiedConnectedAccountDaemonPersistence({
+        credentials: {
+          token: 'token-1',
+          encryption: {
+            type: 'dataKey',
+            publicKey: new Uint8Array(32),
+            machineKey: new Uint8Array(32),
+          },
+        },
+        getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+        readCredential,
+        readConfiguration: vi.fn(async () => null),
+        mutateCredential,
+        mutateConfiguration,
+        secrets: {
+          has: vi.fn(async () => false),
+          read: vi.fn(async () => null),
+        },
+        readAccountSettings: () => ({}),
+        updateAccountSettings,
+      });
+
+      await expect(persistence.attempts.settlement.settle({
+        intent: 'connect',
+        service,
+        accountId: account.accountId,
+        authenticationModeId: 'oauth',
+        expectedCredentialRevision: null,
+        expectedCredentialConfigurationRevision: null,
+        expectedConfigurationRevision: 'unconfigured',
+        generation: 'generation-1',
+        stagedCredentials: { accessToken: 'access-1' },
+        displayName: 'Person',
+        scopes: [],
+      })).resolves.toEqual(expected);
+      expect(mutateCredential).toHaveBeenCalledOnce();
+      // A named refusal is terminal: no read-back reconciliation, no
+      // configuration write and no Account Settings effect.
+      expect(readCredential).not.toHaveBeenCalled();
+      expect(mutateConfiguration).not.toHaveBeenCalled();
+      expect(updateAccountSettings).not.toHaveBeenCalled();
+    }
   });
 
   it('rejects reconnect staging and account SavedSecret references before any credential effect', async () => {
@@ -3165,5 +3251,84 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     expect(mutateCredential).not.toHaveBeenCalled();
     expect(readPlain).not.toHaveBeenCalled();
     expect(registerPlain).not.toHaveBeenCalled();
+  });
+
+  it('writes Connected Account service configuration secrets for a plaintext Account', async () => {
+    resetActiveAccountSettingsSnapshotForTests();
+    // A plaintext Account correctly holds no client Account data-encryption material.
+    // The adapter must hand the raw secret to the canonical Account Settings owner and let
+    // that owner apply the Account's actual encryption mode.
+    // A plaintext Account's stored credential genuinely carries no Account
+    // data-encryption material; `encryption: null` is that fact, not a stub.
+    const credentials = { token: 'plain-account-token', encryption: null };
+    commitActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse({}),
+      rawSettings: {},
+      settingsVersion: 1,
+      loadedAtMs: 100,
+      settingsSecretsReadKeys: [],
+      scopeKey: resolveAccountSettingsScopeKey(credentials),
+    });
+    let submittedContent: AccountSettingsStoredContentEnvelope | null | undefined;
+    const updateSettings = vi.fn(async (request: Readonly<{
+      expectedVersion: number;
+      content: AccountSettingsStoredContentEnvelope | null;
+    }>) => {
+      submittedContent = request.content;
+      return { success: true as const, version: 2 };
+    });
+    const persistence = createQualifiedConnectedAccountDaemonPersistence({
+      credentials,
+      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+      readCredential: vi.fn(async () => null),
+      readConfiguration: vi.fn(async () => null),
+      mutateCredential: vi.fn(),
+      mutateConfiguration: vi.fn(),
+      secrets: {
+        has: vi.fn(async () => false),
+        read: vi.fn(async () => null),
+      },
+      randomBytes: (length) => new Uint8Array(length).fill(7),
+      createConfigurationRevision: () => 'configuration-plain',
+      createSecretId: () => 'secret-plain-1',
+      accountSettingsUpdateDeps: {
+        fetchSettings: async () => ({ content: { t: 'plain' as const, v: {} }, version: 1 }),
+        updateSettings,
+        resolveAccountEncryptionMode: async () => 'plain',
+        resolveCachePath: () => '/tmp/plain-account-settings',
+        writeCache: async () => {},
+      },
+    });
+
+    const result = await persistence.configuration.replaceForControl!({
+      target: { kind: 'service', service, modeId: 'oauth' },
+      expectedRevision: null,
+      values: { endpoint: 'https://api.example.test' },
+      currentSecretRefs: {},
+      secretValues: { clientSecret: 'plain-client-secret' },
+      generation: 'generation-plain',
+      immutableGenerationId: 'artifact-plain',
+    });
+
+    expect(result).toMatchObject({
+      status: 'committed',
+      record: {
+        revision: 'configuration-plain',
+        secretRefs: { clientSecret: 'secret-plain-1' },
+      },
+    });
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(submittedContent?.t).toBe('plain');
+    const persisted = submittedContent?.t === 'plain'
+      ? submittedContent.v as Readonly<{ secrets?: readonly Readonly<{
+        id: string;
+        encryptedValue: Readonly<{ value?: string; encryptedValue?: unknown }>;
+      }>[] }>
+      : null;
+    const written = persisted?.secrets?.find((entry) => entry.id === 'secret-plain-1');
+    expect(written?.encryptedValue.value).toBe('plain-client-secret');
+    expect(written?.encryptedValue.encryptedValue).toBeUndefined();
+    resetActiveAccountSettingsSnapshotForTests();
   });
 });

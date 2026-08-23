@@ -5,6 +5,7 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { logger } from '@/ui/logger';
 import {
   AgentSessionRuntimeEventV1Schema,
   type AgentSessionRuntimeEventV1,
@@ -189,7 +190,11 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       source: 'structured_provider_error',
     }));
     const callerRuntimeAuthHook = vi.fn(async () => {
-      throw new Error('caller hook failed');
+      throw new Error('caller hook failed reading /Users/tester/.happy/credentials.json');
+    });
+    const debugLogs: string[] = [];
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation((...args: unknown[]) => {
+      debugLogs.push(args.map((arg) => (arg instanceof Error ? `${arg.message}\n${arg.stack ?? ''}` : String(arg))).join(' '));
     });
 
     const runtime = createCatalogProviderAcpRuntime({
@@ -238,6 +243,15 @@ describe('createCatalogProviderAcpRuntime (runtime auth failures)', () => {
       });
       expect(JSON.stringify(turnFailed)).not.toContain('connectedService');
     });
+    // The retained daemon log keeps the failure without the local paths the
+    // thrown error and its stack carry.
+    const hookFailureLogs = debugLogs.filter((line) => line.includes('Runtime auth failure'));
+    expect(hookFailureLogs.length).toBeGreaterThan(0);
+    for (const line of hookFailureLogs) {
+      expect(line).not.toContain('/Users/tester/.happy/credentials.json');
+      expect(line).not.toContain('createProviderAcpRuntime.ts');
+    }
+    debugSpy.mockRestore();
   });
 
   it('does not duplicate daemon-owned exhausted recovery metadata in the provider runtime', async () => {

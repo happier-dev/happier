@@ -1,6 +1,7 @@
 import {
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
     openAutomationSessionStartRequestEnvelopeV1,
+    sameAutomationAccountCurrentnessWitnessV1,
     SessionServerStartDispatchRequestV1Schema,
     SessionServerStartDispatchResultV1Schema,
     type AccountEncryptionCurrentnessResponse,
@@ -13,7 +14,6 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
     isAvailableE2eeAutomationAccountEncryptionV1,
     resolveValidatedAutomationAccountEncryptionV1,
-    sameAutomationAccountCurrentnessV1,
     type AvailableAutomationAccountEncryptionV1,
 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 
@@ -86,7 +86,7 @@ async function resolveCurrentTarget(params: Readonly<{
         });
         return !params.signal.aborted
             && encryption.kind === 'available'
-            && sameAutomationAccountCurrentnessV1(
+            && sameAutomationAccountCurrentnessWitnessV1(
                 params.request.start.accountCurrentness,
                 encryption.witness,
             )

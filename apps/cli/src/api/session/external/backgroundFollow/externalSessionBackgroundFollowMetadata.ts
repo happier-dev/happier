@@ -5,7 +5,7 @@ import {
     buildLinkedExternalSessionMetadataV1,
     readExternalSessionAttentionV1,
     readExternalSessionFollowPolicyV1,
-    readLinkedExternalSessionV1FromMetadata,
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     resolveLinkedExternalSessionMetadataV1,
     updateLinkedExternalSessionFollowMetadataV1,
     type ExternalSessionFollowIssueV1,
@@ -27,7 +27,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function readCurrentFollowPolicy(metadata: Metadata): ExternalSessionFollowPolicy {
-    const externalSession = readLinkedExternalSessionV1FromMetadata(metadata);
+    const externalSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
     return readExternalSessionFollowPolicyV1(externalSession?.followPolicyV1)?.policy ?? 'attached_only';
 }
 
@@ -106,7 +106,7 @@ export function updateMetadataWithExternalSessionObservedProgress(
         expectedLinkGeneration: string;
     }>,
 ): Metadata {
-    const currentExternalSession = readLinkedExternalSessionV1FromMetadata(metadata);
+    const currentExternalSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
     if (!currentExternalSession) {
         return metadata;
     }

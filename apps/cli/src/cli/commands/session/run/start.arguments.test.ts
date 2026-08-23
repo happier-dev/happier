@@ -1,8 +1,58 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 
 describe('happier session run start arguments', () => {
+  it('accepts --agent as the executable Agent selector before credential checks', async () => {
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess-1', '--intent', 'review', '--agent', 'agent:codex', '--json'],
+        { readCredentialsFn },
+      );
+
+      expect(output.json()).toEqual({
+        v: 1,
+        ok: false,
+        kind: 'session_run_start',
+        error: { code: 'not_authenticated' },
+      });
+      expect(readCredentialsFn).toHaveBeenCalledOnce();
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('rejects retired --backend before credential checks', async () => {
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess-1', '--intent', 'review', '--backend', 'agent:codex', '--json'],
+        { readCredentialsFn },
+      );
+
+      expect(output.json()).toEqual({
+        v: 1,
+        ok: false,
+        kind: 'session_run_start',
+        error: {
+          code: 'invalid_arguments',
+          message: `Usage: ${SESSION_HELP_LINES.runStart}`,
+        },
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
   it('returns a stable invalid_arguments error for an unsupported intent before reading credentials', async () => {
     const { handleSessionCommand } = await import('../handleSessionCommand');
     const output = captureConsoleJsonOutput();
@@ -10,7 +60,7 @@ describe('happier session run start arguments', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'start', 'sess-1', '--intent', 'qa_cli_run', '--backend', 'agent:codex', '--json'],
+        ['run', 'start', 'sess-1', '--intent', 'qa_cli_run', '--agent', 'agent:codex', '--json'],
         { readCredentialsFn },
       );
 
@@ -46,7 +96,7 @@ describe('happier session run start arguments', () => {
           'sess-1',
           '--intent',
           'review',
-          '--backend',
+          '--agent',
           'agent:codex',
           flag,
           value,
@@ -87,7 +137,7 @@ describe('happier session run start arguments', () => {
           'sess-1',
           '--intent',
           'review',
-          '--backend',
+          '--agent',
           'agent:codex',
           '--json',
           flag,

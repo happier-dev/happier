@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateVendorResumeEligibility } from '@happier-dev/agents';
 import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 import {
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   updateLinkedExternalSessionFollowMetadataV1,
   resolveExternalSessionsSourceKey,
   resolveExternalSessionsSourceKeysForPersistedTagLookup,
@@ -892,7 +892,7 @@ describe('ensureExternalSessionLink', () => {
       ([call]) => call.tag === legacyTag && call.currentStorageState === 'machine_only',
     )).toBe(true);
     expect(existingMetadata).toMatchObject({ tag: legacyTag });
-    expect(readLinkedExternalSessionV1FromMetadata(existingMetadata)).toMatchObject({
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(existingMetadata)).toMatchObject({
       agentId: 'opencode',
       remoteSessionId: 'oc_legacy_tag',
       source: {
@@ -1472,7 +1472,7 @@ describe('ensureExternalSessionLink', () => {
         },
       },
     });
-    expect(readLinkedExternalSessionV1FromMetadata(qualifiedMetadata)?.qualifiedIdentity).toMatchObject({
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(qualifiedMetadata)?.qualifiedIdentity).toMatchObject({
       agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
     });
     const existingRawSession = { id: 'sess_qualified', metadata: 'encrypted-metadata-placeholder' };

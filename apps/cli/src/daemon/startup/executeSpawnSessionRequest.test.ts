@@ -581,7 +581,19 @@ describe('executeSpawnSessionRequest', () => {
     hoisted.createRuntimeProviderSpawnAuthorizationAttempt.mockReset();
     hoisted.getActiveAccountSettingsSnapshot.mockReset();
     hoisted.getActiveAccountSettingsSnapshot.mockReturnValue(null);
-    hoisted.ensureSessionDirectory.mockClear();
+    // `mockClear` keeps queued `mockResolvedValueOnce` values, so a test that
+    // legitimately never reaches workspace creation used to hand its queued
+    // result to the next test. Reset the mock and re-establish the default so
+    // each test owns exactly the directory outcomes it queues.
+    hoisted.ensureSessionDirectory.mockReset();
+    hoisted.ensureSessionDirectory.mockResolvedValue({
+      ok: false,
+      response: {
+        type: 'error',
+        errorCode: 'directory_setup_failed',
+        errorMessage: 'Directory setup failed.',
+      },
+    });
     hoisted.getVendorResumeSupport.mockResolvedValue(hoisted.vendorResumeSupport);
     hoisted.resolveSpawnBackendIdentity.mockResolvedValue({
       ok: true,
@@ -1576,6 +1588,12 @@ describe('executeSpawnSessionRequest', () => {
         cleanupOnExit: null,
         expandedEnvironmentVariables: {},
         extraEnvForChild: {},
+        agentCliLaunchSpec: {
+          source: 'override',
+          resolvedPath: '/workspace/.profile/bin/codex',
+          command: '/workspace/.profile/bin/codex',
+          args: [],
+        },
       };
     });
     vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async (input) => {
@@ -1591,6 +1609,19 @@ describe('executeSpawnSessionRequest', () => {
         authorityFilePath: expect.any(String),
       });
       expect(await input.revalidateBeforeCommit?.()).toBeNull();
+      expect(input.runnerAgentInvocationContext).toMatchObject({
+        cwd: '/tmp/project',
+        environment: {},
+        agentCliLaunch: {
+          localAgentId: 'codex',
+          spec: {
+            source: 'override',
+            resolvedPath: '/workspace/.profile/bin/codex',
+            command: '/workspace/.profile/bin/codex',
+            args: [],
+          },
+        },
+      });
       events.push('child-commit');
       return {
         type: 'error',
@@ -1860,7 +1891,6 @@ describe('executeSpawnSessionRequest', () => {
       sessionAttachPayload: { v: 2, encryptionMode: 'plain' },
       catalogAgentId: 'codex',
     });
-    hoisted.ensureSessionDirectory.mockResolvedValueOnce({ ok: true, directoryCreated: false });
     hoisted.getActiveAccountSettingsSnapshot.mockReturnValue({
       settings: { profiles: [{
         v: 2, id: 'focused', name: 'Focused', extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: '1' }],
@@ -1917,6 +1947,67 @@ describe('executeSpawnSessionRequest', () => {
     });
     expect(resolveSpawnChildEnvironment).not.toHaveBeenCalled();
     expect(hoisted.createRuntimeProviderSpawnAuthorizationAttempt).not.toHaveBeenCalled();
+    // A definitive Provider refusal must not leave a workspace behind: the
+    // requested directory is only created once the Provider decision admits
+    // the spawn.
+    expect(hoisted.ensureSessionDirectory).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a workspace-creation failure with a bounded log once the Provider decision admits the spawn', async () => {
+    hoisted.requireCatalogEntry.mockReturnValue({});
+    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+      ok: true,
+      normalizedExistingSessionId: '',
+      effectiveResume: '',
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        sourceKind: 'built_in',
+        backendId: 'codex',
+      },
+      sessionAttachPayload: { v: 2, encryptionMode: 'plain' },
+      catalogAgentId: 'codex',
+    });
+    hoisted.ensureSessionDirectory.mockResolvedValueOnce({
+      ok: false,
+      response: {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
+        errorMessage: "Unable to create directory at '/private/customer-workspace'.",
+      },
+    });
+    const release = vi.fn(async () => undefined);
+    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
+      registry: {
+        contributes: createRegistryWithBackendOwners({ codex: 'happier.agent.codex' }),
+        agentRuntimesByAgentId: new Map(),
+      },
+      source: 'active',
+      release,
+    });
+    const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+    const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
+    const { logger } = await import('@/ui/logger');
+
+    const result = await executeSpawnSessionRequest({
+      ...createParams(),
+      options: { ...createParams().options, resume: undefined },
+    });
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
+    });
+    expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+      '[DAEMON RUN] Session directory setup failed',
+      {
+        resultType: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
+      },
+    );
+    expect(JSON.stringify(vi.mocked(logger.debug).mock.calls))
+      .not.toContain('/private/customer-workspace');
+    expect(routeSpawnModeAndWaitForWebhook).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledTimes(1);
   });
 

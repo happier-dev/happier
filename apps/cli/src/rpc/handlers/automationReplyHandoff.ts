@@ -8,6 +8,7 @@ import {
     AutomationResultDeliveryResultV1Schema,
     openAutomationConversationReplyContextStoredEnvelopeV1,
     openAutomationRunResultStoredEnvelopeV1,
+    sameAutomationAccountCurrentnessWitnessV1,
     sealAutomationReplyHandoffReceiptStoredEnvelopeV1,
     type AccountEncryptionCurrentnessResponse,
     type AccountScopedCryptoMaterialSnapshotV1,
@@ -30,7 +31,6 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import {
     isAvailableE2eeAutomationAccountEncryptionV1,
     resolveValidatedAutomationAccountEncryptionV1,
-    sameAutomationAccountCurrentnessV1,
 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 
 type AutomationReplyHandoffActionExecutor = typeof executeContributedAction;
@@ -216,7 +216,7 @@ export function registerAutomationReplyHandoffRpcHandler(
         if (encryptionAtOpen.kind === 'unavailable') return unavailable('targetUnavailable');
         if (encryptionAtOpen.kind === 'retry') {
             return settled({
-                settlement: sameAutomationAccountCurrentnessV1(
+                settlement: sameAutomationAccountCurrentnessWitnessV1(
                     request.handoff.accountCurrentness,
                     encryptionAtOpen.witness,
                 )
@@ -225,7 +225,7 @@ export function registerAutomationReplyHandoffRpcHandler(
                 accountCurrentness: encryptionAtOpen.witness,
             });
         }
-        if (!sameAutomationAccountCurrentnessV1(request.handoff.accountCurrentness, encryptionAtOpen.witness)) {
+        if (!sameAutomationAccountCurrentnessWitnessV1(request.handoff.accountCurrentness, encryptionAtOpen.witness)) {
             return settled({
                 settlement: { kind: 'staleClaim' },
                 accountCurrentness: encryptionAtOpen.witness,
@@ -264,7 +264,7 @@ export function registerAutomationReplyHandoffRpcHandler(
             }
             if (encryptionAfterOpenFailure.kind === 'retry') {
                 return settled({
-                    settlement: sameAutomationAccountCurrentnessV1(
+                    settlement: sameAutomationAccountCurrentnessWitnessV1(
                         request.handoff.accountCurrentness,
                         encryptionAfterOpenFailure.witness,
                     )
@@ -273,7 +273,7 @@ export function registerAutomationReplyHandoffRpcHandler(
                     accountCurrentness: encryptionAfterOpenFailure.witness,
                 });
             }
-            if (!sameAutomationAccountCurrentnessV1(encryptionAtOpen.witness, encryptionAfterOpenFailure.witness)) {
+            if (!sameAutomationAccountCurrentnessWitnessV1(encryptionAtOpen.witness, encryptionAfterOpenFailure.witness)) {
                 return settled({
                     settlement: { kind: 'staleClaim' },
                     accountCurrentness: encryptionAfterOpenFailure.witness,
@@ -327,7 +327,7 @@ export function registerAutomationReplyHandoffRpcHandler(
             if (encryptionBeforeInvoke.kind === 'unavailable') return unavailable('targetUnavailable');
             if (
                 encryptionBeforeInvoke.kind !== 'available'
-                || !sameAutomationAccountCurrentnessV1(encryptionAtOpen.witness, encryptionBeforeInvoke.witness)
+                || !sameAutomationAccountCurrentnessWitnessV1(encryptionAtOpen.witness, encryptionBeforeInvoke.witness)
             ) {
                 return settled({
                     settlement: { kind: 'retry', retryAfterMs: 0 },
@@ -374,7 +374,7 @@ export function registerAutomationReplyHandoffRpcHandler(
             if (encryptionAfterInvoke.kind === 'unavailable') return unavailable('targetUnavailable');
             if (
                 encryptionAfterInvoke.kind !== 'available'
-                || !sameAutomationAccountCurrentnessV1(encryptionAtOpen.witness, encryptionAfterInvoke.witness)
+                || !sameAutomationAccountCurrentnessWitnessV1(encryptionAtOpen.witness, encryptionAfterInvoke.witness)
             ) {
                 return settled({
                     settlement: { kind: 'retry', retryAfterMs: 0 },

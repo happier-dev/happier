@@ -328,14 +328,32 @@ describe('current Agent runtime daemon service authority client', () => {
         kind: 'create',
         sessionId: 'session-1',
         cwd: '/workspace',
+        stateSharing: {
+          configMode: 'isolated',
+          stateMode: 'isolated',
+        },
       },
       providerSessionId: 'provider-1',
       timeoutMs: null,
     })).resolves.toMatchObject({ status: 'recorded' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(operations).toEqual([
-      operations[0],
-      operations[0],
+      expect.objectContaining({
+        request: expect.objectContaining({
+          stateSharing: {
+            configMode: 'isolated',
+            stateMode: 'isolated',
+          },
+        }),
+      }),
+      expect.objectContaining({
+        request: expect.objectContaining({
+          stateSharing: {
+            configMode: 'isolated',
+            stateMode: 'isolated',
+          },
+        }),
+      }),
     ]);
   });
 

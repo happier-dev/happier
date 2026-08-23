@@ -5,8 +5,8 @@ import {
   type CommandSurfaceDescriptorInput,
 } from '@/agent/runtime/registry/commandContracts';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { listProjectedPluginCommandRootHelpEntries } from '@/cli/pluginCommandContributions';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
+import { FIRST_CLASS_SESSION_COMMANDS } from '@/cli/firstClassSessionCommands';
 
 export type CliCommandSurfaceEntry = CommandSurfaceDescriptorInput;
 
@@ -74,6 +74,7 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   {
     command: 'agent',
     allowTmux: false,
+    // Deprecated 2026-08-22 (D11); removal is intentionally unscheduled.
   },
   {
     command: 'providers',
@@ -84,6 +85,7 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   {
     command: 'provider',
     allowTmux: false,
+    // Deprecated 2026-08-22 (D11); removal is intentionally unscheduled.
   },
   {
     command: 'plugins',
@@ -150,6 +152,15 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     rootHelpDescription: 'Manage sessions and execution runs',
     allowTmux: false,
   },
+  ...FIRST_CLASS_SESSION_COMMANDS.flatMap((sessionCommand) => [
+    {
+      command: sessionCommand.command,
+      rootHelpLabel: sessionCommand.rootHelpLabel,
+      rootHelpDescription: sessionCommand.rootHelpDescription,
+      allowTmux: false,
+    },
+    ...(sessionCommand.aliases ?? []).map((alias) => ({ command: alias, allowTmux: false })),
+  ]),
   {
     command: 'resume',
     rootHelpLabel: SESSION_HELP_LINES.resume,
@@ -160,11 +171,13 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     // Compatibility alias: intentionally accepted but omitted from root help.
     command: 'sessions',
     allowTmux: false,
+    // Deprecated 2026-08-22 (D11); removal is intentionally unscheduled.
   },
   {
     // Compatibility alias: intentionally accepted but omitted from root help.
     command: 'automations',
     allowTmux: false,
+    // Deprecated 2026-08-22 (D11); removal is intentionally unscheduled.
   },
   {
     command: 'logout',
@@ -204,6 +217,11 @@ function readProjectedProviderRootHelpEntries(): readonly CliCommandSurfaceEntry
 }
 
 let projectedProviderRegistry: Pick<ResolvedContributionRegistry, 'agentDefinitionsById' | 'catalogEntriesById'> | null = null;
+let projectedPluginCommandRootHelpEntries: readonly CliCommandSurfaceEntry[] = Object.freeze([]);
+
+export function setProjectedPluginCommandRootHelpEntries(entries: readonly CliCommandSurfaceEntry[]): void {
+  projectedPluginCommandRootHelpEntries = entries;
+}
 
 export async function primeProjectedCommandSurfaceEntries(): Promise<void> {
   const { getResolvedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
@@ -256,6 +274,6 @@ export function resolveCommandSurfaceCatalog(): CommandSurfaceCatalog {
   return createCommandSurfaceCatalog(mergeCommandSurfaceEntries([
     ...COMMAND_SURFACE_MANIFEST,
     ...readProjectedProviderRootHelpEntries(),
-    ...listProjectedPluginCommandRootHelpEntries(),
+    ...projectedPluginCommandRootHelpEntries,
   ]));
 }

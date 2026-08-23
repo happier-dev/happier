@@ -64,6 +64,12 @@ export async function resolveExternalSessionSourceSurface(
         declaration: Extract<ResolvedExternalSessionSourceProjection, { ok: true }>['declaration'];
         providerOps: ExternalSessionExecutionSurface;
         currentAgent: NonNullable<ReturnType<typeof readCurrentExternalSessionAgentIdentity>>;
+        /**
+         * Immutable generation of the Agent plugin that will serve this request,
+         * so persisted per-Agent host state can be qualified by the code behind
+         * the contribution rather than only by the contribution's identity.
+         */
+        agentRuntimeGeneration: string | null;
         sourceKeyOwner: NonNullable<ReturnType<typeof createExternalSessionSourceKeyOwnerFromAgentProjection>>;
     }>
     | Extract<ResolvedExternalSessionSourceProjection, { ok: false }>
@@ -103,6 +109,9 @@ export async function resolveExternalSessionSourceSurface(
             declaration: projected.declaration,
             providerOps,
             currentAgent,
+            agentRuntimeGeneration:
+                runtimeRegistryLease.registry.agentRuntimesByAgentId
+                    .get(agentId)?.immutableGenerationId ?? null,
             sourceKeyOwner,
         });
     } finally {

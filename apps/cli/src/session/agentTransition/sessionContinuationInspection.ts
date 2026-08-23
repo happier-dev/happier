@@ -1,7 +1,7 @@
 import {
   buildBackendTargetKeyV2,
-  readLinkedExternalSessionV1FromMetadata,
   readBackendTargetRefV2,
+  resolveLinkedExternalSessionAuthorityV1,
   type SessionContinuationInspectionRequestV1,
   type SessionContinuationInspectionUnavailableReasonV1,
   type SessionContinuationInspectionV1,
@@ -13,6 +13,7 @@ import type { StoredCredentials } from '@/persistence';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveCurrentProviderSpawnDefinitiveRejection } from '@/providers/spawn/currentDefinitiveRejection';
 
 /**
  * Live continuation eligibility for one exact selection on THIS machine.
@@ -27,6 +28,8 @@ export type SessionContinuationInspectionDeps = Readonly<{
   resolveSessionTransportContext: typeof resolveSessionTransportContext;
   decryptOwnerMetadataView: typeof tryDecryptSessionOwnerMetadataView;
   readAgentCatalogSnapshot: typeof readAgentCatalogSnapshot;
+  resolveCurrentProviderSpawnDefinitiveRejection:
+    typeof resolveCurrentProviderSpawnDefinitiveRejection;
 }>;
 
 export type InspectSessionContinuationParams = Readonly<{
@@ -99,6 +102,7 @@ export async function inspectSessionContinuation(
     resolveSessionTransportContext,
     decryptOwnerMetadataView: tryDecryptSessionOwnerMetadataView,
     readAgentCatalogSnapshot,
+    resolveCurrentProviderSpawnDefinitiveRejection,
     ...params.deps,
   };
 
@@ -116,9 +120,15 @@ export async function inspectSessionContinuation(
   if (!metadata) return unavailable('unsupported_session');
 
   // Direct/external transcript storage is excluded from in-place continuation:
-  // the target cannot consume it canonically.
-  const hostedTranscript = readLinkedExternalSessionV1FromMetadata(metadata) === null;
-  if (!hostedTranscript) return unavailable('unsupported_session');
+  // the target cannot consume it canonically. "Hosted here" is a POSITIVE fact
+  // the metadata has to prove, so it is read through the discriminated
+  // authority owner: a link that exists but cannot be trusted is unresolved,
+  // not hosted, and reporting such a Session `available` arms a mutation that
+  // stops the source before it can discover the truth.
+  const transcriptAuthority = resolveLinkedExternalSessionAuthorityV1(metadata);
+  if (!transcriptAuthority.ok || transcriptAuthority.transcriptStorage !== 'persisted') {
+    return unavailable('unsupported_session');
+  }
 
   // Deliberately NOT gated on the Session's recorded machine. A machine id is a
   // PROXY for "can this Session be continued here", and the components that
@@ -131,12 +141,19 @@ export async function inspectSessionContinuation(
   // long gone — so it removed real capability to prevent nothing.
 
   const targetAgentId = params.request.selection.agentId;
-  if (!resolveSessionContinuationTargetAgent({
+  const target = resolveSessionContinuationTargetAgent({
     readAgentCatalogSnapshot: deps.readAgentCatalogSnapshot,
     agentId: targetAgentId,
-  })) {
+  });
+  if (!target) {
     return unavailable('target_unavailable');
   }
+  const providerPreflight = await deps.resolveCurrentProviderSpawnDefinitiveRejection({
+    agentTargetKey: target.backendTargetKey,
+    agentId: target.agentId,
+    selection: params.request.selection,
+  });
+  if (!providerPreflight.ok) return unavailable('target_unavailable');
 
   const currentAgentId = resolveAgentIdFromSessionMetadata(metadata);
   // A Session whose current Agent cannot be named has no authoritative source

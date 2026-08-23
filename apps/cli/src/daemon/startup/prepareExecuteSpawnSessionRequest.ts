@@ -15,7 +15,6 @@ import {
     PersistedProviderResumeBindingError,
     readPersistedProviderResumeState,
 } from '@/providers/lifecycle/readPersistedResumeSelection';
-import { ensureSessionDirectory } from './ensureSessionDirectory';
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import { resolveDaemonStartupSourceFromEnv } from '@/daemon/ownership/daemonOwnershipMetadata';
@@ -65,7 +64,6 @@ type BackendIdentitySuccess = Extract<
 >;
 
 export type PreparedExecuteSpawnSessionRequest = Readonly<{
-    directoryCreated: boolean;
     normalizedExistingSessionId: string;
     effectiveResume: string;
     effectiveBackendTargetV2: BackendIdentitySuccess['effectiveBackendTargetV2'];
@@ -142,7 +140,6 @@ export async function prepareExecuteSpawnSessionRequest(
     const {
         directory: requestedDirectory,
         sessionId,
-        approvedNewDirectoryCreation = true,
         resume,
         existingSessionId,
         permissionMode,
@@ -246,25 +243,10 @@ export async function prepareExecuteSpawnSessionRequest(
         }
     }
 
-    const ensuredDirectory = await ensureSessionDirectory({
-        directory,
-        approvedNewDirectoryCreation,
-    });
-    if (!ensuredDirectory.ok) {
-        logger.debug(
-            '[DAEMON RUN] Session directory setup failed',
-            ensuredDirectory.response.type === 'error'
-                ? {
-                    resultType: ensuredDirectory.response.type,
-                    errorCode: ensuredDirectory.response.errorCode,
-                }
-                : {
-                    resultType: ensuredDirectory.response.type,
-                },
-        );
-        return ensuredDirectory.response;
-    }
-
+    // Creating the requested workspace is the first irreversible step of
+    // admission, so it belongs after every definitive refusal the daemon can
+    // already establish — including the Provider decision, which the caller
+    // reaches next. Only side-effect-free validation runs here.
     const darwinBackgroundServiceDirectoryFailure = resolveDarwinBackgroundServiceSpawnDirectoryFailure({
         directory,
         startupSource: resolveDaemonStartupSourceFromEnv(process.env),
@@ -287,7 +269,6 @@ export async function prepareExecuteSpawnSessionRequest(
         agentModeId,
         agentModeUpdatedAt,
         modelSelection: persistedProviderResumeState.selection ?? modelSelection,
-        directoryCreated: ensuredDirectory.directoryCreated,
         normalizedExistingSessionId,
         effectiveResume,
         effectiveBackendTargetV2,

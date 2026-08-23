@@ -166,7 +166,10 @@ function dependencies(input: Readonly<{
     ContextualExternalSessionTakeoverDependencies['resolveCurrentSource']
   >(async () => {
     calls.push('source');
-    return { source };
+    return {
+      source,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
+    };
   });
   const ensureLink = vi.fn(async () => {
     calls.push('link');
@@ -305,6 +308,46 @@ describe('contextual External Sessions takeover durable admission', () => {
     expect(beta.calls).toEqual(['source', 'link', 'derive', 'start']);
   });
 
+  it('refuses an unsupported external-linked writer-safety contract before any link or durable Start', async () => {
+    const activeServerDir = await createRoot();
+    const harness = dependencies({ activeServerDir });
+    harness.resolveCurrentSource.mockImplementation(async () => {
+      harness.calls.push('source');
+      return {
+        source,
+        externalLinkedTakeoverWriterSafety: 'unsupported' as const,
+      };
+    });
+    const adapter = createContextualExternalSessionTakeoverAdapter(
+      harness.value,
+    );
+
+    await expect(adapter.takeover(ref, {
+      targetStorageMode: 'external-linked',
+      idempotencyKey: 'unsupported-writer-safety',
+    })).rejects.toMatchObject({
+      code: 'plugin_external_takeover_writer_safety_unsupported',
+    });
+
+    expect(harness.calls).toEqual(['source']);
+    expect(harness.ensureLink).not.toHaveBeenCalled();
+    expect(harness.deriveTakeoverStartRequest).not.toHaveBeenCalled();
+    expect(harness.startDurableTakeover).not.toHaveBeenCalled();
+    expect(await readExternalSessionOperationRecord(
+      activeServerDir,
+      'external-takeover:new-plugin-operation',
+    )).toBeNull();
+
+    // The same unsupported Agent still admits the persisted mode.
+    await expect(adapter.takeover(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'unsupported-writer-safety-persisted',
+    })).resolves.toMatchObject({
+      operationId: 'external-takeover:new-plugin-operation',
+    });
+    expect(harness.ensureLink).toHaveBeenCalledOnce();
+  });
+
   it.each(['external-linked', 'persisted'] as const)(
     'links before canonical durable %s Start and leaves the link when Start fails',
     async (targetStorageMode) => {
@@ -348,11 +391,17 @@ describe('contextual External Sessions takeover durable admission', () => {
       .mockImplementationOnce(async () => {
         harness.calls.push('source');
         await oldResolution;
-        return { source: oldSource };
+        return {
+          source: oldSource,
+          externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
+        };
       })
       .mockImplementationOnce(async () => {
         harness.calls.push('source');
-        return { source: currentSource };
+        return {
+          source: currentSource,
+          externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
+        };
       });
     const adapter = createContextualExternalSessionTakeoverAdapter(
       harness.value,

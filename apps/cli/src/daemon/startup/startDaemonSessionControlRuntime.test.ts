@@ -429,6 +429,7 @@ const connectedAccountRequestAuthServiceDependenciesCapture = vi.hoisted(() => (
     current: null as ConnectedAccountRequestAuthServiceDependencies | null,
 }));
 const sendSessionMessageMock = vi.hoisted(() => vi.fn(async () => undefined));
+const createCliActionExecutorFromCredentialsMock = vi.hoisted(() => vi.fn());
 type QuotaCoordinatorFactoryTestParams = Readonly<{
     emitEvent?: (event: unknown) => void;
     restartSession?: (input: Readonly<{
@@ -953,6 +954,23 @@ vi.mock('@/session/services/sendSessionMessage', () => ({
     sendSessionMessage: sendSessionMessageMock,
 }));
 
+vi.mock(
+    '@/session/actions/createCliActionExecutorFromCredentials',
+    async (importOriginal) => {
+        const actual = await importOriginal<
+            typeof import('@/session/actions/createCliActionExecutorFromCredentials')
+        >();
+        createCliActionExecutorFromCredentialsMock.mockImplementation(
+            actual.createCliActionExecutorFromCredentials,
+        );
+        return {
+            ...actual,
+            createCliActionExecutorFromCredentials:
+                createCliActionExecutorFromCredentialsMock,
+        };
+    },
+);
+
 vi.mock('../connectedServices/quotas/createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => ({
     createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator: createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock,
 }));
@@ -1327,6 +1345,212 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(source).not.toContain('RunnerAgentExecutionGrant');
         expect(source).not.toContain('grantDigest');
         expect(source).not.toContain('runtimeBindingDigest');
+    });
+
+    it('mounts the Account-bound public Action ingress through the control-server boundary', async () => {
+        const runtimeActionExecute = vi.fn(async () => ({ ok: true }));
+        const externalSessionHostAction = vi.fn(async () => ({
+            ok: true as const,
+            result: { items: [], nextCursor: null },
+        }));
+        const startParams = {
+            machineId: 'machine-external-action-ingress',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy' as const,
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+            // These are daemon-owned lifecycle facts. The HTTP request never
+            // provides either Account or machine-placement authority.
+            externalActionAccountId: 'account-external-action-ingress',
+            runtimeActionExecute,
+            currentMachineHost: 'daemon-host',
+            currentMachineHomeDir: '/home/daemon',
+            resolveExternalSessionHostAction: () => externalSessionHostAction,
+            resolveSessionSpawnDirectTargetTransport: () => undefined,
+        };
+        const runtime = await startDaemonSessionControlRuntime(
+            startParams as StartDaemonSessionControlRuntimeTestParams,
+        );
+
+        try {
+            const controlInput = vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0];
+            const externalActionApi = controlInput?.externalActionApi;
+            expect(externalActionApi).toEqual(expect.objectContaining({
+                currentServerId: configuration.activeServerId,
+                verifyPat: expect.any(Function),
+                resolveTarget: expect.any(Function),
+                executor: expect.objectContaining({ execute: expect.any(Function) }),
+            }));
+            await expect(externalActionApi?.resolveTarget({
+                actionId: 'session.status.get',
+                target: { kind: 'machine', machineId: 'machine-external-action-ingress' },
+                currentMachineId: 'machine-external-action-ingress',
+            })).resolves.toEqual({
+                kind: 'machine',
+                machineId: 'machine-external-action-ingress',
+            });
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('routes E2EE external Action spawn input through the current authenticated machine admission transport', async () => {
+        type ApiMachineForTest = Readonly<{
+            enqueueSessionPendingByMachine: (
+                request: unknown,
+                options?: Readonly<{ signal?: AbortSignal }>,
+            ) => Promise<unknown>;
+            registerLocalServicesRoutes: (routes: unknown) => void;
+            registerSimulatorPreviewRoutes: (routes: unknown) => void;
+        }>;
+        const staleEnqueueSessionPendingByMachine = vi.fn<
+            (request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<{
+                status: 'rejected';
+                code: 'session_input_target_unavailable';
+            }>
+        >(async () => ({
+            status: 'rejected' as const,
+            code: 'session_input_target_unavailable' as const,
+        }));
+        const enqueueSessionPendingByMachine = vi.fn<
+            (request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<{
+                status: 'accepted';
+                localId: string;
+            }>
+        >(async () => ({
+            status: 'accepted' as const,
+            localId: 'plugin-input-v1:external-spawn',
+        }));
+        const apiMachineAtStartup: ApiMachineForTest = {
+            enqueueSessionPendingByMachine: async (request, options) =>
+                await staleEnqueueSessionPendingByMachine(request, options),
+            registerLocalServicesRoutes: () => {},
+            registerSimulatorPreviewRoutes: () => {},
+        };
+        const apiMachineAtRequest: ApiMachineForTest = {
+            enqueueSessionPendingByMachine: async (request, options) =>
+                await enqueueSessionPendingByMachine(request, options),
+            registerLocalServicesRoutes: () => {},
+            registerSimulatorPreviewRoutes: () => {},
+        };
+        let currentApiMachineForSessions: ApiMachineForTest | null =
+            apiMachineAtStartup;
+        const getApiMachineForSessions = vi.fn(() => (
+            currentApiMachineForSessions as unknown as ReturnType<
+                StartDaemonSessionControlRuntimeTestParams['getApiMachineForSessions']
+            >
+        ));
+        const execute = vi.fn(async () => ({ ok: true as const, result: {} }));
+        createCliActionExecutorFromCredentialsMock.mockImplementationOnce(() => ({
+            execute,
+            prepare: vi.fn(),
+            bindInvocation: vi.fn(),
+        }));
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-external-action-admission',
+            credentials: {
+                token: 'token-daemon',
+                encryption: {
+                    type: 'legacy' as const,
+                    secret: new Uint8Array(32).fill(1),
+                },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map(),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+            externalActionAccountId: 'account-external-action-admission',
+            resolveSessionSpawnDirectTargetTransport: () => undefined,
+        } as StartDaemonSessionControlRuntimeTestParams);
+
+        try {
+            const externalActionApi = vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0]?.externalActionApi;
+            if (!externalActionApi) {
+                throw new Error('Expected the daemon to mount the external Action API');
+            }
+            currentApiMachineForSessions = apiMachineAtRequest;
+
+            await externalActionApi.executor.execute(
+                'session.spawn_new',
+                { initialMessage: 'Durable E2EE initial input' },
+                { surface: 'api' },
+            );
+
+            type ExecutorOptions = Readonly<{
+                machineAdmissionTransport?: (
+                    request: unknown,
+                    options?: Readonly<{ signal?: AbortSignal }>,
+                ) => Promise<unknown>;
+            }>;
+            const executorOptions = createCliActionExecutorFromCredentialsMock
+                .mock.calls.at(-1)?.[0] as ExecutorOptions | undefined;
+            const machineAdmissionTransport = executorOptions?.machineAdmissionTransport;
+            if (!machineAdmissionTransport) {
+                throw new Error('Expected external Action execution to receive machine admission');
+            }
+
+            const controller = new AbortController();
+            const request = {
+                v: 1,
+                sessionId: 'session-external-spawn',
+                targetMachineId: 'machine-external-action-admission',
+                localId: 'plugin-input-v1:external-spawn',
+                content: { t: 'encrypted', c: 'ciphertext' },
+                requestedAction: { v: 1, kind: 'send_now' },
+            } as const;
+            await expect(machineAdmissionTransport(request, { signal: controller.signal }))
+                .resolves.toEqual({
+                    status: 'accepted',
+                    localId: 'plugin-input-v1:external-spawn',
+                });
+            expect(getApiMachineForSessions).toHaveBeenCalledTimes(2);
+            expect(enqueueSessionPendingByMachine).toHaveBeenCalledWith(request, {
+                signal: controller.signal,
+            });
+            expect(staleEnqueueSessionPendingByMachine).not.toHaveBeenCalled();
+            expect(execute).toHaveBeenCalledWith(
+                'session.spawn_new',
+                { initialMessage: 'Durable E2EE initial input' },
+                { surface: 'api' },
+            );
+        } finally {
+            await runtime.stopControlServer();
+        }
     });
 
     it('does not restore legacy-unfenced one-shot materialization as an ongoing runtime target', async () => {
@@ -1880,6 +2104,10 @@ describe('startDaemonSessionControlRuntime', () => {
             kind: 'create' as const,
             sessionId,
             cwd: '/workspace',
+            stateSharing: {
+                configMode: 'linked' as const,
+                stateMode: 'shared' as const,
+            },
         };
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-session-open-phase-custody',
@@ -5052,6 +5280,7 @@ describe('startDaemonSessionControlRuntime', () => {
         qualifiedRequestAuthSwitchAfterClassifiedFailureMock.mockClear();
         connectedAccountRequestAuthServiceDependenciesCapture.current = null;
         sendSessionMessageMock.mockClear();
+        createCliActionExecutorFromCredentialsMock.mockClear();
         createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinatorMock.mockClear();
         handleConnectedServiceRuntimeAuthFailureForSessionMock.mockClear();
         dispatchActivityNotificationAsyncMock.mockClear();
@@ -6246,6 +6475,15 @@ describe('startDaemonSessionControlRuntime', () => {
             environment: {
                 PROVIDER_SECRET: 'must-not-become-daemon-authority',
             },
+            agentCliLaunch: {
+                localAgentId: 'claude',
+                spec: {
+                    source: 'override',
+                    resolvedPath: '/workspace/.profile/bin/claude',
+                    command: '/workspace/.profile/bin/claude',
+                    args: [],
+                },
+            },
             providerBindingActive: true,
         };
         tracked.runnerAgentImmutableGenerationId =
@@ -6369,7 +6607,16 @@ describe('startDaemonSessionControlRuntime', () => {
                     'invocation-g',
                 cwd: '/workspace',
                 environment: {},
-                providerBindingActive: false,
+                agentCliLaunch: {
+                    localAgentId: 'claude',
+                    spec: {
+                        source: 'override',
+                        resolvedPath: '/workspace/.profile/bin/claude',
+                        command: '/workspace/.profile/bin/claude',
+                        args: [],
+                    },
+                },
+                providerBindingActive: true,
                 signal: expect.any(AbortSignal),
                 isGenerationCurrent:
                     expect.any(Function),

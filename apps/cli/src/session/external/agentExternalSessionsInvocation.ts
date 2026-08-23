@@ -3,6 +3,9 @@ import { createHash } from 'node:crypto';
 import {
     AgentExternalSessionTranscriptRawRecordSchema,
     ExternalSessionUserProjectionSchema,
+    ExternalSessionsSourceSchema,
+    MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS,
+    MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES,
     PluginAgentExternalSessionLinkDataSchema,
     resolveTranscriptBodySemanticEvent,
     SessionMessageRoleSchema,
@@ -41,7 +44,6 @@ import {
     normalizeFilesystemPathForPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
-const MAX_SOURCE_KIND_CODE_UNITS = 256;
 const MAX_ID_CODE_UNITS = 2_000;
 const MAX_TITLE_CODE_UNITS = 10_000;
 const MAX_SEARCH_CODE_UNITS = 2_000;
@@ -52,11 +54,8 @@ const MAX_READ_AFTER_DIAGNOSTICS = 32;
 const MAX_READ_AFTER_DIAGNOSTIC_POSITIONS = 200;
 const MAX_NATIVE_CURSOR_CODE_UNITS = 2_000;
 const MAX_QUALIFIED_CURSOR_CODE_UNITS = 4_096;
-const MAX_SOURCE_SERIALIZED_BYTES = 262_144;
 const MAX_TRANSCRIPT_MEDIA_READ_ROOTS = 16;
 const MAX_TRANSCRIPT_MEDIA_READ_ROOT_CODE_UNITS = 4_096;
-const MAX_JSON_DEPTH = 8;
-const MAX_JSON_ENTRIES = 256;
 /**
  * Transcript content is not link metadata: a legitimate agent record nests
  * provider-native tool payloads well past the link-data shape bounds, and the
@@ -75,14 +74,14 @@ export const EXTERNAL_SESSIONS_INVOCATION_POLICY = Object.freeze({
     resolveLinkedIdentity: Object.freeze({ maxSerializedBytes: 262_144 }),
     pageTranscript: Object.freeze({ maxItems: 200, maxSerializedBytes: 524_288 }),
     readAfterTranscript: Object.freeze({ maxItems: 200, maxSerializedBytes: 524_288 }),
-    sourceKindMaxCodeUnits: MAX_SOURCE_KIND_CODE_UNITS,
+    sourceKindMaxCodeUnits: MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS,
     idMaxCodeUnits: MAX_ID_CODE_UNITS,
     titleMaxCodeUnits: MAX_TITLE_CODE_UNITS,
     searchMaxCodeUnits: MAX_SEARCH_CODE_UNITS,
     failureMessageMaxCodeUnits: MAX_FAILURE_MESSAGE_CODE_UNITS,
     nativeCursorMaxCodeUnits: MAX_NATIVE_CURSOR_CODE_UNITS,
     qualifiedCursorMaxCodeUnits: MAX_QUALIFIED_CURSOR_CODE_UNITS,
-    sourceMaxSerializedBytes: MAX_SOURCE_SERIALIZED_BYTES,
+    sourceMaxSerializedBytes: MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES,
 });
 
 type ContributionIdentity = Readonly<{
@@ -295,7 +294,6 @@ type QualifiedCursorV1 = Readonly<{
 }>;
 
 type StrictRecord = Readonly<Record<string, unknown>>;
-type JsonSnapshotState = { entries: number; ancestors: Set<object> };
 
 const textEncoder = new TextEncoder();
 
@@ -355,72 +353,16 @@ function readStrictRecord(
     return Object.freeze(snapshot);
 }
 
-function snapshotJsonValue(
-    value: unknown,
-    depth: number,
-    state: JsonSnapshotState,
-): PluginAgentExternalSessionLinkDataValue | null | undefined {
-    if (depth > MAX_JSON_DEPTH) return undefined;
-    if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-    if (typeof value !== 'object') return undefined;
-    if (state.ancestors.has(value)) return undefined;
-    state.ancestors.add(value);
-    try {
-        if (Array.isArray(value)) {
-            const expectedKeys = new Set<PropertyKey>([
-                'length',
-                ...Array.from({ length: value.length }, (_, index) => String(index)),
-            ]);
-            const keys = Reflect.ownKeys(value);
-            if (keys.length !== expectedKeys.size || keys.some((key) => !expectedKeys.has(key))) return undefined;
-            state.entries += value.length;
-            if (state.entries > MAX_JSON_ENTRIES) return undefined;
-            const snapshot: PluginAgentExternalSessionLinkDataValue[] = [];
-            for (let index = 0; index < value.length; index += 1) {
-                const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-                if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) return undefined;
-                const item = snapshotJsonValue(descriptor.value, depth + 1, state);
-                if (item === undefined) return undefined;
-                snapshot.push(item);
-            }
-            return Object.freeze(snapshot);
-        }
-        const prototype = Object.getPrototypeOf(value);
-        if (prototype !== Object.prototype && prototype !== null) return undefined;
-        const keys = Reflect.ownKeys(value);
-        if (keys.some((key) => typeof key !== 'string')) return undefined;
-        state.entries += keys.length;
-        if (state.entries > MAX_JSON_ENTRIES) return undefined;
-        const snapshot: Record<string, PluginAgentExternalSessionLinkDataValue> = {};
-        for (const key of keys as string[]) {
-            const descriptor = Object.getOwnPropertyDescriptor(value, key);
-            if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) return undefined;
-            const item = snapshotJsonValue(descriptor.value, depth + 1, state);
-            if (item === undefined) return undefined;
-            Object.defineProperty(snapshot, key, {
-                configurable: false,
-                enumerable: true,
-                writable: false,
-                value: item,
-            });
-        }
-        return Object.freeze(snapshot);
-    } finally {
-        state.ancestors.delete(value);
-    }
-}
-
+/**
+ * Protocol owns the external-session source grammar: the strict-JSON copy, the
+ * bounded depth/entry/byte budget and the trimmed `kind` rule all live in
+ * `ExternalSessionsSourceSchema`. This wrapper admits host- and
+ * contribution-supplied sources through that one parser so every reader in the
+ * corridor measures the same source the same way.
+ */
 function parseSource(value: unknown): AgentExternalSessionSource | null {
-    const snapshot = snapshotJsonValue(value, 0, { entries: 0, ancestors: new Set() });
-    if (snapshot === undefined || snapshot === null || Array.isArray(snapshot) || typeof snapshot !== 'object') {
-        return null;
-    }
-    const sourceRecord = snapshot as Readonly<Record<string, PluginAgentExternalSessionLinkDataValue>>;
-    const kind = sourceRecord.kind;
-    if (typeof kind !== 'string' || kind.length === 0 || kind.length > MAX_SOURCE_KIND_CODE_UNITS) return null;
-    if (textEncoder.encode(JSON.stringify(sourceRecord)).byteLength > MAX_SOURCE_SERIALIZED_BYTES) return null;
-    return sourceRecord as AgentExternalSessionSource;
+    const parsed = ExternalSessionsSourceSchema.safeParse(value);
+    return parsed.success ? parsed.data as AgentExternalSessionSource : null;
 }
 
 function parseLinkData(value: unknown): PluginAgentExternalSessionLinkData | null {

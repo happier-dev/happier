@@ -82,6 +82,7 @@ describe('startDaemon ownership preflight', () => {
             expect(exitSpy).toHaveBeenCalledTimes(1);
             expect(exitSpy).toHaveBeenCalledWith(1);
 
+            logger.flushSync();
             const logContent = await readFile(logger.logFilePath, 'utf8');
             expect(logContent).toContain('Relay ownership conflict prevented daemon startup');
             expect(logContent).toContain('already owns this relay');
@@ -124,6 +125,7 @@ describe('startDaemon ownership preflight', () => {
             expect(exitSpy).toHaveBeenCalledTimes(1);
             expect(exitSpy).toHaveBeenCalledWith(0);
 
+            logger.flushSync();
             const logContent = await readFile(logger.logFilePath, 'utf8');
             expect(logContent).toContain('Relay ownership conflict prevented daemon startup');
             expect(logContent).not.toContain('[DAEMON RUN][FATAL] Failed somewhere unexpectedly');
@@ -373,6 +375,7 @@ describe('startDaemon ownership preflight', () => {
                 flushSpy.mockRestore();
             }
 
+            logger.flushSync();
             const logContent = await readFile(logger.logFilePath, 'utf8');
             expect(logContent).toContain('Installed background service prevented manual daemon startup');
             expect(logContent).toContain('happier service start');
@@ -455,6 +458,7 @@ describe('startDaemon ownership preflight', () => {
             expect(fetchCalls.some((call) => String(call[0] ?? '').includes('/stop'))).toBe(false);
             expect(waitForInitialCredentialsMock).not.toHaveBeenCalled();
 
+            logger.flushSync();
             const logContent = await readFile(logger.logFilePath, 'utf8');
             expect(logContent).toContain('Installed background service prevented manual daemon startup');
         });

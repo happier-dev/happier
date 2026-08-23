@@ -20,7 +20,10 @@ import type { ChildExit } from '../sessions/onChildExited';
 import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
 import { waitForVisibleConsoleSessionWebhook } from '../sessions/visibleConsoleSpawnWaiter';
 import { waitForSessionWebhook } from './waitForSessionWebhook';
-import type { TrackedSession } from '../types';
+import type {
+    RunnerAgentInvocationContext,
+    TrackedSession,
+} from '../types';
 import type {
     RunnerAgentSessionBootstrapAuthorization,
 } from '../agentRuntime/sessionBridgeAuthorization';
@@ -51,6 +54,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
     unsetEnvKeys?: readonly string[];
     runnerAgentSessionBootstrapAuthorization?:
         RunnerAgentSessionBootstrapAuthorization | null;
+    runnerAgentInvocationContext?: RunnerAgentInvocationContext | null;
     processEnv: NodeJS.ProcessEnv;
     happyHomeDir: string;
     pidToTrackedSession: Map<number, TrackedSession>;
@@ -118,6 +122,10 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
                         params.runnerAgentSessionBootstrapAuthorization
                             .descriptor.backendId,
                 },
+            } : {}),
+            ...(params.runnerAgentInvocationContext ? {
+                runnerAgentInvocationContext:
+                    params.runnerAgentInvocationContext,
             } : {}),
             vendorResumeId: params.effectiveResume || undefined,
             directoryCreated: params.directoryCreated,

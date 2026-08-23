@@ -11,6 +11,7 @@ import {
     applySessionProviderBindingMetadataV1,
     ExternalSessionsAgentIdSchema,
     materializeSessionInputCausalPermissionAuthorityV1,
+    projectAgentSessionProviderBindingV1,
     readSessionProviderBindingMetadataV1,
     registerSensitiveDiagnosticValues,
     SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
@@ -134,6 +135,7 @@ import {
     resolveActiveAccountSettingsSnapshotRevision,
     subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveNativeAgentSessionStateSharingPolicy } from './stateSharingPolicy';
 import {
     createNativeAgentCurrentSessionUiServices,
     createNativeAgentSessionServices,
@@ -1165,6 +1167,7 @@ function isHostOwnedToolTraceEnvironmentKey(key: string): boolean {
 }
 
 function buildNativeAgentSessionOpenInputs(
+    agentId: string,
     input: PluginSessionBindingInput,
     metadata: Readonly<Record<string, unknown>>,
     providerBindingMaterialization: HostSessionRuntimeFactoryParams['providerBindingMaterialization'],
@@ -1173,8 +1176,10 @@ function buildNativeAgentSessionOpenInputs(
 ): Readonly<{
     launchEnvironment: NonNullable<AgentSessionOpenRequest['launchEnvironment']>;
     configuration: AgentSessionConfigurationSnapshot;
+    stateSharing: NonNullable<AgentSessionOpenRequest['stateSharing']>;
     providerBinding?: NonNullable<AgentSessionOpenRequest['providerBinding']>;
 }> {
+    const stateSharing = resolveNativeAgentSessionStateSharingPolicy(agentId);
     const environmentValues = { ...(input.bootstrap.environmentVariables ?? {}) };
     delete environmentValues[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
     for (const key of Object.keys(environmentValues)) {
@@ -1221,11 +1226,11 @@ function buildNativeAgentSessionOpenInputs(
         if (providerBindingMaterialization !== undefined) {
             throw new Error('Native model selection cannot include Provider binding materialization');
         }
-        return Object.freeze({ launchEnvironment, configuration });
+        return Object.freeze({ launchEnvironment, configuration, stateSharing });
     }
     if (providerBindingMaterialization === undefined) {
         if (buildOptions.allowPendingProviderBinding === true) {
-            return Object.freeze({ launchEnvironment, configuration });
+            return Object.freeze({ launchEnvironment, configuration, stateSharing });
         }
         throw new Error('Provider-bound native Agent session requires Provider binding materialization');
     }
@@ -1250,9 +1255,9 @@ function buildNativeAgentSessionOpenInputs(
     return Object.freeze({
         launchEnvironment,
         configuration,
-        providerBinding: Object.freeze({
-            connectionId: providerConnectionId,
-            model: providerBindingMetadata.model,
+        stateSharing,
+        providerBinding: projectAgentSessionProviderBindingV1({
+            metadata: providerBindingMetadata,
             materialization: providerBindingMaterialization,
         }),
     });
@@ -3548,6 +3553,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             const resumeId = openIntent.kind === 'resume'
                 ? openIntent.providerSessionId
                 : null;
+            const strictNativeResumeIdentity = openIntent.kind === 'resume'
+                && openIntent.strictNativeResumeIdentity === true;
             const nativeForkSource = openIntent.kind === 'fork'
                 ? parseNativeAgentForkSource(openIntent.source)
                 : null;
@@ -3560,6 +3567,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 );
             }
             let openInputs = buildNativeAgentSessionOpenInputs(
+                identity.agentId,
                 params.sessionInput,
                 hostRuntimeParams.metadata,
                 hostRuntimeParams.providerBindingMaterialization,
@@ -3729,6 +3737,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         )
                         : hostRuntimeParams.metadata;
                     openInputs = buildNativeAgentSessionOpenInputs(
+                        identity.agentId,
                         lateInput,
                         metadataForOpen,
                         providerBindingHandoff?.materialization,
@@ -3796,6 +3805,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             ) === true;
             if (providerOps && hasDeclaredInstances) {
                 const readsConnectedProfiles = hasConnectedServiceProfileSourceInstances(params.agent);
+                let configuredConstructionFailed = false;
                 const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
                     agents: [params.agent],
                     contributionGenerationId: identity.generation,
@@ -3853,7 +3863,26 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                 }),
                         }
                         : {}),
-                }).catch(() => undefined);
+                }).catch(() => {
+                    // Only a construction failure lands here. It is not
+                    // "this Agent has no configured External Session source":
+                    // that case never reaches this branch at all.
+                    configuredConstructionFailed = true;
+                    return undefined;
+                });
+                if (configuredConstructionFailed) {
+                    // A configured Agent's terminal follow is served by its own
+                    // exact configured source. Falling through to the generic
+                    // provider-session route would follow through a second
+                    // Account/materialization route the configured source was
+                    // chosen over, so fail closed with the typed code the
+                    // terminal follow service already understands.
+                    initialTerminalFollowProviderSession ??= async () => Object.freeze({
+                        status: 'unavailable' as const,
+                        code: 'plugin_external_follow_unavailable',
+                    });
+                    initialTerminalTranscriptFollowSignal ??= signal;
+                }
                 if (lifecycle) {
                     const configuredExternalSessions = lifecycle.compositionPort;
                     initialTerminalFollowProviderSession ??= async (
@@ -4099,6 +4128,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             }),
                         });
                     openInputs = buildNativeAgentSessionOpenInputs(
+                        identity.agentId,
                         lateInput,
                         applySessionProviderBindingMetadataV1(
                             hostRuntimeParams.metadata,
@@ -4385,6 +4415,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         sessionId,
                         cwd,
                         providerSessionId: resumeId,
+                        ...(strictNativeResumeIdentity
+                            ? { strictNativeResumeIdentity: true }
+                            : {}),
                         ...openInputs,
                         ...(mcpServers ? { mcpServers } : {}),
                         ...(clonedStartupInstructions

@@ -110,6 +110,7 @@ describe('attemptNativeForkOpen', () => {
             forkPoint: { type: 'seq', upToSeqInclusive: 8 },
             targetSeqInclusive: 8,
             effectiveCutoffSeqInclusive: 9,
+            requestId: 'fork-request-1',
             spawnNonce: 'fork:native-open',
             forkBackendResolution,
             inheritedForkOverrides: { spawn: {}, metadata: {} },
@@ -132,6 +133,7 @@ describe('attemptNativeForkOpen', () => {
         }));
         expect(awaitAgentSessionOpen).toHaveBeenCalledWith({
             sessionId: 'host-child',
+            timeoutMs: null,
         });
         expect(mocks.updateSessionMetadataWithRetry).toHaveBeenCalledOnce();
         const updater = mocks.updateSessionMetadataWithRetry.mock.calls[0]?.[0]
@@ -141,8 +143,76 @@ describe('attemptNativeForkOpen', () => {
                 parentSessionId: 'host-parent',
                 parentCutoffSeqInclusive: 9,
                 strategy: 'provider_native',
+                requestId: 'fork-request-1',
             },
         });
+        // A retry keeps the caller's durable request identity even when a
+        // latest fork resolves a newer parent head. Once the child has an
+        // established lineage for that request, finalization must not rewrite
+        // its cutoff to this invocation's freshly resolved value.
+        expect(updater({
+            forkV1: {
+                v: 1,
+                parentSessionId: 'host-parent',
+                parentCutoffSeqInclusive: 4,
+                createdAtMs: 1,
+                strategy: 'provider_native',
+                requestId: 'fork-request-1',
+            },
+        })).toMatchObject({
+            forkV1: {
+                parentCutoffSeqInclusive: 4,
+                requestId: 'fork-request-1',
+            },
+        });
+    });
+
+    it('propagates operation cancellation from the open attestation without rolling back the dispatched child', async () => {
+        const controller = new AbortController();
+        const abortError = Object.assign(new Error('Action operation cancelled'), {
+            name: 'AbortError',
+        });
+        const stopSession = vi.fn();
+        const awaitAgentSessionOpen = vi.fn((input: Readonly<{ signal?: AbortSignal }>) => (
+            new Promise<never>((_resolve, reject) => {
+                input.signal?.addEventListener(
+                    'abort',
+                    () => reject(input.signal?.reason),
+                    { once: true },
+                );
+            })
+        ));
+
+        const attempt = attemptNativeForkOpen({
+            credentials,
+            parentSessionId: 'host-parent',
+            parentMetadata,
+            directory: '/source',
+            forkPoint: { type: 'latest' },
+            targetSeqInclusive: 12,
+            effectiveCutoffSeqInclusive: 12,
+            signal: controller.signal,
+            spawnNonce: 'fork:native-cancelled-after-dispatch',
+            forkBackendResolution,
+            inheritedForkOverrides: { spawn: {}, metadata: {} },
+            spawnSession: vi.fn(async () => ({
+                type: 'success' as const,
+                sessionId: 'host-child',
+            })),
+            stopSession,
+            awaitAgentSessionOpen,
+        });
+        await vi.waitFor(() => expect(awaitAgentSessionOpen).toHaveBeenCalledWith({
+            sessionId: 'host-child',
+            timeoutMs: null,
+            signal: controller.signal,
+        }));
+        controller.abort(abortError);
+
+        await expect(attempt).rejects.toBe(abortError);
+        expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
+        expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
+        expect(stopSession).not.toHaveBeenCalled();
     });
 
     it('omits the target for a whole-conversation fork', async () => {
@@ -297,6 +367,41 @@ describe('attemptNativeForkOpen', () => {
         expect(mocks.fetchForkChildSessionOrThrow).not.toHaveBeenCalled();
         expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
         expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
+    });
+
+    it('treats a runner exit before native-fork attestation as a terminal failure', async () => {
+        const stopSession = vi.fn();
+
+        await expect(attemptNativeForkOpen({
+            credentials,
+            parentSessionId: 'host-parent',
+            parentMetadata,
+            directory: '/source',
+            forkPoint: { type: 'latest' },
+            targetSeqInclusive: 12,
+            effectiveCutoffSeqInclusive: 12,
+            spawnNonce: 'fork:native-open-runner-exited',
+            forkBackendResolution,
+            inheritedForkOverrides: { spawn: {}, metadata: {} },
+            spawnSession: vi.fn(async () => ({
+                type: 'success' as const,
+                sessionId: 'host-child',
+            })),
+            stopSession,
+            awaitAgentSessionOpen: vi.fn(async () => ({ status: 'runner_exited' as const })),
+        })).resolves.toMatchObject({
+            ok: false,
+            errorCode: 'UNEXPECTED',
+            errorMessage: 'Child runner exited before native fork open attestation',
+        });
+
+        expect(mocks.updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+        expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledWith({
+            credentials,
+            fallbackStopSession: stopSession,
+            sessionId: 'host-child',
+        });
+        expect(mocks.archiveSessionBestEffort).toHaveBeenCalledWith('token', 'host-child');
     });
 
     it('runs stop-then-archive recovery when fork metadata finalization fails', async () => {

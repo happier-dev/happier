@@ -162,6 +162,43 @@ describe('createProviderLocalInstallationReader', () => {
     expect(outcome).toEqual({ status: 'completed', rows: [] });
   });
 
+  it('keeps a timed-out installation lookup in flight instead of starting another after its cache expires', async () => {
+    let now = 100;
+    const store = await runtimeStore();
+    let settle!: (value: { ok: true; command: string; args: readonly string[]; source: string }) => void;
+    const resolveSystemTool = vi.fn(() => new Promise<{
+      ok: true; command: string; args: readonly string[]; source: string;
+    }>((resolve) => { settle = resolve; }));
+    const reader = createProviderLocalInstallationReader({
+      runtimeStore: store,
+      resolveSystemTool: resolveSystemTool as never,
+      runSystemTool: vi.fn(async () => ({ ok: true as const, exitCode: 1, stdout: '{}', stderr: '' })),
+      now: () => now,
+      ttlMs: 1_000,
+      installationResolutionTimeoutMs: 10,
+    });
+
+    await expect(reader.read({ machineId: 'machine-a', registry: registry(), candidates: [] }))
+      .resolves.toEqual([]);
+    expect(resolveSystemTool).toHaveBeenCalledTimes(1);
+
+    now = 2_000;
+    await expect(reader.read({ machineId: 'machine-a', registry: registry(), candidates: [] }))
+      .resolves.toEqual([]);
+    // The uncancellable lookup is still consuming a real system operation, so
+    // its custody must not be released merely because one waiter timed out.
+    expect(resolveSystemTool).toHaveBeenCalledTimes(1);
+
+    settle({ ok: true, command: '/usr/bin/lms', args: [], source: 'system' });
+    await vi.waitFor(async () => expect(await store.read()).toMatchObject({
+      installationChecks: [{ state: { status: 'present', observedAt: 2_000 } }],
+    }));
+
+    now = 4_000;
+    await reader.read({ machineId: 'machine-a', registry: registry(), candidates: [] });
+    expect(resolveSystemTool).toHaveBeenCalledTimes(2);
+  });
+
   it('caches an early advisory installation resolver rejection as absence', async () => {
     const store = await runtimeStore();
     const resolveSystemTool = vi.fn(async () => {

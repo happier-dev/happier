@@ -11,6 +11,7 @@ import type {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { configuration } from '@/configuration';
 import { createEncryptedTransferChunkEnvelope } from '@/machines/transfer/transferChunkEncryption';
 import { resolveVoiceInferencePaths } from '@/daemon/voiceInference/voiceInferencePaths';
 
@@ -90,6 +91,68 @@ afterEach(() => {
 });
 
 describe('registerMachineVoiceInferenceRpcHandlers transfer lifecycle', () => {
+  it('expires an abandoned STT upload without any later transfer traffic', async () => {
+    vi.useFakeTimers();
+    const worker: VoiceInferenceWorkerHandleLike = {
+      stop: async () => {},
+      getStatus: async () => ({
+        serviceState: 'ready',
+        normalization: {
+          inputTransport: 'upload_transfer',
+          strategy: 'daemon_decode',
+          systemFfmpegAllowed: false,
+        },
+        models: [],
+      }),
+      listModels: async () => [],
+      getModelsStatus: async () => [],
+      installModel: async () => {
+        throw new Error('unused');
+      },
+      removeModel: async () => {},
+      synthesizeTts: async () => {
+        throw new Error('unused');
+      },
+      cancelTts: async () => {},
+      transcribeAudio: async () => {
+        throw new Error('unused');
+      },
+      cancelStt: async () => {},
+    };
+
+    const mgr = createRpcHandlerManager();
+    const registration = registerMachineVoiceInferenceRpcHandlers({
+      rpcHandlerManager: mgr as any,
+      voiceInferenceWorker: worker as any,
+    });
+    try {
+      const sttUploadInit = mgr.handlers.get(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT);
+      if (!sttUploadInit) {
+        throw new Error('expected voice inference upload init handler');
+      }
+      const upload = await sttUploadInit({
+        requestId: 'stt-abandoned',
+        sizeBytes: 5,
+        inputMimeType: 'audio/wav',
+      });
+      expect(upload).toMatchObject({ success: true, uploadId: expect.any(String) });
+      const uploadStore = registration.voiceInferenceTransfers.uploadStore;
+      const tempPath = uploadStore.getUploadSession(upload.uploadId)?.tempPath;
+      expect(tempPath).toBeTypeOf('string');
+      await expect(access(tempPath!)).resolves.toBeUndefined();
+
+      // The client disappears right after init: no chunk, no finalize, no abort,
+      // and no unrelated transfer traffic that could sweep on its behalf.
+      await vi.advanceTimersByTimeAsync(configuration.filesTransferSessionTtlMs + 1_000);
+      await uploadStore.settleClosures();
+
+      expect(uploadStore.getUploadSession(upload.uploadId)).toBeNull();
+      await expectPathMissing(tempPath!);
+    } finally {
+      await registration.dispose();
+    }
+  });
+
   it('disposes abandoned TTS downloads and finalized STT uploads', async () => {
     vi.useFakeTimers();
     const workspace = mkdtempSync(join(tmpdir(), 'happier-voice-inference-lifecycle-'));

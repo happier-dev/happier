@@ -49,10 +49,10 @@ import {
  *    re-enabling the Agent afterwards could not recover it.
  * 2. **The accepted-context boundary owns the advance.** The recorded seq moves
  *    forward only once the provider accepted the context this activation handed
- *    the Agent (`REQ-STATE-03`), and an identity that was offered and reached
- *    no acceptance is invalidated rather than re-offered. Acceptance is not
- *    re-derived here: it is the replay seed's own retirement, the same fact the
- *    prompt owner settles on `onProviderPromptAccepted`.
+ *    the Agent (`REQ-STATE-03`). A failed strict native identity is invalidated
+ *    by the strict-resume owner before any later departure capture can observe
+ *    it; replay-seed retirement is context acceptance, not native identity
+ *    acceptance.
  * 3. **No pre-check of the conversation itself.** There is deliberately no
  *    proof, no `stat()`, and no liveness probe on the recorded id (`AM-24`). A
  *    dead id fails LOUDLY at the first turn — Claude raises
@@ -81,6 +81,19 @@ export type LocalAgentNativeResumeRecordStore = Readonly<{
     }>,
   ) => Promise<void>;
 }>;
+
+/**
+ * Provider-native open boundaries attach this marker only when they prove that
+ * the requested native identity was not accepted. The host deliberately does
+ * not infer this from ordinary startup, transport, or completion errors: those
+ * failures do not authorize invalidating the machine-local return record.
+ */
+export function isAgentNativeResumeIdentityMismatchError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && (error as Readonly<{ happierNativeResumeIdentityMismatch?: unknown }>)
+      .happierNativeResumeIdentityMismatch === true;
+}
 
 /**
  * Resolved per invocation rather than at module load: `configuration` is the
@@ -218,17 +231,16 @@ function isAgentNativeReturnUsable(params: Readonly<{
  * 3. **Context was handed and never accepted** — the boundary does NOT advance
  *    (`REQ-STATE-03`). The Agent reached no new boundary, so recording this head
  *    would hand a LATER return a delta measured against history the Agent never
- *    received, and nothing downstream could tell. If the identity still in the
- *    view is the one this machine RESTORED from the record, that strict native
- *    return also demonstrably failed before acceptance, so the identity is
- *    invalidated rather than left to be re-offered unchanged on the next switch.
+ *    received, and nothing downstream could tell. Strict native failure is not
+ *    inferred here: its host owner invalidates the offered local record before
+ *    this capture can run, including when no replay seed exists.
  *
- * Acceptance is read, not re-derived: an activation brief is retired the instant
- * the provider takes custody of the prompt it was prefixed to, so the seed slot
- * the cutover itself wrote IS the durable acceptance fact, shared with the
- * prompt owner's own settlement rather than duplicated by a second signal. This
- * is why no proof file, probe, read-back, TTL or generation appears here
- * (`AM-24`): the one thing that had to be known is already written down.
+ * Replay-seed acceptance is read, not re-derived: an activation brief is retired
+ * the instant the provider takes custody of the prompt it was prefixed to. It
+ * bounds ordinary departure capture, but it deliberately cannot prove a strict
+ * requested native identity resumed. This is why no proof file, probe, read-back,
+ * TTL or generation appears here (`AM-24`): native identity success is proven by
+ * the provider's strict completion boundary instead.
  *
  * `departureSeqInclusive` is the transcript head as it stands HERE, before the
  * stop. Deliberately not the post-stop head: a row that landed between this
@@ -277,20 +289,59 @@ export async function captureDepartingAgentNativeResumeRecord(params: Readonly<{
     readReplaySeedV1FromMetadata(params.sourceMetadata),
   )) {
     await write(identity);
-    return;
   }
+}
 
-  // Handed context, never accepted. The read is what separates "this machine
-  // offered that id and the resume failed" from "the Agent published an id of
-  // its own": only the first may invalidate, and the second must leave an
-  // earlier, genuinely reached boundary exactly where it is.
+/**
+ * Strict native-resume failure has one local persistence consequence: remove
+ * the exact offered identity before the current Session can be captured again.
+ *
+ * The existing (Session, Agent) record remains the owner. Matching the offered
+ * vendor id prevents an older failure from erasing a newer successful return;
+ * preserving its departure boundary keeps unrelated historical context intact.
+ * There is intentionally no probe, generation, or read-back: the strict
+ * provider completion already supplied the authoritative failure fact.
+ */
+export async function invalidateFailedAgentNativeReturnIdentity(params: Readonly<{
+  store: LocalAgentNativeResumeRecordStore;
+  sessionId: string;
+  targetAgentId: AgentId;
+  vendorResumeId: string;
+}>): Promise<void> {
+  const vendorResumeId = params.vendorResumeId.trim();
+  if (!vendorResumeId) return;
+  const key: LocalAgentNativeResumeRecordKey = {
+    happierSessionId: params.sessionId,
+    agentId: params.targetAgentId,
+  };
   const recorded = await params.store.readAgentNativeResumeRecord(key).catch(() => null);
-  if (recorded?.identity?.vendorResumeId === identity.vendorResumeId) {
-    // A failed strict return makes this identity unusable, but the accepted
-    // replay boundary belongs to its earlier successful departure. Do not
-    // advance that boundary with history the resumed Agent never accepted.
-    await write(null, recorded.departureSeqInclusive);
-  }
+  if (recorded?.identity.vendorResumeId !== vendorResumeId) return;
+  await params.store.writeAgentNativeResumeRecord({
+    ...key,
+    identity: null,
+    departureSeqInclusive: recorded.departureSeqInclusive,
+  }).catch(() => {});
+}
+
+/**
+ * Whether this launch is the specific same-machine native return represented
+ * by the local record. Ordinary `--resume` and restored sessions must not
+ * clear their durable provider identity merely because they also carry a
+ * resume id.
+ */
+export async function hasMatchingAgentNativeReturnIdentity(params: Readonly<{
+  store: LocalAgentNativeResumeRecordStore;
+  sessionId: string;
+  targetAgentId: AgentId;
+  vendorResumeId: string;
+}>): Promise<boolean> {
+  const vendorResumeId = params.vendorResumeId.trim();
+  if (!vendorResumeId) return false;
+  const record = await params.store.readAgentNativeResumeRecord({
+    happierSessionId: params.sessionId,
+    agentId: params.targetAgentId,
+  }).catch(() => null);
+  return record?.identity.vendorResumeId === vendorResumeId;
 }
 
 /**

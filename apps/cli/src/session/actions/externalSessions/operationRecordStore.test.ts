@@ -605,7 +605,7 @@ describe('external session operation record store integrity', () => {
   });
 
   it.each(['cancelled', 'discarded'] as const)(
-    'keeps an acknowledged %s terminal operation as its full durable record',
+    'compacts an acknowledged settled %s operation to its minimal receipt',
     async (status) => {
       const activeServerDir = await createRoot();
       const terminal = ExternalSessionOperationRecordV1Schema.parse({
@@ -635,16 +635,23 @@ describe('external session operation record store integrity', () => {
         stagingDisposition: 'not_applicable',
       });
 
-      expect(compacted).toEqual({
-        status: 'not_eligible',
-        reason: 'operation_not_completed',
+      if (compacted.status === 'not_eligible') {
+        throw new Error(
+          `Expected a settled ${status} operation to compact, got ${compacted.reason}.`,
+        );
+      }
+      expect(compacted.receipt.presentation.status).toBe(status);
+      expect(compacted.receipt.reference).toEqual({
+        sessionId: terminal.request.sessionId,
+        operationId: terminal.operationId,
+        revision: terminal.revision,
       });
       await expect(readExternalSessionOperationStoredEntry(
         activeServerDir,
         terminal.operationId,
       )).resolves.toEqual({
-        kind: 'full_record',
-        record: terminal,
+        kind: 'completion_receipt',
+        receipt: compacted.receipt,
       });
     },
   );
@@ -755,7 +762,7 @@ describe('external session operation record store integrity', () => {
 
   });
 
-  it('fails closed on a cancelled row mislabeled as a completed receipt', async () => {
+  it('fails closed on an unsettled row mislabeled as a completion receipt', async () => {
     const activeServerDir = await createRoot();
     const completed = completedExternalLinkedOperationRecord();
     await writeRawRecord(
@@ -779,7 +786,7 @@ describe('external session operation record store integrity', () => {
         ...compacted.receipt,
         presentation: {
           ...compacted.receipt.presentation,
-          status: 'cancelled',
+          status: 'running',
         },
       }),
     );
@@ -926,19 +933,19 @@ describe('external session operation record store integrity', () => {
           operationId: 'external-takeover:compaction-nonterminal-fixture',
         }),
         stagingDisposition: 'not_applicable',
-        reason: 'operation_not_completed',
+        reason: 'operation_not_settled',
       },
       {
         name: 'failed',
         record: failedRecord(false),
         stagingDisposition: 'not_applicable',
-        reason: 'operation_not_completed',
+        reason: 'operation_not_settled',
       },
       {
         name: 'retryable failure',
         record: failedRecord(true),
         stagingDisposition: 'not_applicable',
-        reason: 'operation_not_completed',
+        reason: 'operation_not_settled',
       },
       {
         name: 'unacknowledged completion',
@@ -950,7 +957,7 @@ describe('external session operation record store integrity', () => {
         name: 'cancelled initial partial awaiting server discard',
         record: cancelledInitialPartial,
         stagingDisposition: 'cleaned',
-        reason: 'operation_not_completed',
+        reason: 'partial_discard_recovery_retained',
       },
       ...(['not_applicable', 'not_ready', 'not_terminal'] as const).map(
         (stagingDisposition) => ({
@@ -970,7 +977,8 @@ describe('external session operation record store integrity', () => {
         | 'not_ready'
         | 'not_terminal';
       reason:
-        | 'operation_not_completed'
+        | 'operation_not_settled'
+        | 'partial_discard_recovery_retained'
         | 'projection_unacknowledged'
         | 'staging_not_clean';
     }>[];
@@ -2930,6 +2938,94 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       initial.operationId,
     )).resolves.toBeNull();
+  });
+
+  it('bounds the physical inventory across ordinary cancel and discard cycles', async () => {
+    const activeServerDir = await createRoot();
+    useAccount('vitest');
+    const settledAtMs = 5_000;
+    const cycles = 6;
+    const settledCycleRecord = (
+      cycle: number,
+    ): ExternalSessionOperationRecordV1 => {
+      const settledStatus = cycle % 2 === 0
+        ? 'cancelled' as const
+        : 'discarded' as const;
+      return ExternalSessionOperationRecordV1Schema.parse({
+        ...operationRecord(),
+        operationId: `external-takeover:capacity-cycle-${cycle}`,
+        request: {
+          ...request,
+          idempotencyKey: `record-store-capacity-cycle-${cycle}`,
+        },
+        revision: 1,
+        status: settledStatus,
+        updatedAtMs: settledAtMs,
+        retryTargetPhase: undefined,
+        progressProjection: { acknowledgedRevision: 1 },
+        ...(settledStatus === 'cancelled'
+          ? {
+            cancellation: {
+              requestedAtMs: settledAtMs,
+              requestedAtRevision: 0,
+            },
+          }
+          : {}),
+        terminalResult: { kind: settledStatus },
+      });
+    };
+
+    const recordsDirectory = join(
+      activeServerDir,
+      'external-session-operations',
+      'by-account',
+      `sub-${createHash('sha256').update('vitest', 'utf8').digest('hex')
+        .slice(0, 32)}`,
+      'records',
+    );
+    const physicalInventorySize = async (): Promise<number> => {
+      const entries = await fsPromises.readdir(recordsDirectory);
+      return entries.filter((name) => name.endsWith('.json')).length;
+    };
+
+    for (let cycle = 0; cycle < cycles; cycle += 1) {
+      const settled = settledCycleRecord(cycle);
+      await writeRawRecord(
+        activeServerDir,
+        settled.operationId,
+        `${JSON.stringify(settled, null, 2)}\n`,
+      );
+      const compacted =
+        await compactExternalSessionOperationRecordToCompletionReceipt({
+          activeServerDir,
+          operationId: settled.operationId,
+          expectedRevision: settled.revision,
+          stagingDisposition: 'cleaned',
+        });
+      expect({ cycle, status: compacted.status }).toEqual({
+        cycle,
+        status: 'compacted',
+      });
+    }
+
+    // Every settled cycle is now a minimal replay receipt, so no cancelled or
+    // discarded full record is left holding an inventory slot.
+    await expect(
+      listExternalSessionOperationRecords(activeServerDir),
+    ).resolves.toEqual([]);
+    expect(await physicalInventorySize()).toBe(cycles);
+
+    // The existing receipt lifecycle then releases every settled slot.
+    const pruned = await pruneExpiredExternalSessionOperationCompletionReceipts(
+      {
+        activeServerDir,
+        nowMs: settledAtMs + 24 * 60 * 60 * 1_000,
+        sessionIds: [request.sessionId],
+        readSelectedPresentation: async () => ({ kind: 'absent' as const }),
+      },
+    );
+    expect(pruned).toEqual({ deleted: cycles, retained: 0 });
+    expect(await physicalInventorySize()).toBe(0);
   });
 });
 

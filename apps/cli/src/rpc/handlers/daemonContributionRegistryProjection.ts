@@ -51,6 +51,7 @@ import {
     type DaemonReactNativeWebLoaderCapabilityV1,
     type DaemonPluginReactNativeBundleCacheIdentityV1,
     type DaemonPluginHostedWebArtifactCacheIdentityV1,
+    type ActionOperationDeclarationV1,
     type DaemonContributionRegistryProjectionDescribeRequest,
     type DaemonContributionRegistryProjectionDescribeResponse,
     type PluginSettingFieldV2,
@@ -222,6 +223,20 @@ export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
     installedReactNativeArtifactLoaderAvailable?: boolean;
     reactNativeScriptManagerRuntimeIntegrated?: boolean;
     reactNativeHostRuntime?: ReactNativeHostRuntimeReadinessIdentity;
+    observePluginExecution?: (request: Readonly<{
+        actionId: string;
+        title: string;
+        operation: ActionOperationDeclarationV1;
+        input: unknown;
+        requestId?: string;
+        sessionId?: string;
+        execute: (context: Readonly<{
+            signal: AbortSignal;
+            operationProgress: Readonly<{ update(progress: Readonly<{
+                label?: string; phase?: string; current?: number; total?: number;
+            }>): void }>;
+        }>) => Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
+    }>) => Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
     /** Current daemon-owned Connected Account purpose runtime for form choices. */
     resolveConnectedAccountPurposeBindingRuntime?: () => Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
@@ -3140,6 +3155,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
             });
         }
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        let releaseLease = true;
         try {
             const projectionGeneration = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
             if (String(projectionGeneration) !== request.data.expectedGeneration) {
@@ -3267,6 +3283,14 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     });
                 }
             }
+            const trackedOperation = resolvedAction?.definition.execution?.target === 'daemon'
+                ? resolvedAction.definition.operation
+                : undefined;
+            let preparedTrackedInvocation: Readonly<{
+                run(operationProgress?: Readonly<{ update(progress: Readonly<{
+                    label?: string; phase?: string; current?: number; total?: number;
+                }>): void }>): Promise<unknown>;
+            }> | null = null;
             const attempt = await executePluginActionIfAvailable({
                 runtimeRegistry: lease.registry,
                 actionId: request.data.qualifiedActionId,
@@ -3297,7 +3321,19 @@ export function registerDaemonContributionRegistryProjectionHandler(
                         : {}),
                     ...(defaultSessionId ? { defaultSessionId } : {}),
                     ...(messageAction ? { messageAction } : {}),
-                    ...(context?.signal ? { signal: context.signal } : {}),
+                    ...(context?.signal && !(trackedOperation && opts?.observePluginExecution)
+                        ? { signal: context.signal }
+                        : {}),
+                    ...(context?.localActionContext?.operationProgress
+                        ? { operationProgress: context.localActionContext.operationProgress }
+                        : {}),
+                    ...(trackedOperation && opts?.observePluginExecution
+                        ? {
+                            capturePreparedInvocation: (invocation) => {
+                                preparedTrackedInvocation = invocation;
+                            },
+                        }
+                        : {}),
                 },
             });
             if (!attempt.matched) {
@@ -3305,6 +3341,43 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     ok: false,
                     code: 'plugin_action_unavailable',
                 });
+            }
+            if (trackedOperation && opts?.observePluginExecution) {
+                if (!attempt.result.ok || !preparedTrackedInvocation || !resolvedAction) {
+                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(
+                        attempt.result.ok
+                            ? { ok: false, code: 'plugin_action_unavailable' }
+                            : { ok: false, code: attempt.result.errorCode },
+                    );
+                }
+                const rawTitle = resolvedAction.definition.title;
+                const title = typeof rawTitle === 'string'
+                    ? rawTitle
+                    : (rawTitle as Readonly<{ fallback: string }>).fallback;
+                const observed = await opts.observePluginExecution({
+                    actionId: request.data.qualifiedActionId,
+                    title,
+                    operation: trackedOperation,
+                    input: request.data.input,
+                    ...(request.data.requestId ? { requestId: request.data.requestId } : {}),
+                    ...(request.data.sessionId ? { sessionId: request.data.sessionId } : {}),
+                    execute: async ({ operationProgress }) => {
+                        const rawResult = await preparedTrackedInvocation!.run(operationProgress);
+                        const result = rawResult && typeof rawResult === 'object' && !Array.isArray(rawResult)
+                            ? rawResult as Record<string, unknown>
+                            : {};
+                        if (result.ok === true) return { ok: true, result: result.result };
+                        const errorCode = typeof result.errorCode === 'string'
+                            ? result.errorCode
+                            : 'plugin_action_execution_failed';
+                        return { ok: false, errorCode, error: errorCode };
+                    },
+                });
+                return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(
+                    observed.ok
+                        ? { ok: true, result: observed.result }
+                        : { ok: false, code: observed.errorCode },
+                );
             }
             return attempt.result.ok
                 ? DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
@@ -3316,7 +3389,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     code: attempt.result.errorCode,
                 });
         } finally {
-            await lease.release();
+            if (releaseLease) await lease.release();
         }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE, async (raw: unknown, context) => {

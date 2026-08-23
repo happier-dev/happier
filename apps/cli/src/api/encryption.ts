@@ -143,6 +143,21 @@ export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
 }
 
 /**
+ * Encrypts with a keyed, content-bound nonce derived by the caller. Never pass
+ * an unkeyed or reusable nonce through this narrow idempotent-retry boundary.
+ */
+export function encryptWithDerivedNonce(
+  key: Uint8Array,
+  variant: 'legacy' | 'dataKey',
+  data: any,
+  nonce: Uint8Array,
+): Uint8Array {
+  return variant === 'legacy'
+    ? encryptLegacyWithNonce(data, key, nonce)
+    : encryptWithDataKeyAndNonce(data, key, nonce);
+}
+
+/**
  * Decrypt data using AES-256-GCM with the data encryption key
  * @param bundle - The encrypted data bundle
  * @param dataKey - The 32-byte AES-256 key

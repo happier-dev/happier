@@ -26,6 +26,7 @@ import {
   type ProviderProbeTransportRequest,
 } from '@/providers/probe/client';
 import { createProviderConnectionService } from '@/providers/connections';
+import { PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS } from '@/providers/probe/scheduler';
 import type { ProviderModelSettingsMutationIntent } from '@/providers/connections';
 
 import {
@@ -118,15 +119,17 @@ describe('runtime provider model-management composition', () => {
       authIsolation: { suppressConnectedServiceIds: ['openai-codex'], ownedEnvKeys: [] },
       materialization: 'engineConfig', applyPolicy: 'restart_session', supportsFreeformModelIds: false,
     } as const;
+    const agentDefinition = (providerRequirements: unknown) => ({
+      id: 'codex',
+      pluginId: 'happier.agent.codex',
+      identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      definition: { id: 'codex', kindVersion: 1, providerRequirements },
+    });
+    const agentDefinitionsById = new Map([['codex', agentDefinition(support)]]);
     const executable = {
       contributes: {
         providersByContributionKey: registry.providersByContributionKey,
-        agentDefinitionsById: new Map([['codex', {
-          id: 'codex',
-          pluginId: 'happier.agent.codex',
-          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-          definition: { id: 'codex', kindVersion: 1, providerRequirements: support },
-        }]]),
+        agentDefinitionsById,
       },
       activateContributionsOnDemand: vi.fn(async () => []),
       agentRuntimesByAgentId: new Map([['codex', {
@@ -212,7 +215,7 @@ describe('runtime provider model-management composition', () => {
     });
     const runtimeStore: ProviderRuntimeStateStore = {
       path: '/virtual/provider-runtime-state.json', read: vi.fn(async () => state),
-      update: vi.fn(async (transform) => transform(state)), touch: vi.fn(), flushTouches: vi.fn(async () => state),
+      update: vi.fn(async (transform) => transform(state)),
     };
     let accountSettings = AccountSettingsSchema.parse({ providerSettingsV1: settings });
     const transport = vi.fn(async () => ({
@@ -351,6 +354,44 @@ describe('runtime provider model-management composition', () => {
       },
     });
 
+    // A Provider that permits manual ids and an Agent that accepts freeform ids
+    // make catalog membership NOT the authority over whether a model is real.
+    // The exact selected model stays listed and must not be reported missing.
+    const freeformDefinition = ProviderContributionV1Schema.parse({
+      ...definition,
+      catalog: {
+        source: 'static+probe', manualModelPolicy: 'allowed',
+        staticModels: [{ id: 'same-id', name: 'Provider Same', capabilities: { toolRoundTrips: 'supported' } }],
+        probes: [{ endpointTemplateId: 'chat', path: '/models', parser: 'openai-models' }],
+      },
+    });
+    registry.providersByContributionKey.set(contributionKey, { ...contribution, definition: freeformDefinition });
+    agentDefinitionsById.set('codex', agentDefinition({ ...support, supportsFreeformModelIds: true }));
+    const freeformSelection = {
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: connectionId,
+      modelId: 'vendor/freeform-only',
+    };
+    const freeformProjection = await services.projectModels({
+      machineId: 'machine-a', agentTargetKey: 'backend:codex', currentSelection: freeformSelection,
+    });
+    expect(freeformProjection).toMatchObject({ status: 'success', currentSelectionRecovery: null });
+    if (freeformProjection.status !== 'success') throw new Error('Expected model projection');
+    expect(freeformProjection.groups.flatMap((group) => group.rows).map((row) => row.ref.modelId))
+      .toContain('vendor/freeform-only');
+    // The same selection under an Agent that refuses freeform ids stays missing.
+    agentDefinitionsById.set('codex', agentDefinition(support));
+    await expect(services.projectModels({
+      machineId: 'machine-a', agentTargetKey: 'backend:codex', currentSelection: freeformSelection,
+    })).resolves.toMatchObject({
+      status: 'success',
+      currentSelectionRecovery: {
+        kind: 'model_not_found',
+        error: { code: 'provider_model_not_found', action: 'choose_model' },
+      },
+    });
+    registry.providersByContributionKey.set(contributionKey, contribution);
+
     const probeOnlyDefinition = ProviderContributionV1Schema.parse({
       ...definition,
       catalog: {
@@ -438,8 +479,148 @@ describe('runtime provider model-management composition', () => {
     expect(isEnabled).toHaveBeenCalledWith('providers.localModelManagement');
   });
 
-  it('drains every legal picker demand through the shared scheduler instead of dropping its pending tail', async () => {
-    const connectionCount = 69;
+  it('answers a cold picker read with the catalog its own demand produced', async () => {
+    const registry = { providersByContributionKey: new Map() };
+    const base = ProviderSettingsV1Schema.parse({
+      ...DEFAULT_PROVIDER_SETTINGS_V1,
+      connections: [{
+        v: 1,
+        id: 'pc_cold',
+        source: {
+          kind: 'custom',
+          template: {
+            v: 1,
+            name: 'Cold',
+            endpointTemplates: [{
+              id: 'catalog',
+              protocol: 'openai-chat',
+              baseUrl: 'https://cold.example/v1',
+              capabilities: {
+                streaming: 'unknown', toolRoundTrips: 'unknown',
+                statefulResponses: 'unknown', reasoningControls: 'unknown',
+              },
+            }],
+            catalog: {
+              source: 'probe',
+              manualModelPolicy: 'allowed',
+              probes: [{ endpointTemplateId: 'catalog', path: '/models', parser: 'openai-models' }],
+            },
+          },
+        },
+        role: 'named',
+        displayName: 'Cold',
+        displayNameMode: 'custom',
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    });
+    const resolvedCold = resolveProviderConnectionForMachine({
+      connectionId: 'pc_cold',
+      machineId: 'machine-a',
+      accountSettings: { providerSettingsV1: base },
+      registry,
+      dnsEvidenceByEndpointUrl: new Map([['https://cold.example/v1', ['1.1.1.1']]]),
+    });
+    if (resolvedCold.status !== 'resolved') throw new Error('Expected custom Provider connection');
+    const settings = ProviderSettingsV1Schema.parse({
+      ...base,
+      accountGrants: [{
+        v: 1,
+        connectionId: 'pc_cold',
+        connectionSecurityFingerprint: resolvedCold.record.connectionSecurityFingerprint,
+        confirmedAt: 1,
+      }],
+    });
+    const support = {
+      acceptsProtocols: ['openai-chat'],
+      required: { streaming: true },
+      credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+      authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] },
+      materialization: 'engineConfig',
+      applyPolicy: 'restart_session',
+      supportsFreeformModelIds: false,
+    } as const;
+    const executable = {
+      contributes: {
+        providersByContributionKey: registry.providersByContributionKey,
+        agentDefinitionsById: new Map([['codex', {
+          id: 'codex',
+          pluginId: 'happier.agent.codex',
+          identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+          definition: { id: 'codex', kindVersion: 1, providerRequirements: support },
+        }]]),
+      },
+      activateContributionsOnDemand: vi.fn(async () => []),
+      agentRuntimesByAgentId: new Map([['codex', {
+        pluginId: 'happier.agent.codex',
+        pluginVersion: '1.0.0',
+        agentId: 'codex',
+        generation: 'fixture-generation',
+        providerBinding: {
+          v: 1,
+          adapterVersion: 1,
+          prepare: vi.fn(() => ({ v: 1, materialization: 'engineConfig' })),
+          materialize: vi.fn(),
+        },
+        isCurrent: () => true,
+        createRuntime: vi.fn(),
+      }]]),
+    } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+    const lease: PluginRuntimeRegistryLease = {
+      registry: executable, source: 'active', release: vi.fn(async () => undefined),
+    };
+    let state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    const runtimeStore: ProviderRuntimeStateStore = {
+      path: '/virtual/provider-runtime-state.json',
+      read: vi.fn(async () => state),
+      update: vi.fn(async (transform) => {
+        state = await transform(state);
+        return state;
+      }),
+    };
+    const transport = vi.fn(async () => ({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ data: [{ id: 'cold-model' }] }), 'utf8'),
+    }));
+    const services = createRuntimeProviderModelManagementServices({
+      machineId: 'machine-a',
+      registry,
+      runtimeStore,
+      resolveAddresses: async () => ['1.1.1.1'],
+      acquireRuntimeLease: async () => lease,
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
+      getAccountSettingsSnapshot: () => ({
+        source: 'cache',
+        settings: AccountSettingsSchema.parse({ providerSettingsV1: settings }),
+        settingsVersion: 1,
+        loadedAtMs: 1,
+        settingsSecretsReadKeys: [],
+        scopeKey: 'account-a',
+      }),
+      featureGate: { isEnabled: () => true },
+      modelSettingsMutation: successfulModelSettingsMutation,
+    });
+
+    // The very first picker read is cold: nothing has ever probed this connection,
+    // so a projection that returns before its own demand settles is a silently
+    // empty list with nothing to follow it.
+    const projection = await services.projectModels({
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+    });
+    expect(projection.status).toBe('success');
+    if (projection.status !== 'success') throw new Error('Expected model projection');
+    expect(projection.groups.flatMap((group) => group.rows).map((row) => row.ref.modelId))
+      .toEqual(['cold-model']);
+  });
+
+  it('submits picker demand to the sole scheduler and retains no tail the scheduler refused', async () => {
+    // The sole probe scheduler admits four active operations and queues 64 more
+    // by default, so exactly one of these legal connections must be refused.
+    const schedulerAdmittedCapacity = PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS + 64;
+    const connectionCount = schedulerAdmittedCapacity + 1;
     const registry = { providersByContributionKey: new Map() };
     const base = ProviderSettingsV1Schema.parse({
       ...DEFAULT_PROVIDER_SETTINGS_V1,
@@ -565,8 +746,6 @@ describe('runtime provider model-management composition', () => {
         state = await transform(state);
         return state;
       }),
-      touch: vi.fn(),
-      flushTouches: vi.fn(async () => state),
     };
     const catalogHosts = new Set<string>();
     const releases: Array<() => void> = [];
@@ -607,21 +786,39 @@ describe('runtime provider model-management composition', () => {
     });
 
     try {
-      await expect(services.projectModels({
+      // Every one of these connections is cold, so the read waits for the demand
+      // it submitted rather than answering with an empty catalog.
+      const projection = services.projectModels({
         machineId: 'machine-a',
         agentTargetKey: 'backend:codex',
-      })).resolves.toMatchObject({ status: 'success', groups: expect.any(Array) });
-      await vi.waitFor(() => expect(catalogHosts.size).toBe(4));
+      });
+      // Every identity is submitted immediately, so the sole scheduler holds
+      // its four active operations and queues its pending maximum while the
+      // transport is blocked. One identity is beyond both and is refused.
+      await vi.waitFor(() => expect(releases.length).toBe(4));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       releaseAll = true;
       for (const release of releases.splice(0)) release();
 
-      await vi.waitFor(() => expect(catalogHosts.size).toBe(connectionCount), { timeout: 5_000 });
+      await expect(projection).resolves.toMatchObject({ status: 'success', groups: expect.any(Array) });
+      await vi.waitFor(
+        () => expect(catalogHosts.size).toBe(schedulerAdmittedCapacity),
+        { timeout: 5_000 },
+      );
+      // A consumer-side queue would keep feeding the refused tail once the
+      // scheduler drained; the sole scheduler must leave it for a later read.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(catalogHosts.size).toBe(schedulerAdmittedCapacity);
+      expect(schedulerAdmittedCapacity).toBeLessThan(connectionCount);
     } finally {
       releaseAll = true;
       for (const release of releases.splice(0)) release();
     }
-  });
+    // Proving the refused tail requires a fixture larger than the scheduler's
+    // whole admission window, so this case is inherently the slowest in the
+    // suite and needs more than the shared default budget.
+  }, 240_000);
 
   it('owns one shared probe/catalog runtime when the caller does not provide one', () => {
     const services = createRuntimeProviderModelManagementServices({
@@ -648,8 +845,6 @@ describe('runtime provider model-management composition', () => {
       path: '/virtual/provider-runtime-state.json',
       read: vi.fn(async () => state),
       update: vi.fn(async (transform) => transform(state)),
-      touch: vi.fn(),
-      flushTouches: vi.fn(async () => state),
     };
     const services = createRuntimeProviderModelManagementServices({
       machineId: 'machine-a',

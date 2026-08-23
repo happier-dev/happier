@@ -90,6 +90,11 @@ describe('happier session create (action executor)', () => {
         expect(output.text()).toContain(permissionIntent);
       }
       expect(output.text()).toContain('read_only');
+      expect(output.text()).toContain('--agent');
+      expect(output.text()).not.toContain('--backend');
+      expect(output.text()).not.toContain('--host');
+      expect(output.text()).not.toContain('--runtime-descriptor-json');
+      expect(output.text()).not.toContain('--tag');
     } finally {
       output.restore();
     }
@@ -134,6 +139,209 @@ describe('happier session create (action executor)', () => {
           session: { id: 'sess-1' },
         }),
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('emits the creation envelope before unchanged compact history rows for --follow --jsonl', async () => {
+    execute
+      .mockResolvedValueOnce(sessionSpawnSuccess('sess-follow'))
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          ok: true,
+          leaseId: 'lease-follow',
+          items: [{
+            id: 'row-1',
+            seq: 1,
+            createdAt: 123,
+            role: 'assistant',
+            kind: 'assistant_message',
+            raw: { role: 'agent', content: { type: 'text', text: 'followed message' } },
+          }],
+          nextCursor: 'cursor-1',
+          truncated: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-follow', items: [], nextCursor: 'cursor-1', truncated: false },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, session: { id: 'sess-follow', active: false } },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-follow', items: [], nextCursor: 'cursor-1', truncated: false },
+      })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--path', '/tmp', '--follow', '--jsonl'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.logs.map((line) => JSON.parse(line))).toEqual([
+        {
+          v: 1,
+          ok: true,
+          kind: 'session_create',
+          data: { created: true, session: { id: 'sess-follow' } },
+        },
+        {
+          id: 'row-1',
+          seq: 1,
+          createdAt: 123,
+          role: 'agent',
+          kind: 'text',
+          text: 'followed message',
+        },
+      ]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('emits the creation envelope when --follow --jsonl completes without transcript rows', async () => {
+    execute
+      .mockResolvedValueOnce(sessionSpawnSuccess('sess-empty'))
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-empty', items: [], nextCursor: 'cursor-0', truncated: false },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, session: { id: 'sess-empty', active: false } },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-empty', items: [], nextCursor: 'cursor-0', truncated: false },
+      })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--path', '/tmp', '--follow', '--jsonl'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.logs.map((line) => JSON.parse(line))).toEqual([{
+        v: 1,
+        ok: true,
+        kind: 'session_create',
+        data: { created: true, session: { id: 'sess-empty' } },
+      }]);
+      expect(process.exitCode ?? 0).toBe(0);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('emits one failure envelope and does not follow when JSONL creation fails', async () => {
+    execute.mockResolvedValueOnce({
+      ok: false,
+      errorCode: 'server_unreachable',
+      error: 'daemon unavailable',
+    });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--path', '/tmp', '--follow', '--jsonl'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(output.logs.map((line) => JSON.parse(line))).toEqual([{
+        v: 1,
+        ok: false,
+        kind: 'session_create',
+        error: { code: 'server_unreachable', message: 'daemon unavailable' },
+      }]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('keeps the creation envelope before a terminal follow failure and releases once', async () => {
+    execute
+      .mockResolvedValueOnce(sessionSpawnSuccess('sess-follow-failure'))
+      .mockResolvedValueOnce({
+        ok: false,
+        errorCode: 'server_unreachable',
+        error: 'follow daemon unavailable',
+      })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--path', '/tmp', '--follow', '--jsonl'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenCalledTimes(3);
+      expect(execute).toHaveBeenNthCalledWith(
+        3,
+        'transcript.unfollow',
+        { sessionId: 'sess-follow-failure', leaseId: expect.any(String) },
+        { surface: 'cli', defaultSessionId: null },
+      );
+      expect(output.logs.map((line) => JSON.parse(line))).toEqual([
+        {
+          v: 1,
+          ok: true,
+          kind: 'session_create',
+          data: { created: true, session: { id: 'sess-follow-failure' } },
+        },
+        {
+          v: 1,
+          ok: false,
+          kind: 'session_create',
+          error: { code: 'server_unreachable', message: 'follow daemon unavailable' },
+        },
+      ]);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it.each([
+    [['--host', 'legacy-host', 'would-be-prompt'], /--machine-id/i],
+    [['--host=legacy-host', 'would-be-prompt'], /--machine-id/i],
+    [['--tag', 'legacy-label', 'would-be-prompt'], /--title/i],
+    [['--tag=legacy-label', 'would-be-prompt'], /--title/i],
+    [['--runtime-descriptor-json={"v":1}', 'would-be-prompt'], /--agent.*--model.*--mode/i],
+    [['--agent-runtime-descriptor-json={"v":1}', 'would-be-prompt'], /--agent.*--model.*--mode/i],
+  ])('returns one typed invalid-argument envelope for retired create flags %o', async (args, guidance) => {
+    const readCredentialsFn = vi.fn(async () => ({
+      token: 'token_test',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    }));
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', ...args, '--json'], { readCredentialsFn });
+
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_create',
+        error: { code: 'invalid_arguments', message: expect.stringMatching(guidance) },
+      });
     } finally {
       output.restore();
     }
@@ -402,6 +610,33 @@ describe('happier session create (action executor)', () => {
     }
   });
 
+  it('emits one approval-created envelope and does not follow for --follow --jsonl', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'approval-follow' },
+    });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--path', '/tmp', '--follow', '--jsonl'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(output.logs.map((line) => JSON.parse(line))).toEqual([{
+        v: 1,
+        ok: true,
+        kind: 'session_create',
+        data: { kind: 'approval_request_created', artifactId: 'approval-follow' },
+      }]);
+    } finally {
+      output.restore();
+    }
+  });
+
   it('defaults the spawn path from the stack-invoked cwd when --path is omitted', async () => {
     execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-2'));
 
@@ -468,5 +703,21 @@ describe('happier session create (action executor)', () => {
     } finally {
       output.restore();
     }
+  });
+
+  it('shows a human run the same stable attempt id when creation stays pending', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { type: 'pending' as const, outcome: 'unknown', retryWithSameCreationKey: true },
+    });
+
+    await expect(handleSessionCommand([
+      'create', '--path', '/tmp', '--spawn-attempt-id', 'attempt-7',
+    ], {
+      readCredentialsFn: async () => ({
+        token: 'token_test',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      }),
+    })).rejects.toThrow(/--spawn-attempt-id attempt-7 --resume-spawn-attempt/u);
   });
 });

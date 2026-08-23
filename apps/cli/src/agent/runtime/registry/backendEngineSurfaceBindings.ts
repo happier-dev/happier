@@ -48,6 +48,7 @@ type AgentRuntimeSurfaceInvocationContextResolver = (
         happierSessionId?: string;
     }>,
 ) => Promise<PluginInvocationContext>;
+type AgentRuntimeAttachSurface = NonNullable<NonNullable<AgentRuntime['surfaces']>['attach']>;
 type AgentRuntimeForkSurface = NonNullable<NonNullable<AgentRuntime['surfaces']>['fork']>;
 type AgentRuntimeHandoffSurface = NonNullable<NonNullable<AgentRuntime['surfaces']>['handoff']>;
 type AgentRuntimeForkAvailabilityRequest = Parameters<NonNullable<AgentRuntimeForkSurface['evaluateAvailability']>>[0];
@@ -442,6 +443,41 @@ function projectHostReplayForkChildLaunchRequestForAgentRuntime(
     };
 }
 
+/**
+ * Attach is a public Agent surface like fork and handoff: a retired runtime
+ * generation must not have a late availability or attach result accepted after
+ * its replacement is live. The generation fence is the same host-boundary one
+ * fork and handoff already use, so attach owns no generation state of its own.
+ */
+function bindNativeAgentAttachSurface(params: Readonly<{
+    runtime: AgentRuntime;
+    agentId: string;
+    isCurrent: () => boolean;
+}>): BackendExecutionSurfaces['attach'] {
+    const attach = params.runtime.surfaces?.attach;
+    if (!attach) return null;
+    return Object.freeze({
+        ...(attach.evaluateAvailability
+            ? {
+                evaluateAvailability: async (
+                    request: Parameters<NonNullable<AgentRuntimeAttachSurface['evaluateAvailability']>>[0],
+                ) => {
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    const result = await attach.evaluateAvailability!(request);
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    return result;
+                },
+            }
+            : {}),
+        attach: async (request: Parameters<AgentRuntimeAttachSurface['attach']>[0]) => {
+            assertCurrentNativeAgentSurfaceGeneration(params);
+            const result = await attach.attach(request);
+            assertCurrentNativeAgentSurfaceGeneration(params);
+            return result;
+        },
+    });
+}
+
 function bindNativeAgentForkSurface(params: Readonly<{
     runtime: AgentRuntime;
     agentId: string;
@@ -590,7 +626,6 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
     createAgentRuntimeSurfaceInvocationContext?: AgentRuntimeSurfaceInvocationContextResolver;
 }>): BackendExecutionSurfaces {
     const runtimeSurfaces = params.runtime.surfaces;
-    const attach = runtimeSurfaces?.attach ?? null;
     const checkpoint = runtimeSurfaces?.checkpoint ?? null;
     const surfaceBindingParams = {
         runtime: params.runtime,
@@ -600,6 +635,11 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
     };
     const fork = bindNativeAgentForkSurface(surfaceBindingParams);
     const handoff = bindNativeAgentHandoffSurface(surfaceBindingParams);
+    const attach = bindNativeAgentAttachSurface({
+        runtime: params.runtime,
+        agentId: params.agentId,
+        isCurrent: params.isCurrent,
+    });
     const terminal = runtimeSurfaces?.terminal;
     if (!terminal) return {
         terminalRuntime: null,

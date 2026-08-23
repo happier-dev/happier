@@ -8,7 +8,10 @@ import { resolveBundledPluginMetadataForBackendTarget } from '../bundledBackendP
 import { resolveWindowsRemoteSessionConsoleMode } from '../platform/windows/windowsSessionConsoleMode';
 import { buildHappySessionControlArgs } from '../sessionSpawnArgs';
 import type { ChildExit } from '../sessions/onChildExited';
-import type { TrackedSession } from '../types';
+import type {
+  RunnerAgentInvocationContext,
+  TrackedSession,
+} from '../types';
 import type {
   RunnerAgentSessionBootstrapAuthorization,
 } from '../agentRuntime/sessionBridgeAuthorization';
@@ -56,6 +59,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
   unsetEnvKeys?: readonly string[];
   runnerAgentSessionBootstrapAuthorization?:
     RunnerAgentSessionBootstrapAuthorization | null;
+  runnerAgentInvocationContext?: RunnerAgentInvocationContext | null;
   processEnv: NodeJS.ProcessEnv;
   happyHomeDir: string;
   pidToTrackedSession: Map<number, TrackedSession>;
@@ -145,6 +149,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
     unsetEnvKeys: params.unsetEnvKeys,
     runnerAgentSessionBootstrapAuthorization:
       params.runnerAgentSessionBootstrapAuthorization,
+    runnerAgentInvocationContext: params.runnerAgentInvocationContext,
     pidToTrackedSession: params.pidToTrackedSession,
     pidToAwaiter: params.pidToAwaiter,
     pidToSpawnResultResolver: params.pidToSpawnResultResolver,
@@ -219,6 +224,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
       unsetEnvKeys: params.unsetEnvKeys,
       runnerAgentSessionBootstrapAuthorization:
         params.runnerAgentSessionBootstrapAuthorization,
+      runnerAgentInvocationContext: params.runnerAgentInvocationContext,
       processEnv: params.processEnv,
       happyHomeDir: params.happyHomeDir,
       pidToTrackedSession: params.pidToTrackedSession,
@@ -249,6 +255,7 @@ export async function routeSpawnModeAndWaitForWebhook(params: Readonly<{
     unsetEnvKeys: params.unsetEnvKeys,
     runnerAgentSessionBootstrapAuthorization:
       params.runnerAgentSessionBootstrapAuthorization,
+    runnerAgentInvocationContext: params.runnerAgentInvocationContext,
     processEnv: params.processEnv,
     pidToTrackedSession: params.pidToTrackedSession,
     pidToAwaiter: params.pidToAwaiter,

@@ -19,6 +19,23 @@ vi.mock('@/ui/logger', () => ({
 import { createSpawnNewSessionLifecycleActionHandler } from './createSpawnNewSessionLifecycleActionHandler';
 
 describe('createSpawnNewSessionLifecycleActionHandler', () => {
+  it('acknowledges a cancellation signal before spawning a process', async () => {
+    const spawnSession = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+    const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession });
+
+    await expect(handler({
+      directory: '/tmp/project',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+    }, { signal: controller.signal })).resolves.toEqual({
+      type: 'error',
+      errorCode: 'cancelled',
+      errorMessage: 'cancelled',
+    });
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
   it('preserves accepted spawn identity for method-specific RPC projection', async () => {
     const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({
       type: 'success',

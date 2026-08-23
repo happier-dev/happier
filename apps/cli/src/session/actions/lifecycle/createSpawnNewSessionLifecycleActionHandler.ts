@@ -33,7 +33,13 @@ import type {
 export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
     spawnSession: SessionLifecycleMachineHandlers['spawnSession'];
 }>): SessionLifecycleActionHandler {
-    return async (rawParams: unknown) => {
+    return async (rawParams: unknown, context) => {
+        const cancelled = () => ({
+            type: 'error' as const,
+            errorCode: 'cancelled',
+            errorMessage: 'cancelled',
+        });
+        if (context?.signal.aborted) return cancelled();
         const {
             directory,
             spawnNonce,
@@ -357,6 +363,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             }
 
             const baseSpawnOptions = buildBaseSpawnOptions(directory);
+            if (context?.signal.aborted) return cancelled();
             const result = await params.spawnSession({
                 ...baseSpawnOptions,
                 existingSessionId,
@@ -381,6 +388,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             };
         }
         const baseSpawnOptions = buildBaseSpawnOptions(directory);
+        if (context?.signal.aborted) return cancelled();
         const result = await params.spawnSession({
             ...baseSpawnOptions,
             sessionId: normalizedSessionId,

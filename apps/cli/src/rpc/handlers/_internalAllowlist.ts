@@ -311,6 +311,11 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         ownerPacket: 'LSV-1',
     },
     {
+        method: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
+        rationale: 'LSV-1 daemon-owned local-services inventory change watch (long poll over the inventory registry push producer); remains internal transport, not a public action surface.',
+        ownerPacket: 'LSV-1',
+    },
+    {
         method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
         rationale: 'LSV-6 daemon-owned local-services launcher feed read projection; remains internal transport, not a public action surface.',
         ownerPacket: 'LSV-6',

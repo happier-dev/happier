@@ -117,6 +117,7 @@ import type {
   SpawnSessionOptions,
   SpawnSessionResult,
 } from '../../../session/shared/spawnSessionContract';
+import type { RegisterActionSpecRpcHandlersParams } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 
 export type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 
@@ -164,6 +165,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
   runtimeConfig?: SessionHandoffRuntimeConfig;
   runtimeDependencies?: Partial<SessionHandoffRuntimeDependencies>;
+  observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
+  coordinateSessionHandoff?: (input: Readonly<{
+    actionInput: unknown;
+    start: () => Promise<import('@happier-dev/protocol/actions').ActionExecuteResult>;
+    signal: AbortSignal;
+    publishOwnerUpdate: (update: import('@/daemon/actionOperations').ActionOperationOwnerUpdate) => void;
+  }>) => Promise<import('@happier-dev/protocol/actions').ActionExecuteResult>;
 }>): void {
   const runtimeConfig = params.runtimeConfig ?? readSessionHandoffRuntimeConfig();
   const createUuid = params.runtimeDependencies?.createUuid ?? randomUUID;
@@ -679,18 +687,36 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     invalidRequest,
   });
 
+  const lifecycleExecutor = createSessionLifecycleRpcActionExecutor({
+    'session.handoff': startHandler,
+    'session.handoff.prepare_target': prepareTargetHandler,
+    'session.handoff.prepare_target.resume': prepareTargetResumeHandler,
+    'session.handoff.prepare_target_result.get': prepareTargetResultGetHandler,
+    'session.handoff.commit': commitHandler,
+    'session.handoff.abort': abortHandler,
+    'session.handoff.status.get': statusGetHandler,
+  });
   registerSessionLifecycleRpcHandlers({
     rpcHandlerManager,
-    actionExecutor: createSessionLifecycleRpcActionExecutor({
-      'session.handoff': startHandler,
-      'session.handoff.prepare_target': prepareTargetHandler,
-      'session.handoff.prepare_target.resume': prepareTargetResumeHandler,
-      'session.handoff.prepare_target_result.get': prepareTargetResultGetHandler,
-      'session.handoff.commit': commitHandler,
-      'session.handoff.abort': abortHandler,
-      'session.handoff.status.get': statusGetHandler,
-    }),
+    actionExecutor: params.coordinateSessionHandoff
+      ? {
+          execute: async (actionId, input, context) => {
+            if (actionId !== 'session.handoff') {
+              return await lifecycleExecutor.execute(actionId, input, context);
+            }
+            return await params.coordinateSessionHandoff!({
+              actionInput: input,
+              start: async () => await lifecycleExecutor.execute(actionId, input, context),
+              signal: context?.signal ?? new AbortController().signal,
+              publishOwnerUpdate: (update) => {
+                context?.operationOwnerUpdate?.update(update);
+              },
+            });
+          },
+        }
+      : lifecycleExecutor,
     scopes: SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
+    ...(params.observeExecution ? { observeExecution: params.observeExecution } : {}),
   });
 
   registerSessionHandoffPredecessorCompatibilityHandlers({

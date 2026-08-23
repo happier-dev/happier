@@ -6,7 +6,10 @@ import { resolveAgentCliManagedCommandPath } from '@/packagedRuntime/managedTool
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import {
+  SPAWN_SESSION_ERROR_CODES,
+  type SpawnSessionOptions,
+} from '@/rpc/handlers/registerSessionHandlers';
 
 const tempDirs = new Set<string>();
 
@@ -238,6 +241,87 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  it('retains the exact non-secret launch spec selected by a profile Agent CLI override', async () => {
+    if (process.platform === 'win32') return;
+
+    const root = await createTempDir('happier-spawn-profile-agent-cli-', tmpdir());
+    tempDirs.add(root);
+    const profileClaudePath = await writeExecutableShim({
+      dir: root,
+      fileName: 'claude-profile',
+      contents: '#!/bin/sh\necho profile-claude\n',
+    });
+
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {
+        HAPPIER_CLAUDE_PATH: profileClaudePath,
+        PRIVATE_LAUNCH_SECRET: 'must-not-be-retained',
+      },
+      daemonSpawnHooks: null,
+      processEnv: {
+        HAPPIER_CLAUDE_PATH: process.execPath,
+        PATH: '',
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result.ok).toBe(true);
+    const launchSpec = (result as unknown as {
+      agentCliLaunchSpec?: unknown;
+    }).agentCliLaunchSpec;
+    expect(launchSpec).toEqual({
+      source: 'override',
+      resolvedPath: profileClaudePath,
+      command: profileClaudePath,
+      args: [],
+    });
+  });
+
+  it('keeps an invalid profile CLI override closed after earlier runtime prerequisites resolved', async () => {
+    const root = await createTempDir('happier-spawn-invalid-profile-agent-cli-', tmpdir());
+    tempDirs.add(root);
+    const daemonClaudePath = await writeExecutableShim({
+      dir: root,
+      fileName: process.platform === 'win32' ? 'claude.cmd' : 'claude',
+      contents: process.platform === 'win32'
+        ? '@echo off\r\necho daemon-claude\r\n'
+        : '#!/bin/sh\necho daemon-claude\n',
+    });
+
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {
+        HAPPIER_CLAUDE_PATH: `${root}/missing-claude`,
+      },
+      daemonSpawnHooks: null,
+      processEnv: {
+        HAPPIER_CLAUDE_PATH: daemonClaudePath,
+        PATH: '',
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+      runtimePrerequisitesAlreadyResolved: true,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: expect.stringContaining('HAPPIER_CLAUDE_PATH is set but does not point'),
+    }));
   });
 
   it('fails closed for invalid profile provider CLI overrides even when the daemon can resolve another CLI', async () => {

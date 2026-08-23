@@ -307,7 +307,7 @@ describe('explicit provider model loading', () => {
     expect(test.refresh).not.toHaveBeenCalled();
   });
 
-  it('coalesces concurrent clicks from authorization by machine, connection, and model', async () => {
+  it('coalesces concurrent clicks that resolve to the same exact endpoint generation', async () => {
     let release!: () => void;
     const test = harness({
       post: () => new Promise((resolve) => { release = () => resolve({ ok: true, statusCode: 200 }); }),
@@ -315,12 +315,54 @@ describe('explicit provider model loading', () => {
     const first = test.service.loadNow(request);
     const second = test.service.loadNow(request);
     await vi.waitFor(() => expect(test.postJsonModelId).toHaveBeenCalledTimes(1));
-    expect(test.authorize).toHaveBeenCalledTimes(1);
     release();
     await expect(Promise.all([first, second])).resolves.toEqual([
       { status: 'loaded', source: 'requested' },
       { status: 'loaded', source: 'requested' },
     ]);
+    expect(test.postJsonModelId).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs a separate operation when the endpoint generation rotates under one model', async () => {
+    const releases: Array<() => void> = [];
+    let endpointFingerprint = 'endpoint-fingerprint-a';
+    const test = harness({
+      authorize: async () => ({
+        status: 'authorized' as const,
+        authorization: authorization({
+          endpoint: {
+            endpointTemplateId: 'management',
+            endpointUrl: endpointFingerprint === 'endpoint-fingerprint-a'
+              ? 'http://127.0.0.1:1234/'
+              : 'http://127.0.0.1:5678/',
+            endpointFingerprint,
+            publicHeaders: {},
+          },
+        }),
+      }),
+      post: () => new Promise((resolve) => {
+        releases.push(() => resolve({ ok: true as const, statusCode: 200 }));
+      }),
+    });
+    const first = test.service.loadNow(request);
+    await vi.waitFor(() => expect(test.postJsonModelId).toHaveBeenCalledTimes(1));
+
+    endpointFingerprint = 'endpoint-fingerprint-b';
+    const second = test.service.loadNow(request);
+
+    try {
+      await vi.waitFor(() => expect(test.postJsonModelId).toHaveBeenCalledTimes(2));
+      expect(test.authorize).toHaveBeenCalledTimes(2);
+      expect(test.postJsonModelId).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        endpointUrl: 'http://127.0.0.1:1234/',
+      }));
+      expect(test.postJsonModelId).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        endpointUrl: 'http://127.0.0.1:5678/',
+      }));
+    } finally {
+      for (const release of releases.splice(0)) release();
+      await Promise.allSettled([first, second]);
+    }
   });
 
   it('keeps distinct model ids separate even when their captured endpoint generations differ', async () => {
@@ -725,15 +767,12 @@ describe('explicit provider model loading', () => {
     }
   });
 
-  it('cancels the shared pending authorization for one logical model identity', async () => {
+  it('cancels every pending authorization for one logical model identity', async () => {
     const pendingAuthorizations: Array<() => void> = [];
     let authorizeCalls = 0;
     const test = harness({
       authorize: async () => {
         authorizeCalls += 1;
-        if (authorizeCalls > 1) {
-          return { status: 'unavailable' as const };
-        }
         return await new Promise<Readonly<{
           status: 'authorized';
           authorization: ProviderModelLoadAuthorization<Ticket, CredentialRef>;
@@ -747,7 +786,7 @@ describe('explicit provider model loading', () => {
     });
     const first = test.service.loadNow(request);
     const second = test.service.loadNow(request);
-    await vi.waitFor(() => expect(authorizeCalls).toBe(1));
+    await vi.waitFor(() => expect(pendingAuthorizations.length).toBe(2));
 
     try {
       await expect(test.service.cancelNow(request)).resolves.toEqual({

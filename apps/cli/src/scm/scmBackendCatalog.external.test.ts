@@ -27,7 +27,7 @@ describe('external SCM runtime consumer parity', () => {
                     capabilities: ['detect', 'status'],
                 }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         const hostingManifest = ingestCanonicalPluginManifest({
             schemaVersion: 2,
             id: 'acme.scm.hosting',
@@ -44,7 +44,7 @@ describe('external SCM runtime consumer parity', () => {
                     capabilities: ['detect'],
                 }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!backendManifest.ok || !hostingManifest.ok) {
             const diagnostics = [
                 ...(backendManifest.ok ? [] : backendManifest.diagnostics),

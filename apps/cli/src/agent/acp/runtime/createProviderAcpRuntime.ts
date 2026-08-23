@@ -16,6 +16,7 @@ import {
 import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
+import { sanitizeConnectedServiceDiagnosticError } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { projectConnectedServiceRuntimeAuthRecoveryReport } from '@/daemon/connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoverySessionEvent';
 import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessionNotificationContext';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from '@/agent/runtime/session/errors/connectedServiceRuntimeAuthRecoveryContext';
@@ -205,7 +206,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends AgentFac
     try {
       delegated = await params.hooks?.onRuntimeAuthFailure?.(evt);
     } catch (error) {
-      logger.debug(`[${params.loggerLabel}] Runtime auth failure caller hook failed (non-fatal)`, error);
+      logger.debug(`[${params.loggerLabel}] Runtime auth failure caller hook failed (non-fatal): ${sanitizeConnectedServiceDiagnosticError(error)}`);
     }
     if (!hasConnectedServiceRuntimeAuthRecoveryContext(evt.classification)) {
       return delegated;

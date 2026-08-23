@@ -310,16 +310,18 @@ describe('managed Provider catalog runtime composition', () => {
                 ? 'http://127.0.0.1:45123/v1'
                 : null
             ),
-            fetch: async () => {
+            request: async () => {
               signalTransportStarted();
               await transportGate;
-              return new Response(
-                '{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}',
-                {
-                  status: 200,
-                  headers: { 'content-type': 'application/json' },
-                },
-              );
+              return Object.freeze({
+                ok: true,
+                status: 200,
+                statusText: 'OK',
+                headers: Object.freeze({ 'content-type': 'application/json' }),
+                body: new Response(
+                  '{"object":"list","data":[{"id":"gpt-5-codex","object":"model"}]}',
+                ).body,
+              });
             },
           }),
           isCurrent: () => true,

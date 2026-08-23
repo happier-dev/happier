@@ -1561,7 +1561,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,
@@ -1866,7 +1866,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,
@@ -1967,7 +1967,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,
@@ -2551,7 +2551,7 @@ describe('runner managed-services Provider custody', () => {
             access: Object.freeze({
                 endpointUrl: () =>
                     'http://127.0.0.1:4312/v1/chat/completions',
-                fetch: vi.fn(),
+                request: vi.fn(),
             }),
             isCurrent: () => true,
             cleanup: projectionCleanup,
@@ -2780,7 +2780,7 @@ describe('runner managed-services Provider custody', () => {
                     endpointUrl: () => isCurrent()
                         ? 'http://127.0.0.1:4312/v1'
                         : null,
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent,
                 cleanup: vi.fn(async () => {}),
@@ -2880,7 +2880,7 @@ describe('runner managed-services Provider custody', () => {
                     endpointUrl: () => isCurrent()
                         ? 'http://127.0.0.1:4312/v1'
                         : null,
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent,
                 cleanup: vi.fn(async () => {}),
@@ -2982,7 +2982,7 @@ describe('runner managed-services Provider custody', () => {
                     endpointUrl: () => isCurrent()
                         ? 'http://127.0.0.1:4312/v1'
                         : null,
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent,
                 cleanup: vi.fn(async () => {}),
@@ -3081,7 +3081,7 @@ describe('runner managed-services Provider custody', () => {
                 access: Object.freeze({
                     endpointUrl: () =>
                         `http://127.0.0.1:4312/${service.snapshot().id}`,
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: vi.fn(async () => {}),
@@ -3188,7 +3188,7 @@ describe('runner managed-services Provider custody', () => {
                 access: Object.freeze({
                     endpointUrl: (endpointTemplateId: string): string | null =>
                         `http://127.0.0.1:4312/${endpointTemplateId}`,
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: vi.fn(async () => {}),
@@ -3266,7 +3266,7 @@ describe('runner managed-services Provider custody', () => {
                 access: Object.freeze({
                     endpointUrl: () =>
                         `http://127.0.0.1:4312/${service.snapshot().id}`,
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: vi.fn(async () => {}),
@@ -3359,7 +3359,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: vi.fn(async () => {}),
@@ -3679,7 +3679,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,
@@ -3761,7 +3761,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,
@@ -3830,7 +3830,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,
@@ -4096,7 +4096,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,
@@ -4173,7 +4173,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,
@@ -4257,7 +4257,7 @@ describe('runner managed-services Provider custody', () => {
             projectEndpointAccess: async () => Object.freeze({
                 access: Object.freeze({
                     endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                    fetch: vi.fn(),
+                    request: vi.fn(),
                 }),
                 isCurrent: () => true,
                 cleanup: projectionCleanup,

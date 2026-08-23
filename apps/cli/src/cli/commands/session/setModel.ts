@@ -2,6 +2,7 @@ import chalk from 'chalk';
 
 import type { StoredCredentials } from '@/persistence';
 import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
+import { readProviderConnectionFlag } from './shared/readProviderConnectionFlag';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import {
@@ -9,6 +10,9 @@ import {
   unwrapCliActionSuccessPayload,
 } from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
+
+const SESSION_SET_MODEL_USAGE =
+  'Usage: happier session set-model <session-id-or-prefix> <model-id> [--provider-connection <id|native>] [--json]';
 
 function normalizeModelIdOrThrow(raw: string): string {
   const trimmed = raw.trim();
@@ -25,12 +29,16 @@ export async function cmdSessionSetModel(
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const [idOrPrefix = '', rawModelId = ''] = readCommandPositionals(argv, { startIndex: 1 });
+  const [idOrPrefix = '', rawModelId = ''] = readCommandPositionals(argv, {
+    startIndex: 1,
+    valueFlags: ['--provider-connection'],
+  });
   if (!idOrPrefix || !rawModelId) {
-    throw new Error('Usage: happier session set-model <session-id-or-prefix> <model-id> [--json]');
+    throw new Error(SESSION_SET_MODEL_USAGE);
   }
 
   const modelId = normalizeModelIdOrThrow(rawModelId);
+  const providerConnectionId = readProviderConnectionFlag(argv);
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -45,7 +53,11 @@ export async function cmdSessionSetModel(
   const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'session.model.set',
-    { sessionId: idOrPrefix, modelId },
+    {
+      sessionId: idOrPrefix,
+      modelId,
+      ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
+    },
     { surface: 'cli', defaultSessionId: null },
   );
   const normalized = normalizeActionExecuteResult(actionRes as any);

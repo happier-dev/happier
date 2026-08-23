@@ -499,4 +499,97 @@ describe('setSessionModel', () => {
       requestedSelection: { modelId: 'stale-model' },
     });
   });
+
+  it('refuses an omitted-connection model set when the ACTIVE binding is unreadable', async () => {
+    // A present-but-unparsable applied binding cannot prove the runner is
+    // native. Publishing a native transition here would ask the live owner to
+    // re-point the Session at the Agent's own catalog.
+    resolveSessionTransportContext.mockResolvedValue(transport(true, {
+      metadata: JSON.stringify({
+        flavor: 'codex',
+        providerBindingV1: {
+          v: 1,
+          connectionId: 'pc_active',
+          contributionKey: null,
+          connectionRevision: 'not-a-number',
+          model: { id: 'active-model', name: 'Active model' },
+          protocol: 'openai-responses',
+          materialization: 'engineConfig',
+          compatibilityFingerprint: 'compatibility:v1:active',
+          bindingSecurityFingerprint: 'binding-security:v1:active',
+          displaySnapshot: {
+            providerName: 'Gateway',
+            connectionName: 'Active',
+            connectionRole: 'named',
+            connectionDisplayNameMode: 'custom',
+          },
+        },
+      }),
+      metadataLayoutVersion: 0,
+      encryptionMode: 'plain',
+    }));
+
+    await expect(setSessionModel({
+      credentials,
+      idOrPrefix: 'sess-1',
+      modelId: 'next-model',
+    })).rejects.toMatchObject({
+      code: 'model_selection_session_provider_state_unreadable',
+    });
+
+    expect(callSessionRpc).not.toHaveBeenCalled();
+    expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+
+  it('refuses an omitted-connection model set when the INACTIVE persisted intent is unreadable', async () => {
+    resolveSessionTransportContext.mockResolvedValue(transport(false, {
+      metadata: JSON.stringify({
+        flavor: 'codex',
+        modelSelectionIntentV1: { selection: { providerConnectionId: 'pc_work' } },
+      }),
+      metadataLayoutVersion: 0,
+      encryptionMode: 'plain',
+    }));
+
+    await expect(setSessionModel({
+      credentials,
+      idOrPrefix: 'sess-1',
+      modelId: 'next-model',
+    })).rejects.toMatchObject({
+      code: 'model_selection_session_provider_state_unreadable',
+    });
+
+    expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+    expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('still applies an explicitly named connection over unreadable ambient state', async () => {
+    resolveSessionTransportContext.mockResolvedValue(transport(false, {
+      metadata: JSON.stringify({
+        flavor: 'codex',
+        modelSelectionIntentV1: { selection: { providerConnectionId: 'pc_work' } },
+      }),
+      metadataLayoutVersion: 0,
+      encryptionMode: 'plain',
+    }));
+    updateSessionMetadataWithRetry.mockImplementation(async (input) => ({
+      metadata: input.updater({ flavor: 'codex' }),
+      version: 2,
+    }));
+
+    await expect(setSessionModel({
+      credentials,
+      idOrPrefix: 'sess-1',
+      modelId: 'next-model',
+      providerConnectionId: 'pc_explicit',
+    })).resolves.toMatchObject({
+      ok: true,
+      status: 'intent_updated',
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_explicit',
+        modelId: 'next-model',
+      },
+    });
+  });
 });

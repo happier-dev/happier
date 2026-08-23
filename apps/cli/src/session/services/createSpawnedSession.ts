@@ -1,11 +1,13 @@
 import {
   SPAWN_SESSION_ERROR_CODES,
+  readConnectedServiceMaterializationIdentityV1FromMetadata,
   normalizeSpawnSessionNonceResolution,
   sessionCreationCorrespondenceMatchesV1,
   type BackendTargetRefV2,
   type SessionCreationCorrespondenceV1,
   type SessionCreationTagV1,
   type SessionSpawnNewInitialInputDispositionV1,
+  type SessionSpawnSourceContextV1,
   type SessionOrganizationPlacementV1,
   type SessionModelSelectionV1,
   type SpawnSessionNonceResolution,
@@ -17,8 +19,6 @@ import os from 'node:os';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
-import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
-import { shouldResolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import type { StoredCredentials } from '@/persistence';
 import {
   SpawnDaemonSessionRequestSchema,
@@ -43,6 +43,10 @@ import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId } from './awaitS
 import { archiveSessionOnceInactive } from './archiveSessionOnceInactive';
 import { requestSessionStop } from './requestSessionStop';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
+import {
+  createConnectedServiceChildLaunchContext,
+  type ConnectedServiceChildLaunchContext,
+} from '@/session/fork/connectedServiceForkLaunchContext';
 
 /**
  * Host-private local path for an exact daemon's canonical spawn lifecycle.
@@ -132,15 +136,32 @@ export type CreateSpawnedSessionParams = Readonly<{
   /** Stable caller-owned identity for one launch attempt. */
   spawnNonce?: string;
   /**
+   * Raw source intent retained only for canonical existing-row and
+   * settled-child validation. It is host-private creator input, not a
+   * machine-RPC field.
+   */
+  sourceContext?: SessionSpawnSourceContextV1;
+  /**
    * Commit the Session row here, seeded from a resolved Replay recipe, and
    * attach the launched runner to it. Absent for ordinary authoring, where the
    * runner bootstrap creates the row from the creation tag.
    */
   replaySeededCreation?: ReplaySeededSessionCreationV1;
+  /**
+   * A fork-owned projection already minted by the shared child-launch owner.
+   * It keeps the committed row and its direct runner attachment on one identity.
+   */
+  connectedServiceChildLaunch?: ConnectedServiceChildLaunchContext;
   /** Resolve an already-submitted launch attempt without sending another spawn. */
   resumeOnly?: boolean;
   /** Exact-daemon in-process transport for the closed server-origin bridge. */
   directTransport?: DirectSpawnedSessionTransport;
+  /** In-process current-daemon transport; preserves the canonical RPC handlers. */
+  machineActionTransport?: (
+    method: string,
+    request: unknown,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ) => Promise<unknown>;
   signal?: AbortSignal;
 } & Partial<Pick<
   SpawnSessionOptions,
@@ -364,12 +385,58 @@ export function readPersistedReplaySeedSourceRecipe(
 
 export function replaySeedSourceRecipeConflicts(
   persisted: ReplaySeededCreationSourceRecipe | null,
-  requested?: ReplaySeededCreationSourceRecipe,
+  requested?: ReplaySeededCreationSourceRecipe | SessionSpawnSourceContextV1,
 ): boolean {
   if (!requested) return persisted !== null;
   if (!persisted) return true;
+  if ('forkPoint' in requested) {
+    if (persisted.sourceSessionId !== requested.sourceSessionId) return true;
+    // `latest` is resolved once when the child is first created. A retry must
+    // prove the same source but must not reinterpret that original snapshot
+    // against a later source head. An explicit seq remains exact.
+    return requested.forkPoint.type === 'seq'
+      && persisted.cutoffSeqInclusive !== requested.forkPoint.upToSeqInclusive;
+  }
   return persisted.sourceSessionId !== requested.sourceSessionId
     || persisted.cutoffSeqInclusive !== requested.cutoffSeqInclusive;
+}
+
+type ExistingSessionCreationCandidateValidation =
+  | Readonly<{ kind: 'matched' }>
+  | Readonly<{ kind: 'correspondence_conflict' }>
+  | Readonly<{ kind: 'source_recipe_missing' }>
+  | Readonly<{ kind: 'source_recipe_conflict' }>;
+
+/**
+ * The canonical existing-row proof shared by preflight rejoin, atomic
+ * get-or-create, and post-spawn settlement. Callers retain their ingress
+ * error projection, but none may independently decide whether an immutable
+ * correspondence or replay source recipe proves the candidate child.
+ */
+function validateExistingSessionCreationCandidate(params: Readonly<{
+  ownerMetadata: Readonly<Record<string, unknown>> | null | undefined;
+  correspondence?: SessionCreationCorrespondenceV1;
+  sourceRecipe?: ReplaySeededCreationSourceRecipe | SessionSpawnSourceContextV1;
+  validateSourceRecipe: boolean;
+}>): ExistingSessionCreationCandidateValidation {
+  if (
+    params.correspondence
+    && !sessionCreationCorrespondenceMatchesV1(
+      params.ownerMetadata?.sessionCreationCorrespondenceV1,
+      params.correspondence,
+    )
+  ) {
+    return { kind: 'correspondence_conflict' };
+  }
+  if (!params.validateSourceRecipe) return { kind: 'matched' };
+
+  const persistedSourceRecipe = readPersistedReplaySeedSourceRecipe(params.ownerMetadata);
+  if (params.sourceRecipe && persistedSourceRecipe === null) {
+    return { kind: 'source_recipe_missing' };
+  }
+  return replaySeedSourceRecipeConflicts(persistedSourceRecipe, params.sourceRecipe)
+    ? { kind: 'source_recipe_conflict' }
+    : { kind: 'matched' };
 }
 
 async function submitSpawnInitialInput(params: Readonly<{
@@ -423,28 +490,35 @@ async function submitSpawnInitialInput(params: Readonly<{
   }
 }
 
-/**
- * One ambiguity rule for the replay-seeded launch, whether the transport
- * answered with a failure or threw one. An ambiguous outcome may still have
- * produced a live runner, so its Session is never settled as an orphan.
- */
-function isAmbiguousReplaySeededLaunchOutcome(code: unknown): boolean {
-  return code === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
-    || code === 'MACHINE_RPC_TIMEOUT';
+// This is deliberately the creator's cleanup projection, not a second daemon
+// outcome model. Only these known producers reject before a runner can attach;
+// every other response, throw, or legacy code may still name a live child.
+const DEFINITE_REPLAY_SEEDED_PRE_ADMISSION_ERROR_CODES = new Set<string>([
+  SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+  SPAWN_SESSION_ERROR_CODES.INVALID_ENVIRONMENT_VARIABLES,
+  SPAWN_SESSION_ERROR_CODES.AUTH_ENV_UNEXPANDED,
+  SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
+  SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+  SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
+  SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+]);
+
+function isDefiniteReplaySeededPreAdmissionRejection(code: unknown): boolean {
+  return typeof code === 'string'
+    && DEFINITE_REPLAY_SEEDED_PRE_ADMISSION_ERROR_CODES.has(code);
 }
 
 /**
  * Dispatch the launch for an already-committed replay-seeded row.
  *
- * The row exists before this runs, so a transport that throws — request
- * validation, an unavailable daemon RPC, an aborted submission — leaves exactly
- * the orphan a definite failure response leaves. It therefore takes the same
- * single settlement under the same ambiguity rule, instead of escaping as a
- * committed Session no ingress can recover.
+ * A returned row may be fresh or rejoined. Cleanup is therefore deliberately
+ * narrower than dispatch failure: only a fresh row plus a known pre-admission
+ * rejection proves this creator can archive it.
  */
 async function dispatchReplaySeededSpawn(args: Readonly<{
   token: string;
   sessionId: string;
+  createdHere: boolean;
   dispatchSpawnRequest: (request: SpawnDaemonSessionRequest) => Promise<unknown>;
   spawnRequestInput: Record<string, unknown>;
 }>): Promise<unknown> {
@@ -459,7 +533,7 @@ async function dispatchReplaySeededSpawn(args: Readonly<{
     const code = error && typeof error === 'object'
       ? (error as { code?: unknown }).code
       : undefined;
-    if (!isAmbiguousReplaySeededLaunchOutcome(code)) {
+    if (args.createdHere && isDefiniteReplaySeededPreAdmissionRejection(code)) {
       await archiveSessionOnceInactive({ token: args.token, sessionId: args.sessionId })
         .catch(() => undefined);
     }
@@ -510,15 +584,11 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     token: params.credentials.token,
     ...(params.signal ? { signal: params.signal } : {}),
   });
-  const connectedServiceMaterializationIdentity = shouldResolveConnectedServiceAuthForSpawn({
-    directory: params.directory,
-    connectedServices: params.connectedServices,
-  })
-    ? {
-        connectedServiceMaterializationIdentityV1:
-          generateConnectedServiceMaterializationIdentityV1(),
-      }
-    : {};
+  let connectedServiceChildLaunch = params.connectedServiceChildLaunch
+    ?? createConnectedServiceChildLaunchContext({
+      spawn: args.spawnRequestInput,
+      metadata: replaySeededCreation.metadata,
+    });
   // `legacyMetadataLabel` is the predecessor approval-artifact replay's private
   // label and writes the same `tag` metadata field this creation already owns.
   // The two never co-occur: that replay path carries no source recipe.
@@ -531,7 +601,7 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
       host: os.hostname(),
       flavor: replaySeededCreation.flavor,
       ...replaySeededCreation.metadata,
-      ...connectedServiceMaterializationIdentity,
+      ...connectedServiceChildLaunch.metadata,
     },
     agentState: null,
     ...(params.organizationPlacement ? { organizationPlacement: params.organizationPlacement } : {}),
@@ -553,13 +623,31 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
   // source conflict into a seeded continuation of another Session. A row this
   // call just created cannot conflict with itself and needs no such evidence.
   if (created.created !== true) {
-    const ownerMetadata = accountEncryptionCurrentness
-      ? tryDecryptSessionOwnerMetadataView({
-        credentials: params.credentials,
-        accountEncryptionMode: accountEncryptionCurrentness.mode,
-        rawSession: created.session,
-      })
-      : null;
+    if (!accountEncryptionCurrentness) {
+      throw createCodedError(
+        'Existing Session creation candidate could not be authenticated',
+        SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        { sessionId },
+      );
+    }
+    const ownerMetadata = tryDecryptSessionOwnerMetadataView({
+      credentials: params.credentials,
+      accountEncryptionMode: accountEncryptionCurrentness.mode,
+      rawSession: created.session,
+    });
+    const candidateValidation = validateExistingSessionCreationCandidate({
+      ownerMetadata,
+      correspondence: params.sessionCreationCorrespondence,
+      sourceRecipe: params.sourceContext ?? replaySeededCreation.sourceRecipe,
+      validateSourceRecipe: true,
+    });
+    if (candidateValidation.kind === 'correspondence_conflict') {
+      throw createCodedError(
+        'Existing Session creation correspondence conflicts with the admitted immutable recipe',
+        'creation_conflict',
+        { sessionId },
+      );
+    }
     // POSITIVE evidence, not merely the absence of a contradiction. A readable
     // row that names a different source is the loud case; the quiet one is a
     // row whose owner metadata will not decrypt, or carries no recipe at all —
@@ -567,36 +655,64 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     // a Session this call did not authenticate. Consumption keeps
     // these fields (it blanks `seedText` and spreads the rest), so an exact
     // retry after the child has already run still rejoins.
-    const persistedSourceRecipe = readPersistedReplaySeedSourceRecipe(ownerMetadata);
-    if (persistedSourceRecipe === null) {
+    if (candidateValidation.kind === 'source_recipe_missing') {
       throw createCodedError(
         'Existing Session creation candidate could not be authenticated',
         SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
         { sessionId },
       );
     }
-    if (replaySeedSourceRecipeConflicts(persistedSourceRecipe, replaySeededCreation.sourceRecipe)) {
+    if (candidateValidation.kind === 'source_recipe_conflict') {
       throw createCodedError(
         'Existing Session was created from a different source recipe',
         'creation_conflict',
         { sessionId },
       );
     }
+    if (connectedServiceChildLaunch.materializationIdentity) {
+      const persistedMaterializationIdentity = readConnectedServiceMaterializationIdentityV1FromMetadata(ownerMetadata);
+      if (!persistedMaterializationIdentity) {
+        throw createCodedError(
+          'Existing Session connected-service identity could not be authenticated',
+          'creation_conflict',
+          { sessionId },
+        );
+      }
+      connectedServiceChildLaunch = {
+        ...connectedServiceChildLaunch,
+        materializationIdentity: persistedMaterializationIdentity,
+        spawn: {
+          ...connectedServiceChildLaunch.spawn,
+          connectedServiceMaterializationIdentityV1: persistedMaterializationIdentity,
+        },
+        metadata: {
+          ...connectedServiceChildLaunch.metadata,
+          connectedServiceMaterializationIdentityV1: persistedMaterializationIdentity,
+        },
+      };
+    }
   }
 
   const spawnResponse = await dispatchReplaySeededSpawn({
     token: params.credentials.token,
     sessionId,
+    createdHere: created.created === true,
     dispatchSpawnRequest: args.dispatchSpawnRequest,
-    spawnRequestInput: args.spawnRequestInput,
+    spawnRequestInput: {
+      ...args.spawnRequestInput,
+      ...connectedServiceChildLaunch.spawn,
+    },
   });
   const spawnResponseRecord = readSpawnResponseRecord(spawnResponse);
   const spawnSucceeded = spawnResponseRecord?.type === 'success'
     || spawnResponseRecord?.success === true;
   if (!spawnSucceeded) {
-    // One orphan settlement for every Replay ingress. An ambiguous failure may
-    // still have produced a live runner, so it is never archived here.
-    if (!isAmbiguousReplaySeededLaunchOutcome(spawnResponseRecord?.errorCode)) {
+    // Only a fresh row plus a known pre-admission rejection proves this owner
+    // can archive. Rejoins and ambiguous/post-admission outcomes may be live.
+    if (
+      created.created === true
+      && isDefiniteReplaySeededPreAdmissionRejection(spawnResponseRecord?.errorCode)
+    ) {
       await archiveSessionOnceInactive({ token: params.credentials.token, sessionId })
         .catch(() => undefined);
     }
@@ -770,10 +886,13 @@ export async function createSpawnedSession(
         accountEncryptionMode: accountEncryptionCurrentness.mode,
         rawSession: existing,
       });
-      if (!sessionCreationCorrespondenceMatchesV1(
-        ownerMetadata?.sessionCreationCorrespondenceV1,
-        params.sessionCreationCorrespondence,
-      )) {
+      const candidateValidation = validateExistingSessionCreationCandidate({
+        ownerMetadata,
+        correspondence: params.sessionCreationCorrespondence,
+        sourceRecipe: params.sourceContext ?? params.replaySeededCreation?.sourceRecipe,
+        validateSourceRecipe: true,
+      });
+      if (candidateValidation.kind === 'correspondence_conflict') {
         throw createCodedError(
           'Existing Session creation correspondence conflicts with the admitted immutable recipe',
           'creation_conflict',
@@ -783,10 +902,7 @@ export async function createSpawnedSession(
       // Strict SessionCreationCorrespondenceV1 does not carry the source
       // recipe, so a rejoin additionally authenticates the persisted Replay
       // lineage against the requested source before input or navigation.
-      if (replaySeedSourceRecipeConflicts(
-        readPersistedReplaySeedSourceRecipe(ownerMetadata),
-        params.replaySeededCreation?.sourceRecipe,
-      )) {
+      if (candidateValidation.kind === 'source_recipe_missing' || candidateValidation.kind === 'source_recipe_conflict') {
         throw createCodedError(
           'Existing Session was created from a different source recipe',
           'creation_conflict',
@@ -840,7 +956,15 @@ export async function createSpawnedSession(
           request,
           params.signal ? { signal: params.signal } : undefined,
         )
-        : await callMachineRpc({
+        : params.machineActionTransport
+          ? await params.machineActionTransport(
+            isProviderBound
+              ? RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
+              : RPC_METHODS.SPAWN_HAPPY_SESSION,
+            request,
+            params.signal ? { signal: params.signal } : undefined,
+          )
+          : await callMachineRpc({
           credentials: params.credentials,
           machineId: exactMachineId,
           method: isProviderBound
@@ -897,13 +1021,20 @@ export async function createSpawnedSession(
           await params.directTransport.resolveSpawnSessionByNonce(nonce, { signal }),
         );
       }
-      return normalizeSpawnSessionNonceResolution(await callMachineRpc({
-        credentials: params.credentials,
-        machineId: exactMachineId,
-        method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
-        request: { spawnNonce: nonce },
-        ...(signal ? { signal } : {}),
-      }));
+      const resolved = params.machineActionTransport
+        ? await params.machineActionTransport(
+          RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
+          { spawnNonce: nonce },
+          signal ? { signal } : undefined,
+        )
+        : await callMachineRpc({
+          credentials: params.credentials,
+          machineId: exactMachineId,
+          method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
+          request: { spawnNonce: nonce },
+          ...(signal ? { signal } : {}),
+        });
+      return normalizeSpawnSessionNonceResolution(resolved);
     } catch (error) {
       if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) {
         return { status: 'unsupported' };
@@ -1003,6 +1134,16 @@ export async function createSpawnedSession(
   }
   const rawSession = visibility.type === 'visible' ? visibility.session : null;
   if (!rawSession) {
+    if (
+      params.sourceContext
+      || (sessionCreationOutcome.disposition === 'rejoined' && params.sessionCreationCorrespondence)
+    ) {
+      throw createCodedError(
+        'Settled Session creation candidate could not be authenticated before visibility settled',
+        SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        { sessionId },
+      );
+    }
     const initialInput = await submitSpawnInitialInput({
       credentials: params.credentials,
       sessionId,
@@ -1023,22 +1164,45 @@ export async function createSpawnedSession(
     token: params.credentials.token,
     ...(params.signal ? { signal: params.signal } : {}),
   });
-  if (accountEncryptionCurrentness && params.sessionCreationCorrespondence) {
-    const ownerMetadata = tryDecryptSessionOwnerMetadataView({
+  if (
+    !accountEncryptionCurrentness
+    && (
+      params.sourceContext
+      || (sessionCreationOutcome.disposition === 'rejoined' && params.sessionCreationCorrespondence)
+    )
+  ) {
+    throw createCodedError(
+      'Rejoined Session creation candidate could not be authenticated',
+      SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+      { sessionId },
+    );
+  }
+  const ownerMetadata = accountEncryptionCurrentness && (params.sessionCreationCorrespondence || params.sourceContext)
+    ? tryDecryptSessionOwnerMetadataView({
       credentials: params.credentials,
       accountEncryptionMode: accountEncryptionCurrentness.mode,
       rawSession,
-    });
-    if (!sessionCreationCorrespondenceMatchesV1(
-      ownerMetadata?.sessionCreationCorrespondenceV1,
-      params.sessionCreationCorrespondence,
-    )) {
-      throw createCodedError(
-        'Spawned Session correspondence does not match the admitted immutable recipe',
-        'creation_conflict',
-        { sessionId },
-      );
-    }
+    })
+    : null;
+  const candidateValidation = validateExistingSessionCreationCandidate({
+    ownerMetadata,
+    correspondence: params.sessionCreationCorrespondence,
+    sourceRecipe: params.sourceContext,
+    validateSourceRecipe: Boolean(params.sourceContext),
+  });
+  if (candidateValidation.kind === 'correspondence_conflict') {
+    throw createCodedError(
+      'Spawned Session correspondence does not match the admitted immutable recipe',
+      'creation_conflict',
+      { sessionId },
+    );
+  }
+  if (candidateValidation.kind === 'source_recipe_missing' || candidateValidation.kind === 'source_recipe_conflict') {
+    throw createCodedError(
+      'Settled Session was created from a different source recipe',
+      'creation_conflict',
+      { sessionId },
+    );
   }
   if (accountEncryptionCurrentness) {
     await writeLegacyMetadataLabelBestEffort({

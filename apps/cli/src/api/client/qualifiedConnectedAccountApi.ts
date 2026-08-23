@@ -9,6 +9,7 @@ import {
     QualifiedConnectedAccountCredentialSnapshotV4Schema,
     QualifiedConnectedAccountCredentialDeleteV4Schema,
     QualifiedConnectedAccountCredentialHealthPatchV4Schema,
+    QualifiedConnectedAccountCredentialErrorV4Schema,
     QualifiedConnectedAccountCredentialMutationSuccessV4Schema,
     QualifiedConnectedAccountCredentialMutationV4Schema,
     QualifiedConnectedAccountGroupActiveAccountV4Schema,
@@ -35,6 +36,7 @@ import {
     type QualifiedConnectedAccountServiceRef,
 } from "@happier-dev/protocol";
 
+import { HttpStatusError } from "@/api/client/httpStatusError";
 import type {
     CliServerFeaturesSnapshot,
 } from "@/features/serverFeaturesClient";
@@ -65,6 +67,41 @@ export class QualifiedConnectedAccountCompatibilityError extends Error {
         this.name = "QualifiedConnectedAccountCompatibilityError";
         this.code = code;
     }
+}
+
+/**
+ * The exact cause the server named for a refused credential mutation.
+ *
+ * `/v4/connect/qualified/credential` answers 409 with a CLOSED discriminated
+ * union, and each member means something different to the caller: capacity
+ * exhaustion is terminal, an identity or authentication-mode mismatch needs a
+ * different reconnect, and only the superseded member is an ordinary CAS race.
+ * Reading only the status code collapses all of them into "conflict", so the
+ * discriminator is parsed here, at the boundary that still has the body.
+ */
+export type QualifiedConnectedAccountCredentialConflictCode =
+    | ReturnType<typeof QualifiedConnectedAccountCredentialErrorV4Schema.parse>['error']
+    | "connected_account_credential_conflict_response_invalid";
+
+export class QualifiedConnectedAccountCredentialConflictError extends HttpStatusError {
+    readonly status = 409;
+    readonly code: QualifiedConnectedAccountCredentialConflictCode;
+
+    constructor(code: QualifiedConnectedAccountCredentialConflictCode) {
+        super(409, code);
+        this.name = "QualifiedConnectedAccountCredentialConflictError";
+        this.code = code;
+    }
+}
+
+function throwQualifiedConnectedAccountCredentialConflict(data: unknown): never {
+    const parsed =
+        QualifiedConnectedAccountCredentialErrorV4Schema.safeParse(data);
+    throw new QualifiedConnectedAccountCredentialConflictError(
+        parsed.success
+            ? parsed.data.error
+            : "connected_account_credential_conflict_response_invalid",
+    );
 }
 
 export class QualifiedConnectedAccountGroupConflictError extends Error {
@@ -685,8 +722,12 @@ export async function mutateQualifiedConnectedAccountCredentialV4(
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: (status) => status === 200 || status === 409,
         },
     );
+    if (response.status === 409) {
+        throwQualifiedConnectedAccountCredentialConflict(response.data);
+    }
     if (response.status !== 200) {
         throw new Error(
             `Qualified Connected Account mutation returned ${response.status}`,

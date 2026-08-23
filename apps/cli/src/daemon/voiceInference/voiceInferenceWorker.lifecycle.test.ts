@@ -153,6 +153,52 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     await lifecycle.stop();
   });
 
+  it('cancels an in-flight model install when the caller aborts and never reports it installed', async () => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    const manifest = createKokoroCatalogManifest();
+    const fetchManifest = vi.fn(async () => manifest);
+    const caller = new AbortController();
+    let observedSignal: AbortSignal | null = null;
+    const installModelPack = vi.fn(async (input: Readonly<{
+      packsRootDir: string;
+      manifest: ModelPackManifest;
+      signal?: AbortSignal | null;
+    }>) => {
+      observedSignal = input.signal ?? null;
+      // A real install is a long download; the caller gives up midway.
+      caller.abort(new Error('caller_cancelled'));
+      await new Promise<void>((resolve, reject) => {
+        if (input.signal?.aborted) {
+          reject(input.signal.reason);
+          return;
+        }
+        input.signal?.addEventListener('abort', () => reject(input.signal?.reason), { once: true });
+        setTimeout(resolve, 5_000);
+      });
+      // Only reached if cancellation never arrived: this is the late publish.
+      const packDir = join(input.packsRootDir, input.manifest.packId);
+      await mkdir(packDir, { recursive: true });
+      await writeFile(join(packDir, 'pack.json'), JSON.stringify(input.manifest), 'utf8');
+      return input.manifest;
+    });
+    const lifecycle = createVoiceInferenceWorkerLifecycle({
+      installerOps: { fetchManifest, installModelPack },
+    });
+
+    await expect(lifecycle.installModel({
+      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      signal: caller.signal,
+    })).rejects.toBeDefined();
+
+    expect(observedSignal).not.toBeNull();
+    expect((observedSignal as unknown as AbortSignal).aborted).toBe(true);
+    await expect(lifecycle.getModelsStatus(['kokoro-82m-v1.0-onnx-q8-wasm'])).resolves.toEqual([
+      expect.objectContaining({ installState: expect.not.stringMatching(/^installed$/) }),
+    ]);
+    await lifecycle.stop();
+  });
+
   it('admits a supported catalog family for an explicit injected runtime fixture', async () => {
     const homeDir = await createHomeDir();
     const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);

@@ -33,7 +33,10 @@ import { dispatchDaemonSpawnHookEvent } from '@/plugins/runtime/hooks/execution/
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from './spawnExplicitEnvKeysMarker';
 import type { ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialization/materializer';
 import { buildMissingAgentCliCommandErrorMessage } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
-import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import {
+  resolveAgentCliLaunchSpec,
+  type AgentCliLaunchSpec,
+} from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import {
   isSessionControlEnvKey,
   stripSessionControlEnvOverrides,
@@ -48,6 +51,8 @@ type ResolveSpawnChildEnvironmentSuccess = {
   unsetEnvKeys?: readonly string[];
   providerEnvKeys?: readonly string[];
   providerBindingLaunchHandoff?: ProviderBindingLaunchHandoffV1;
+  /** Exact non-secret built-in Agent CLI launch admitted for this spawn. */
+  agentCliLaunchSpec?: AgentCliLaunchSpec;
   cleanupOnFailure: (() => void) | null;
   cleanupOnExit: (() => void) | null;
   materializationDiagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
@@ -424,10 +429,11 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     };
   }
 
-  if (!params.runtimePrerequisitesAlreadyResolved && (
+  let agentCliLaunchSpec: AgentCliLaunchSpec | undefined;
+  if (
     !params.daemonSpawnHooks?.resolveRuntimePrerequisites
     && backendTarget?.sourceKind === 'built_in'
-  )) {
+  ) {
     const providerCliResolutionEnv = {
       ...params.processEnv,
       ...extraEnv,
@@ -437,10 +443,16 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     // contributed. An id the catalog no longer carries has no CLI runtime
     // metadata at all, which is the same "CLI unavailable" refusal rather than
     // an exception escaping the spawn path.
-    const agentCliValidation = ((): Readonly<{ ok: true } | { ok: false; errorMessage: string }> => {
+    const agentCliValidation = ((): Readonly<
+      | { ok: true; launchSpec: AgentCliLaunchSpec }
+      | { ok: false; errorMessage: string }
+    > => {
       try {
-        if (resolveAgentCliLaunchSpec(backendTarget.backendId, { processEnv: providerCliResolutionEnv }) !== null) {
-          return { ok: true };
+        const launchSpec = resolveAgentCliLaunchSpec(backendTarget.backendId, {
+          processEnv: providerCliResolutionEnv,
+        });
+        if (launchSpec !== null) {
+          return { ok: true, launchSpec };
         }
         return {
           ok: false,
@@ -466,6 +478,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
       };
     }
+    agentCliLaunchSpec = agentCliValidation.launchSpec;
   }
 
   if (!params.runtimePrerequisitesAlreadyResolved && params.daemonSpawnHooks?.resolveRuntimePrerequisites) {
@@ -513,6 +526,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
       extraEnvForChild: {},
       unsetEnvKeys: [],
       providerEnvKeys: [],
+      ...(agentCliLaunchSpec ? { agentCliLaunchSpec } : {}),
       cleanupOnFailure,
       cleanupOnExit,
       ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
@@ -625,6 +639,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     ...(lateProviderMaterialization
       ? { providerBindingLaunchHandoff: lateProviderMaterialization.providerBindingLaunchHandoff }
       : {}),
+    ...(agentCliLaunchSpec ? { agentCliLaunchSpec } : {}),
     cleanupOnFailure,
     cleanupOnExit,
     ...(materializationDiagnostics ? { materializationDiagnostics } : {}),

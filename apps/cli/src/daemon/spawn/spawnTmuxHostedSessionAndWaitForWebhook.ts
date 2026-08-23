@@ -20,7 +20,10 @@ import { resolveDaemonCliSubcommandFromBackendTarget } from '../backendTargetRou
 import { buildTmuxSpawnConfig } from '../platform/tmux/spawnConfig';
 import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
 import type { ChildExit } from '../sessions/onChildExited';
-import type { TrackedSession } from '../types';
+import type {
+  RunnerAgentInvocationContext,
+  TrackedSession,
+} from '../types';
 import type {
   RunnerAgentSessionBootstrapAuthorization,
 } from '../agentRuntime/sessionBridgeAuthorization';
@@ -55,6 +58,7 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
   unsetEnvKeys?: readonly string[];
   runnerAgentSessionBootstrapAuthorization?:
     RunnerAgentSessionBootstrapAuthorization | null;
+  runnerAgentInvocationContext?: RunnerAgentInvocationContext | null;
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
   pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
@@ -250,6 +254,10 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
         backendId:
           params.runnerAgentSessionBootstrapAuthorization.descriptor.backendId,
       },
+    } : {}),
+    ...(params.runnerAgentInvocationContext ? {
+      runnerAgentInvocationContext:
+        params.runnerAgentInvocationContext,
     } : {}),
     tmuxSessionId: tmuxResult.sessionId,
     tmuxTmpDir: typeof tmuxTmpDir === 'string' && tmuxTmpDir.trim().length > 0 ? tmuxTmpDir.trim() : undefined,

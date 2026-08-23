@@ -666,12 +666,28 @@ export function createExternalSessionObservationReconciler(
     };
 
     const ensureObserver = async (resource: ResourceRecord): Promise<void> => {
-        const currentObserver = resource.observer;
-        if (currentObserver?.active) {
+        let currentObserver = resource.observer;
+        if (currentObserver && !currentObserver.active) {
+            // A retained inactive observer means its disposal is still in flight or
+            // an earlier attempt rejected. The physical observer is still this
+            // host's to release: attaching a replacement over that record would
+            // make it unreachable and it could never be disposed. Finish the exact
+            // cleanup first — a repeated failure surfaces to this caller instead of
+            // leaking the observer.
+            await stopObserver(resource);
+            currentObserver = resource.observer;
+        }
+        if (currentObserver) {
+            // Either the observer already serves this resource, or a concurrent
+            // pass installed the replacement while the retained cleanup ran.
             await currentObserver.startPromise;
             return;
         }
-        if (!resource.active || resourcesByKey.get(resource.key) !== resource) {
+        if (
+            !resource.active
+            || resourcesByKey.get(resource.key) !== resource
+            || !hasObserverDemand(resource)
+        ) {
             return;
         }
 
@@ -742,7 +758,17 @@ export function createExternalSessionObservationReconciler(
                 }
             })
             .catch((error: unknown) => {
-                if (resource.observer === observer) {
+                if (
+                    resource.observer === observer
+                    && (!observer.observer || observer.observerReleased)
+                ) {
+                    // Only a record with nothing left to release may be dropped.
+                    // When the staleness release above rejected, the acquired
+                    // physical observer is still un-disposed and still this
+                    // host's to release: clearing the record here would make it
+                    // unreachable and it could never be disposed. Retaining it
+                    // leaves the exact retained-inactive record that
+                    // `stopObserver` and `ensureObserver` already retry.
                     resource.observer = null;
                 }
                 throw error;

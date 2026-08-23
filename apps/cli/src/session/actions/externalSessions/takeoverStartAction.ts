@@ -1,7 +1,7 @@
 import {
   ExternalSessionTakeoverStartInputV1Schema,
   projectExternalSessionOperationProgressV1,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveExternalSessionOperationTimelineV1,
   type ExternalSessionOperationActionResponseV1,
   type ExternalSessionOperationAuthorIntentV1,
@@ -208,7 +208,7 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
         }
         throw new Error('external_session_takeover_start_source_unavailable');
       }
-      const linked = readLinkedExternalSessionV1FromMetadata(loaded.session.metadata);
+      const linked = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(loaded.session.metadata);
       if (
         !linked?.qualifiedIdentity
         || loaded.session.remoteSessionId !== intent.source.remoteSessionId
@@ -432,7 +432,7 @@ export function createExternalSessionTakeoverStartActionExecutor(
       if (admission.kind === 'completion_receipt') {
         return failure(
           'invalid_state',
-          'The completed takeover no longer has private recovery state.',
+          'The settled takeover no longer has private recovery state.',
         );
       }
       if (admission.kind === 'existing_record') {
@@ -530,7 +530,7 @@ export function createExternalSessionTakeoverStartActionExecutor(
         if (converged.status === 'completion_receipt') {
           return failure(
             'invalid_state',
-            'The completed takeover no longer has private recovery state.',
+            'The settled takeover no longer has private recovery state.',
           );
         }
         if (converged.status === 'conflict') {

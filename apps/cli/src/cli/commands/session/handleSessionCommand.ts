@@ -89,9 +89,11 @@ export async function handleSessionCommand(
   argv: string[],
   deps?: Readonly<{
     readCredentialsFn?: () => Promise<StoredCredentials | null>;
+    signal?: AbortSignal;
   }>,
 ): Promise<void> {
   const json = wantsJson(argv);
+  const structuredOutput = json || hasFlag(argv, '--jsonl');
   const kind = inferSessionKind(argv);
   const subcommand = String(argv[0] ?? '').trim();
   const hasHelpFlag = hasFlag(argv, '--help') || hasFlag(argv, '-h');
@@ -121,7 +123,7 @@ export async function handleSessionCommand(
       }
       case 'create': {
         const { cmdSessionCreate } = await import('./create');
-        await cmdSessionCreate(argv, { readCredentialsFn });
+        await cmdSessionCreate(argv, { readCredentialsFn, ...(deps?.signal ? { signal: deps.signal } : {}) });
         return;
       }
       case 'set-title': {
@@ -166,7 +168,7 @@ export async function handleSessionCommand(
       }
       case 'history': {
         const { cmdSessionHistory } = await import('./history');
-        await cmdSessionHistory(argv, { readCredentialsFn });
+        await cmdSessionHistory(argv, { readCredentialsFn, ...(deps?.signal ? { signal: deps.signal } : {}) });
         return;
       }
       case 'run': {
@@ -289,7 +291,7 @@ export async function handleSessionCommand(
         throw new Error(`Unknown session subcommand: ${subcommand}`);
     }
   } catch (error) {
-    if (!json) throw error;
+    if (!structuredOutput) throw error;
     const mapped = mapUnknownErrorToControlError(error);
     await printJsonEnvelope(
       {

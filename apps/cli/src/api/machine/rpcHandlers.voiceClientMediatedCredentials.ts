@@ -4,6 +4,7 @@ import {
   deriveVoiceCredentialBindingIdentityV1,
   resolveAccountSettingsVoiceCredentialSource,
   type PluginContributionIdentityV1,
+  type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
@@ -50,15 +51,23 @@ function failure(error: unknown) {
 }
 
 function targetService(
-  target: Readonly<{
-    kind: 'account';
-    account: Readonly<{ service: PluginContributionIdentityV1 }>;
-  }> | Readonly<{
-    kind: 'group';
-    service: PluginContributionIdentityV1;
-  }>,
+  target: QualifiedConnectedAccountPurposeBindingTargetV1,
 ): PluginContributionIdentityV1 {
   return target.kind === 'account' ? target.account.service : target.service;
+}
+
+function sameSelectedTarget(
+  left: QualifiedConnectedAccountPurposeBindingTargetV1,
+  right: QualifiedConnectedAccountPurposeBindingTargetV1,
+): boolean {
+  if (left.kind === 'account') {
+    return right.kind === 'account'
+      && sameContribution(left.account.service, right.account.service)
+      && left.account.accountId === right.account.accountId;
+  }
+  return right.kind === 'group'
+    && sameContribution(left.service, right.service)
+    && left.groupId === right.groupId;
 }
 
 function exactHeaders(
@@ -106,6 +115,20 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
       const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
       try {
         signal.throwIfAborted();
+        // The caller's declaration authority is checked before any provider or
+        // Connected Account work: a client running a projection this daemon has
+        // already replaced must never reach materialization, because its
+        // approved operation projection is not the one resolved here.
+        const declarationAuthority = request.data.declarationAuthority;
+        if (declarationAuthority.kind === 'projected') {
+          const cacheIdentity = declarationAuthority.cacheIdentity;
+          if (
+            cacheIdentity.pluginId !== request.data.contribution.pluginId
+            || cacheIdentity.contributionId !== request.data.contribution.localId
+            || cacheIdentity.platform !== request.data.platform
+            || lease.registry.generation !== cacheIdentity.projectionGeneration
+          ) return failure(null);
+        }
         const provider = lease.registry.contributes.voiceProviders?.find((candidate) => (
           candidate.identity.pluginId === request.data.contribution.pluginId
           && candidate.identity.localId === request.data.contribution.localId
@@ -144,6 +167,13 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
           machineId: null,
         });
         if (before.selection.kind !== 'connectedAccount') return failure(null);
+        // Both processes resolve the selected source independently and each one
+        // is internally consistent, so only comparing the caller's captured
+        // selection against this daemon's can catch a switch that happened on
+        // one side alone.
+        if (!sameSelectedTarget(before.selection.target, request.data.expectedSelection)) {
+          return failure(null);
+        }
         const selectedService = targetService(before.selection.target);
         const source = declaration.credentials?.sources.flatMap((candidate) => (
           candidate.kind === 'connectedAccount' ? [candidate] : []
@@ -163,9 +193,17 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
         }
         const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
         if (!connectedAccounts) return failure(null);
+        // The Account Settings snapshot read above and the Connected Account
+        // binding store the owner resolves from are separate readers. Handing
+        // the owner the exact account the caller captured makes it fence its own
+        // resolution against that authority before and after materialization.
+        const expectedSelection = request.data.expectedSelection;
         const materialization = await connectedAccounts.materialize({
           purpose: identity.purpose,
           serviceRefs: Object.freeze([qualifyService(provider.pluginId, source.service)]),
+          ...(expectedSelection.kind === 'account'
+            ? { expectedAccount: expectedSelection.account }
+            : {}),
           request: projection.request,
           signal,
         });

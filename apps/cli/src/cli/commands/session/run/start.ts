@@ -12,6 +12,7 @@ import {
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { parseProtocolEnumFlag } from '@/cli/commands/shared/parseProtocolEnumFlag';
+import { assertSessionCommandArguments } from '@/cli/commands/session/shared/assertSessionCommandArguments';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import {
   defaultIoModeForExecutionRunIntent,
@@ -34,16 +35,24 @@ export async function cmdSessionRunStart(
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
+  assertSessionCommandArguments(argv, {
+    usage: `Usage: ${SESSION_HELP_LINES.runStart}`,
+    startIndex: 2,
+    booleanFlags: ['--json'],
+    valueFlags: ['--intent', '--agent', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
+    allowMissingValueFlags: ['--intent', '--agent', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
+    maxPositionals: 1,
+  });
   const [idOrPrefix = ''] = readCommandPositionals(argv, {
     startIndex: 2,
-    valueFlags: ['--intent', '--backend', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
+    valueFlags: ['--intent', '--agent', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
   });
   if (!idOrPrefix) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.runStart}`);
   }
 
   const intentRaw = (readFlagValue(argv, '--intent') ?? '').trim();
-  const backendTargetRaw = (readFlagValue(argv, '--backend') ?? '').trim();
+  const backendTargetRaw = (readFlagValue(argv, '--agent') ?? '').trim();
   const instructions = readFlagValue(argv, '--instructions') ?? undefined;
 
   if (!intentRaw || !backendTargetRaw) {

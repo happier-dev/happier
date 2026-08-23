@@ -4,6 +4,7 @@ import {
   ProviderEndpointRuntimeStateV1Schema,
   mergeProviderCatalogV1,
   readOwnRecordValue,
+  providerCatalogPermitsUnlistedModelIdV1,
   serializeProviderCatalogRuntimeStateKeyV1,
   type ProviderCatalogDeclarationV1,
   type ProviderCatalogTransitionStateV1,
@@ -248,20 +249,46 @@ export function assembleProviderConnectionCatalog(
     loadState: row.loadState,
   });
   const currentSelection = input.currentSelectionForRecovery;
-  const retainProbeSelection = !input.connection.authorization.authorized
-    && 'probes' in catalog
-    && currentSelection?.agentTargetKey === agentTargetKey
+  // The Session's current selection can be real without appearing in the merged
+  // catalog. Retaining it here is what keeps the picker showing what the user
+  // actually chose, and it is the same fact a "model not found" recovery reads.
+  const unrepresentedCurrentSelection = currentSelection !== undefined
+    && currentSelection.agentTargetKey === agentTargetKey
     && currentSelection.providerConnectionId === input.connection.connectionId
     && !projected.rows.some((row) => row.row.descriptor.id === currentSelection.modelId)
-    && !projected.staleRows.some((row) => row.row.descriptor.id === currentSelection.modelId);
-  const recoveryRows: readonly ProjectedProviderCatalogPresentationRow[] = retainProbeSelection
+    && !projected.staleRows.some((row) => row.row.descriptor.id === currentSelection.modelId)
+    ? currentSelection
+    : null;
+  // Reason 1: authorization is unavailable, so the catalog cannot be observed at
+  // all and the last probe-sourced selection is all the evidence there is.
+  const retainUnobservableSelection = unrepresentedCurrentSelection !== null
+    && !input.connection.authorization.authorized
+    && 'probes' in catalog;
+  // Reason 2: catalog membership is not the authority over whether the model is
+  // real. The selection is already known to be unlisted here, so the remaining
+  // question is exactly the Protocol-owned two-sided freeform policy that the
+  // canonical reference resolver itself consults.
+  const retainFreeformSelection = unrepresentedCurrentSelection !== null
+    && !retainUnobservableSelection
+    && providerCatalogPermitsUnlistedModelIdV1({
+      manualModelPolicy: catalog.manualModelPolicy,
+      agentSupportsFreeformModelIds: input.agentSupportsFreeformModelIds === true,
+    });
+  const recoveryRows: readonly ProjectedProviderCatalogPresentationRow[] =
+    unrepresentedCurrentSelection !== null
+      && (retainUnobservableSelection || retainFreeformSelection)
     ? [{
         row: {
-          descriptor: { id: currentSelection.modelId, name: currentSelection.modelId },
-          sources: { manual: false, static: false, probe: true },
-          confidence: input.connection.deployment.kind === 'managedLocal'
-            ? 'account_unverified'
-            : 'probe',
+          descriptor: {
+            id: unrepresentedCurrentSelection.modelId,
+            name: unrepresentedCurrentSelection.modelId,
+          },
+          sources: { manual: false, static: false, probe: retainUnobservableSelection },
+          confidence: retainUnobservableSelection
+            ? input.connection.deployment.kind === 'managedLocal'
+              ? 'account_unverified'
+              : 'probe'
+            : 'manual',
           catalogStale: true,
           stale: true,
         },

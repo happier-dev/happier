@@ -24,6 +24,7 @@ import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitF
 import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import { ensureSessionDirectory } from './ensureSessionDirectory';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
 import { refreshAccountSettingsForDaemonRequest } from './accountSettingsFreshness';
 import {
@@ -40,6 +41,7 @@ import {
 } from '../spawn/prepareDaemonConnectedServices';
 import { prepareDaemonSpawnChildEnvironment } from '../spawn/prepareDaemonSpawnChildEnvironment';
 import { prepareDaemonSpawnLifecycle } from '../spawn/prepareDaemonSpawnLifecycle';
+import { bindAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import {
     prepareRunnerAgentSessionBootstrapForLease,
 } from '../spawn/prepareAgentRuntimeSessionBridge';
@@ -152,7 +154,6 @@ export async function executeSpawnSessionRequest(
             agentModeId,
             agentModeUpdatedAt,
             modelSelection,
-            directoryCreated,
             normalizedExistingSessionId,
             effectiveResume,
             effectiveBackendTargetV2,
@@ -229,8 +230,11 @@ export async function executeSpawnSessionRequest(
                 }
             };
             const refuseSpawn = async (
-                result: Extract<SpawnSessionResult, { type: 'error' }>,
-            ): Promise<Extract<SpawnSessionResult, { type: 'error' }>> => {
+                result: Extract<
+                    SpawnSessionResult,
+                    { type: 'error' | 'requestToApproveDirectoryCreation' }
+                >,
+            ): Promise<SpawnSessionResult> => {
                 const incompleteRetirement =
                     await retireLaunchResources();
                 return incompleteRetirement
@@ -248,16 +252,12 @@ export async function executeSpawnSessionRequest(
                 ?? options.providerBindingMetadataV1
                 ?? null;
             const appliedPluginRuntimeLease = await pluginRuntimeLease.acquire();
-            const runnerAgentSessionBootstrap =
-                await prepareRunnerAgentSessionBootstrapForLease({
-                    target: effectiveBackendTargetV2,
-                    lease: appliedPluginRuntimeLease,
-                });
-            if (runnerAgentSessionBootstrap) {
-                launchResourceScope.register(
-                    runnerAgentSessionBootstrap.cleanupBootstrapFile,
-                );
-            }
+            // The Provider decision runs before the workspace is created and
+            // before any runner bootstrap material is written or the Agent
+            // runtime contribution is activated. Cleanup can remove a bootstrap
+            // file, but it cannot un-create the workspace or un-activate a
+            // runtime, so every refusal this owner can already establish is
+            // established first.
             const daemonProviderLaunch = await prepareDaemonProviderLaunch({
                 options,
                 effectiveBackendTarget: effectiveBackendTargetV2,
@@ -280,6 +280,34 @@ export async function executeSpawnSessionRequest(
             });
             if (!daemonProviderLaunch.ok) {
                 return await refuseSpawn(daemonProviderLaunch.result);
+            }
+            const ensuredDirectory = await ensureSessionDirectory({
+                directory,
+                approvedNewDirectoryCreation:
+                    options.approvedNewDirectoryCreation ?? true,
+            });
+            if (!ensuredDirectory.ok) {
+                logger.debug(
+                    '[DAEMON RUN] Session directory setup failed',
+                    ensuredDirectory.response.type === 'error'
+                        ? {
+                            resultType: ensuredDirectory.response.type,
+                            errorCode: ensuredDirectory.response.errorCode,
+                        }
+                        : { resultType: ensuredDirectory.response.type },
+                );
+                return await refuseSpawn(ensuredDirectory.response);
+            }
+            const directoryCreated = ensuredDirectory.directoryCreated;
+            const runnerAgentSessionBootstrap =
+                await prepareRunnerAgentSessionBootstrapForLease({
+                    target: effectiveBackendTargetV2,
+                    lease: appliedPluginRuntimeLease,
+                });
+            if (runnerAgentSessionBootstrap) {
+                launchResourceScope.register(
+                    runnerAgentSessionBootstrap.cleanupBootstrapFile,
+                );
             }
             const optionsWithProviderIsolation = daemonProviderLaunch.options;
             const providerBindingAttempt: ProviderSpawnAuthorizationAttempt | null = daemonProviderLaunch.attempt;
@@ -548,6 +576,26 @@ export async function executeSpawnSessionRequest(
                 return await refuseSpawn(childEnvironment.result);
             }
             const { spawnEnvironment, extraEnv, extraEnvForChild, trackedSpawnOptions, terminalRequest } = childEnvironment;
+            const runnerAgentInvocationContext =
+                runnerAgentSessionBootstrap
+                    ? Object.freeze({
+                        cwd: directory,
+                        environment: Object.freeze({}),
+                        ...(spawnEnvironment.agentCliLaunchSpec
+                            ? {
+                                agentCliLaunch: bindAgentCliLaunchSpec({
+                                    localAgentId:
+                                        runnerAgentSessionBootstrap.authorization
+                                            .descriptor.agentId,
+                                    spec: spawnEnvironment.agentCliLaunchSpec,
+                                }),
+                            }
+                            : {}),
+                        providerBindingActive: Boolean(
+                            spawnEnvironment.providerBindingLaunchHandoff,
+                        ),
+                    })
+                    : null;
             const activateConnectedAccountSessionBinding = async (
                 canonicalSessionId: string,
             ): Promise<DaemonSpawnStartupReadinessFailure | null> => {
@@ -658,6 +706,7 @@ export async function executeSpawnSessionRequest(
                 runnerAgentSessionBootstrapAuthorization:
                     spawnLifecycle
                         .runnerAgentSessionBootstrapAuthorization,
+                runnerAgentInvocationContext,
                 processEnv: params.processEnv ?? process.env,
                 happyHomeDir: configuration.happyHomeDir,
                 pidToTrackedSession: params.pidToTrackedSession,

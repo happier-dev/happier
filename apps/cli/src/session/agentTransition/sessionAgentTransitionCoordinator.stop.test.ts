@@ -153,7 +153,7 @@ describe('runSessionAgentTransition — confirmed stop gates every target effect
     ]);
   });
 
-  it('maps a resolution failure before any stop attempt to rejected/source_stop_failed', async () => {
+  it('maps a resolution failure before any stop attempt to source_stop_failed and reopens its fence', async () => {
     const harness = createTransitionDepsHarness({
       requestSessionStop: vi.fn(async () => ({
         ok: false as const,
@@ -167,9 +167,15 @@ describe('runSessionAgentTransition — confirmed stop gates every target effect
       deps: harness.deps,
     });
 
-    expect(result).toEqual({ type: 'rejected', code: 'source_stop_failed', sourceEffect: 'none' });
+    expect(result).toEqual({
+      type: 'rejected',
+      code: 'source_stop_failed',
+      sourceEffect: 'none',
+    });
     expect(harness.deps.applySessionAgentTransitionCutover).not.toHaveBeenCalled();
-    // The exact epoch fence is reopened because the source is still running.
+    // `ok: false` is produced by the stop owner's identity-resolution return,
+    // before it can address a runner. Its exact admission epoch is therefore
+    // reopened alongside the truthful untouched-source result.
     expect(harness.calls.filter((call) => call === 'admission:clear')).toHaveLength(1);
   });
 

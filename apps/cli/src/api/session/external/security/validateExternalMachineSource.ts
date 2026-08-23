@@ -41,6 +41,10 @@ type ValidatedExternalMachineSourceResult =
         Awaited<ReturnType<typeof resolveExternalSessionSourceSurface>>,
         { ok: true }
       >['currentAgent'];
+      agentRuntimeGeneration: Extract<
+        Awaited<ReturnType<typeof resolveExternalSessionSourceSurface>>,
+        { ok: true }
+      >['agentRuntimeGeneration'];
       transcriptMediaReadRoots: readonly string[];
       sourceKeyOwner: Extract<
         Awaited<ReturnType<typeof resolveExternalSessionSourceSurface>>,
@@ -116,6 +120,7 @@ export async function validateExternalMachineSource(params: Readonly<{
     source: validated.source,
     providerOps: resolved.providerOps,
     currentAgent: resolved.currentAgent,
+    agentRuntimeGeneration: resolved.agentRuntimeGeneration,
     transcriptMediaReadRoots:
       validated.transcriptMediaReadRoots ?? EMPTY_TRANSCRIPT_MEDIA_READ_ROOTS,
     sourceKeyOwner,

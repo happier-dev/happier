@@ -21,6 +21,7 @@ import { annotateExternalSessionCandidates } from './candidateAnnotations';
 import {
     executeExternalSessionCandidateQuery,
     hydrateExternalSessionCandidateThroughAgentSource,
+    isExternalSessionCandidateIndexCursorResetError,
 } from './candidateQuery';
 import {
     externalSessionsError,
@@ -56,11 +57,13 @@ export async function executeExternalSessionCandidatesListAction(
         const res = await executeExternalSessionCandidateQuery({
             activeServerDir: configuration.activeServerDir,
             agentIdentity: currentAgent.identity,
+            agentRuntimeGeneration: validatedSource.agentRuntimeGeneration,
             source,
             ...(cursor ? { cursor } : {}),
             limit,
             ...(searchTerm ? { searchTerm } : {}),
             ...(searchMode ? { searchMode } : {}),
+            ...(options.signal ? { signal: options.signal } : {}),
             listCandidates: async (request) => await providerOps.listCandidates!({
                 source,
                 ...request,
@@ -117,6 +120,7 @@ export async function executeExternalSessionCandidatesListAction(
                 source,
                 candidates: res.candidates,
                 sourceKeyOwner,
+                ...(options.signal ? { signal: options.signal } : {}),
             });
         logger.debug('[externalSessions.actions.candidates] list finished', {
             agentId,
@@ -144,6 +148,21 @@ export async function executeExternalSessionCandidatesListAction(
             autoLinkPolicyScopeV1,
         } satisfies ExternalSessionsCandidatesListResponse;
     } catch (error) {
+        /**
+         * A dead continuation is a listing outcome, not a request error: the only
+         * recovery is to drop it and rebuild from the root, so answering with a
+         * retryable-looking failure would leave the caller re-sending a cursor that
+         * can never resolve. It is reported as an empty typed reset instead, which
+         * keeps the rows the caller already has while telling it to start over.
+         */
+        if (isExternalSessionCandidateIndexCursorResetError(error)) {
+            return {
+                ok: true,
+                candidates: [],
+                nextCursor: null,
+                cursorReset: true,
+            } satisfies ExternalSessionsCandidatesListResponse;
+        }
         const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);
         if (providerFailure) return providerFailure satisfies ExternalSessionsCandidatesListResponse;
         return internalErrorResponse(

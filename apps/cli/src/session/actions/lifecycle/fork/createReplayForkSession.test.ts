@@ -352,6 +352,71 @@ describe('createReplayForkSession', () => {
     expect(createdMetadata[0]?.connectedServiceMaterializationIdentityV1).toEqual(spawnIdentity);
   });
 
+  it('keeps a replay child identity stable on retry while minting a distinct identity for the next attempt', async () => {
+    const rowsByTag = new Map<string, Readonly<{
+      sessionId: string;
+      metadata: Record<string, unknown>;
+    }>>();
+    let nextSession = 1;
+    getOrCreateSessionByTagMock.mockImplementation(async (input: { tag: string; metadata: Record<string, unknown> }) => {
+      const existing = rowsByTag.get(input.tag);
+      if (existing) {
+        return {
+          created: false,
+          session: {
+            id: existing.sessionId,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify(existing.metadata),
+          },
+        };
+      }
+      const row = {
+        sessionId: `child-session-${nextSession++}`,
+        metadata: input.metadata,
+      };
+      rowsByTag.set(input.tag, row);
+      return { created: true, session: { id: row.sessionId } };
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockImplementation(async (options) => ({ type: 'success', sessionId: options.existingSessionId! }));
+
+    const create = async (spawnNonce: string) => await createReplayForkSession({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {
+        connectedServiceMaterializationIdentityV1: PARENT_MATERIALIZATION_IDENTITY,
+      },
+      directory: '/tmp/parent-worktree',
+      effectiveCutoffSeqInclusive: 3,
+      spawnNonce,
+      forkPointType: 'seq',
+      replaySummaryRunner: null,
+      replayMaxSeedChars: undefined,
+      maxTextChars: undefined,
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: { connectedServices: CONNECTED_SERVICES },
+        spawn: { connectedServices: CONNECTED_SERVICES },
+      },
+      forkSurface: null,
+      spawnSession,
+    });
+
+    await expect(create('fork:retry')).resolves.toEqual({ ok: true, childSessionId: 'child-session-1' });
+    await expect(create('fork:retry')).resolves.toEqual({ ok: true, childSessionId: 'child-session-1' });
+    await expect(create('fork:next-attempt')).resolves.toEqual({ ok: true, childSessionId: 'child-session-2' });
+
+    const firstAttemptIdentity = spawnSession.mock.calls[0]?.[0].connectedServiceMaterializationIdentityV1;
+    const retryIdentity = spawnSession.mock.calls[1]?.[0].connectedServiceMaterializationIdentityV1;
+    const nextAttemptIdentity = spawnSession.mock.calls[2]?.[0].connectedServiceMaterializationIdentityV1;
+    expect(firstAttemptIdentity).toEqual(expect.objectContaining({ v: 1, source: 'fork' }));
+    expect(retryIdentity).toEqual(firstAttemptIdentity);
+    expect(nextAttemptIdentity).toEqual(expect.objectContaining({ v: 1, source: 'fork' }));
+    expect(nextAttemptIdentity).not.toEqual(firstAttemptIdentity);
+    expect(rowsByTag.get('fork:retry')?.metadata.connectedServiceMaterializationIdentityV1).toEqual(firstAttemptIdentity);
+    expect(rowsByTag.get('fork:next-attempt')?.metadata.connectedServiceMaterializationIdentityV1).toEqual(nextAttemptIdentity);
+  });
+
   it('does not add a connected-service identity to replay children without connected services', async () => {
     const createdMetadata: Record<string, unknown>[] = [];
     getOrCreateSessionByTagMock.mockImplementationOnce(async (input: { metadata: Record<string, unknown> }) => {

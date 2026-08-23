@@ -52,6 +52,9 @@ import type {
     AgentInvocationTurnAdmissionWitness,
 } from '@/plugins/runtime/invocation/services/types';
 import {
+    EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
+} from '@/session/external/hostOperationOwner';
+import {
     projectAgentRuntimeDaemonServiceTurnWitnessV1,
 } from './agentRuntimeDaemonServiceTurnWitness';
 import {
@@ -2823,9 +2826,9 @@ export async function prepareRunnerDaemonPluginServices(
                 let disposal: Promise<void> | null = null;
                 let cancellationRequested = false;
                 let listenerDeliveryRejected = false;
-                const close = (): Promise<void> => {
-                    if (disposal) return disposal;
-                    disposal = (async () => {
+                const close = async (): Promise<void> => {
+                    if (disposal) return await disposal;
+                    const attempt = (async () => {
                         try {
                             await dispatch<null>({
                                 kind:
@@ -2834,20 +2837,53 @@ export async function prepareRunnerDaemonPluginServices(
                                 invocationId: input.invocationId,
                                 subscriptionId,
                             }, {
-                                timeoutMs: null,
+                                // `timeoutMs: null` waits for the platform
+                                // default — minutes, not the disposal boundary
+                                // this subscription promises. Bound the close on
+                                // the transport exactly as the exact External
+                                // Session follow carrier does.
+                                timeoutMs:
+                                    EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
                             });
                         } finally {
+                            // Always cancels the outstanding `next_v1`, whether
+                            // the close request settled or timed out.
                             controller.abort();
                         }
                     })();
-                    return disposal;
+                    disposal = attempt;
+                    try {
+                        await attempt;
+                    } catch (error) {
+                        // A close is allowed to fail once and succeed on retry.
+                        // Caching the rejected attempt would make the exact same
+                        // cleanup permanently unreachable.
+                        if (disposal === attempt) disposal = null;
+                        throw error;
+                    }
                 };
-                const abort = () => {
+                const detachCallerAbort = (): void => {
+                    input.signal.removeEventListener('abort', abort);
+                    options.signal?.removeEventListener('abort', abort);
+                };
+                /**
+                 * The single terminalization of this follow attempt. Every
+                 * terminal branch runs it, so a follow that never became a
+                 * subscription still closes its daemon-side subscription, aborts
+                 * the pump, and detaches the caller/invocation abort listeners.
+                 * Detaching only on successful disposal accumulated one listener
+                 * per unavailable attempt on the invocation-scoped signal.
+                 */
+                const terminate = async (): Promise<void> => {
+                    detachCallerAbort();
+                    await close();
+                };
+                function abort(): void {
                     cancellationRequested = true;
                     if (acquisitionSettled) {
                         void close().catch(() => undefined);
                     }
-                };
+                }
                 if (input.signal.aborted || options.signal?.aborted) {
                     abort();
                 } else {
@@ -3036,22 +3072,22 @@ export async function prepareRunnerDaemonPluginServices(
                 try {
                     acquired = await acquisition;
                 } catch (error) {
-                    await close().catch(() => undefined);
+                    await terminate().catch(() => undefined);
                     throw error;
                 }
                 if (acquired.status === 'unavailable') {
-                    await close().catch(() => undefined);
+                    await terminate().catch(() => undefined);
                     return acquired;
                 }
                 if (cancellationRequested) {
-                    await close().catch(() => undefined);
+                    await terminate().catch(() => undefined);
                     return Object.freeze({
                         status: 'unavailable' as const,
                         code: 'plugin_operation_aborted',
                     });
                 }
                 if (listenerDeliveryRejected) {
-                    await close().catch(() => undefined);
+                    await terminate().catch(() => undefined);
                     throw new PluginError({
                         code:
                             'plugin_external_follow_listener_failed',
@@ -3064,15 +3100,7 @@ export async function prepareRunnerDaemonPluginServices(
                     startingCursor: acquired.startingCursor,
                     subscription: Object.freeze({
                         async dispose() {
-                            input.signal.removeEventListener(
-                                'abort',
-                                abort,
-                            );
-                            options.signal?.removeEventListener(
-                                'abort',
-                                abort,
-                            );
-                            await close();
+                            await terminate();
                         },
                     }),
                 });

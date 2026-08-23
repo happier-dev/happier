@@ -34,6 +34,7 @@ import type {
 } from './resolve';
 import {
   resolveProviderSpawnAuthorization,
+  resolveProviderSpawnDefinitiveRejection,
   type ResolveProviderSpawnAuthorizationInput,
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
@@ -515,6 +516,28 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   | { ok: true; attempt: ProviderSpawnAuthorizationAttempt }
   | { ok: false; error: ProviderErrorV1 }
 >> {
+  // Reject only cold, locally definitive facts before activation can create an
+  // executable plugin runtime or any downstream launch state.  A later fresh
+  // resolution still owns dynamic prerequisites and can legitimately fail.
+  const initialSnapshot = input.getAccountSettingsSnapshot();
+  if (!initialSnapshot) {
+    return {
+      ok: false,
+      error: createProviderErrorV1('provider_connection_not_found', {
+        connectionId: input.selection.ref.providerConnectionId ?? undefined,
+        machineId: input.machineId,
+      }),
+    };
+  }
+  const definitive = resolveProviderSpawnDefinitiveRejection({
+    selection: input.selection.ref,
+    agentTargetKey: input.agentTargetKey,
+    agentId: input.agentId,
+    accountSettings: initialSnapshot.settings,
+    registry: input.lease.registry.contributes,
+  });
+  if (!definitive.ok) return definitive;
+
   const activationResults = await activateAgentRuntimeContributionOnDemand(
     input.lease.registry,
     input.agentId,

@@ -3,6 +3,7 @@ import {
   parseBackendTargetKeyV2,
   type ProviderCatalogDeclarationV1,
   type ProviderBoundModelRef,
+  type ProviderRuntimeStateFileV1,
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
 import type {
@@ -22,7 +23,6 @@ import { resolveProviderContributionRegistryView } from '@/providers/registry/co
 import { createProviderProbeHttpClient } from '@/providers/probe/client';
 import { createRuntimeProviderServices } from '@/providers/probe/runtimeServices';
 import type { RuntimeProviderServices } from '@/providers/probe/runtimeServices';
-import { PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS } from '@/providers/probe/scheduler';
 import type { ProviderRuntimeStateStore } from '@/providers/runtimeState';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -231,24 +231,6 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     loadNow: service.loadNow,
     cancelNow: service.cancelNow,
   });
-  const schedulePickerDemandRefreshes = (
-    identities: readonly Readonly<{ connectionId: string; machineId: string }>[],
-  ): void => {
-    let nextIdentityIndex = 0;
-    const refreshNext = async (): Promise<void> => {
-      for (;;) {
-        const identity = identities[nextIdentityIndex];
-        nextIdentityIndex += 1;
-        if (!identity) return;
-        await sharedRuntime.scheduleDemandRefresh(identity, 'picker_open');
-      }
-    };
-    void Promise.all(Array.from(
-      { length: Math.min(PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS, identities.length) },
-      refreshNext,
-    )).catch(() => undefined);
-  };
-
   const projectModels = async (
     request: DaemonProviderModelProjectionRequestV1,
   ): Promise<DaemonProviderModelProjectionResponseV1> => {
@@ -279,91 +261,117 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       await activateAgentRuntimeContributionOnDemand(lease.registry, target.backendId);
       const adapter = readLeasedAgentProviderBindingAdapter({ lease, agentId: target.backendId });
       if (!adapter) return { status: 'success', agentTargetKey: request.agentTargetKey, groups: [] };
-      const runtimeState = await sharedRuntime.runtimeStore.read();
       const settingsRead = readProviderSettingsForCli(snapshot.settings);
-      const catalogs: ProviderConnectionCatalog[] = [];
-      const modelLoadProjectionByConnectionId = new Map<string, Readonly<{
-        action: 'available' | 'descriptor_absent' | 'feature_disabled';
-        preflightPolicy: 'advisory' | 'required' | null;
-      }>>();
-      const confirmedByRef = new Map<string, boolean>();
-      const pickerDemand: Array<Readonly<{ connectionId: string; machineId: string }>> = [];
-      for (const connection of settingsRead.settings.connections) {
-        const context = await sharedRuntime.resolvePresentationCatalogContext({
-          connectionId: connection.id,
-          machineId: request.machineId,
-        }, runtimeState);
-        if (context.status === 'error') continue;
-        if (context.connection.authorization.authorized) {
-          pickerDemand.push({
+      const assemble = async (runtimeState: ProviderRuntimeStateFileV1) => {
+        const catalogs: ProviderConnectionCatalog[] = [];
+        const modelLoadProjectionByConnectionId = new Map<string, Readonly<{
+          action: 'available' | 'descriptor_absent' | 'feature_disabled';
+          preflightPolicy: 'advisory' | 'required' | null;
+        }>>();
+        const confirmedByRef = new Map<string, boolean>();
+        const pickerDemand: Array<Readonly<{ connectionId: string; machineId: string }>> = [];
+        const coldDemand: Array<Readonly<{ connectionId: string; machineId: string }>> = [];
+        for (const connection of settingsRead.settings.connections) {
+          const context = await sharedRuntime.resolvePresentationCatalogContext({
             connectionId: connection.id,
             machineId: request.machineId,
-          });
-        }
-        const modelLoadDescriptor =
-          context.connection.source.kind === 'contribution'
-            ? context.connection.source.definition.modelLoad
-            : undefined;
-        modelLoadProjectionByConnectionId.set(connection.id, {
-          action: modelLoadDescriptor
-            ? input.featureGate.isEnabled('providers.localModelManagement')
-              ? 'available'
-              : 'feature_disabled'
-            : 'descriptor_absent',
-          preflightPolicy: modelLoadDescriptor?.preflightPolicy ?? null,
-        });
-        const initial = assembleProviderConnectionCatalog({
-          agentTargetKey: request.agentTargetKey,
-          connection: context.connection,
-          providerSettings: context.providerSettings,
-          runtimeState,
-          catalogRuntimeKey: context.catalogRuntimeKey,
-        });
-        const recoveryDescriptor = !context.connection.authorization.authorized
-          && request.currentSelection?.agentTargetKey === request.agentTargetKey
-          && request.currentSelection.providerConnectionId === connection.id
-          && ![...initial.rows, ...initial.staleRows].some(
-            (row) => row.ref.modelId === request.currentSelection!.modelId,
-          )
-          ? { id: request.currentSelection.modelId, name: request.currentSelection.modelId }
-          : null;
-        const compatibilityByModelId = new Map(
-          [
-            ...[...initial.rows, ...initial.staleRows].map((row) => row.descriptor),
-            ...(recoveryDescriptor ? [recoveryDescriptor] : []),
-          ].map((descriptor) => {
-            const compatibility = resolveProviderModelCompatibility({
-              record: context.connection,
-              providerSettings: context.providerSettings,
-              agentTargetKey: request.agentTargetKey,
-              support: adapter.support,
-              adapterVersion: adapter.adapter.adapterVersion,
-              model: descriptor,
+          }, runtimeState);
+          if (context.status === 'error') continue;
+          const authorizedForDemand = context.connection.authorization.authorized;
+          if (authorizedForDemand) {
+            pickerDemand.push({
+              connectionId: connection.id,
+              machineId: request.machineId,
             });
-            confirmedByRef.set(`${connection.id}\0${descriptor.id}`, compatibility.confirmed);
-            return [descriptor.id, compatibility] as const;
-          }),
-        );
-        const currentEndpointHealthByTemplateId = selectCurrentProviderEndpointHealthByTemplateId({
-          machineId: request.machineId,
-          connectionId: connection.id,
-          expectedEndpoints: context.expectedEndpointObservations,
-          allowedObservationAuthorizationFingerprints: context.allowedObservationAuthorizationFingerprints,
-          endpointHealth: runtimeState.endpointHealth,
-        });
-        catalogs.push(assembleProviderConnectionCatalog({
-          agentTargetKey: request.agentTargetKey,
-          connection: context.connection,
-          providerSettings: context.providerSettings,
-          runtimeState,
-          catalogRuntimeKey: context.catalogRuntimeKey,
-          compatibilityByModelId,
-          currentEndpointHealthByTemplateId,
-          ...(request.currentSelection
-            ? { currentSelectionForRecovery: request.currentSelection }
-            : {}),
-        }));
+          }
+          const modelLoadDescriptor =
+            context.connection.source.kind === 'contribution'
+              ? context.connection.source.definition.modelLoad
+              : undefined;
+          modelLoadProjectionByConnectionId.set(connection.id, {
+            action: modelLoadDescriptor
+              ? input.featureGate.isEnabled('providers.localModelManagement')
+                ? 'available'
+                : 'feature_disabled'
+              : 'descriptor_absent',
+            preflightPolicy: modelLoadDescriptor?.preflightPolicy ?? null,
+          });
+          // The recovery-row decision belongs to the catalog assembler, so this
+          // first pass carries the same current selection: whatever it retains is
+          // exactly what needs compatibility, and nothing re-derives the rule.
+          const recoveryInput = {
+            ...(request.currentSelection
+              ? { currentSelectionForRecovery: request.currentSelection }
+              : {}),
+            agentSupportsFreeformModelIds: adapter.support.supportsFreeformModelIds,
+          };
+          const initial = assembleProviderConnectionCatalog({
+            agentTargetKey: request.agentTargetKey,
+            connection: context.connection,
+            providerSettings: context.providerSettings,
+            runtimeState,
+            catalogRuntimeKey: context.catalogRuntimeKey,
+            ...recoveryInput,
+          });
+          const compatibilityByModelId = new Map(
+            [...initial.rows, ...initial.staleRows]
+              .map((row) => row.descriptor)
+              .map((descriptor) => {
+              const compatibility = resolveProviderModelCompatibility({
+                record: context.connection,
+                providerSettings: context.providerSettings,
+                agentTargetKey: request.agentTargetKey,
+                support: adapter.support,
+                adapterVersion: adapter.adapter.adapterVersion,
+                model: descriptor,
+              });
+              confirmedByRef.set(`${connection.id}\0${descriptor.id}`, compatibility.confirmed);
+              return [descriptor.id, compatibility] as const;
+            }),
+          );
+          const currentEndpointHealthByTemplateId = selectCurrentProviderEndpointHealthByTemplateId({
+            machineId: request.machineId,
+            connectionId: connection.id,
+            expectedEndpoints: context.expectedEndpointObservations,
+            allowedObservationAuthorizationFingerprints: context.allowedObservationAuthorizationFingerprints,
+            endpointHealth: runtimeState.endpointHealth,
+          });
+          const assembled = assembleProviderConnectionCatalog({
+            agentTargetKey: request.agentTargetKey,
+            connection: context.connection,
+            providerSettings: context.providerSettings,
+            runtimeState,
+            catalogRuntimeKey: context.catalogRuntimeKey,
+            compatibilityByModelId,
+            currentEndpointHealthByTemplateId,
+            ...recoveryInput,
+          });
+          catalogs.push(assembled);
+          // A connection with no probe observation yet AND no row to show contributes
+          // nothing to the picker: returning now is the silently empty list. Anything
+          // that already probed — even to an empty or incompatible catalog — is warm and
+          // stays advisory, so a failing endpoint never blocks a later read.
+          if (authorizedForDemand
+            && assembled.rows.length === 0
+            && (context.catalogRuntimeRecord?.state.snapshot ?? null) === null) {
+            coldDemand.push({ connectionId: connection.id, machineId: request.machineId });
+          }
+        }
+        return { catalogs, modelLoadProjectionByConnectionId, confirmedByRef, pickerDemand, coldDemand };
+      };
+
+      let assembly = await assemble(await sharedRuntime.runtimeStore.read());
+      const awaitedColdDemand = assembly.coldDemand;
+      if (awaitedColdDemand.length > 0) {
+        // The canonical probe scheduler still owns admission, coalescing, concurrency
+        // and its typed capacity refusal; this read simply waits for the cold work it
+        // just demanded instead of answering with an empty catalog nobody follows up on.
+        await Promise.all(awaitedColdDemand.map((identity) =>
+          sharedRuntime.scheduleDemandRefresh(identity, 'picker_open')));
+        assembly = await assemble(await sharedRuntime.runtimeStore.read());
       }
+      const { catalogs, modelLoadProjectionByConnectionId, confirmedByRef, pickerDemand } = assembly;
+      const awaitedConnectionIds = new Set(awaitedColdDemand.map((identity) => identity.connectionId));
       const projection = projectProviderCatalogForPicker({
         catalogs,
         modelVisibilityByRef: settingsRead.settings.modelVisibilityByRef,
@@ -418,7 +426,14 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         projectedGroups: groups,
         machineId: request.machineId,
       });
-      schedulePickerDemandRefreshes(pickerDemand);
+      // Warm connections already render from their cached observation, so their
+      // refresh goes straight to the sole probe scheduler, which owns admission,
+      // coalescing and the typed capacity refusal. A consumer-side queue here would be
+      // a second work owner retaining work the canonical scheduler already refused.
+      for (const identity of pickerDemand) {
+        if (awaitedConnectionIds.has(identity.connectionId)) continue;
+        void sharedRuntime.scheduleDemandRefresh(identity, 'picker_open');
+      }
       return DaemonProviderModelProjectionResponseV1Schema.parse({
         status: 'success',
         agentTargetKey: request.agentTargetKey,

@@ -527,9 +527,22 @@ describe('provider spawn authorization lifecycle', () => {
     )).toBe(false);
   });
 
-  it('preserves Agent activation failure as the typed runtime-unsupported refusal', async () => {
+  it('rejects a missing Provider connection before Agent activation', async () => {
     const pluginId = 'happier.agent.codex';
-    const getAccountSettingsSnapshot = vi.fn(() => null);
+    const getAccountSettingsSnapshot = vi.fn(() => ({
+      source: 'network' as const,
+      settings: {} as ActiveAccountSettingsSnapshot['settings'],
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+    }) as ActiveAccountSettingsSnapshot);
+    const activateContributionsOnDemand = vi.fn(async () => [{
+      pluginId,
+      diagnostics: [{
+        code: 'plugin_activation_failed',
+        message: 'fixture activation details must not escape',
+      }],
+    }]);
     const result = await createRuntimeProviderSpawnAuthorizationAttempt({
       selection: SessionModelSelectionV1Schema.parse({
         v: 1,
@@ -554,13 +567,7 @@ describe('provider spawn authorization lifecycle', () => {
               identity: { pluginId, localId: 'codex' },
             }]]),
           },
-          activateContributionsOnDemand: async () => [{
-            pluginId,
-            diagnostics: [{
-              code: 'plugin_activation_failed',
-              message: 'fixture activation details must not escape',
-            }],
-          }],
+          activateContributionsOnDemand,
         } as never,
       },
       getAccountSettingsSnapshot,
@@ -568,17 +575,9 @@ describe('provider spawn authorization lifecycle', () => {
       sessionId: 'session-activation-failure',
     });
 
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: 'provider_agent_runtime_unsupported',
-        connectionId,
-        machineId: 'machine-a',
-        retryable: false,
-        action: 'review_connection',
-      },
-    });
-    expect(getAccountSettingsSnapshot).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: false });
+    expect(getAccountSettingsSnapshot).toHaveBeenCalledOnce();
+    expect(activateContributionsOnDemand).not.toHaveBeenCalled();
   });
 
   it('does not relabel diagnostics from an active Agent plugin as activation failure', async () => {

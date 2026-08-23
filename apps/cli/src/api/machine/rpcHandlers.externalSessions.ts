@@ -287,7 +287,15 @@ export function createExternalSessionRpcActionExecutor(
             ),
           };
         case 'sessions.external.link.ensure':
-          return { ok: true, result: await executeExternalSessionLinkEnsureAction(input) };
+          return {
+            ok: true,
+            result: await executeExternalSessionLinkEnsureAction(
+              input,
+              executionContext?.signal
+                ? { signal: executionContext.signal }
+                : undefined,
+            ),
+          };
         case 'sessions.external.status.get':
           return { ok: true, result: await executeExternalSessionStatusGetAction(input, context) };
         case 'sessions.external.transcript.page':
@@ -506,6 +514,12 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
   ) => () => void;
 }>): Readonly<{
   pluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
+  /**
+   * The exact fenced RPC executor also owns host-stamped external Action
+   * dispatch. It is exposed as one owner rather than rebuilding an Action
+   * switch at the public HTTP boundary.
+   */
+  hostExternalSessionActionExecutor: RpcActionExecutor;
   connectivityResource?: Readonly<{
     name: string;
     pause(): void | Promise<void>;
@@ -1105,6 +1119,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     rpcHandlerManager,
   });
   return {
+    hostExternalSessionActionExecutor: publicationFenceAwareActionExecutor,
     pluginAdmissionOwner: {
       ...(materializeStartActionExecutor
         ? {

@@ -27,6 +27,13 @@ const harness = vi.hoisted(() => {
     };
   });
 
+  const providerAccountUsagePersistenceFlush = vi.fn(async () => {});
+  const createProviderAccountUsagePersistenceScheduler = vi.fn(() => ({
+    recordInBandSnapshot: vi.fn(async () => ({ status: 'enqueued' as const, enqueue: 'accepted' as const })),
+    flush: providerAccountUsagePersistenceFlush,
+    dispose: vi.fn(),
+  }));
+
   const connectedServiceQuotasPause = vi.fn();
   const connectedServiceQuotasResume = vi.fn();
   const connectedServiceQuotasStop = vi.fn();
@@ -105,6 +112,8 @@ const harness = vi.hoisted(() => {
   });
 
   return {
+    providerAccountUsagePersistenceFlush,
+    createProviderAccountUsagePersistenceScheduler,
     startAutomationWorker,
     automationWorkerStop,
     automationWorkerRefreshAssignments,
@@ -438,6 +447,10 @@ vi.mock('./memory/memoryWorker', () => ({
 
 vi.mock('./voiceInference/voiceInferenceWorker', () => ({
   startVoiceInferenceWorker: vi.fn(async () => null),
+}));
+
+vi.mock('./connectedServices/accountUsage/persistence', () => ({
+  createProviderAccountUsagePersistenceScheduler: harness.createProviderAccountUsagePersistenceScheduler,
 }));
 
 vi.mock('./connectedServices/quotas/ConnectedServiceQuotasCoordinator', () => ({
@@ -1551,6 +1564,11 @@ describe('startDaemon automation wiring (integration)', () => {
       });
 
       expect(harness.automationWorkerResume).toHaveBeenCalledTimes(1);
+      // Provider account-usage persistence pauses a key after repeated failures and
+      // keeps its unchanged payload. Reconnect must resubmit it, or usage silently
+      // stops updating for the rest of the daemon's life.
+      await vi.waitFor(() =>
+        expect(harness.providerAccountUsagePersistenceFlush).toHaveBeenCalledWith(0));
 
       harness.requestShutdown('happier-cli');
       await run;

@@ -9,7 +9,7 @@ import {
     SESSION_LIFECYCLE_RPC_SCOPES,
     SESSION_SPAWN_NEW_RPC_SCOPES,
 } from './actionSpecRpcRegistration';
-import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
+import { registerActionSpecRpcHandlers, type RegisterActionSpecRpcHandlersParams } from './registerActionSpecRpcHandlers';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
@@ -59,9 +59,23 @@ export function createSessionLifecycleRpcActionExecutor(
             }
             return {
                 ok: true,
-                result: context?.signal
-                    ? await handler(input, { signal: context.signal })
-                    : await handler(input),
+                result: await handler(input, context
+                    ? {
+                        signal: context.signal ?? new AbortController().signal,
+                        ...(context.operationProgress || context.operationOwnerUpdate
+                            ? {
+                                localActionContext: {
+                                    ...(context.operationProgress
+                                        ? { operationProgress: context.operationProgress }
+                                        : {}),
+                                    ...(context.operationOwnerUpdate
+                                        ? { operationOwnerUpdate: context.operationOwnerUpdate }
+                                        : {}),
+                                },
+                            }
+                            : {}),
+                    }
+                    : undefined),
             };
         },
     };
@@ -72,12 +86,14 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
     actionExecutor: RpcActionExecutor;
     actionIds?: readonly SessionLifecycleActionId[];
     scopes?: readonly ActionSpecRpcRegistrationScope[];
+    observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
 }>): void {
     registerActionSpecRpcHandlers({
         rpcHandlerManager: params.rpcHandlerManager,
         actionExecutor: params.actionExecutor,
         actionIds: params.actionIds,
         scopes: params.scopes ?? SESSION_LIFECYCLE_RPC_SCOPES,
+        ...(params.observeExecution ? { observeExecution: params.observeExecution } : {}),
     });
 }
 
@@ -102,12 +118,14 @@ async function resolveProductionSessionSpawnNewActionExecutor(): Promise<RpcActi
 export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
     rpcHandlerManager: RpcRegistrar;
     actionExecutor?: RpcActionExecutor;
+    observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
 }>): void {
     registerActionSpecRpcHandlers({
         rpcHandlerManager: params.rpcHandlerManager,
         actionExecutor: params.actionExecutor,
         resolveActionExecutor: resolveProductionSessionSpawnNewActionExecutor,
         scopes: SESSION_SPAWN_NEW_RPC_SCOPES,
+        ...(params.observeExecution ? { observeExecution: params.observeExecution } : {}),
     });
 }
 
@@ -191,7 +209,11 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
         return settled;
     };
 
-    const handle = async (input: unknown, providerSafe: boolean): Promise<unknown> => {
+    const handle = async (
+        input: unknown,
+        providerSafe: boolean,
+        context?: RpcHandlerContext,
+    ): Promise<unknown> => {
         const parsed = SpawnDaemonSessionRequestSchema.safeParse(input);
         if (!parsed.success) {
             return {
@@ -200,7 +222,7 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
                 errorMessage: 'Invalid session spawn request',
             };
         }
-        const response = await params.spawnLifecycleHandler(parsed.data);
+        const response = await params.spawnLifecycleHandler(parsed.data, context);
         // Inactive resume deliberately reports a bare success envelope. It is
         // a different lifecycle operation, not an unresolvable fresh spawn.
         if (providerSafe || parsed.data.type === 'resume-session') {
@@ -211,10 +233,10 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
 
     params.rpcHandlerManager.registerHandler(
         RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-        async (input) => await handle(input, true),
+        async (input, context) => await handle(input, true, context),
     );
     params.rpcHandlerManager.registerHandler(
         RPC_METHODS.SPAWN_HAPPY_SESSION,
-        async (input) => await handle(input, false),
+        async (input, context) => await handle(input, false, context),
     );
 }

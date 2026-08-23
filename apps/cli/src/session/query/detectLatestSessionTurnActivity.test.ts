@@ -68,4 +68,43 @@ describe('detectLatestSessionTurnActivity', () => {
     expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
     expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
   });
+
+  it('keeps a refreshed durable pending input in flight before transcript materialization', async () => {
+    const fetchSessionById = vi.fn(async () => ({
+      id: 'sess-1',
+      latestTurnStatus: null,
+      pendingCount: 1,
+    }));
+    const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+    const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById,
+    }));
+    vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+      fetchEncryptedTranscriptPageLatest,
+      fetchEncryptedTranscriptPageAfterSeq,
+    }));
+
+    const { detectLatestSessionTurnActivity } = await import('./detectLatestSessionTurnActivity');
+
+    await expect(detectLatestSessionTurnActivity({
+      token: 'token',
+      sessionId: 'sess-1',
+      encryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32).fill(1),
+      encryptionVariant: 'dataKey',
+    })).resolves.toEqual({
+      pendingUserTurns: 1,
+      activeTaskInFlight: false,
+      turnInFlight: true,
+    });
+
+    expect(fetchSessionById).toHaveBeenCalledWith({
+      token: 'token',
+      sessionId: 'sess-1',
+    });
+    expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
+    expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
+  });
 });

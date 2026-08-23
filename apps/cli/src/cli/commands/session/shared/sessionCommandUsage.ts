@@ -18,9 +18,9 @@ const SESSION_CREATE_HELP = [
   'happier session create [options]',
   '',
   'Options:',
-  '  [--path <path>] [--backend <backend-target>]',
-  '  [--title <text>] [--tag <tag>]',
-  '  [--prompt <text>|--message <text>]',
+  '  [--path <path>] [--agent <agent-id>]',
+  '  [--title <text>]',
+  '  [<prompt>|--prompt <text>|--message <text>]',
   '  [--model <model-id> [--provider-connection <connection-id>]]',
   `  [--permission-mode <${AGENT_PERMISSION_INTENTS_V1.join('|')}>] [--mode <agent-mode-id>]`,
   '    Aliases include read_only, ro, safe, full-access, accept-edits, and bypass-permissions.',
@@ -29,9 +29,10 @@ const SESSION_CREATE_HELP = [
   '  [--env <KEY=VALUE>]',
   '  [--auth <default|native|cs:<id>>|--connected-services <selector>|--auth-json <json>]',
   '  [--mcp-selection-json <json>] [--transcript-storage <persisted|direct>]',
-  '  [--terminal-json <json>] [--runtime-descriptor-json <json>]',
-  '  [--host <host>] [--machine-id <machineId>] [--server-id <serverId>]',
+  '  [--terminal-json <json>]',
+  '  [--machine-id <machineId>] [--server-id <serverId>]',
   '  [--spawn-attempt-id <id>] [--resume-spawn-attempt]',
+  '  [--wait [--timeout <seconds>]|--follow [--jsonl]]',
   '  [--json]',
 ].join('\n');
 
@@ -40,24 +41,24 @@ export const SESSION_HELP_LINES = {
   list: 'happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]',
   status: 'happier session status <session-id-or-prefix-or-tag> [--live] [--json]',
   create: SESSION_CREATE_HELP,
-  send: 'happier session send <session-id-or-prefix-or-tag> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]',
+  send: 'happier session send <session-id-or-prefix-or-tag> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--provider-connection <id|native>] [--local-id <id>] [--wait] [--timeout <seconds>] [--json]',
   wait: 'happier session wait <session-id-or-prefix-or-tag> [--timeout <seconds>] [--json]',
   stop: 'happier session stop <session-id-or-prefix-or-tag> [--json]',
-  history: 'happier session history <session-id-or-prefix-or-tag> [--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json]',
+  history: 'happier session history <session-id-or-prefix-or-tag> ([--tail N|--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json] | --follow [--jsonl])',
   setTitle: 'happier session set-title <session-id-or-prefix-or-tag> <title> [--json]',
   setPermissionMode: 'happier session set-permission-mode <session-id-or-prefix-or-tag> <mode> [--json]',
-  setModel: 'happier session set-model <session-id-or-prefix-or-tag> <model-id> [--json]',
+  setModel: 'happier session set-model <session-id-or-prefix-or-tag> <model-id> [--provider-connection <id|native>] [--json]',
   archive: 'happier session archive <session-id-or-prefix-or-tag> [--json]',
   unarchive: 'happier session unarchive <session-id-or-prefix-or-tag> [--json]',
   reviewStart: 'happier session review start <session-id-or-prefix-or-tag> --engines <id1,id2> --instructions <text> [--json]',
   planStart: 'happier session plan start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]',
-  delegateStart: 'happier session delegate start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]',
+  delegateStart: 'happier session delegate start <session-id-or-prefix-or-tag> [<instructions>|--instructions <text>] (--backends <id1,id2>|--agent <agent>) [--json]',
   voiceAgentStart: 'happier session voice-agent start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]',
   actionsList: 'happier session actions list [--json]',
   actionsDescribe: 'happier session actions describe <action-id> [--json]',
   actionsExecute: 'happier session actions execute <session-id-or-prefix-or-tag> <action-id> [--input-json <json>] [--action-request-id <id>] [--resume-action-request] [--json]',
-  runStart: `happier session run start <session-id-or-prefix-or-tag> --intent <${EXECUTION_RUN_INTENT_USAGE}> --backend <backend-target> [--instructions <text>] [--permission-mode <mode>] [--retention <${EXECUTION_RUN_RETENTION_USAGE}>] [--run-class <${EXECUTION_RUN_CLASS_USAGE}>] [--io-mode <${EXECUTION_RUN_IO_MODE_USAGE}>] [--json]`,
-  runList: `happier session run list <session-id-or-prefix-or-tag> [--backend <backend-target>] [--status <${EXECUTION_RUN_STATUS_USAGE}>] [--limit <count>] [--json]`,
+  runStart: `happier session run start <session-id-or-prefix-or-tag> --intent <${EXECUTION_RUN_INTENT_USAGE}> --agent <agent-id> [--instructions <text>] [--permission-mode <mode>] [--retention <${EXECUTION_RUN_RETENTION_USAGE}>] [--run-class <${EXECUTION_RUN_CLASS_USAGE}>] [--io-mode <${EXECUTION_RUN_IO_MODE_USAGE}>] [--json]`,
+  runList: `happier session run list <session-id-or-prefix-or-tag> [--agent <agent-id>] [--status <${EXECUTION_RUN_STATUS_USAGE}>] [--limit <count>] [--json]`,
   runGet: 'happier session run get <session-id-or-prefix-or-tag> <run-id> [--include-structured] [--json]',
   runSend: 'happier session run send <session-id-or-prefix-or-tag> <run-id> <message> [--resume] [--json]',
   runStop: 'happier session run stop <session-id-or-prefix-or-tag> <run-id> [--json]',
@@ -152,3 +153,18 @@ export const SESSION_NESTED_SUBCOMMAND_HELP_LINES: Record<string, string> = {
   'run stream-read': SESSION_HELP_LINES.runStreamRead,
   'run stream-cancel': SESSION_HELP_LINES.runStreamCancel,
 };
+
+/** Projects canonical session usage onto a first-class command without duplicating its contract. */
+export function formatFirstClassSessionCommandHelp(params: Readonly<{
+  command: string;
+  sessionPath: readonly string[];
+}>): string {
+  const sessionPathKey = params.sessionPath.join(' ');
+  const canonicalUsage = SESSION_NESTED_SUBCOMMAND_HELP_LINES[sessionPathKey]
+    ?? SESSION_SUBCOMMAND_HELP_LINES[sessionPathKey]?.[0];
+  const canonicalPrefix = `happier session ${sessionPathKey}`;
+  if (!canonicalUsage || !canonicalUsage.startsWith(canonicalPrefix)) {
+    throw new Error(`No canonical usage is registered for first-class session command ${sessionPathKey}`);
+  }
+  return `happier ${params.command}${canonicalUsage.slice(canonicalPrefix.length)}`;
+}

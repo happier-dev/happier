@@ -35,7 +35,7 @@ describe('Connected Account attempt transaction API', () => {
     });
     const record = {
       revision: 1,
-      ciphertext: 'opaque-ciphertext',
+      content: { t: 'encrypted' as const, c: 'opaque-ciphertext' },
       expiresAtMs: 123_456,
     };
     vi.mocked(axios.post).mockResolvedValue({
@@ -48,7 +48,11 @@ describe('Connected Account attempt transaction API', () => {
     });
     vi.mocked(axios.patch).mockResolvedValue({
       status: 200,
-      data: { ...record, revision: 2, ciphertext: 'opaque-replacement' },
+      data: {
+        ...record,
+        revision: 2,
+        content: { t: 'encrypted' as const, c: 'opaque-replacement' },
+      },
     });
     vi.mocked(axios.delete).mockResolvedValue({
       status: 200,
@@ -58,7 +62,7 @@ describe('Connected Account attempt transaction API', () => {
     await expect(api.create({
       kind: 'oauth',
       attemptId: 'attempt-1',
-      ciphertext: record.ciphertext,
+      content: record.content,
       expiresAtMs: record.expiresAtMs,
     })).resolves.toEqual(record);
     await expect(api.read({
@@ -69,12 +73,12 @@ describe('Connected Account attempt transaction API', () => {
       kind: 'oauth',
       attemptId: 'attempt-1',
       expectedRevision: 1,
-      ciphertext: 'opaque-replacement',
+      content: { t: 'encrypted', c: 'opaque-replacement' },
       expiresAtMs: record.expiresAtMs,
     })).resolves.toEqual({
       ...record,
       revision: 2,
-      ciphertext: 'opaque-replacement',
+      content: { t: 'encrypted', c: 'opaque-replacement' },
     });
     await expect(api.delete({
       kind: 'oauth',
@@ -126,11 +130,51 @@ describe('Connected Account attempt transaction API', () => {
       kind: 'device',
       attemptId: 'attempt-2',
       expectedRevision: 1,
-      ciphertext: 'opaque',
+      content: { t: 'encrypted', c: 'opaque' },
       expiresAtMs: 123_456,
     })).rejects.toMatchObject({
       name: ConnectedAccountAttemptTransactionApiError.name,
       code: 'connected_account_attempt_transaction_conflict',
+    });
+  });
+
+  it('accepts an exact absent record as successful terminal cleanup and still rejects a conflict', async () => {
+    const api = createConnectedAccountAttemptTransactionApi({
+      token: 'account-token',
+    });
+    vi.mocked(axios.delete).mockResolvedValueOnce({
+      status: 404,
+      data: { error: 'connected_account_attempt_transaction_not_found' },
+    });
+
+    await expect(api.delete({
+      kind: 'oauth',
+      attemptId: 'attempt-4',
+      expectedRevision: 3,
+    })).resolves.toBeUndefined();
+
+    vi.mocked(axios.delete).mockResolvedValueOnce({
+      status: 409,
+      data: { error: 'connected_account_attempt_transaction_conflict' },
+    });
+    await expect(api.delete({
+      kind: 'oauth',
+      attemptId: 'attempt-4',
+      expectedRevision: 3,
+    })).rejects.toMatchObject({
+      code: 'connected_account_attempt_transaction_conflict',
+    });
+
+    vi.mocked(axios.delete).mockResolvedValueOnce({
+      status: 404,
+      data: { error: 'connected_account_attempt_transaction_conflict' },
+    });
+    await expect(api.delete({
+      kind: 'oauth',
+      attemptId: 'attempt-4',
+      expectedRevision: 3,
+    })).rejects.toMatchObject({
+      code: 'connected_account_attempt_transaction_contract_invalid',
     });
   });
 
@@ -142,7 +186,7 @@ describe('Connected Account attempt transaction API', () => {
       status: 200,
       data: {
         revision: 0,
-        ciphertext: '',
+        content: { t: 'encrypted', c: '' },
         expiresAtMs: 'not-a-number',
       },
     });
@@ -150,6 +194,27 @@ describe('Connected Account attempt transaction API', () => {
     await expect(api.read({
       kind: 'oauth',
       attemptId: 'attempt-3',
+    })).rejects.toThrow();
+  });
+
+  it('rejects a server record whose content is neither a plain nor an encrypted envelope', async () => {
+    const api = createConnectedAccountAttemptTransactionApi({
+      token: 'account-token',
+    });
+    vi.mocked(axios.get).mockResolvedValue({
+      status: 200,
+      data: {
+        revision: 1,
+        // The retired side contract shipped a bare opaque string here. The canonical
+        // envelope is explicit about which representation it carries.
+        content: 'opaque-ciphertext',
+        expiresAtMs: 123_456,
+      },
+    });
+
+    await expect(api.read({
+      kind: 'oauth',
+      attemptId: 'attempt-5',
     })).rejects.toThrow();
   });
 });

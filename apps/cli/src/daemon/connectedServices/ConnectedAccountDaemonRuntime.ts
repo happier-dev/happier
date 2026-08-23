@@ -168,12 +168,13 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
         if (!lease) return false;
         try {
             if (String(lease.registry.generation) !== input.generation) return false;
+            // Currentness is a host fact the cold projection already carries; asking it
+            // must not boot the plugin whose currentness is in question.
             const entry = lease.registry.connectedAccountContributions?.list()
                 .find((candidate) => candidate.ref.pluginId === input.pluginId);
             if (!entry) return false;
-            const runtime = await lease.registry.resolveConnectedAccountRuntime?.(entry.ref);
-            return runtime?.immutableGenerationId === input.immutableGenerationId
-                && runtime.isCurrent();
+            return entry.immutableGenerationId === input.immutableGenerationId
+                && entry.isCurrent();
         } catch {
             return false;
         } finally {
@@ -218,9 +219,12 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
             const registryLease = params.reloadController.tryAcquireRuntimeRegistry?.() ?? null;
             if (!registryLease) return false;
             try {
-                const contribution = await registryLease.registry.resolveConnectedAccountRuntime?.(
-                    admission.service,
-                );
+                // A currentness question is answered from the cold projection: the executable
+                // runtime is resolved by `invoke`, which is the call that needs it.
+                const contribution =
+                    registryLease.registry.connectedAccountContributions?.describe(
+                        admission.service,
+                    ) ?? null;
                 return Boolean(
                     contribution
                     && contribution.generation === admission.generation
@@ -339,8 +343,14 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
             if (!params.reloadController.isRuntimeRegistryCurrent(lease.registry)) {
                 return null;
             }
+            // A control basis is an authentication-mode descriptor plus the generation
+            // identity to fence on. Both are cold facts the contribution projection
+            // already holds, and `readConfiguration` never reaches the plugin at all —
+            // so resolving the executable runtime here would boot a plugin to answer a
+            // question about stored configuration.
             const contribution =
-                await lease.registry.resolveConnectedAccountRuntime?.(service);
+                lease.registry.connectedAccountContributions?.describe(service)
+                ?? null;
             if (
                 !contribution
                 || !contribution.isCurrent()
@@ -439,18 +449,30 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                                 code: 'connected_account_runtime_generation_changed',
                             };
                         }
+                        // Discovery answers from the descriptor. Booting the plugin to
+                        // describe it is what couples Settings and offline inspection to
+                        // runtime activation; the cold projection carries the descriptor,
+                        // the generation identity and the currentness closure.
                         const contribution =
-                            await lease.registry.resolveConnectedAccountRuntime?.(
+                            lease.registry.connectedAccountContributions?.describe(
                                 command.service,
-                            );
+                            ) ?? null;
                         if (
                             !contribution
-                            || !contribution.isCurrent()
                             || !sameService(contribution.ref, command.service)
                         ) {
                             return {
                                 status: 'unavailable' as const,
                                 code: 'connected_account_service_unavailable',
+                            };
+                        }
+                        // A retired generation is a currentness fact, not an absent
+                        // service. The executable path reported these apart by throwing;
+                        // the cold path must keep them apart without activating.
+                        if (!contribution.isCurrent()) {
+                            return {
+                                status: 'unavailable' as const,
+                                code: 'connected_account_runtime_generation_changed',
                             };
                         }
                         const accounts =
@@ -557,7 +579,10 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                                 : {}),
                         });
                     }
-                    assertNotAborted(options?.signal);
+                    // The revocation has settled at its canonical owner. A
+                    // caller detaching now cannot undo the credential delete,
+                    // so the committed outcome is reported rather than
+                    // reclassified as an unavailable control result.
                     return result.status === 'deleted'
                         ? Object.freeze({
                             status: 'revoked' as const,
@@ -597,10 +622,14 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     values: command.values,
                     secretValues: command.secretValues,
                 });
-                assertNotAborted(options?.signal);
                 if (replacement.status !== 'committed') {
+                    assertNotAborted(options?.signal);
                     return replacement;
                 }
+                // Past this point the configuration mutation is committed at
+                // its canonical owner. Caller cancellation is authoritative
+                // only before commit; the required post-commit consequence and
+                // the settled result must still be produced.
                 if (!await configuration.isCurrent(replacement.snapshot)) {
                     return Object.freeze({
                         status: 'conflict' as const,
@@ -608,7 +637,6 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     });
                 }
                 const accounts = await resolveConsequenceAccounts(basis);
-                assertNotAborted(options?.signal);
                 if (!await configuration.isCurrent(replacement.snapshot)) {
                     return Object.freeze({
                         status: 'conflict' as const,
@@ -667,7 +695,6 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                             },
                         );
                     }
-                    assertNotAborted(options?.signal);
                     if (!await configuration.isCurrent(replacement.snapshot)) {
                         return Object.freeze({
                             status: 'conflict' as const,
@@ -676,7 +703,6 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     }
                 }
                 const view = await configuration.inspect(basis);
-                assertNotAborted(options?.signal);
                 if (
                     view.revision !== replacement.snapshot.revision
                     || !await configuration.isCurrent(replacement.snapshot)

@@ -41,6 +41,7 @@ function registration(input: Readonly<{
     pluginId: 'happier.agent.codex',
     pluginVersion: '1.0.0',
     agentId: 'codex',
+    localAgentId: 'codex',
     generation: 'registry-generation',
     immutableGenerationId:
       'generation' in input ? input.generation : 'generation-g',

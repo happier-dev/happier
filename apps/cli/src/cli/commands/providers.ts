@@ -1,5 +1,9 @@
+import { ProviderErrorV1Schema } from '@happier-dev/protocol';
+import { errorFrame } from '@happier-dev/cli-common/output';
+
 import type { CommandContext } from '@/cli/commandRegistry';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import { executeProvidersCommand, ProviderCliError } from './providers/index';
 import { hasFlag } from './providers/args';
 import { resolveProviderCliDependencies } from './providers/deps';
@@ -73,7 +77,13 @@ export async function handleProvidersCliCommand(
             }, { exitCode: 1 });
             return;
         }
-        console.error(`Error: ${cliError.message}`);
+        // A typed Provider refusal already names its recovery action. Render it
+        // through the canonical presenter so the direct CLI path keeps the same
+        // guidance the other Provider surfaces show instead of a bare code.
+        const typed = ProviderErrorV1Schema.safeParse(cliError.details);
+        console.error(typed.success
+            ? errorFrame('Error:', presentProviderCliRefusal(typed.data))
+            : `Error: ${cliError.message}`);
         process.exitCode = 1;
     }
 }

@@ -1,15 +1,16 @@
 import { join } from 'node:path';
 
-import type {
-  ModelSelectionApplyPolicy,
-  ProviderBoundModelRef,
-  ProviderModelDescriptorV1,
-  ProviderRuntimeBindingBasisV1,
-  QualifiedConnectedAccountPurposeBindingsV1,
-  SessionModelSelectionV1,
-  SessionProviderBindingMetadataV1,
+import {
+  projectAgentSessionProviderBindingV1,
+  ProviderConnectionIdSchema,
+  type ModelSelectionApplyPolicy,
+  type ProviderBoundModelRef,
+  type ProviderModelDescriptorV1,
+  type ProviderRuntimeBindingBasisV1,
+  type QualifiedConnectedAccountPurposeBindingsV1,
+  type SessionModelSelectionV1,
+  type SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -435,13 +436,10 @@ export function createSessionModelTransitionAuthorizer(params: Readonly<{
         policy === 'live'
         || retainExactActivePublishedBindingFacts
       ) && activeMaterialization
-        ? {
-            connectionId: ProviderConnectionIdSchema.parse(
-              nextAuthorization.selection.providerConnectionId,
-            ),
-            model: nextAuthorization.model,
+        ? projectAgentSessionProviderBindingV1({
+            metadata: sessionBindingMetadata,
             materialization: activeMaterialization,
-          }
+          })
         : null,
       sessionBindingMetadata,
       runtimeBindingBasis: retainExactActivePublishedBindingFacts

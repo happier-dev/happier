@@ -215,7 +215,8 @@ function privateRecord(input: Readonly<{
     | 'awaiting_user_resume'
     | 'cancel_requested'
     | 'completed'
-    | 'cancelled';
+    | 'cancelled'
+    | 'discarded';
   operationClaimId?: string;
   targetRuntimeAttemptId?: string;
   phase?:
@@ -233,6 +234,7 @@ function privateRecord(input: Readonly<{
 }>) {
   const isCompleted = input.status === 'completed';
   const isCancelled = input.status === 'cancelled';
+  const isDiscarded = input.status === 'discarded';
   const phase = input.phase ?? 'publishing';
   const plan = input.plan ?? 'materialize';
   const isExternalLinkedTakeover =
@@ -241,7 +243,7 @@ function privateRecord(input: Readonly<{
   return ExternalSessionOperationRecordV1Schema.parse({
     v: 1,
     operationId: input.operationId,
-    revision: isCompleted || isCancelled ? 2 : 0,
+    revision: isCompleted || isCancelled || isDiscarded ? 2 : 0,
     request: {
       v: 1,
       idempotencyKey: `key-${input.operationId}`,
@@ -274,7 +276,7 @@ function privateRecord(input: Readonly<{
           : EXTERNAL_SESSION_OPERATION_TIMELINES_V1.takeover_persisted)
       : EXTERNAL_SESSION_OPERATION_TIMELINES_V1.materialize,
     createdAtMs: 1,
-    updatedAtMs: isCompleted || isCancelled ? 2 : 1,
+    updatedAtMs: isCompleted || isCancelled || isDiscarded ? 2 : 1,
     priorStableStorage: { state: 'machine_only' },
     currentStorageState: isCompleted && !isExternalLinkedTakeover
       ? 'snapshot_complete'
@@ -343,6 +345,7 @@ function privateRecord(input: Readonly<{
       }
       : {}),
     ...(isCancelled ? { terminalResult: { kind: 'cancelled' } } : {}),
+    ...(isDiscarded ? { terminalResult: { kind: 'discarded' } } : {}),
   });
 }
 
@@ -2970,7 +2973,11 @@ describe('external-session operation progress producer selection', () => {
       error: { code: 'reconciliation_required', retryable: true },
       canonicalOwnerEvidence: {
         disagreement: {
-          owner: 'runtime_control',
+          // The record captured a transcript-authority revision and nothing
+          // from runtime control, so that is the owner the evidence names.
+          owner: 'transcript_authority',
+          expectedRevision: 3,
+          observedRevision: 0,
         },
       },
     });
@@ -3301,6 +3308,51 @@ describe('external-session operation progress producer selection', () => {
     )).resolves.toMatchObject({ kind: 'completion_receipt' });
   });
 
+  it.each(['cancelled', 'discarded'] as const)(
+    'compacts a settled %s external-linked takeover on the live acknowledgement path, not only at boot repair',
+    async (status) => {
+      const activeServerDir = await mkdtemp(join(
+        tmpdir(),
+        'happier-operation-external-linked-live-settled-',
+      ));
+      roots.push(activeServerDir);
+      const settled = privateRecord({
+        operationId: `operation-external-linked-live-settled-${status}`,
+        sessionId: `session-external-linked-live-settled-${status}`,
+        status,
+        phase: 'finalizing',
+        plan: 'takeover',
+        targetStorageMode: 'external-linked',
+      });
+      await writeExternalSessionOperationRecord(activeServerDir, settled);
+      const presentation =
+        projectExternalSessionOperationSharedPresentationV1(
+          projectExternalSessionOperationProgressV1(settled),
+        );
+
+      await expect(convergeExternalSessionOperationProgressProjection(
+        activeServerDir,
+        settled,
+        {
+          readPresentation: async () => ({ kind: 'valid', presentation }),
+          publish: async () => {},
+        },
+      )).resolves.toBe('acknowledged');
+
+      // A settled external-linked takeover owns no private staging, so the
+      // acknowledgement that settles it is the last event that can touch the
+      // full record. Holding the inventory slot until the next daemon boot
+      // repair is the same leak in a slower shape.
+      await expect(readExternalSessionOperationStoredEntry(
+        activeServerDir,
+        settled.operationId,
+      )).resolves.toMatchObject({
+        kind: 'completion_receipt',
+        receipt: { presentation: { status } },
+      });
+    },
+  );
+
   it('compacts an acknowledged external-linked completion on boot and keeps raw Start full-record-only', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
@@ -3550,7 +3602,7 @@ describe('external-session operation progress producer selection', () => {
     },
   );
 
-  it('keeps an acknowledged cancelled materialize operation and its private staging through boot repair', async () => {
+  it('compacts an acknowledged cancelled materialize operation once boot repair clears its private staging', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-operation-materialize-cancelled-cleanup-',
@@ -3578,18 +3630,68 @@ describe('external-session operation progress producer selection', () => {
       { cleanupTerminalStaging },
     )).resolves.toBe(0);
 
-    expect(cleanupTerminalStaging).not.toHaveBeenCalled();
+    // A settled cancellation with no remaining explicit-Discard recovery must
+    // release its inventory slot; otherwise ordinary Cancel cycles grow the
+    // Account inventory to its ceiling and brick every later operation.
+    expect(cleanupTerminalStaging).toHaveBeenCalledWith(cancelled.operationId);
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       cancelled.operationId,
     )).resolves.toMatchObject({
-      kind: 'full_record',
-      record: {
-        status: 'cancelled',
-        terminalResult: { kind: 'cancelled' },
+      kind: 'completion_receipt',
+      receipt: {
+        reference: {
+          sessionId: cancelled.request.sessionId,
+          operationId: cancelled.operationId,
+          revision: cancelled.revision,
+        },
+        presentation: { status: 'cancelled' },
       },
     });
   });
+
+  it.each(['cancelled', 'discarded'] as const)(
+    'compacts an acknowledged settled %s external-linked takeover whose staging is structurally absent',
+    async (status) => {
+      const activeServerDir = await mkdtemp(join(
+        tmpdir(),
+        'happier-operation-external-linked-settled-compaction-',
+      ));
+      roots.push(activeServerDir);
+      const settledInput = privateRecord({
+        operationId: `operation-external-linked-settled-${status}`,
+        sessionId: `session-external-linked-settled-${status}`,
+        status,
+        phase: 'finalizing',
+        plan: 'takeover',
+        targetStorageMode: 'external-linked',
+      });
+      await writeExternalSessionOperationRecord(activeServerDir, settledInput);
+      const settled =
+        await acknowledgeExternalSessionOperationProgressProjection({
+          activeServerDir,
+          operationId: settledInput.operationId,
+          projectedRevision: settledInput.revision,
+        });
+      const cleanupTerminalStaging = vi.fn(async () => 'missing' as const);
+
+      await expect(repairExternalSessionOperationProgressProjections(
+        activeServerDir,
+        { cleanupTerminalStaging },
+      )).resolves.toBe(0);
+
+      // An external-linked takeover owns no private staging in any settled
+      // state, so it must release its inventory slot without a staging owner.
+      expect(cleanupTerminalStaging).not.toHaveBeenCalled();
+      await expect(readExternalSessionOperationStoredEntry(
+        activeServerDir,
+        settled.operationId,
+      )).resolves.toMatchObject({
+        kind: 'completion_receipt',
+        receipt: { presentation: { status } },
+      });
+    },
+  );
 
   it('keeps an acknowledged cancelled initial partial full during boot repair until server Discard discharges it', async () => {
     const activeServerDir = await mkdtemp(join(
@@ -3885,7 +3987,10 @@ describe('external-session operation progress producer selection', () => {
           canonicalOwnerEvidence: {
             ...original.canonicalOwnerEvidence,
             disagreement: {
-              owner: 'runtime_control',
+              // No admission-owner revision was ever captured, so the only
+              // real owner revision this record holds is its linked Session
+              // revision; it is never relabelled as runtime-control evidence.
+              owner: 'linked_session',
               expectedRevision: 1,
               observedRevision: 0,
             },

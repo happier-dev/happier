@@ -54,6 +54,8 @@ export type BuildReplaySeededSpawnRecipeParams = Readonly<{
   agentHintAgentId: string;
   /** Extra creation metadata merged UNDER the canonical envelopes. */
   extraMetadata?: Record<string, unknown>;
+  /** Caller identity retained in durable fork lineage for outcome reconciliation. */
+  requestId?: string | null;
   /**
    * Retrieval strategy. Ingresses that expose an explicit strategy on their wire
    * (the legacy continue-with-replay contract) pass it; the fork branch omits it
@@ -141,6 +143,9 @@ export async function buildReplaySeededSpawnRecipe(
     ? params.lineageCutoffSeqInclusive
     : resolvedSeed.sourceCutoffSeqInclusive;
   const nowMs = typeof params.nowMs === 'number' ? params.nowMs : Date.now();
+  const requestId = typeof params.requestId === 'string' && params.requestId.trim().length > 0
+    ? params.requestId.trim()
+    : null;
   const mediaUsable = params.mediaContinuityUsableOnCreatingMachine !== false;
   const referencedSessionMediaWorkspacePaths = resolvedSeed.referencedSessionMediaWorkspacePaths;
 
@@ -158,6 +163,7 @@ export async function buildReplaySeededSpawnRecipe(
           parentCutoffSeqInclusive: cutoffSeqInclusive,
           createdAtMs: nowMs,
           strategy: 'replay',
+          ...(requestId ? { requestId } : {}),
           agentHint: { agentId: params.agentHintAgentId },
         },
         replaySeedV1: {

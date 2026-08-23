@@ -814,19 +814,22 @@ describe('external session materialize action', () => {
       },
     });
     expect(commands.map((command) => command.kind)).toEqual(['discard']);
+    // The server Discard discharged the retained partial history, so the
+    // settled record has nothing left to act on and releases its inventory
+    // slot as a minimal receipt.
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       cancelled.operationId,
     )).resolves.toMatchObject({
-      kind: 'full_record',
-      record: {
-        status: 'discarded',
-        terminalResult: { kind: 'discarded' },
+      kind: 'completion_receipt',
+      receipt: {
+        durableIdempotencyKey: cancelled.request.idempotencyKey,
+        presentation: { status: 'discarded' },
       },
     });
   });
 
-  it('retains discarded materialization idempotency evidence after canonical staging cleanup', async () => {
+  it('retains discarded materialization idempotency evidence in the receipt left by canonical staging cleanup', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-materialize-discarded-cleanup-full-record-',
@@ -862,11 +865,15 @@ describe('external session materialize action', () => {
       activeServerDir,
       discarded.operationId,
     )).resolves.toMatchObject({
-      kind: 'full_record',
-      record: {
-        request: { idempotencyKey: discarded.request.idempotencyKey },
-        status: 'discarded',
-        terminalResult: { kind: 'discarded' },
+      kind: 'completion_receipt',
+      receipt: {
+        reference: {
+          sessionId: discarded.request.sessionId,
+          operationId: discarded.operationId,
+          revision: discarded.revision,
+        },
+        durableIdempotencyKey: discarded.request.idempotencyKey,
+        presentation: { status: 'discarded' },
       },
     });
   });

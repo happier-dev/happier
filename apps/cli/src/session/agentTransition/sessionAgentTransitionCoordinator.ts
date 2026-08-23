@@ -1,13 +1,11 @@
 import {
   beginSessionAgentTransitionEffects,
   buildSessionAgentTransitionDividerLocalId,
-  isSameSessionAgentTransitionDividerV1,
   isSessionStopConfirmed,
   matchesSessionAgentTransitionDividerAgentsV1,
-  readLinkedExternalSessionV1FromMetadata,
   readSessionAgentTransitionDividerFromStoredRecordV1,
+  resolveLinkedExternalSessionAuthorityV1,
   type SessionAgentTransitionCurrentViewCommitted,
-  type SessionAgentTransitionDividerV1,
   type SessionAgentTransitionRejectedCodeV1,
   type SessionAgentTransitionRequestV1,
   type SessionAgentTransitionResultV1,
@@ -25,10 +23,7 @@ import {
   applyAcpSessionModeIntentSessionMetadata,
   applyModelIntentSessionMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-  ProviderBoundModelRefSchema,
-  type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { type ProviderBoundModelRef } from '@happier-dev/protocol';
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -79,6 +74,7 @@ import {
   sealSessionAgentTransitionCurrentView,
 } from './sessionAgentTransitionCutoverPayload';
 import { resolveSessionContinuationTargetAgent } from './sessionContinuationInspection';
+import { resolveCurrentProviderSpawnDefinitiveRejection } from '@/providers/spawn/currentDefinitiveRejection';
 
 /**
  * The invocation-local same-Session Agent transition (contract section 7).
@@ -110,6 +106,13 @@ export type SessionAgentTransitionDeps = Readonly<{
   resolveSessionTransportContext: typeof resolveSessionTransportContext;
   decryptOwnerMetadataView: typeof tryDecryptSessionOwnerMetadataView;
   readAgentCatalogSnapshot: typeof readAgentCatalogSnapshot;
+  /**
+   * The provider spawn owner's cold, definitive-rejection phase.  This is an
+   * injected system-read boundary so inspection and mutation share one answer
+   * without the coordinator acquiring, activating, or caching plugin state.
+   */
+  resolveCurrentProviderSpawnDefinitiveRejection:
+    typeof resolveCurrentProviderSpawnDefinitiveRejection;
   waitForSessionIdle: typeof waitForSessionIdle;
   callSessionProviderInputAdmission: typeof callSessionProviderInputAdmission;
   requestSessionStop: typeof requestSessionStop;
@@ -162,6 +165,7 @@ function resolveDeps(overrides: Partial<SessionAgentTransitionDeps> | undefined)
     resolveSessionTransportContext,
     decryptOwnerMetadataView: tryDecryptSessionOwnerMetadataView,
     readAgentCatalogSnapshot,
+    resolveCurrentProviderSpawnDefinitiveRejection,
     waitForSessionIdle,
     callSessionProviderInputAdmission,
     requestSessionStop,
@@ -209,27 +213,6 @@ function mapTransportResolutionFailure(
   code: Extract<Awaited<ReturnType<typeof resolveSessionTransportContext>>, { ok: false }>['code'],
 ): SessionAgentTransitionRejectedCodeV1 {
   return code === 'encryption_material_unavailable' ? 'forbidden' : 'unsupported_operation';
-}
-
-/**
- * The wire selection carries a plain bounded model/connection pair; the
- * canonical provider schema owns its branded shape and its native-vs-connection
- * arms. Resolving it during preflight means a malformed or unhonourable
- * reference rejects with `target_unavailable` BEFORE any effect, instead of
- * failing after the source is already stopped.
- */
-function resolveTargetModelSelection(
-  params: Readonly<{ backendTargetKey: string; selection: SessionAgentTransitionSelectionV1 }>,
-): Readonly<{ ok: true; ref: ProviderBoundModelRef | null }> | Readonly<{ ok: false }> {
-  const modelId = readNonEmptyString(params.selection.modelId);
-  if (!modelId) return { ok: true, ref: null };
-  const providerConnectionId = readNonEmptyString(params.selection.providerConnectionId);
-  const parsed = ProviderBoundModelRefSchema.safeParse({
-    agentTargetKey: params.backendTargetKey,
-    providerConnectionId,
-    modelId,
-  });
-  return parsed.success ? { ok: true, ref: parsed.data } : { ok: false };
 }
 
 /**
@@ -374,7 +357,6 @@ async function readDividerEvidence(params: Readonly<{
   expected: Readonly<{
     fromAgentId: string;
     toAgentId: string;
-    exactDivider?: SessionAgentTransitionDividerV1;
   }>;
 }>): Promise<DividerEvidence> {
   const outcome = await params.deps.findTranscriptMessageByLocalId({
@@ -406,43 +388,28 @@ async function readDividerEvidence(params: Readonly<{
   if (!divider) return { status: 'unknown' };
   return {
     status: 'present',
-    matches: params.expected.exactDivider
-      ? isSameSessionAgentTransitionDividerV1(divider, params.expected.exactDivider)
-      : matchesSessionAgentTransitionDividerAgentsV1(divider, params.expected),
+    matches: matchesSessionAgentTransitionDividerAgentsV1(divider, params.expected),
   };
 }
 
 /**
  * The single divider-evidence projection, from a committed current view.
  *
- * Two callers need it and must never disagree: the already-target reconciliation
- * (section 7.5) and the primary path when the server reports it could not verify
- * an existing opaque row at the reserved localId. Returning `null` means the
- * divider is this operation's own and the caller may continue; anything else is
- * the terminal result.
+ * The already-target reconciliation needs this projection. Returning `null`
+ * means the divider is this operation's own and the caller may continue;
+ * anything else is the terminal result.
  */
 function projectDividerEvidenceArm(
   evidence: DividerEvidence,
   committed: SessionAgentTransitionCurrentViewCommitted,
 ): SessionAgentTransitionResultV1 | null {
-  if (evidence.status === 'absent') return committed.committed('divider_missing');
-  // A row that EXISTS but carries a different transition payload is a known
-  // state, not an indeterminate one: the view is committed and the reserved
-  // localId is occupied by a stale, conflicting, or planted operation. It must
-  // never be overwritten, must never be retried as a switch, and must never be
-  // collapsed into `divider_missing` — the bounded context pass would otherwise
-  // trust a divider naming the wrong target as its delta boundary.
-  if (evidence.status === 'present' && !evidence.matches) {
-    return committed.committed('divider_conflict');
+  // The public contract deliberately does not reveal whether the unavailable
+  // divider was absent, mismatched, or unreadable. All three leave a committed
+  // target view whose boundary cannot be trusted, so none may admit input or
+  // activate the target.
+  if (evidence.status !== 'present' || !evidence.matches) {
+    return committed.committed('divider_unavailable');
   }
-  // The row could not be read or decoded at all. That is a fact about the
-  // BOUNDARY, not about the switch: this projection only runs from a committed
-  // current view, so the Session observably IS the target. Reporting the
-  // codeless indeterminate arm here would deny a cutover we can see and leave
-  // the client's armed switch alive in front of a Session that already
-  // switched. Section 7.5's safe action is the same as `divider_missing`'s —
-  // resume the target and send — with the boundary flagged as unverified.
-  if (evidence.status === 'unknown') return committed.committed('divider_unknown');
   return null;
 }
 
@@ -710,8 +677,15 @@ export async function runSessionAgentTransition(
   if (!sourceMetadata) return effects.rejected('forbidden');
 
   // Direct/external transcript Sessions are excluded: the target cannot consume
-  // their storage canonically (section 2.3).
-  if (readLinkedExternalSessionV1FromMetadata(sourceMetadata) !== null) {
+  // their storage canonically (section 2.3). Read through the discriminated
+  // authority owner, and require `persisted` POSITIVELY: this is the last gate
+  // before the source runtime is quiesced and stopped, and a link that exists
+  // but cannot be trusted must not read as "hosted here".
+  const sourceTranscriptAuthority = resolveLinkedExternalSessionAuthorityV1(sourceMetadata);
+  if (
+    !sourceTranscriptAuthority.ok
+    || sourceTranscriptAuthority.transcriptStorage !== 'persisted'
+  ) {
     return effects.rejected('unsupported_operation');
   }
 
@@ -766,11 +740,13 @@ export async function runSessionAgentTransition(
     return effects.rejected('stale_selection');
   }
   if (!target) return effects.rejected('target_unavailable');
-  const modelSelection = resolveTargetModelSelection({
-    backendTargetKey: target.backendTargetKey,
+  const providerPreflight = await deps.resolveCurrentProviderSpawnDefinitiveRejection({
+    agentTargetKey: target.backendTargetKey,
+    agentId: target.agentId,
     selection: request.selection,
   });
-  if (!modelSelection.ok) return effects.rejected('target_unavailable');
+  if (!providerPreflight.ok) return effects.rejected('target_unavailable');
+  const modelSelectionRef = providerPreflight.ref;
   const sourceAgentId = currentAgentId;
 
   const idle = await deps.waitForSessionIdle({
@@ -878,8 +854,11 @@ export async function runSessionAgentTransition(
     return await fenced.outcomeUnknown();
   }
   if (stop.ok === false) {
-    // Resolution failed BEFORE any stop attempt: the source is provably still
-    // running, which is the only stop outcome `rejected` may carry.
+    // The stop owner's `ok: false` arm is returned only by its identity
+    // resolver, before it can address a runner. That leaves the source both
+    // untouched and still running, so this is the one pre-attempt stop refusal
+    // that truthfully rides the rejected arm. `fenced.rejected` reopens this
+    // exact epoch before it returns that fact.
     return await fenced.rejected('source_stop_failed');
   }
   if (!isSessionStopConfirmed(stop)) {
@@ -978,7 +957,7 @@ export async function runSessionAgentTransition(
   const projectTargetView = buildTargetCurrentViewProjection({
     targetAgentId: target.agentId,
     selection: request.selection,
-    modelSelectionRef: modelSelection.ref,
+    modelSelectionRef,
     nativeResumeIdentity: nativeReturn?.identity ?? null,
     activationSeed: brief.seed,
     connectedServices: targetConnectedServices,
@@ -1056,51 +1035,9 @@ export async function runSessionAgentTransition(
         : stopped.sourceStopped('cutover_conflict');
     }
     if (cutover.effect === 'current_view_committed') {
-      // `divider-conflict` means a row EXISTS at the reserved localId carrying a
-      // DIFFERENT transition payload. That is not a missing divider: retrying
-      // the switch re-derives the same conflict forever, and the bounded context
-      // pass must not trust that row as a departure boundary.
-      return stopped.cutoverCommitted().committed(
-        cutover.error === 'divider-conflict' ? 'divider_conflict' : 'divider_missing',
-      );
+      return stopped.cutoverCommitted().committed('divider_unavailable');
     }
     return stopped.outcomeUnknown();
-  }
-
-  // The server committed the current view but found a row it cannot read
-  // already occupying the reserved divider localId, so it could not establish
-  // that this operation wrote it. For an E2EE Session only this daemon can:
-  // uniqueness of the reserved localId is not proof of authorship, because a
-  // reserved row can be reached by an ingress the transition does not own. The
-  // verification therefore gates admission and activation, and reuses the same
-  // decrypt-and-compare owner the already-target reconciliation uses.
-  if (cutover.dividerVerificationRequired) {
-    const committed = stopped.cutoverCommitted();
-    const arm = projectDividerEvidenceArm(
-      await readDividerEvidence({
-        deps,
-        token: credentials.token,
-        sessionId,
-        dividerLocalId: divider.localId,
-        crypto: readCryptoContext(stoppedSession),
-        expected: {
-          fromAgentId: sourceAgentId,
-          toAgentId: target.agentId,
-          exactDivider: divider.sidecar,
-        },
-      }),
-      committed,
-    );
-    if (arm) return arm;
-    return await activateTargetAndAdmitInput({
-      deps,
-      credentials,
-      request,
-      machineAdmissionTransport: params.machineAdmissionTransport,
-      admissionFence,
-      inputAdmissionTimeoutMs,
-      committed,
-    });
   }
 
   /* --------------------------------------------------------------------- *

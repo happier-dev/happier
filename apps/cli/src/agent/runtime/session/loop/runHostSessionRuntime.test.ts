@@ -1490,6 +1490,7 @@ describe('runHostSessionRuntime', () => {
       createdWorkspaceRelativePaths: [
         '.happier/uploads/messages/session-1/local-1/review.png',
       ],
+      workingDirectory: '/tmp/session-1-workspace',
     };
     harness.deps.sessionLoopLifecycleDeps = {
       daemonTurnContributionsBridge: {
@@ -2301,6 +2302,11 @@ describe('runHostSessionRuntime', () => {
           modelId: nextSelection.modelId,
           providerBinding: {
             connectionId,
+            upstream: {
+              protocol: 'openai-responses',
+              normalizedUrl: 'https://provider.example/v1',
+              credential: 'none',
+            },
             model: {
               id: nextSelection.modelId,
               name: nextSelection.modelId,

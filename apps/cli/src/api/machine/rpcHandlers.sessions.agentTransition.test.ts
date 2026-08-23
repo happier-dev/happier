@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
 
@@ -48,6 +49,22 @@ const TARGET_METADATA: Record<string, unknown> = {
   machineId: MACHINE_ID,
   path: '/home/u/project',
 };
+
+/**
+ * The registration reaches the real coordinator, which obtains this snapshot
+ * through the canonical `GET /v1/features` client. Keep that HTTP boundary
+ * real in this test: a mocked feature-decision helper would let a missing or
+ * miswired server gate make the registered RPC look healthy.
+ */
+const AGENT_SWITCHING_FEATURES_SNAPSHOT = FeaturesResponseSchema.parse({
+  features: {
+    sessions: {
+      enabled: true,
+      agentSwitching: { enabled: true },
+    },
+  },
+  capabilities: {},
+});
 
 const mocks = vi.hoisted(() => ({
   sessionMode: 'plain' as 'plain' | 'e2ee',
@@ -117,6 +134,7 @@ vi.mock('@/persistence', async (importOriginal) => ({
 }));
 
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
+import { buildAgentCatalogContribution } from '@/session/agentTransition/sessionAgentTransitionTestkit';
 
 import { registerMachineSessionRpcHandlers } from './rpcHandlers.sessions';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
@@ -256,8 +274,8 @@ describe('registered session.agentTransition machine RPC handler', () => {
     mocks.findTranscriptEncryptedMessageByLocalIdV2.mockResolvedValue(null);
     mocks.readAgentCatalogSnapshot.mockReturnValue({
       agentDefinitionsById: new Map([
-        ['codex', { id: 'codex', identity: { pluginId: 'codex', localId: 'codex' } }],
-        ['claude', { id: 'claude', identity: { pluginId: 'claude', localId: 'claude' } }],
+        ['codex', buildAgentCatalogContribution({ id: 'codex' })],
+        ['claude', buildAgentCatalogContribution({ id: 'claude' })],
       ]),
       catalogEntriesById: {},
     });
@@ -266,6 +284,55 @@ describe('registered session.agentTransition machine RPC handler', () => {
       didWrite: true, terminal: false, suppressed: false,
     });
     mocks.resolveSessionMessageModel.mockReturnValue({ modelId: null, selection: null });
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL, init?: RequestInit) => {
+      expect(String(input)).toMatch(/\/v1\/features$/);
+      expect(init).toMatchObject({ method: 'GET' });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => AGENT_SWITCHING_FEATURES_SNAPSHOT,
+      };
+    }) as unknown as typeof fetch);
+  });
+
+  it('publishes the incumbent exact-daemon spawn transport for host Action ingress', () => {
+    const { manager } = createCapturingRegistrar();
+
+    const registration = registerMachineSessionRpcHandlers({
+      rpcHandlerManager: manager,
+      handlers: {
+        spawnSession: vi.fn(),
+        stopSession: vi.fn(),
+        requestShutdown: vi.fn(),
+      } as never,
+      deps: {
+        currentMachineId: MACHINE_ID,
+        sessionServerStart: {
+          machineId: MACHINE_ID,
+          token: 'token-1',
+          readCredentials: async () => CREDENTIALS,
+          resolveAccountId: async () => 'account-1',
+          resolveInstallationId: () => 'installation-1',
+          resolveAccountEncryptionCurrentness: async () => ({ mode: 'plain' }),
+        },
+      } as never,
+    }) as unknown as Readonly<{
+      sessionSpawnDirectTargetTransport?: Readonly<{
+        machineId: string;
+        prepare: unknown;
+        spawnedSession: unknown;
+      }>;
+    }>;
+
+    expect(registration).toEqual(expect.objectContaining({
+      sessionSpawnDirectTargetTransport: expect.objectContaining({
+        machineId: MACHINE_ID,
+        prepare: expect.any(Function),
+        spawnedSession: expect.objectContaining({
+          spawn: expect.any(Function),
+        }),
+      }),
+    }));
   });
 
   it('admits a plain protected transition input through the Account route with no machine transport', async () => {

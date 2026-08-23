@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 
 import {
-    AgentSessionProviderBindingV1Schema,
     createProviderErrorV1,
+    projectAgentSessionProviderBindingV1,
     type BackendTargetRefV2Input,
     type ConnectedServiceBindingsV1,
     type ProviderBoundModelRef,
@@ -153,12 +153,13 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
         }));
     }
 
-    const providerBinding = AgentSessionProviderBindingV1Schema.safeParse({
-        connectionId: direct.bindingMetadata.connectionId,
-        model: direct.bindingMetadata.model,
-        materialization: direct.launchMaterialization,
-    });
-    if (!providerBinding.success) {
+    let projectedProviderBinding: AgentSessionProviderBinding;
+    try {
+        projectedProviderBinding = projectAgentSessionProviderBindingV1({
+            metadata: direct.bindingMetadata,
+            materialization: direct.launchMaterialization,
+        });
+    } catch {
         await direct.cleanupOnExit?.();
         throw refusal(createProviderErrorV1('provider_materialization_failed', {
             connectionId: input.selection.providerConnectionId,
@@ -166,8 +167,8 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
         }));
     }
     if (
-        providerBinding.data.connectionId !== input.selection.providerConnectionId
-        || providerBinding.data.model.id !== input.selection.modelId
+        projectedProviderBinding.connectionId !== input.selection.providerConnectionId
+        || projectedProviderBinding.model.id !== input.selection.modelId
     ) {
         await direct.cleanupOnExit?.();
         throw refusal(createProviderErrorV1('provider_authorization_changed', {
@@ -182,7 +183,7 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
         ...(input.connectedServices !== undefined
             ? { connectedServices: direct.connectedServices }
             : {}),
-        providerBinding: providerBinding.data,
+        providerBinding: projectedProviderBinding,
         sanitizeDiagnosticText: direct.sanitizeDiagnosticText,
         revalidateBeforeCommit: direct.revalidateBeforeCommit,
         cleanupOnExit: direct.cleanupOnExit,

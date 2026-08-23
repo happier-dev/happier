@@ -12,6 +12,9 @@ import {
     type RunnerDaemonPluginServiceOperationV1,
 } from './agentRuntimeDaemonPluginServicesProtocol';
 import {
+    EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
+} from '@/session/external/hostOperationOwner';
+import {
     prepareRunnerDaemonPluginServices,
 } from './runnerDaemonPluginServices';
 
@@ -536,6 +539,224 @@ describe('runner daemon PluginServices proxy', () => {
         });
         expect(listener).not.toHaveBeenCalled();
         expect(closeCount).toBe(1);
+    });
+
+    it('bounds every follow close and detaches the invocation abort listener on each unavailable attempt', async () => {
+        const unavailable = createUnavailablePluginServices();
+        const invocation = new AbortController();
+        const added = vi.spyOn(invocation.signal, 'addEventListener');
+        const removed = vi.spyOn(invocation.signal, 'removeEventListener');
+        const closeTimeouts: Array<number | null | undefined> = [];
+        type SubscriptionState = Readonly<{
+            resolveClose: () => void;
+            closed: Promise<void>;
+        }> & { emitted: boolean };
+        const states = new Map<string, SubscriptionState>();
+        const stateFor = (subscriptionId: string): SubscriptionState => {
+            const existing = states.get(subscriptionId);
+            if (existing) return existing;
+            let resolveClose!: () => void;
+            const closed = new Promise<void>((resolve) => {
+                resolveClose = resolve;
+            });
+            const created: SubscriptionState = Object.assign(
+                { emitted: false },
+                { resolveClose, closed },
+            );
+            states.set(subscriptionId, created);
+            return created;
+        };
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId: 'invocation-external-listener-leak',
+            signal: invocation.signal,
+            dispatch: async (
+                operation,
+                options?: Readonly<{
+                    signal?: AbortSignal;
+                    timeoutMs?: number | null;
+                }>,
+            ): Promise<unknown> => {
+                if (operation.kind === 'plugin_services.prepare_v1') {
+                    return preparedSnapshot();
+                }
+                if (
+                    operation.kind
+                    === 'plugin_sessions.external.follow_transcript.open_v1'
+                ) {
+                    return { status: 'opening' };
+                }
+                if (
+                    operation.kind
+                    === 'plugin_services.subscription.next_v1'
+                ) {
+                    const state = stateFor(operation.subscriptionId);
+                    if (operation.acknowledgement === 'settled') return null;
+                    if (!state.emitted) {
+                        state.emitted = true;
+                        return {
+                            kind:
+                                'plugin_sessions.external.follow_transcript.opened_v1',
+                            invocationId:
+                                'invocation-external-listener-leak',
+                            subscriptionId: operation.subscriptionId,
+                            result: {
+                                status: 'unavailable',
+                                code: 'plugin_external_follow_unavailable',
+                            },
+                        };
+                    }
+                    await state.closed;
+                    throw new PluginError({
+                        code: 'plugin_service_subscription_closed',
+                        message: 'Subscription closed',
+                    });
+                }
+                if (
+                    operation.kind
+                    === 'plugin_services.subscription.close_v1'
+                ) {
+                    closeTimeouts.push(options?.timeoutMs);
+                    stateFor(operation.subscriptionId).resolveClose();
+                    return null;
+                }
+                throw new Error(`Unexpected ${operation.kind}`);
+            },
+            local: {
+                availability: unavailable.availability,
+                logger: unavailable.logger,
+                sessions: unavailable.sessions,
+                managedServices: unavailable.managedServices,
+                exec: unavailable.exec,
+                composerContent: unavailable.composerContent,
+                interactions: unavailable.interactions,
+                targetedContributions: unavailable.targetedContributions,
+            },
+        });
+        added.mockClear();
+        removed.mockClear();
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            await expect(services.sessions.external.followTranscript({
+                agentId: 'fixture.agent',
+                sourceId: 'source-1',
+                remoteSessionId: `remote-${attempt}`,
+            }, {}, vi.fn())).resolves.toEqual({
+                status: 'unavailable',
+                code: 'plugin_external_follow_unavailable',
+            });
+        }
+
+        // A follow that never became a subscription still terminalizes: one
+        // abort listener attached, one detached, per attempt. Detaching only on
+        // successful disposal accumulated one listener per unavailable attempt
+        // on the invocation-scoped signal.
+        expect(added).toHaveBeenCalledTimes(3);
+        expect(removed).toHaveBeenCalledTimes(3);
+        // `timeoutMs: null` waits for the platform default — minutes — not the
+        // disposal boundary this subscription promises. The literal ceiling is
+        // deliberate: comparing only against the exported constant would pass
+        // for any value that constant ever takes.
+        expect(closeTimeouts).toHaveLength(3);
+        for (const timeoutMs of closeTimeouts) {
+            expect(typeof timeoutMs).toBe('number');
+            expect(timeoutMs).toBeGreaterThan(0);
+            expect(timeoutMs).toBeLessThanOrEqual(10_000);
+            expect(timeoutMs)
+                .toBe(EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS);
+        }
+    });
+
+    it('retries the exact same follow close after it fails once', async () => {
+        const unavailable = createUnavailablePluginServices();
+        let closeCount = 0;
+        let emitted = false;
+        let resolveClosed!: () => void;
+        const closed = new Promise<void>((resolve) => {
+            resolveClosed = resolve;
+        });
+        const services = await prepareRunnerDaemonPluginServices({
+            invocationId: 'invocation-external-close-retry',
+            signal: new AbortController().signal,
+            dispatch: async (operation): Promise<unknown> => {
+                if (operation.kind === 'plugin_services.prepare_v1') {
+                    return preparedSnapshot();
+                }
+                if (
+                    operation.kind
+                    === 'plugin_sessions.external.follow_transcript.open_v1'
+                ) {
+                    return { status: 'opening' };
+                }
+                if (
+                    operation.kind
+                    === 'plugin_services.subscription.next_v1'
+                ) {
+                    if (operation.acknowledgement === 'settled' && emitted) {
+                        return null;
+                    }
+                    if (!emitted) {
+                        emitted = true;
+                        return {
+                            kind:
+                                'plugin_sessions.external.follow_transcript.opened_v1',
+                            invocationId: 'invocation-external-close-retry',
+                            subscriptionId: operation.subscriptionId,
+                            result: {
+                                status: 'following',
+                                startingCursor: 'cursor-0',
+                            },
+                        };
+                    }
+                    await closed;
+                    throw new PluginError({
+                        code: 'plugin_service_subscription_closed',
+                        message: 'Subscription closed',
+                    });
+                }
+                if (
+                    operation.kind
+                    === 'plugin_services.subscription.close_v1'
+                ) {
+                    closeCount += 1;
+                    if (closeCount === 1) {
+                        throw new PluginError({
+                            code: 'plugin_service_transport_failed',
+                            message: 'transport failed',
+                        });
+                    }
+                    resolveClosed();
+                    return null;
+                }
+                throw new Error(`Unexpected ${operation.kind}`);
+            },
+            local: {
+                availability: unavailable.availability,
+                logger: unavailable.logger,
+                sessions: unavailable.sessions,
+                managedServices: unavailable.managedServices,
+                exec: unavailable.exec,
+                composerContent: unavailable.composerContent,
+                interactions: unavailable.interactions,
+                targetedContributions: unavailable.targetedContributions,
+            },
+        });
+
+        const followed = await services.sessions.external.followTranscript({
+            agentId: 'fixture.agent',
+            sourceId: 'source-1',
+            remoteSessionId: 'remote-1',
+        }, {}, vi.fn());
+        if (followed.status !== 'following') {
+            throw new Error('expected a following subscription');
+        }
+
+        await expect(followed.subscription.dispose()).rejects.toMatchObject({
+            code: 'plugin_service_transport_failed',
+        });
+        // Caching the rejected attempt would make the exact same cleanup
+        // permanently unreachable.
+        await expect(followed.subscription.dispose()).resolves.toBeUndefined();
+        expect(closeCount).toBe(2);
     });
 
     it('keeps cancelled External Sessions acquisition open until its unavailable result is acknowledged', async () => {

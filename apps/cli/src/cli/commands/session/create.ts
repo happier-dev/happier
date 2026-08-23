@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 import { SessionSpawnNewResultV1Schema, type SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 
-import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { hasFlag, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { StoredCredentials } from '@/persistence';
@@ -59,18 +59,31 @@ async function resolveSessionCreateConnectedServices(params: Readonly<{
 
 export async function cmdSessionCreate(
   argv: string[],
-  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
+  deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null>; signal?: AbortSignal }>,
 ): Promise<void> {
   if (hasFlag(argv, '--help') || hasFlag(argv, '-h')) {
     throw new Error(SESSION_CREATE_USAGE);
   }
+  const waitAfterCreation = hasFlag(argv, '--wait');
+  const followAfterCreation = hasFlag(argv, '--follow');
+  const jsonl = hasFlag(argv, '--jsonl');
+  if (waitAfterCreation && followAfterCreation) {
+    throw new Error('Choose only one of --wait or --follow.');
+  }
+  if (followAfterCreation && hasFlag(argv, '--json')) {
+    throw new Error('--follow requires --jsonl instead of --json.');
+  }
+  if (jsonl && !followAfterCreation) {
+    throw new Error('--jsonl requires --follow.');
+  }
   const parsedOptions = parseSessionCreateSpawnOptions(argv);
   const { json, backendRaw, backendTargetKey, spawnAttemptId, resumeSpawnAttempt } = parsedOptions;
+  const structuredCreationOutput = json || jsonl;
   const effectiveSpawnAttemptId = spawnAttemptId ?? randomUUID();
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
-    if (json) {
+    if (structuredCreationOutput) {
       await printJsonEnvelope({ ok: false, kind: 'session_create', error: { code: 'not_authenticated' } });
       return;
     }
@@ -104,7 +117,7 @@ export async function cmdSessionCreate(
     );
   } catch (error) {
     const mapped = mapUnknownErrorToControlError(error);
-    if (json) {
+    if (structuredCreationOutput) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
@@ -124,7 +137,7 @@ export async function cmdSessionCreate(
   const result = normalizeActionExecuteResult(actionRes);
   if (!result.ok) {
     const isAmbiguousSpawn = hasSpawnNonce(result.details);
-    if (json) {
+    if (structuredCreationOutput) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
@@ -147,7 +160,11 @@ export async function cmdSessionCreate(
     });
   }
   const rawCreated = result.data;
-  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json, result: rawCreated })) {
+  if (await tryHandleApprovalRequestCreated({
+    envelopeKind: 'session_create',
+    json: structuredCreationOutput,
+    result: rawCreated,
+  })) {
     return;
   }
   const parsedCreated = SessionSpawnNewResultV1Schema.safeParse(rawCreated);
@@ -157,7 +174,7 @@ export async function cmdSessionCreate(
   const created = parsedCreated.data;
   if (created.type === 'error') {
     const code = created.code;
-    if (json) {
+    if (structuredCreationOutput) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
@@ -171,7 +188,7 @@ export async function cmdSessionCreate(
     throw Object.assign(new Error(code), { code });
   }
   if (created.type === 'pending') {
-    if (json) {
+    if (structuredCreationOutput) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_create',
@@ -184,13 +201,48 @@ export async function cmdSessionCreate(
       });
       return;
     }
-    throw Object.assign(new Error('session_create_pending'), { code: 'session_create_pending' });
+    // The spawn attempt id is this creation's stable retry identity. A human
+    // run must see it too, or the only safe retry is unavailable to them.
+    throw Object.assign(
+      new Error(
+        `session_create_pending Retry with --spawn-attempt-id ${effectiveSpawnAttemptId} --resume-spawn-attempt.`,
+      ),
+      { code: 'session_create_pending', spawnAttemptId: effectiveSpawnAttemptId },
+    );
   }
 
   const output = {
     created: created.disposition === 'created',
     session: { id: created.sessionId },
   };
+
+  if (waitAfterCreation) {
+    const { cmdSessionWait } = await import('./wait');
+    const timeout = readFlagValue(argv, '--timeout');
+    await cmdSessionWait([
+      'wait',
+      created.sessionId,
+      ...(timeout ? ['--timeout', timeout] : []),
+      ...(json ? ['--json'] : []),
+    ], deps);
+    return;
+  }
+  if (followAfterCreation) {
+    if (jsonl) {
+      await printJsonEnvelope({ ok: true, kind: 'session_create', data: output });
+    }
+    const { cmdSessionHistory } = await import('./history');
+    await cmdSessionHistory([
+      'history',
+      created.sessionId,
+      '--follow',
+      ...(jsonl ? ['--jsonl'] : []),
+    ], {
+      ...deps,
+      ...(deps.signal ? { signal: deps.signal } : {}),
+    });
+    return;
+  }
 
   if (json) {
     await printJsonEnvelope({ ok: true, kind: 'session_create', data: output });

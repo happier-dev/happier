@@ -164,6 +164,13 @@ export function createBrowserDaemonRuntimeActionExecutor(
       return await fallback(args);
     }
 
+    // The ActionSpec's canonical agent surface keeps browser session lifecycle Actions private
+    // until a daemon owner exists. Do not route them merely because they share the browser control
+    // family with backed view commands.
+    if (!getActionSpec(args.actionId).surfaces.agent) {
+      return browserRuntimeActionDisabledResult('browser_action_unbacked');
+    }
+
     if (BROWSER_CONTROL_ACTION_IDS.has(args.actionId)) {
       if (!featureGate.isEnabled('browser.sidecar')) {
         return browserRuntimeActionDisabledResult('browser_control_route_unavailable');

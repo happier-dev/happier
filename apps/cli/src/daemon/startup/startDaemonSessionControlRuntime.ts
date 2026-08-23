@@ -104,6 +104,18 @@ import type {
 import {
     createSessionConnectedServiceAuthTransport,
 } from '@/session/runtime/control/transport';
+import {
+    DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
+    createSessionTranscriptFollowLeaseRegistry,
+} from '@/api/session/transcriptQueries';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import type { ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol/actions';
+import { createAccountServerPatIntrospector } from '../auth/accountServerPatIntrospector';
+import { createDaemonPatVerifier } from '../auth/daemonPatVerifier';
+import { createDaemonExternalActionContributedInvoker } from '../externalActions/createDaemonExternalActionContributedInvoker';
+import { createDaemonExternalActionTargetResolver } from '../externalActions/daemonExternalActionTargetResolver';
+import type { ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
 
 import type {
     ConnectedServiceDaemonAuthBridgeRegistration,
@@ -139,6 +151,7 @@ import {
     finalizeComposerStagedMediaToSession,
 } from '@/session/media/finalizeComposerStagedMediaToSession';
 import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
+import { settleComposerStagedMediaAdmissionV1 } from '@/session/media/settleComposerStagedMediaAdmission';
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import {
@@ -1946,6 +1959,22 @@ export async function commitConnectedServiceHotApplyRuntimeTarget(input: Readonl
 export async function startDaemonSessionControlRuntime(
     params: Readonly<{
         machineId: string;
+        /**
+         * Account identity resolved from this daemon's authenticated lifecycle.
+         * Without it the public Action route is deliberately not mounted.
+         */
+        externalActionAccountId?: string | null;
+        runtimeActionExecute?: RuntimeActionExecute;
+        currentMachineHost?: string | null;
+        currentMachineHomeDir?: string | null;
+        /** Current exact external-session RPC executor; it may change after machine sync. */
+        resolveExternalSessionHostAction?: () =>
+            | ActionExecutorDeps['hostExternalSessionAction']
+            | undefined;
+        /** Current exact daemon spawn transport; it may change after machine sync. */
+        resolveSessionSpawnDirectTargetTransport?: () =>
+            | SessionSpawnDirectTargetTransport
+            | undefined;
         externalSessionHostOperationOwner?: ExternalSessionHostOperationOwner;
         runtimeId?: string;
         credentials: NonNullable<Parameters<typeof executeSpawnSessionRequest>[0]['credentials']>;
@@ -2099,6 +2128,7 @@ export async function startDaemonSessionControlRuntime(
         processEnv: NodeJS.ProcessEnv;
     }>,
 ): Promise<Readonly<{
+    externalActionIngressOwner?: ExternalActionIngressOwner;
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     stopSession: (sessionId: string) => Promise<StopSessionResult>;
     isSessionAlreadyRunning: (sessionId: string) => Promise<boolean>;
@@ -2179,6 +2209,8 @@ export async function startDaemonSessionControlRuntime(
         ReturnType<typeof createExternalSessionHostOperationOwner>['install']
     >;
     providerAccountUsageStore: Pick<ProviderAccountUsageStore, 'recordSnapshot' | 'resolveRecordId' | 'resolveBySource'>;
+    /** Resubmits provider account-usage material the persistence scheduler paused. */
+    flushProviderAccountUsagePersistence: (timeoutMs: number) => Promise<void>;
     connectedServiceRuntimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
     createAgentCatalogObservation: (
         infrastructure: Pick<
@@ -2992,8 +3024,6 @@ export async function startDaemonSessionControlRuntime(
             connectedServicesV2: profile.connectedServicesV2,
             connectedServiceCredentialRevisionsV1:
                 profile.connectedServiceCredentialRevisionsV1,
-            connectedAccountsV4: profile.connectedAccountsV4,
-            connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
         });
         replaceConnectedServiceProjectionSnapshot(snapshot);
         return snapshot;
@@ -5462,25 +5492,25 @@ export async function startDaemonSessionControlRuntime(
                             'Runner PluginServices exact runner authority is unavailable',
                     });
                 }
+                const trackedInvocationContext =
+                    tracked.runnerAgentInvocationContext;
                 const invocationContext =
-                    tracked.runnerAgentInvocationContext
+                    trackedInvocationContext
                         ? Object.freeze({
-                            cwd:
-                                tracked
-                                    .runnerAgentInvocationContext
-                                    .cwd,
+                            cwd: trackedInvocationContext.cwd,
                             environment: Object.freeze({}),
-                            providerBindingActive: false,
+                            ...(trackedInvocationContext.agentCliLaunch
+                                ? {
+                                    agentCliLaunch:
+                                        trackedInvocationContext
+                                            .agentCliLaunch,
+                                }
+                                : {}),
+                            providerBindingActive:
+                                trackedInvocationContext
+                                    .providerBindingActive,
                         })
-                        : tracked.spawnOptions?.directory
-                            ? Object.freeze({
-                                cwd:
-                                    tracked.spawnOptions
-                                        .directory,
-                                environment: Object.freeze({}),
-                                providerBindingActive: false,
-                            })
-                            : null;
+                        : null;
                 if (!invocationContext) {
                     throw new PluginError({
                         code:
@@ -6753,6 +6783,12 @@ export async function startDaemonSessionControlRuntime(
                                 invocationContext.cwd,
                             environment:
                                 invocationContext.environment,
+                            ...(invocationContext.agentCliLaunch
+                                ? {
+                                    agentCliLaunch:
+                                        invocationContext.agentCliLaunch,
+                                }
+                                : {}),
                             providerBindingActive:
                                 invocationContext
                                     .providerBindingActive,
@@ -10453,6 +10489,92 @@ export async function startDaemonSessionControlRuntime(
         pidToTrackedSession: params.pidToTrackedSession,
         pidToAwaiter: params.pidToAwaiter,
     });
+    const externalActionAccountId = params.externalActionAccountId?.trim() ?? '';
+    const pluginActionCurrentIntent = createCredentialedTargetActionCurrentIntent(
+        params.credentials,
+    );
+    const externalActionTranscriptFollowLeaseRegistry = externalActionAccountId
+        ? createSessionTranscriptFollowLeaseRegistry({
+            // This matches the established CLI Action executor capacity. The
+            // registry is daemon-lifetime so retained follow leases are not
+            // lost between finite HTTP requests.
+            maxLeases: 16,
+            idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
+        })
+        : null;
+    const externalActionContributedInvoker = externalActionAccountId
+        ? createDaemonExternalActionContributedInvoker({
+            requestCurrentIntent: pluginActionCurrentIntent,
+        })
+        : null;
+    const externalActionIngressOwner: ExternalActionIngressOwner | undefined = (
+        externalActionAccountId
+        && externalActionTranscriptFollowLeaseRegistry
+        && externalActionContributedInvoker
+    )
+        ? {
+            currentServerId: configuration.activeServerId,
+            resolveTarget: createDaemonExternalActionTargetResolver({
+                credentials: params.credentials,
+                ...(params.currentMachineHost
+                    ? { currentMachineHost: params.currentMachineHost }
+                    : {}),
+                ...(params.currentMachineHomeDir
+                    ? { currentMachineHomeDir: params.currentMachineHomeDir }
+                    : {}),
+            }),
+            executor: {
+                execute: async (actionId, input, context) => {
+                    // Machine-sync owners can be replaced after the control
+                    // listener starts. Resolve their exact current adapters at
+                    // the request boundary rather than retaining a stale one.
+                    const hostExternalSessionAction =
+                        params.resolveExternalSessionHostAction?.();
+                    const sessionSpawnDirectTargetTransport =
+                        params.resolveSessionSpawnDirectTargetTransport?.();
+                    const apiMachineForSessions = params.getApiMachineForSessions();
+                    const executor = createCliActionExecutorFromCredentials({
+                        credentials: params.credentials,
+                        ...(params.runtimeActionExecute
+                            ? { runtimeActionExecute: params.runtimeActionExecute }
+                            : {}),
+                        invokeContributedAction: externalActionContributedInvoker,
+                        ...(hostExternalSessionAction
+                            ? { hostExternalSessionAction }
+                            : {}),
+                        ...(sessionSpawnDirectTargetTransport
+                            ? { sessionSpawnDirectTargetTransport }
+                            : {}),
+                        ...(apiMachineForSessions
+                            ? {
+                                machineAdmissionTransport: async (request, options) =>
+                                    await apiMachineForSessions.enqueueSessionPendingByMachine(
+                                        request,
+                                        options,
+                                    ),
+                            }
+                            : {}),
+                        transcriptFollowLeaseRegistry:
+                            externalActionTranscriptFollowLeaseRegistry,
+                    });
+                    return await executor.execute(actionId, input, context);
+                },
+            },
+        }
+        : undefined;
+    const externalActionApi: NonNullable<
+        Parameters<typeof startDaemonControlServer>[0]['externalActionApi']
+    > | undefined = externalActionIngressOwner
+        ? {
+            verifyPat: createDaemonPatVerifier({
+                accountId: externalActionAccountId,
+                introspect: createAccountServerPatIntrospector({
+                    daemonConnectionToken: params.credentials.token,
+                }),
+            }),
+            ...externalActionIngressOwner,
+        }
+        : undefined;
     /**
      * The control-runtime shutdown phases, in the one order the daemon uses. Each
      * phase is independent: a runner cleanup that rejects must not stop External
@@ -10477,6 +10599,11 @@ export async function startDaemonSessionControlRuntime(
             ['external_session_host_operations', async () => {
                 await externalSessionHostOperationOwner.retire();
             }],
+            ...(externalActionTranscriptFollowLeaseRegistry
+                ? [['external_action_transcript_follow_leases', async () => {
+                    await externalActionTranscriptFollowLeaseRegistry.dispose();
+                }] as const]
+                : []),
             ['control_runtime_resources', disposeControlRuntimeResources],
             ...trailingPhases,
         ];
@@ -10508,7 +10635,8 @@ export async function startDaemonSessionControlRuntime(
         requestShutdown: () => params.requestShutdown('happier-cli'),
         ...(params.requestSelfRestart ? { requestSelfRestart: params.requestSelfRestart } : {}),
         ...(params.pluginChangeService ? { pluginChangeService: params.pluginChangeService } : {}),
-        pluginActionCurrentIntent: createCredentialedTargetActionCurrentIntent(params.credentials),
+        pluginActionCurrentIntent,
+        ...(externalActionApi ? { externalActionApi } : {}),
         ...(params.isShuttingDown ? { isShuttingDown: params.isShuttingDown } : {}),
         beforeShutdown: async () => {
             const beforeShutdown = params.beforeShutdown;
@@ -11271,59 +11399,15 @@ export async function startDaemonSessionControlRuntime(
                             operationRequest.kind
                             === 'settleComposerStagedMedia'
                         ) {
-                            const tracked =
-                                findTrackedSessionByHappySessionId(
-                                    params.pidToTrackedSession.values(),
-                                    sessionId,
-                                );
-                            // A late runner reply no longer has a current Session owner.
-                            // Keep it inert: neither release a stage nor delete durable media
-                            // after the tracked lifecycle has ended or been replaced.
-                            if (!tracked) {
-                                return {
-                                    ok: true as const,
-                                    result: {
-                                        kind: 'turn_contributions' as const,
-                                        status: 'resolved' as const,
-                                        contributions:
-                                            AgentRuntimeDaemonTurnContributionsResultV1Schema.parse({
-                                                kind:
-                                                    'settleComposerStagedMedia' as const,
-                                            }),
-                                    },
-                                };
-                            }
-                            if (
-                                operationRequest.outcome
-                                === 'accepted'
-                            ) {
-                                const stageStore =
+                            await settleComposerStagedMediaAdmissionV1({
+                                outcome: operationRequest.outcome,
+                                settlement: operationRequest.settlement,
+                                stageStore:
                                     createActiveDaemonComposerMediaStageStore({
                                         machineId: params.machineId,
-                                    });
-                                await Promise.all(
-                                    operationRequest.settlement.releaseIntents
-                                        .map(async (intent) => {
-                                            await stageStore.release(intent);
-                                        }),
-                                );
-                            } else {
-                                const workingDirectory =
-                                    tracked?.spawnOptions?.directory;
-                                if (
-                                    typeof workingDirectory === 'string'
-                                    && workingDirectory.trim().length > 0
-                                ) {
-                                    await garbageCollectUncommittedSessionMedia({
-                                        workingDirectory,
-                                        candidateWorkspaceRelativePaths:
-                                            operationRequest.settlement
-                                                .createdWorkspaceRelativePaths,
-                                        reason: 'failed_durable_write',
-                                        logger,
-                                    });
-                                }
-                            }
+                                    }),
+                                logger,
+                            });
                             return {
                                 ok: true as const,
                                 result: {
@@ -11625,6 +11709,7 @@ export async function startDaemonSessionControlRuntime(
                                                             finalization.releaseIntents,
                                                         createdWorkspaceRelativePaths:
                                                             finalization.createdWorkspaceRelativePaths,
+                                                        workingDirectory,
                                                     },
                                                 }
                                                 : {}),
@@ -12902,8 +12987,6 @@ export async function startDaemonSessionControlRuntime(
         const projectionSnapshot = parseConnectedServiceProjectionSnapshot({
             connectedServicesV2: notification.connectedServicesV2,
             connectedServiceCredentialRevisionsV1: notification.connectedServiceCredentialRevisionsV1,
-            connectedAccountsV4: notification.connectedAccountsV4,
-            connectedAccountGroupsV4: notification.connectedAccountGroupsV4,
         });
         notification.signal.throwIfAborted();
         await publishObservedConnectedServiceProjectionThenApply({
@@ -12926,6 +13009,7 @@ export async function startDaemonSessionControlRuntime(
         });
     };
     return {
+        ...(externalActionIngressOwner ? { externalActionIngressOwner } : {}),
         spawnSession: spawnSessionForInternalResume,
         stopSession,
         isSessionAlreadyRunning,
@@ -12958,6 +13042,12 @@ export async function startDaemonSessionControlRuntime(
         installExternalSessionHostOperations: (operations) =>
             externalSessionHostOperationOwner.install(operations),
         providerAccountUsageStore,
+        // Provider account-usage persistence pauses a key after repeated write
+        // failures and retains its last payload. Reconnect is the only signal that
+        // the failure cause is gone, so the daemon connectivity lifecycle resubmits
+        // the retained material through the scheduler's existing flush.
+        flushProviderAccountUsagePersistence: async (timeoutMs: number) =>
+            await providerAccountUsagePersistence.flush(timeoutMs),
         // K2: the single runtime quota-snapshot store shared by the reactive coordinator, the
         // proactive pre-turn coordinator, and (via bootstrap) the quotas coordinator + in-band
         // recorder — so the proactive selection sees the same probed snapshots (matches the

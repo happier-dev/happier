@@ -1,10 +1,12 @@
-import { resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents';
+import {
+  resolveAmbientProviderConnectionForModelIntent,
+  resolveModelSelectionIntentFromSessionMetadata,
+} from '@happier-dev/agents';
 import {
   buildBackendTargetKeyV2,
   type ModelSelectionApplyPolicy,
   ProviderBoundModelRefSchema,
   ProviderConnectionIdSchema,
-  readSessionProviderBindingMetadataV1,
   SessionModelSelectionResolutionError,
   SessionModelSelectionV1Schema,
   type SessionModelSelectionV1,
@@ -71,13 +73,20 @@ export function resolveSessionMessageModel(params: Readonly<{
     if (requestedProviderConnectionId !== null && requestedModelId === null) {
       throw new Error('Provider model selection requires a concrete model id');
     }
-    const currentIntent = resolveModelSelectionIntentFromSessionMetadata(metadata, agentTargetKey);
-    const currentProviderConnectionId = params.sessionActive === true
-      ? readSessionProviderBindingMetadataV1(metadata)?.connectionId ?? null
-      : currentIntent?.selection?.providerConnectionId ?? null;
-    const providerConnectionId = hasExplicitProviderConnectionId
-      ? requestedProviderConnectionId
-      : currentProviderConnectionId;
+    let providerConnectionId: string | null;
+    if (hasExplicitProviderConnectionId) {
+      providerConnectionId = requestedProviderConnectionId;
+    } else {
+      const ambient = resolveAmbientProviderConnectionForModelIntent({
+        metadata,
+        agentTargetKey,
+        sessionActive: params.sessionActive === true,
+      });
+      if (ambient.status === 'unreadable') {
+        throw new SessionModelSelectionResolutionError(ambient.code);
+      }
+      providerConnectionId = ambient.providerConnectionId;
+    }
     const selection = ProviderBoundModelRefSchema.parse({
       agentTargetKey,
       providerConnectionId,

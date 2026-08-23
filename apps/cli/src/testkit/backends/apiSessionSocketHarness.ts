@@ -1,7 +1,99 @@
 import { vi } from 'vitest';
-import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
+import {
+    MACHINE_PLAIN_DATA_KEY_MARKER,
+    type SessionTurnMutationV1,
+} from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 type SocketEventHandler = (...args: unknown[]) => void;
+
+export function createAvailableSessionSpawnMachineSnapshot(
+    machineId: string,
+    options?: Readonly<{ dataEncryptionKey?: string }>,
+) {
+    return {
+        id: machineId,
+        revokedAt: null,
+        replacedByMachineId: null,
+        dataEncryptionKey: options?.dataEncryptionKey ?? MACHINE_PLAIN_DATA_KEY_MARKER,
+        operationProtocolCapabilities: {
+            sessionSpawn: { protocolVersions: [1] },
+        },
+        operationProtocolCapabilitiesRevision: 1,
+    };
+}
+
+export function respondToExactMachineSessionSpawnRpc(params: Readonly<{
+    event: string;
+    args: unknown[];
+    machineId: string;
+    sessionId: string;
+    rpcCodec?: Readonly<{
+        decode: (value: unknown) => unknown;
+        encode: (value: unknown) => unknown;
+    }>;
+    onSpawnRequest?: (request: Readonly<Record<string, unknown>>) => void;
+}>): boolean {
+    if (params.event !== SOCKET_RPC_EVENTS.CALL) return false;
+    const [rawCall, rawCallback] = params.args;
+    const call = rawCall && typeof rawCall === 'object' && !Array.isArray(rawCall)
+        ? rawCall as { method?: unknown; params?: unknown }
+        : null;
+    const callback = typeof rawCallback === 'function'
+        ? rawCallback as (value: unknown) => void
+        : null;
+    if (!call || !callback) return false;
+
+    const exactMethod = (method: string) => `${params.machineId}:${method}`;
+    if (call.method === exactMethod(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE)) {
+        const decodedParams = params.rpcCodec?.decode(call.params) ?? call.params;
+        const request = decodedParams && typeof decodedParams === 'object' && !Array.isArray(decodedParams)
+            ? decodedParams as Readonly<Record<string, unknown>>
+            : {};
+        callback({
+            ok: true,
+            result: params.rpcCodec?.encode({
+                ok: true,
+                directory: typeof request.directory === 'string' ? request.directory : process.cwd(),
+                directoryCreationRequired: false,
+                checkout: null,
+            }) ?? {
+                ok: true,
+                directory: typeof request.directory === 'string' ? request.directory : process.cwd(),
+                directoryCreationRequired: false,
+                checkout: null,
+            },
+        });
+        return true;
+    }
+
+    if (
+        call.method === exactMethod(RPC_METHODS.SPAWN_HAPPY_SESSION)
+        || call.method === exactMethod(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)
+    ) {
+        const decodedParams = params.rpcCodec?.decode(call.params) ?? call.params;
+        const request = decodedParams && typeof decodedParams === 'object' && !Array.isArray(decodedParams)
+            ? decodedParams as Readonly<Record<string, unknown>>
+            : {};
+        params.onSpawnRequest?.(request);
+        const result = {
+            success: true,
+            sessionId: params.sessionId,
+            sessionCreationOutcome: {
+                disposition: 'created',
+                organizationPlacement: { folderId: null, tagIds: [] },
+            },
+        };
+        callback({
+            ok: true,
+            result: params.rpcCodec?.encode(result) ?? result,
+        });
+        return true;
+    }
+
+    return false;
+}
 
 export function createSessionTurnMutationAppliedReceipt(mutation: SessionTurnMutationV1) {
     return {

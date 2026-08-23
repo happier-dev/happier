@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ok } from '@happier-dev/cli-common/output';
 
-import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
@@ -52,6 +53,30 @@ describe('happier session send (action executor)', () => {
         kind: 'session_send',
         data: { sessionId: 'sess-1', localId: 'local-1', waited: false },
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('prints concise human success output without dumping the Action result', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false },
+    });
+
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const output = captureConsoleText();
+    try {
+      await handleSessionCommand(['send', 'sess-1', 'Hello'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.text()).toBe(ok('Message sent (local id local-1)'));
+      expect(output.text()).not.toContain('"sessionId"');
+      expect(output.text()).not.toContain('"localId"');
     } finally {
       output.restore();
     }
@@ -179,7 +204,7 @@ describe('happier session send (action executor)', () => {
         kind: 'session_send',
         error: {
           code: 'invalid_arguments',
-          message: 'Usage: happier session send <session-id-or-prefix> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]',
+          message: 'Usage: happier session send <session-id-or-prefix> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--provider-connection <id|native>] [--local-id <id>] [--wait] [--timeout <seconds>] [--json]',
         },
       });
       expect(execute).not.toHaveBeenCalled();
@@ -285,4 +310,82 @@ describe('happier session send (action executor)', () => {
       output.restore();
     }
   });
+  it('carries an exact Provider connection, an explicit native source, and a retained local id', async () => {
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const credentials = {
+      readCredentialsFn: async () => ({
+        token: 'token_test',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+      }),
+    };
+    const success = {
+      ok: true,
+      result: { ok: true, sessionId: 'sess-1', localId: 'local-42', waited: false },
+    };
+
+    execute.mockResolvedValueOnce(success);
+    let output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['send', 'sess-1', 'Hello', '--model', 'provider/model', '--provider-connection', 'pc_work', '--local-id', 'local-42', '--json'],
+        credentials,
+      );
+    } finally {
+      output.restore();
+    }
+    expect(execute).toHaveBeenLastCalledWith(
+      'session.message.send',
+      expect.objectContaining({
+        modelOverride: 'provider/model',
+        providerConnectionId: 'pc_work',
+        localId: 'local-42',
+      }),
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    execute.mockResolvedValueOnce(success);
+    output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['send', 'sess-1', 'Hello', '--model', 'sonnet', '--provider-connection', 'native', '--json'],
+        credentials,
+      );
+    } finally {
+      output.restore();
+    }
+    expect(execute).toHaveBeenLastCalledWith(
+      'session.message.send',
+      expect.objectContaining({ modelOverride: 'sonnet', providerConnectionId: null }),
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    // An exact connection is only meaningful with a concrete model id.
+    await expect(handleSessionCommand(
+      ['send', 'sess-1', 'Hello', '--provider-connection', 'pc_work'],
+      credentials,
+    )).rejects.toThrow(/--provider-connection requires --model/u);
+  });
+
+  it('prints the durable local id so a human retry can rejoin the same input', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { ok: true, sessionId: 'sess-1', localId: 'local-42', waited: false },
+    });
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+
+    const text = captureConsoleText();
+    try {
+      await handleSessionCommand(['send', 'sess-1', 'Hello'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+    } finally {
+      text.restore();
+    }
+
+    expect(text.text()).toContain('local-42');
+  });
+
 });

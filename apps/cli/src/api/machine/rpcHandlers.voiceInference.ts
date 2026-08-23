@@ -110,7 +110,7 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
     }
   });
 
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL, async (raw: unknown) => {
+  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL, async (raw: unknown, context) => {
     const parsed = DaemonVoiceInferenceModelsInstallRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return toVoiceInferenceError(new Error('invalid_parameters'));
@@ -118,7 +118,12 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
     try {
       return parseVoiceInferenceResponse(DaemonVoiceInferenceModelsInstallResponseSchema, {
         ok: true,
-        model: await params.voiceInferenceWorker.installModel(parsed.data),
+        // The request's own lifetime bounds the install: a caller that timed out
+        // or navigated away must not leave a download running to completion.
+        model: await params.voiceInferenceWorker.installModel({
+          ...parsed.data,
+          signal: context?.signal ?? null,
+        }),
       });
     } catch (error) {
       return toVoiceInferenceError(error);

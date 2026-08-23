@@ -22,6 +22,7 @@ import {
   openAccountScopedBlobCiphertext,
   parseAutomationRunExecutionRecipeV1,
   readExecutionRunStartRunCreation,
+  sameAutomationAccountCurrentnessWitnessV1,
   validateAutomationRunExecutionRecipeOuterV1,
   type AutomationAccountCurrentnessWitnessV1,
   type AutomationRunExecutionRecipeV1,
@@ -31,7 +32,6 @@ import {
 
 import {
   isAvailableE2eeAutomationAccountEncryptionV1,
-  sameAutomationAccountCurrentnessV1,
   type AvailableAutomationAccountEncryptionV1,
   type ValidatedAutomationAccountEncryptionV1,
 } from '@/plugins/runtime/automations/automationAccountCurrentness';
@@ -181,7 +181,7 @@ async function resolveMatchingAutomationCurrentness(params: Readonly<{
     return null;
   }
   if (params.signal.aborted || resolved.kind !== 'available') return null;
-  return sameAutomationAccountCurrentnessV1(resolved.witness, params.expected)
+  return sameAutomationAccountCurrentnessWitnessV1(resolved.witness, params.expected)
     ? resolved
     : null;
 }

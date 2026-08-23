@@ -24,6 +24,7 @@ import {
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type {
+  ResolvedContributionRegistry,
   ResolvedManagedProviderRuntime,
   ResolvedProviderContribution,
 } from '@/plugins/projection/registry/types';
@@ -43,6 +44,7 @@ import {
 import {
   resolveProviderModelLoadAuthorization,
   resolveProviderProbeAuthorization,
+  resolveProviderSpawnDefinitiveRejection,
   resolveProviderSpawnAuthorization,
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
@@ -345,11 +347,69 @@ function lease(
   return { registry: registryRuntime, source: 'active', release: vi.fn(async () => undefined) };
 }
 
-function accountSettings(settings: ProviderSettingsV1) {
+function accountSettings(settings: unknown) {
   const encryptedValue = encryptSecretStringV1('secret-value', key, (length) => new Uint8Array(length).fill(2));
   return {
     providerSettingsV1: settings,
     secrets: [{ id: 'secret-a', encryptedValue: { _isSecretValue: true, encryptedValue } }],
+  };
+}
+
+/**
+ * A probe-less Provider: its manifest is the complete set of model ids, so the
+ * cold phase can prove an unlisted id invalid without any runtime observation.
+ *
+ * This is the shape shipped by static Providers such as Z.AI and MiniMax, which
+ * still allow manual model ids — so the two-sided freeform policy, not catalog
+ * membership, decides whether an unlisted id exists here.
+ */
+const probelessContribution: ResolvedProviderContribution = {
+  ...contribution,
+  definition: ProviderContributionV1Schema.parse({
+    ...definition,
+    catalog: {
+      source: 'static',
+      manualModelPolicy: 'allowed',
+      staticModels: [{ id: 'model-a', name: 'Model A', capabilities: { toolRoundTrips: 'supported' } }],
+    },
+  }),
+};
+
+/** The same probe-less Provider with the freeform side the Provider owns closed. */
+const probelessCatalogOnlyContribution: ResolvedProviderContribution = {
+  ...probelessContribution,
+  definition: ProviderContributionV1Schema.parse({
+    ...probelessContribution.definition,
+    catalog: { ...probelessContribution.definition.catalog, manualModelPolicy: 'catalog-only' },
+  }),
+};
+
+/**
+ * The definitive-rejection phase sees only the cold manifest projection.  It
+ * deliberately has no executable provider-binding adapter, DNS evidence, or
+ * grant proof to consult before a launch is allowed to activate anything.
+ */
+function staticPreflightRegistry(
+  providersByContributionKey: ReadonlyMap<string, ResolvedProviderContribution> =
+    registry.providersByContributionKey,
+  supportsFreeformModelIds = false,
+): Pick<ResolvedContributionRegistry, 'agentDefinitionsById' | 'providersByContributionKey'> {
+  // Reuse the one lease fixture's cold contributions so the two phases cannot
+  // disagree about the Agent's declared provider requirements.  Narrowing to the
+  // cold projection is what keeps the executable runtime out of this phase.
+  return lease(
+    undefined,
+    supportsFreeformModelIds,
+    undefined,
+    providersByContributionKey,
+  ).registry.contributes;
+}
+
+function definitiveSelection(modelId = 'model-a') {
+  return {
+    agentTargetKey: 'backend:codex',
+    providerConnectionId: connectionId,
+    modelId,
   };
 }
 
@@ -360,6 +420,156 @@ describe('provider spawn authorization resolver', () => {
     await Promise.all(executableRegistries.splice(0).map(async (registry) => {
       await registry.dispose();
     }));
+  });
+
+  describe('definitive pre-launch rejection', () => {
+    it.each([
+      ['missing', ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1 })],
+      ['deleted', ProviderSettingsV1Schema.parse({
+        ...DEFAULT_PROVIDER_SETTINGS_V1,
+        connectionTombstones: [{
+          v: 1,
+          id: connectionId,
+          contributionKey,
+          lastDisplayName: 'Gateway',
+          deletedAt: 1,
+        }],
+      })],
+    ] as const)('rejects a %s Provider connection before activation', (_kind, settings) => {
+      const result = resolveProviderSpawnDefinitiveRejection({
+        selection: definitiveSelection(),
+        agentTargetKey: 'backend:codex',
+        agentId: 'codex',
+        accountSettings: accountSettings(settings),
+        registry: staticPreflightRegistry(),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'provider_connection_not_found' },
+      });
+    });
+
+    it('rejects a malformed persisted Provider connection before activation', () => {
+      const result = resolveProviderSpawnDefinitiveRejection({
+        selection: definitiveSelection(),
+        agentTargetKey: 'backend:codex',
+        agentId: 'codex',
+        accountSettings: accountSettings({
+          ...DEFAULT_PROVIDER_SETTINGS_V1,
+          connections: [{ id: connectionId }],
+        }),
+        registry: staticPreflightRegistry(),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'provider_connection_not_found' },
+      });
+    });
+
+    it('rejects a catalog-invalid model without consulting grant or runtime state', () => {
+      const result = resolveProviderSpawnDefinitiveRejection({
+        selection: definitiveSelection('not-in-the-static-catalog'),
+        agentTargetKey: 'backend:codex',
+        agentId: 'codex',
+        accountSettings: accountSettings(providerSettings()),
+        // The Agent refuses ids it cannot verify against a catalog, so the
+        // two-sided freeform policy is closed and membership is decisive.
+        registry: staticPreflightRegistry(
+          new Map([[canonicalContributionKey, probelessContribution]]),
+        ),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'provider_model_not_found' },
+      });
+    });
+
+    // The cold phase must not become a second, stricter answer to the question
+    // the picker already asked. A Provider allowing manual ids plus an Agent
+    // accepting unverifiable ids makes an unlisted id a real selection, and the
+    // picker offers exactly that entry for static Providers such as Z.AI.
+    it('admits an unlisted model id the two-sided freeform policy makes real', () => {
+      const result = resolveProviderSpawnDefinitiveRejection({
+        selection: definitiveSelection('glm-5.3-preview'),
+        agentTargetKey: 'backend:codex',
+        agentId: 'codex',
+        accountSettings: accountSettings(providerSettings()),
+        registry: staticPreflightRegistry(
+          new Map([[canonicalContributionKey, probelessContribution]]),
+          true,
+        ),
+      });
+
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('rejects an unlisted model id when the Provider refuses manual ids', () => {
+      const result = resolveProviderSpawnDefinitiveRejection({
+        selection: definitiveSelection('glm-5.3-preview'),
+        agentTargetKey: 'backend:codex',
+        agentId: 'codex',
+        accountSettings: accountSettings(providerSettings()),
+        registry: staticPreflightRegistry(
+          new Map([[canonicalContributionKey, probelessCatalogOnlyContribution]]),
+          true,
+        ),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'provider_model_not_found' },
+      });
+    });
+
+    it('admits a configured manual model of a probe-less Provider', () => {
+      const settings = ProviderSettingsV1Schema.parse({
+        ...providerSettings(),
+        manualModelsByConnectionId: {
+          [connectionId]: [{ id: 'manual-only', name: 'Manual Only', addedAt: 2 }],
+        },
+      });
+      const result = resolveProviderSpawnDefinitiveRejection({
+        selection: definitiveSelection('manual-only'),
+        agentTargetKey: 'backend:codex',
+        agentId: 'codex',
+        accountSettings: accountSettings(settings),
+        registry: staticPreflightRegistry(
+          new Map([[canonicalContributionKey, probelessContribution]]),
+        ),
+      });
+
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('keeps an unlisted model of a probe-capable Provider eligible for the launch owner', () => {
+      const result = resolveProviderSpawnDefinitiveRejection({
+        selection: definitiveSelection('probe-only'),
+        agentTargetKey: 'backend:codex',
+        agentId: 'codex',
+        accountSettings: accountSettings(providerSettings()),
+        // The Gateway declares a catalog probe, so its live catalog can report a
+        // model the manifest never listed.  Even with the two-sided freeform
+        // policy refused, this cold phase has proven nothing about that id.
+        registry: staticPreflightRegistry(),
+      });
+
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('keeps a static catalog model eligible when authorization is deferred', () => {
+      const result = resolveProviderSpawnDefinitiveRejection({
+        selection: definitiveSelection(),
+        agentTargetKey: 'backend:codex',
+        agentId: 'codex',
+        accountSettings: accountSettings(providerSettings()),
+        registry: staticPreflightRegistry(),
+      });
+
+      expect(result).toEqual({ ok: true });
+    });
   });
 
   it('preserves exact Ollama catalog capabilities through authorization and Codex materialization', async () => {

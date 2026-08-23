@@ -8,6 +8,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
     ensureSessionDirectory: vi.fn(),
+    validateEnvVarRecordStrict: vi.fn(),
 }));
 
 vi.mock('@/ui/logger', () => ({
@@ -21,6 +22,10 @@ vi.mock('@/ui/logger', () => ({
 
 vi.mock('./ensureSessionDirectory', () => ({
     ensureSessionDirectory: mocks.ensureSessionDirectory,
+}));
+
+vi.mock('@/terminal/runtime/envVarSanitization', () => ({
+    validateEnvVarRecordStrict: mocks.validateEnvVarRecordStrict,
 }));
 
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
@@ -110,6 +115,7 @@ function mapPrivateExternalTakeoverPlan() {
 describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.validateEnvVarRecordStrict.mockReturnValue({ ok: true, env: {} });
     });
 
     it('keeps private External Sessions takeover launch facts out of persistent diagnostics', async () => {
@@ -148,16 +154,10 @@ describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
         );
     });
 
-    it('logs only bounded result state when directory setup fails', async () => {
-        mocks.ensureSessionDirectory.mockResolvedValueOnce({
-            ok: false,
-            response: {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
-                errorMessage: `Unable to create directory at '${PRIVATE_DIRECTORY}'.`,
-            },
-        });
-
+    it('creates no workspace while establishing definitive refusals', async () => {
+        // Admission preparation is side-effect-free: the requested workspace is
+        // only created once the daemon has cleared every refusal it can already
+        // establish, so a Provider refusal never leaves a directory behind.
         const result = await prepareExecuteSpawnSessionRequest({
             request: {
                 options: {
@@ -174,25 +174,21 @@ describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
             validateEnvVarRecordStrict: () => ({ ok: true, env: {} }),
         });
 
-        expect(result).toMatchObject({
-            type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
-        });
+        expect(result).toMatchObject({ directory: PRIVATE_DIRECTORY });
+        expect(mocks.ensureSessionDirectory).not.toHaveBeenCalled();
         expectNoPrivateSpawnFacts(serializedLoggerCalls());
-        expect(logger.debug).toHaveBeenCalledWith(
-            '[DAEMON RUN] Session directory setup failed',
-            {
-                resultType: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
-            },
-        );
     });
 
     it('does not persist an unexpected private pre-spawn error and preserves the thrown error', async () => {
         const privateError = new Error(
             `Unexpected failure for ${PRIVATE_DIRECTORY} and ${PRIVATE_ENVIRONMENT_VALUE}`,
         );
-        mocks.ensureSessionDirectory.mockRejectedValueOnce(privateError);
+        // Injected at the first pre-spawn step, before the daemon acquires any
+        // launch resource. A throw after that point is retired and reported by
+        // the launch scope instead of escaping.
+        mocks.validateEnvVarRecordStrict.mockImplementationOnce(() => {
+            throw privateError;
+        });
 
         await expect(executeSpawnSessionRequest({
             options: {

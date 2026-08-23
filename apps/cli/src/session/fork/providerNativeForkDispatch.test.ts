@@ -54,6 +54,27 @@ describe('dispatchProviderNativeFork', () => {
     });
   });
 
+  it('passes the operation cancellation signal to the provider-native fork owner', async () => {
+    const controller = new AbortController();
+    const fork = vi.fn().mockResolvedValue(null);
+
+    await dispatchProviderNativeFork({
+      forkSurface: { fork },
+      parentSessionId: 'happy_parent',
+      parentMetadata: {
+        codexSessionId: 'codex_parent_1',
+        codexBackendMode: 'appServer',
+      },
+      directory: '/tmp/project',
+      forkPoint: { type: 'latest' },
+      signal: controller.signal,
+    });
+
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({
+      signal: controller.signal,
+    }));
+  });
+
   it('projects OpenCode-safe fields from the canonical descriptor without forwarding the raw envelope', async () => {
     const fork = vi.fn().mockResolvedValue(null);
 

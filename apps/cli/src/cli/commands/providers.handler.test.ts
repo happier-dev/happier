@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createProviderErrorV1 } from '@happier-dev/protocol';
+
 import type { CommandContext } from '@/cli/commandRegistry';
 import { handleProvidersCliCommand } from './providers';
 import { ProviderCliError } from './providers/index';
@@ -67,6 +69,30 @@ describe('happier providers command boundary', () => {
         details,
       },
     });
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('preserves the canonical review_current_state refusal for an unknown mutation outcome', async () => {
+    const providerError = createProviderErrorV1('provider_rpc_mutation_outcome_unknown', {
+      connectionId: 'pc_1',
+      machineId: 'machine-a',
+    });
+    const load = vi.fn(async () => {
+      throw new ProviderCliError(
+        providerError.code,
+        `Provider operation failed: ${providerError.code}`,
+        providerError,
+      );
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await handleProvidersCliCommand(context(['edit', 'pc_1', '--name', 'Work']), load);
+
+    const printed = error.mock.calls.map(([line]) => String(line)).join('\n');
+    expect(printed).toContain('provider_rpc_mutation_outcome_unknown');
+    expect(printed).toContain('may have applied the Provider change');
+    expect(printed).toContain('Review current Provider state before making another change.');
+    expect(printed).toContain('Connection: pc_1');
     expect(process.exitCode).toBe(1);
   });
 

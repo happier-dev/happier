@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import {
   DIRECT_ROUTE_GRANT_TTL_MS,
   readServerEnabledBit,
+  resolvePeerRouteFeatureId,
   type FeaturesResponse,
   type PeerLoopbackEndpointCandidateV1,
 } from '@happier-dev/protocol';
@@ -144,6 +145,13 @@ export async function startPeerMediationLoopback(
     && readServerEnabledBit(input.serverFeatures, 'machines.liveStream.directPeer') === true;
   const tunnelEnabled =
     tunnelOptions !== undefined && readServerEnabledBit(input.serverFeatures, 'machines.tunnel.directPeer') === true;
+  // The voice-media flow rides the same loopback tunnel endpoint; `resolvePeerRouteFeatureId` is
+  // the single owner of which bit gates it, shared with the grant-minting server and the client.
+  const voiceMediaEnabled = tunnelOptions !== undefined
+    && readServerEnabledBit(
+      input.serverFeatures,
+      resolvePeerRouteFeatureId({ flowKind: 'voice_media', routeKind: 'loopback_direct' }),
+    ) === true;
   if (!rpcEnabled && !liveStreamEnabled && !tunnelEnabled) return null;
 
   const nowMs = input.nowMs ?? Date.now;
@@ -207,7 +215,7 @@ export async function startPeerMediationLoopback(
       ...(rpcEnabled ? { machine_rpc: machineRpcExpected } : {}),
       ...(liveStreamEnabled ? { live_stream: liveStreamExpected } : {}),
       ...(tunnelEnabled ? { tcp_tunnel: tcpTunnelExpected } : {}),
-      ...(tunnelEnabled ? { voice_media: voiceMediaExpected } : {}),
+      ...(voiceMediaEnabled ? { voice_media: voiceMediaExpected } : {}),
     },
     trustRoots,
     endpointExpiresAt: now + (input.endpointTtlMs ?? defaultEndpointTtlMs),

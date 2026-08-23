@@ -32,6 +32,32 @@ describe('buildSessionAgentTransitionDividerPayload', () => {
     expect(JSON.stringify(build())).toEqual(JSON.stringify(build()));
   });
 
+  it.each(['legacy', 'dataKey'] as const)(
+    'seals an E2EE divider byte-identically for a retry while changing bytes for a changed boundary (%s)',
+    (encryptionVariant) => {
+      const params = {
+        mode: 'e2ee' as const,
+        ctx: {
+          encryptionKey: new Uint8Array(32).fill(7),
+          encryptionVariant,
+        },
+        submittedLocalId: 'local-1',
+        fromAgentId: 'claude',
+        toAgentId: 'codex',
+        sourceCutoffSeqInclusive: 29_979,
+        returningAgentLastSeenSeqInclusive: null,
+      };
+      const changedBoundary = { ...params, sourceCutoffSeqInclusive: 29_980 };
+
+      const first = buildSessionAgentTransitionDividerPayload(params);
+      const retry = buildSessionAgentTransitionDividerPayload(params);
+      const changed = buildSessionAgentTransitionDividerPayload(changedBoundary);
+
+      expect(retry.content).toEqual(first.content);
+      expect(changed.content).not.toEqual(first.content);
+    },
+  );
+
   it('produces a record the canonical transcript schema accepts, with a required event id', () => {
     const payload = build();
     const record = (payload.content as { t: 'plain'; v: unknown }).v;

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import {
   EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   type ExternalSessionOperationRecordV1,
   type ExternalSessionOperationSocketCommandV1,
   type ExternalSessionOperationSocketResponseV1,
@@ -181,7 +181,7 @@ async function loadCurrentLinked(request: MaterializeRequest): Promise<Readonly<
       'External session source is unavailable.',
     );
   }
-  const persisted = readLinkedExternalSessionV1FromMetadata(loaded.session.metadata);
+  const persisted = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(loaded.session.metadata);
   if (
     !persisted
     || loaded.session.remoteSessionId !== request.source.remoteSessionId

@@ -42,6 +42,10 @@ function inspectionDeps(params: Readonly<{ sessionMachineId: string }>) {
         ['deepsec', buildAgentCatalogContribution({ id: 'deepsec', primary: 'executionRuns' })],
       ]),
     })) as never,
+    resolveCurrentProviderSpawnDefinitiveRejection: vi.fn(async () => ({
+      ok: true as const,
+      ref: null,
+    })) as never,
   };
 }
 
@@ -100,5 +104,89 @@ describe('sessionContinuationInspection', () => {
       protocolVersion: 1,
       sameSessionTransition: true,
     });
+  });
+
+  it('rejects a definitely missing Provider selection before advertising the target', async () => {
+    const deps = inspectionDeps({ sessionMachineId: 'machine-1' });
+    const definitiveRejection = vi.fn(async () => ({ ok: false as const }));
+    deps.resolveCurrentProviderSpawnDefinitiveRejection = definitiveRejection as never;
+    const selection = {
+      v: 1 as const,
+      agentId: 'claude',
+      modelId: 'model-a',
+      providerConnectionId: 'pc_missing',
+    };
+
+    const inspection = await inspectSessionContinuation({
+      credentials,
+      request: { v: 1, sourceSessionId: 'source-session', selection },
+      deps,
+    });
+
+    expect(inspection).toEqual({ type: 'unavailable', reason: 'target_unavailable' });
+    expect(definitiveRejection).toHaveBeenCalledWith({
+      agentTargetKey: 'backend:claude',
+      agentId: 'claude',
+      selection,
+    });
+  });
+  /**
+   * A link that EXISTS but cannot be resolved — a malformed canonical row, or
+   * two persisted rows that disagree — is neither `direct` nor `persisted`. The
+   * nullable metadata read collapsed it into `null`, which this inspection
+   * scored as "hosted here" and reported `available`; the client then armed a
+   * transition whose first act is stopping the source runtime. Both unresolved
+   * shapes must be refused, and refused BEFORE any target work.
+   */
+  it.each([
+    [
+      'malformed canonical link',
+      {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-1',
+          source: { kind: 'codexHome', home: 'user' },
+          followStatusV1: { v: 1, status: 'not-a-status', updatedAtMs: 10 },
+        },
+      },
+    ],
+    [
+      'dual rows requiring reconciliation',
+      {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-1',
+          source: { kind: 'codexHome', home: 'user' },
+        },
+        directSessionV1: {
+          v: 1,
+          agentId: 'claude',
+          machineId: 'machine-legacy',
+          remoteSessionId: 'remote-legacy',
+          source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+        },
+      },
+    ],
+  ])('never reports a Session hosted when its link is unresolved (%s)', async (_label, link) => {
+    const deps = inspectionDeps({ sessionMachineId: 'machine-1' });
+    deps.decryptOwnerMetadataView = vi.fn(() => ({
+      machineId: 'machine-1',
+      flavor: 'codex',
+      path: '/work/repo',
+      ...link,
+    })) as never;
+
+    const inspection = await inspectSessionContinuation({
+      credentials,
+      request: { v: 1, sourceSessionId: 'source-session', selection: { v: 1, agentId: 'claude' } },
+      deps,
+    });
+
+    expect(inspection).toEqual({ type: 'unavailable', reason: 'unsupported_session' });
+    expect(deps.resolveCurrentProviderSpawnDefinitiveRejection).not.toHaveBeenCalled();
   });
 });

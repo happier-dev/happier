@@ -119,13 +119,13 @@ function captureJsonProcessOutput(): Readonly<{
   });
 
   return {
-    parse: () => JSON.parse(logs.join('\n').trim()),
+    parse: () => JSON.parse(stdout.text().trim()),
     assertPure: () => {
-      expect(logs).toHaveLength(1);
-      expect(logs[0]?.trim().startsWith('{')).toBe(true);
+      expect(logs).toEqual([]);
+      expect(stdout.chunks).toHaveLength(1);
+      expect(stdout.text().trim().startsWith('{')).toBe(true);
       expect(warnings).toEqual([]);
       expect(errors).toEqual([]);
-      expect(stdout.text()).toBe('');
       expect(stderr.text()).toBe('');
     },
     restore: () => {
@@ -169,7 +169,7 @@ describe('happier session --json output purity', () => {
     { name: 'actions execute rollback', argv: ['actions', 'execute', 'sess-1', 'session.rollback', '--input-json', '{"target":{"type":"latest_turn"}}', '--json'], expectedKind: 'session_actions_execute' },
     { name: 'actions execute checkpoint rollback', argv: ['actions', 'execute', 'sess-1', 'session.checkpoint_code_rollback', '--input-json', '{"v":1}', '--json'], expectedKind: 'session_actions_execute' },
     { name: 'actions execute checkpoint', argv: ['actions', 'execute', 'sess-1', 'session.checkpoint', '--input-json', '{"v":1,"scopes":["workspace"],"candidate":{"source":"happier_scm"}}', '--json'], expectedKind: 'session_actions_execute' },
-    { name: 'run start', argv: ['run', 'start', 'sess-1', '--intent', 'review', '--backend', 'agent:claude', '--json'], expectedKind: 'session_run_start' },
+    { name: 'run start', argv: ['run', 'start', 'sess-1', '--intent', 'review', '--agent', 'agent:claude', '--json'], expectedKind: 'session_run_start' },
     { name: 'run list', argv: ['run', 'list', 'sess-1', '--json'], expectedKind: 'session_run_list' },
     { name: 'run get', argv: ['run', 'get', 'sess-1', 'run-1', '--json'], expectedKind: 'session_run_get' },
     { name: 'run send', argv: ['run', 'send', 'sess-1', 'run-1', 'hello', '--json'], expectedKind: 'session_run_send' },

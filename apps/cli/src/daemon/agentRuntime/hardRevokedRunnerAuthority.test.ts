@@ -8,6 +8,7 @@ import { PLUGIN_MANIFEST as PI_PLUGIN_MANIFEST } from '@happier-dev/plugins-pi/m
 
 import type { TrackedSession } from '@/daemon/types';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
@@ -172,7 +173,12 @@ describe('hard-revoked Runner Agent authority', () => {
             })).resolves.toBe(true);
             await persistValidatedAgentSessionRunnerFactories({
                 paths,
-                record: bundledArtifact.record,
+                // A generated bundled artifact carries structural facts only;
+                // custody is stamped when the host admits the generation.
+                record: {
+                    ...bundledArtifact.record,
+                    sourceProvenance: pluginSourceProvenanceForKind('bundled'),
+                },
                 manifestAuthority: 'bundled_first_party',
                 factories: [{
                     localAgentId: 'pi',

@@ -377,7 +377,10 @@ export function createRuntimeProviderOperationsProducer(input: Readonly<{
               const result = parsed.action === 'load'
                 ? await input.machineServices.loadModel({ ...parsed, signal })
                 : await input.machineServices.cancelModelLoad({ ...parsed, signal });
-              if (signal.aborted || !isBindingCurrent(binding)) return modelLoadCancelled();
+              // The machine owner observed the same composed signal and already
+              // decided the outcome. Once it answers, that answer is committed
+              // state: overriding it with a local cancellation would hide a
+              // completed load and make an identical retry duplicate it.
               return DaemonProviderModelLoadResponseV1Schema.parse(result);
             } catch (error) {
               if (signal.aborted || !isBindingCurrent(binding)) return modelLoadCancelled();

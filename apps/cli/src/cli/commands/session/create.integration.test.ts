@@ -5,7 +5,9 @@ import { DEFAULT_CATALOG_AGENT_ID } from '@/agent/catalog/ids';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
   bindApiSessionSocketMock,
+  createAvailableSessionSpawnMachineSnapshot,
   createApiSessionSocketStub,
+  respondToExactMachineSessionSpawnRpc,
   type ApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
@@ -28,13 +30,12 @@ describe('happier session create (integration)', () => {
     'HAPPIER_SERVER_URL',
     'HAPPIER_WEBAPP_URL',
     'HAPPIER_HOME_DIR',
-    'HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS',
   ] as const;
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
   let machineKeySeed: Uint8Array;
-  let observedInitialMessageRpc = false;
+  let observedInitialMessageAdmission = false;
   let observedSpawnBody: Record<string, unknown> | null = null;
   let observedMetadataUpdateCallCount = 0;
   let sessionGetAttempts = 0;
@@ -60,7 +61,7 @@ describe('happier session create (integration)', () => {
       'base64',
     );
     let metadataVersion = 0;
-    observedInitialMessageRpc = false;
+    observedInitialMessageAdmission = false;
     observedSpawnBody = null;
     observedMetadataUpdateCallCount = 0;
     sessionGetAttempts = 0;
@@ -69,14 +70,34 @@ describe('happier session create (integration)', () => {
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
 
-      if (req.method === 'POST' && url.pathname === `/spawn-session`) {
-        const chunks: Buffer[] = [];
-        for await (const c of req) chunks.push(Buffer.from(c));
-        observedSpawnBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
-
+      if (req.method === 'GET' && url.pathname === '/v1/machines/machine_integration') {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ success: true, sessionId }));
+        res.end(JSON.stringify({
+          machine: createAvailableSessionSpawnMachineSnapshot('machine_integration', {
+            dataEncryptionKey: encodeBase64(envelope, 'base64'),
+          }),
+        }));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/v2/sessions/lookup-by-tags') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ sessions: [] }));
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: 'integration-signing-key',
+          contentKeyFingerprint: 'integration-content-key',
+          updatedAt: 1,
+        }));
         return;
       }
 
@@ -136,7 +157,7 @@ describe('happier session create (integration)', () => {
         if (decrypted?.summary !== undefined) {
           expect(decrypted?.summary?.text).toBe('My Title');
         }
-        expect(decrypted?.tag).toBe('MyTag');
+        expect(decrypted?.tag).toBeUndefined();
         metadataCiphertext = metadata.ciphertext;
         metadataVersion += 1;
         res.statusCode = 200;
@@ -174,12 +195,36 @@ describe('happier session create (integration)', () => {
 
     sessionSocket = createApiSessionSocketStub({
       emit: (event: string, args: unknown[]) => {
+        if (respondToExactMachineSessionSpawnRpc({
+          event,
+          args,
+          machineId: 'machine_integration',
+          sessionId,
+          rpcCodec: {
+            decode: (value) => decryptWithDataKey(decodeBase64(String(value), 'base64'), machineKeySeed),
+            encode: (value) => encodeBase64(encryptWithDataKey(value, machineKeySeed), 'base64'),
+          },
+          onSpawnRequest: (request) => {
+            observedSpawnBody = { ...request };
+            metadataCiphertext = encodeBase64(
+              encryptWithDataKey({
+                path: process.cwd(),
+                host: 'spawn-host',
+                sessionCreationCorrespondenceV1: request.sessionCreationCorrespondence,
+              }, dek),
+              'base64',
+            );
+          },
+        })) {
+          return;
+        }
+
         if (event === 'update-metadata') {
           const [data, callback] = args as [any, ((value: unknown) => void) | undefined];
           observedMetadataUpdateCallCount += 1;
           expect(data?.expectedVersion).toBe(metadataVersion);
           const decrypted = decryptWithDataKey(decodeBase64(String(data?.metadata ?? ''), 'base64'), dek);
-          expect(decrypted?.tag).toBe('MyTag');
+          expect(decrypted?.tag).toBeUndefined();
           if (decrypted?.summary !== undefined) {
             expect(decrypted?.summary?.text).toBe('My Title');
           }
@@ -191,13 +236,13 @@ describe('happier session create (integration)', () => {
 
         if (event === SOCKET_RPC_EVENTS.CALL) {
           const [, callback] = args as [any, ((value: unknown) => void) | undefined];
-          observedInitialMessageRpc = true;
           callback?.({ ok: true });
           return;
         }
 
         if (event === 'message') {
           const [, callback] = args as [any, ((value: unknown) => void) | undefined];
+          observedInitialMessageAdmission = true;
           callback?.({ ok: true, id: 'm1', seq: 1, localId: 'local-1' });
           return;
         }
@@ -226,13 +271,13 @@ describe('happier session create (integration)', () => {
     reloadConfiguration();
   });
 
-  it('returns a session_create JSON envelope and marks created=true when tag does not exist', async () => {
+  it('returns a session_create JSON envelope and marks created=true', async () => {
     const { handleSessionCommand } = await import('./index');
 
     const output = captureConsoleJsonOutput();
 
     try {
-      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--prompt', 'Plan the refactor', '--json'], {
+      await handleSessionCommand(['create', '--machine-id', 'machine_integration', '--title', 'My Title', '--prompt', 'Plan the refactor', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -249,18 +294,15 @@ describe('happier session create (integration)', () => {
       expect(parsed.kind).toBe('session_create');
       expect(parsed.data?.created).toBe(true);
       expect(parsed.data?.session?.id).toBe('sess_integration_create_123');
-      expect(parsed.data?.session?.tag).toBe('MyTag');
-      expect(parsed.data?.session?.title).toBe('My Title');
-      expect(parsed.data?.session?.active).toBe(true);
-      expect(parsed.data?.session?.encryption?.type).toBe('dataKey');
       expect(observedSpawnBody).toEqual(expect.objectContaining({
         directory: process.cwd(),
-        backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
-        initialPrompt: 'Plan the refactor',
+        machineId: 'machine_integration',
+        backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
+        initialTitle: 'My Title',
         spawnNonce: expect.any(String),
       }));
-      expect(observedInitialMessageRpc).toBe(false);
-      expect(observedMetadataUpdateCallCount).toBeGreaterThanOrEqual(1);
+      expect(observedInitialMessageAdmission).toBe(false);
+      expect(observedMetadataUpdateCallCount).toBe(0);
     } finally {
       output.restore();
     }
@@ -273,7 +315,7 @@ describe('happier session create (integration)', () => {
     sessionGetNotFoundUntil = 1;
 
     try {
-      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--prompt', 'Plan the refactor', '--json'], {
+      await handleSessionCommand(['create', '--machine-id', 'machine_integration', '--title', 'My Title', '--prompt', 'Plan the refactor', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -289,21 +331,19 @@ describe('happier session create (integration)', () => {
       expect(parsed.kind).toBe('session_create');
       expect(parsed.data?.session?.id).toBe('sess_integration_create_123');
       expect(sessionGetAttempts).toBeGreaterThan(1);
-      expect(observedMetadataUpdateCallCount).toBeGreaterThanOrEqual(1);
+      expect(observedMetadataUpdateCallCount).toBe(0);
     } finally {
       output.restore();
     }
   });
 
-  it('returns success when create-time title metadata falls back after a session socket connect timeout', async () => {
+  it('carries the create-time title through the exact-machine spawn request', async () => {
     const { handleSessionCommand } = await import('./index');
-    envScope.patch({ HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS: '1' });
-    sessionSocket.connect.mockImplementation(() => sessionSocket);
 
     const output = captureConsoleJsonOutput();
 
     try {
-      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--prompt', 'Plan the refactor', '--json'], {
+      await handleSessionCommand(['create', '--machine-id', 'machine_integration', '--title', 'My Title', '--prompt', 'Plan the refactor', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -318,9 +358,8 @@ describe('happier session create (integration)', () => {
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_create');
       expect(parsed.data?.session?.id).toBe('sess_integration_create_123');
-      expect(parsed.data?.session?.tag).toBe('MyTag');
-      expect(parsed.data?.session?.title).toBe('My Title');
-      expect(sessionSocket.connect).toHaveBeenCalled();
+      expect(observedSpawnBody).toEqual(expect.objectContaining({ initialTitle: 'My Title' }));
+      expect(observedMetadataUpdateCallCount).toBe(0);
     } finally {
       output.restore();
     }
@@ -332,7 +371,7 @@ describe('happier session create (integration)', () => {
     const output = captureConsoleJsonOutput();
 
     try {
-      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--message', 'Plan the refactor', '--json'], {
+      await handleSessionCommand(['create', '--machine-id', 'machine_integration', '--title', 'My Title', '--message', 'Plan the refactor', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -348,12 +387,13 @@ describe('happier session create (integration)', () => {
       expect(parsed.kind).toBe('session_create');
       expect(observedSpawnBody).toEqual(expect.objectContaining({
         directory: process.cwd(),
-        backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
-        initialPrompt: 'Plan the refactor',
+        machineId: 'machine_integration',
+        backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
+        initialTitle: 'My Title',
         spawnNonce: expect.any(String),
       }));
-      expect(observedInitialMessageRpc).toBe(false);
-      expect(observedMetadataUpdateCallCount).toBeGreaterThanOrEqual(1);
+      expect(observedInitialMessageAdmission).toBe(false);
+      expect(observedMetadataUpdateCallCount).toBe(0);
     } finally {
       output.restore();
     }
@@ -365,7 +405,7 @@ describe('happier session create (integration)', () => {
     const output = captureConsoleJsonOutput();
 
     try {
-      await handleSessionCommand(['create', '--agent', 'codex', '--prompt', 'Plan the refactor', '--json'], {
+      await handleSessionCommand(['create', '--machine-id', 'machine_integration', '--agent', 'codex', '--prompt', 'Plan the refactor', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -381,21 +421,22 @@ describe('happier session create (integration)', () => {
       expect(parsed.kind).toBe('session_create');
       expect(observedSpawnBody).toEqual(expect.objectContaining({
         directory: process.cwd(),
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        initialPrompt: 'Plan the refactor',
+        machineId: 'machine_integration',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         spawnNonce: expect.any(String),
       }));
+      expect(observedInitialMessageAdmission).toBe(false);
     } finally {
       output.restore();
     }
   });
 
-  it('accepts legacy --no-load-existing flag (ignored)', async () => {
+  it('rejects the obsolete --no-load-existing flag before spawning', async () => {
     const { handleSessionCommand } = await import('./index');
     const output = captureConsoleJsonOutput();
 
     try {
-      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--no-load-existing', '--json'], {
+      await handleSessionCommand(['create', '--machine-id', 'machine_integration', '--title', 'My Title', '--no-load-existing', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -407,14 +448,11 @@ describe('happier session create (integration)', () => {
       });
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_create');
-      expect(observedSpawnBody).toEqual(expect.objectContaining({
-        directory: process.cwd(),
-        backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
-        spawnNonce: expect.any(String),
-      }));
-      expect(observedMetadataUpdateCallCount).toBeGreaterThanOrEqual(1);
+      expect(parsed.error?.code).toBe('invalid_arguments');
+      expect(observedSpawnBody).toBeNull();
+      expect(observedMetadataUpdateCallCount).toBe(0);
     } finally {
       output.restore();
     }

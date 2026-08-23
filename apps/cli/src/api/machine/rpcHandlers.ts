@@ -170,6 +170,17 @@ import {
 } from '@/daemon/controlClient';
 import { isUnattestedPublicV1RunnerRolloutMutation } from '@/daemon/plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
 import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
+import {
+  registerActionOperationRpcHandlers,
+  type ActionOperationRpcHandlers,
+} from '@/daemon/actionOperations';
+import type { RegisterActionSpecRpcHandlersParams } from '@/rpc/handlers/registerActionSpecRpcHandlers';
+import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import {
+  registerExternalActionRpcHandler,
+  type ExternalActionRpcRegistrationOptions,
+} from '@/rpc/handlers/externalAction';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
 const MACHINE_RPC_HANDLER_OWNER = 'machine-rpc-surface';
@@ -252,6 +263,13 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  actionOperations?: Readonly<{
+    handlers: ActionOperationRpcHandlers;
+    observeExecution: NonNullable<RegisterActionSpecRpcHandlersParams['observeExecution']>;
+  }>;
+  sessionHandoffCoordinator?: NonNullable<
+    Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['coordinateSessionHandoff']
+  >;
   /**
    * Host-private server-origin Session-start binding. The session RPC owner
    * supplies its lifecycle and nonce handlers at registration time.
@@ -260,6 +278,8 @@ export type MachineRpcHandlerDeps = Readonly<{
     MachineSessionServerStartRpcRegistrationOptions,
     'spawnLifecycleHandler' | 'resolveSpawnSessionByNonce'
   >;
+  /** Closed server-origin Action receiver bound to the shared daemon ingress. */
+  externalAction?: ExternalActionRpcRegistrationOptions;
   externalSessionOperationExclusion?: ExternalSessionOperationExclusionOwner;
   npmRegistryProfiles?: Readonly<{
     machineId: string;
@@ -321,6 +341,10 @@ export type MachineRpcHandlerDeps = Readonly<{
 
 export type MachineRpcLifecycleRegistration = Readonly<{
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
+  /** The one fenced external-session executor retained for host Action ingress. */
+  externalSessionHostActionExecutor?: RpcActionExecutor;
+  /** Exact-daemon Session spawn transport shared with host Action ingress. */
+  sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
   connectivityResources: readonly Readonly<{
     name: string;
     pause(): void | Promise<void>;
@@ -371,11 +395,18 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     });
   let transferRelayV2ResponderCleanup: (() => void) | null = null;
 
-  registerMachineSessionRpcHandlers({
+  if (params.deps?.actionOperations) {
+    registerActionOperationRpcHandlers(rpcHandlerManager, params.deps.actionOperations.handlers);
+  }
+
+  const sessionRpcRegistration = registerMachineSessionRpcHandlers({
     rpcHandlerManager,
     handlers,
     deps: params.deps,
   });
+  if (params.deps?.externalAction) {
+    registerExternalActionRpcHandler(rpcHandlerManager, params.deps.externalAction);
+  }
   registerMachineSessionGoalRpcHandlers({
     rpcHandlerManager,
     deps: {
@@ -679,6 +710,12 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     ...(handlers.savePreparedTargetLocalMetadata ? { savePreparedTargetLocalMetadata: handlers.savePreparedTargetLocalMetadata } : {}),
     ...(handlers.machineTransferChannel ? { machineTransferChannel: handlers.machineTransferChannel } : {}),
     ...(handlers.directPeerTransfer ? { directPeerTransfer: handlers.directPeerTransfer } : {}),
+    ...(params.deps?.actionOperations
+      ? { observeExecution: params.deps.actionOperations.observeExecution }
+      : {}),
+    ...(params.deps?.sessionHandoffCoordinator
+      ? { coordinateSessionHandoff: params.deps.sessionHandoffCoordinator }
+      : {}),
   });
   registerMachineDiagnosticsRpcHandlers({ rpcHandlerManager });
 
@@ -733,6 +770,11 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   });
 
   return {
+    ...(sessionRpcRegistration.sessionSpawnDirectTargetTransport
+      ? { sessionSpawnDirectTargetTransport: sessionRpcRegistration.sessionSpawnDirectTargetTransport }
+      : {}),
+    externalSessionHostActionExecutor:
+      externalSessionsRegistration.hostExternalSessionActionExecutor,
     ...(externalSessionsRegistration.pluginAdmissionOwner
       ? {
           externalSessionPluginAdmissionOwner:

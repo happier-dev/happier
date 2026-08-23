@@ -11,6 +11,7 @@ import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/json
 import { hasFlag, readCommandPositionals, readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { parseProtocolEnumFlag } from '@/cli/commands/shared/parseProtocolEnumFlag';
 import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
+import { assertSessionCommandArguments } from '@/cli/commands/session/shared/assertSessionCommandArguments';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { listExecutionRuns } from '@/session/services/executionRuns';
@@ -20,17 +21,25 @@ export async function cmdSessionRunList(
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
+  assertSessionCommandArguments(argv, {
+    usage: `Usage: ${SESSION_HELP_LINES.runList}`,
+    startIndex: 2,
+    booleanFlags: ['--json'],
+    valueFlags: ['--agent', '--status', '--limit'],
+    allowMissingValueFlags: ['--agent', '--status', '--limit'],
+    maxPositionals: 1,
+  });
   const [idOrPrefix = ''] = readCommandPositionals(argv, {
     startIndex: 2,
-    valueFlags: ['--backend', '--status', '--limit'],
+    valueFlags: ['--agent', '--status', '--limit'],
   });
   if (!idOrPrefix) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.runList}`);
   }
   const limit = readIntFlagValue(argv, '--limit', { min: 1, max: 200 });
-  const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
-  const backendTarget = backendRaw ? parseSingleBackendTargetFromFlag(backendRaw) : undefined;
-  if (hasFlag(argv, '--backend') && !backendTarget) {
+  const agentRaw = (readFlagValue(argv, '--agent') ?? '').trim();
+  const backendTarget = agentRaw ? parseSingleBackendTargetFromFlag(agentRaw) : undefined;
+  if (hasFlag(argv, '--agent') && !backendTarget) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.runList}`);
   }
   const statusRaw = (readFlagValue(argv, '--status') ?? '').trim();

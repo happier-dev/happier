@@ -18,6 +18,31 @@ export type AgentCliLaunchSpec = Readonly<{
   args: readonly string[];
 }>;
 
+/**
+ * A non-secret, in-memory binding of one admitted CLI launch to the Agent
+ * contribution that is allowed to consume it. This never carries the source
+ * environment that selected the CLI.
+ */
+export type BoundAgentCliLaunchSpec = Readonly<{
+  localAgentId: string;
+  spec: AgentCliLaunchSpec;
+}>;
+
+export function bindAgentCliLaunchSpec(params: Readonly<{
+  localAgentId: string;
+  spec: AgentCliLaunchSpec;
+}>): BoundAgentCliLaunchSpec {
+  return Object.freeze({
+    localAgentId: params.localAgentId,
+    spec: Object.freeze({
+      source: params.spec.source,
+      resolvedPath: params.spec.resolvedPath,
+      command: params.spec.command,
+      args: Object.freeze([...params.spec.args]),
+    }),
+  });
+}
+
 export function resolveAgentCliLaunchSpecForRuntime(
   runtimeSpec: AgentCliRuntimeDescriptor,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},

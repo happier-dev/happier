@@ -944,85 +944,10 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         expect(reconcile.mock.invocationCallOrder[0]).toBeLessThan(writeAccountChangesCursor.mock.invocationCallOrder[0]!);
     });
 
-    it('forwards novel qualified Account V4 projection truth without downconverting it to V2', async () => {
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-        const service = {
-            pluginId: 'acme.connected-accounts',
-            localId: 'external-service',
-        } as const;
-        const account = {
-            ref: { service, accountId: 'external-account' },
-            status: 'connected',
-            authenticationModeId: 'manual',
-            revisionSemantics: 'revisioned',
-            credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
-            configurationReady: false,
-            configurationRevision: null,
-            displayName: 'External account',
-            scopes: [],
-        } as const;
-        const group = {
-            v: 1,
-            ref: { service, groupId: 'external-fallbacks' },
-            incarnation: 'qualified-group-row-external-fallbacks',
-            displayName: null,
-            policy: {},
-            activeConnectedAccountId: 'external-account',
-            generation: 4,
-            runtimeStateRevision: 2,
-            state: {},
-            createdAt: 1,
-            updatedAt: 1,
-            members: [],
-        } as const;
-        axiosGet.mockImplementation(async (url: string) => {
-            if (url.includes('/v1/account/profile')) {
-                return {
-                    status: 200,
-                    data: {
-                        id: 'acc-1',
-                        connectedServicesV2: [],
-                        connectedServiceCredentialRevisionsV1: [],
-                        connectedAccountsV4: [account],
-                        connectedAccountGroupsV4: [group],
-                    },
-                };
-            }
-            if (url.includes('/v2/changes')) {
-                return { status: 200, data: { changes: [], nextCursor: 8 } };
-            }
-            throw new Error(`unexpected url: ${url}`);
-        });
-        const reconcile = vi.fn(async () => {});
-        const client = new ApiMachineClient('token', machine);
-        client.onConnectedServicesProjection(reconcile);
-
-        await (client as any).syncChangesOnConnect({ reason: 'connect' });
-
-        expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({
-            source: 'startup',
-            connectedServicesV2: [],
-            connectedAccountsV4: [expect.objectContaining({
-                ref: account.ref,
-                credentialRevision: account.credentialRevision,
-            })],
-            connectedAccountGroupsV4: [expect.objectContaining({
-                ref: group.ref,
-                activeConnectedAccountId: group.activeConnectedAccountId,
-                generation: group.generation,
-            })],
-        }));
-    });
-
-    it('preserves live connected-service projection authority instead of downgrading it to reconnect catch-up', async () => {
+    it.each([
+        ['connect', 'startup'],
+        ['reconnect', 'reconnect'],
+    ] as const)('reconciles connected-services truth during %s recovery when /v2/changes is disabled', async (reason, source) => {
         const previousV2Changes = process.env.HAPPY_ENABLE_V2_CHANGES;
         process.env.HAPPY_ENABLE_V2_CHANGES = 'false';
         try {
@@ -1050,16 +975,97 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             const client = new ApiMachineClient('token', machine);
             client.onConnectedServicesProjection(reconcile);
 
-            await (client as any).syncChangesOnConnect({ reason: 'live' });
+            await (client as any).syncChangesOnConnect({ reason });
 
-            expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({
-                source: 'live',
-                executionAuthority: 'runtime_recovery',
+            expect(reconcile).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+                source,
+                executionAuthority: 'passive_projection',
             }));
         } finally {
             if (previousV2Changes === undefined) delete process.env.HAPPY_ENABLE_V2_CHANGES;
             else process.env.HAPPY_ENABLE_V2_CHANGES = previousV2Changes;
         }
+    });
+
+    it('does not reconcile connected services for a live session-only changes page', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [{
+                            cursor: 8,
+                            kind: 'session',
+                            entityId: 'session-1',
+                            changedAt: 8,
+                            hint: null,
+                        }],
+                        nextCursor: 8,
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        writeAccountChangesCursor.mockClear();
+        const reconcile = vi.fn(async () => {});
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(reconcile);
+
+        await (client as any).syncChangesOnConnect({ reason: 'live' });
+
+        expect(reconcile).not.toHaveBeenCalled();
+        expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 8);
+    });
+
+    it('reconciles connected services once for a live connected-services change', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [{
+                            cursor: 9,
+                            kind: 'account',
+                            entityId: 'self',
+                            changedAt: 9,
+                            hint: { connectedServices: true },
+                        }],
+                        nextCursor: 9,
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+        const reconcile = vi.fn(async () => {});
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(reconcile);
+
+        await (client as any).syncChangesOnConnect({ reason: 'live' });
+
+        expect(reconcile).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            source: 'changes',
+            executionAuthority: 'runtime_recovery',
+        }));
     });
 
     it('continues /v2/changes catch-up without timer retry when generation reconciliation awaits another domain event', async () => {

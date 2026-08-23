@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   type PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
 
@@ -23,7 +23,7 @@ const AGENT_IDENTITY: PluginContributionIdentityV1 = {
 
 describe('resolveLinkedExternalSessionQualifiedIdentity', () => {
   it('preserves a legacy link while unavailable and resolves the same stable identity after reinstall', async () => {
-    const legacy = readLinkedExternalSessionV1FromMetadata(LEGACY_METADATA);
+    const legacy = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(LEGACY_METADATA);
     expect(legacy).not.toBeNull();
 
     const unavailable = await resolveLinkedExternalSessionQualifiedIdentity(legacy!, {
@@ -34,7 +34,7 @@ describe('resolveLinkedExternalSessionQualifiedIdentity', () => {
       errorCode: 'agent_unavailable',
       error: 'external_session_agent_unavailable',
     });
-    expect(readLinkedExternalSessionV1FromMetadata(LEGACY_METADATA)).toEqual(legacy);
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(LEGACY_METADATA)).toEqual(legacy);
 
     const installed = await resolveLinkedExternalSessionQualifiedIdentity(legacy!, {
       resolveCurrentAgent: async () => ({
@@ -79,7 +79,7 @@ describe('resolveLinkedExternalSessionQualifiedIdentity', () => {
   });
 
   it('does not let a different plugin claim a persisted qualified link', async () => {
-    const legacy = readLinkedExternalSessionV1FromMetadata(LEGACY_METADATA)!;
+    const legacy = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(LEGACY_METADATA)!;
     const qualified = await resolveLinkedExternalSessionQualifiedIdentity(legacy, {
       resolveCurrentAgent: async () => ({ identity: AGENT_IDENTITY, sourceKinds: ['claudeConfig'] }),
     });
@@ -98,7 +98,7 @@ describe('resolveLinkedExternalSessionQualifiedIdentity', () => {
   });
 
   it('rejects a source kind that the current manifest Agent does not declare', async () => {
-    const legacy = readLinkedExternalSessionV1FromMetadata(LEGACY_METADATA)!;
+    const legacy = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(LEGACY_METADATA)!;
 
     await expect(resolveLinkedExternalSessionQualifiedIdentity(legacy, {
       resolveCurrentAgent: async () => ({ identity: AGENT_IDENTITY, sourceKinds: ['codexHome'] }),

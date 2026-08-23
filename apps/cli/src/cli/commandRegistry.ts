@@ -7,11 +7,7 @@ import type {
 
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import {
-  handlePluginCommandCliCommand,
-  resolvePluginCommandProjection,
-  setProjectedPluginCommandRootHelpEntries,
-} from '@/cli/pluginCommandContributions';
+import { resolvePluginCommandProjection } from '@/cli/pluginCommandProjection';
 import {
   createCommandDispatchRegistry,
   type CommandDispatchPolicy,
@@ -21,7 +17,9 @@ import {
 import {
   isStaticCommandSurfaceProviderPlaceholder,
   isStaticCommandSurfaceReserved,
+  setProjectedPluginCommandRootHelpEntries,
 } from '@/cli/commandSurfaceManifest';
+import { FIRST_CLASS_SESSION_COMMANDS } from '@/cli/firstClassSessionCommands';
 
 export type CommandContext = Readonly<{
   args: string[];
@@ -97,6 +95,24 @@ const handleStatusCliCommand = lazyCommandHandler(async () => (await import('./c
 const handleToolsCliCommand = lazyCommandHandler(async () => (await import('./commands/tools')).handleToolsCliCommand);
 const handleUninstallCliCommand = lazyCommandHandler(async () => (await import('./commands/uninstall')).handleUninstallCliCommand);
 
+function lazyPluginCommandHandler(root: string): CommandHandler {
+  return lazyCommandHandler(async () => {
+    const { handlePluginCommandCliCommand } = await import('./pluginCommandContributions');
+    return async (context) => {
+      await handlePluginCommandCliCommand(root, context);
+    };
+  });
+}
+
+const firstClassSessionCommandRegistryEntries: Readonly<Record<string, CommandRegistryEntry>> = Object.freeze(
+  Object.fromEntries(
+    FIRST_CLASS_SESSION_COMMANDS.flatMap((sessionCommand) => [
+      [sessionCommand.command, { handler: sessionCommand.handler }],
+      ...(sessionCommand.aliases ?? []).map((alias) => [alias, { handler: sessionCommand.handler }]),
+    ]),
+  ) as Record<string, CommandRegistryEntry>,
+);
+
 const staticCommandRegistryEntries: Readonly<Record<string, CommandRegistryEntry>> = {
   attach: { handler: handleAttachCliCommand },
   automation: { handler: handleAutomationCliCommand },
@@ -135,6 +151,7 @@ const staticCommandRegistryEntries: Readonly<Record<string, CommandRegistryEntry
   status: { handler: handleStatusCliCommand },
   tools: { handler: handleToolsCliCommand },
   uninstall: { handler: handleUninstallCliCommand },
+  ...firstClassSessionCommandRegistryEntries,
 };
 
 const staticCommandRegistry: Readonly<Record<string, CommandHandler>> = Object.freeze(
@@ -218,9 +235,7 @@ export function synchronizePluginCommandContributions(registry: ResolvedContribu
     })));
 
   for (const root of projection.roots) {
-    mutableCommandRegistry[root] = async (context) => {
-      await handlePluginCommandCliCommand(root, context);
-    };
+    mutableCommandRegistry[root] = lazyPluginCommandHandler(root);
     mutableCommandPolicies[root] = undefined;
     dynamicPluginCommandKeys.add(root);
   }

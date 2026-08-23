@@ -4,7 +4,10 @@ import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happ
 
 import type { ChildExit } from '../sessions/onChildExited';
 import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
-import type { TrackedSession } from '../types';
+import type {
+  RunnerAgentInvocationContext,
+  TrackedSession,
+} from '../types';
 import type {
   RunnerAgentSessionBootstrapAuthorization,
 } from '../agentRuntime/sessionBridgeAuthorization';
@@ -65,6 +68,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   unsetEnvKeys?: readonly string[];
   runnerAgentSessionBootstrapAuthorization?:
     RunnerAgentSessionBootstrapAuthorization | null;
+  runnerAgentInvocationContext?: RunnerAgentInvocationContext | null;
   processEnv: NodeJS.ProcessEnv;
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
@@ -191,6 +195,10 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
         backendId:
           params.runnerAgentSessionBootstrapAuthorization.descriptor.backendId,
       },
+    } : {}),
+    ...(params.runnerAgentInvocationContext ? {
+      runnerAgentInvocationContext:
+        params.runnerAgentInvocationContext,
     } : {}),
     vendorResumeId: params.effectiveResume || undefined,
     directoryCreated: params.directoryCreated,

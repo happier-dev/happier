@@ -1,32 +1,30 @@
 import {
   AcpConfigOptionOverridesV1Schema,
   ConnectedServiceBindingsV1Schema,
-  RuntimeDescriptorV1Schema,
   SessionMcpSelectionV1Schema,
   type AcpConfigOptionOverridesV1,
   type ConnectedServiceBindingsV1,
-  type RuntimeDescriptorV1,
   type SessionMcpSelectionV1,
   type SpawnConfigOptionValue,
 } from '@happier-dev/protocol';
 
-import { readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
+import { readCommandPositionals, readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
 import { normalizeBackendTargetKeysFromCsv } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import {
   parseConnectedServicesLaunchAuth,
   type ConnectedServicesLaunchAuthIntent,
 } from '@/cli/connectedServicesLaunchAuth';
+import { assertSessionCommandArguments } from '../shared/assertSessionCommandArguments';
 
 /**
  * CLI argv projection only. `normalizeSessionCreateSpawnRequest` owns its
- * conversion into the strict public `SessionSpawnNewInputV2` Action input.
+ * conversion into the strict canonical `SessionSpawnNewInputV2` Action input.
  */
 export type SessionCreateSpawnRequest = Readonly<{
   directory: string;
   backendTargetKey: string | null;
   title?: string;
-  tag?: string;
   initialMessage?: string;
   modelId?: string;
   providerConnectionId?: string;
@@ -40,8 +38,6 @@ export type SessionCreateSpawnRequest = Readonly<{
   mcpSelection?: SessionMcpSelectionV1;
   transcriptStorage?: 'persisted' | 'direct';
   terminal?: Readonly<Record<string, unknown>>;
-  runtimeDescriptorV1?: RuntimeDescriptorV1;
-  host?: string;
   machineId?: string;
   serverId?: string;
 }>;
@@ -161,13 +157,79 @@ function parseTranscriptStorage(raw: string): 'persisted' | 'direct' {
   throw new Error('Invalid --transcript-storage.');
 }
 
+function rejectRetiredSessionCreateFlags(argv: readonly string[]): void {
+  for (const raw of argv) {
+    if (raw === '--') return;
+    if (raw === '--host' || raw.startsWith('--host=')) {
+      throw new Error(
+        'Invalid session create argument: --host is no longer accepted; select the configured root server and use --machine-id.',
+      );
+    }
+    if (raw === '--tag' || raw.startsWith('--tag=')) {
+      throw new Error(
+        'Invalid session create argument: --tag is no longer accepted; use --title and the returned Session id instead.',
+      );
+    }
+    if (
+      raw === '--runtime-descriptor-json'
+      || raw.startsWith('--runtime-descriptor-json=')
+      || raw === '--agent-runtime-descriptor-json'
+      || raw.startsWith('--agent-runtime-descriptor-json=')
+    ) {
+      throw new Error(
+        'Invalid session create argument: runtime descriptors are no longer accepted; use --agent, --model, and --mode.',
+      );
+    }
+  }
+}
+
 export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedSessionCreateSpawnOptions {
+  rejectRetiredSessionCreateFlags(argv);
+  assertSessionCommandArguments(argv, {
+    usage: 'Usage: happier session create [options]',
+    startIndex: 1,
+    booleanFlags: ['--json', '--wait', '--follow', '--jsonl', '--resume-spawn-attempt'],
+    valueFlags: [
+      '--path', '--title', '--message', '--prompt', '--backend', '--agent', '--model',
+      '--provider-connection', '--permission-mode', '--mode', '--launch-profile', '--profile',
+      '--machine-id', '--server-id', '--spawn-attempt-id', '--transcript-storage', '--timeout',
+      '--config-option', '--reasoning-effort', '--config-overrides-json', '--env', '--auth',
+      '--connected-services', '--auth-json', '--connected-services-json', '--mcp-selection-json',
+      '--terminal-json',
+    ],
+    maxPositionals: 1,
+    inlineValueFlags: [
+      '--path', '--title', '--message', '--prompt', '--backend', '--agent', '--model',
+      '--provider-connection', '--permission-mode', '--mode', '--launch-profile', '--profile',
+      '--machine-id', '--server-id', '--spawn-attempt-id', '--transcript-storage', '--timeout',
+      '--reasoning-effort', '--config-overrides-json', '--auth', '--connected-services', '--auth-json',
+      '--connected-services-json', '--mcp-selection-json', '--terminal-json',
+    ],
+  });
+  if (readFlagValue(argv, '--timeout') !== null && !hasFlag(argv, '--wait')) {
+    throw Object.assign(new Error('--timeout requires --wait.'), { code: 'invalid_arguments' });
+  }
+  const [positionalInitialPrompt = ''] = readCommandPositionals(argv, {
+    startIndex: 1,
+    valueFlags: [
+      '--path', '--title', '--message', '--prompt', '--backend', '--agent', '--model',
+      '--provider-connection', '--permission-mode', '--mode', '--launch-profile', '--profile',
+      '--machine-id', '--server-id', '--spawn-attempt-id', '--transcript-storage',
+      '--timeout',
+      '--config-option', '--reasoning-effort', '--config-overrides-json', '--env', '--auth',
+      '--connected-services', '--auth-json', '--connected-services-json', '--mcp-selection-json',
+      '--terminal-json',
+    ],
+  });
   const path = resolveRequestedSessionDirectory({
     requestedDirectory: readFlagValue(argv, '--path') ?? null,
   });
-  const tag = (readFlagValue(argv, '--tag') ?? '').trim();
   const title = (readFlagValue(argv, '--title') ?? '').trim();
-  const initialPrompt = (readFlagValue(argv, '--message') ?? readFlagValue(argv, '--prompt') ?? '').trim();
+  const flagInitialPrompt = (readFlagValue(argv, '--message') ?? readFlagValue(argv, '--prompt') ?? '').trim();
+  if (flagInitialPrompt && positionalInitialPrompt) {
+    throw new Error('Choose only one of a positional prompt, --message, or --prompt.');
+  }
+  const initialPrompt = flagInitialPrompt || positionalInitialPrompt;
   const backendRaw = (readFlagValue(argv, '--backend') ?? readFlagValue(argv, '--agent') ?? '').trim();
   const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendRaw);
   const backendTargetKey = backendTargetKeys.length === 1 ? backendTargetKeys[0] : null;
@@ -184,7 +246,6 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
     throw new Error('Choose only one of --launch-profile or --profile.');
   }
   const profileId = (launchProfileId ?? legacyProfileId ?? '').trim();
-  const host = (readFlagValue(argv, '--host') ?? '').trim();
   const machineId = (readFlagValue(argv, '--machine-id') ?? '').trim();
   const serverId = (readFlagValue(argv, '--server-id') ?? '').trim();
   const spawnAttemptId = (readFlagValue(argv, '--spawn-attempt-id') ?? '').trim() || null;
@@ -234,12 +295,6 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
   );
   const terminalRaw = readFlagValue(argv, '--terminal-json');
   const terminal = terminalRaw ? parseObjectJsonFlagValue(terminalRaw, '--terminal-json') : null;
-  const runtimeDescriptorRaw =
-    readFlagValue(argv, '--runtime-descriptor-json')
-    ?? readFlagValue(argv, '--agent-runtime-descriptor-json');
-  const runtimeDescriptorV1 = runtimeDescriptorRaw
-    ? RuntimeDescriptorV1Schema.parse(parseJsonFlagValue(runtimeDescriptorRaw, '--runtime-descriptor-json'))
-    : null;
   const transcriptStorage = transcriptStorageRaw ? parseTranscriptStorage(transcriptStorageRaw) : null;
 
   return {
@@ -253,7 +308,6 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
       directory: path,
       backendTargetKey,
       ...(title ? { title } : {}),
-      ...(tag ? { tag } : {}),
       ...(initialPrompt ? { initialMessage: initialPrompt } : {}),
       ...(modelId ? { modelId } : {}),
       ...(providerConnectionId ? { providerConnectionId } : {}),
@@ -267,8 +321,6 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
       ...(mcpSelection ? { mcpSelection } : {}),
       ...(transcriptStorage ? { transcriptStorage } : {}),
       ...(terminal ? { terminal } : {}),
-      ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
-      ...(host ? { host } : {}),
       ...(machineId ? { machineId } : {}),
       ...(serverId ? { serverId } : {}),
     },

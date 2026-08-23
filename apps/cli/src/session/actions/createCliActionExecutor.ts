@@ -11,9 +11,12 @@ import {
 import { readActionsSettingsFromEnv } from '@/settings/actionsSettings';
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { createTargetActionCurrentIntentAdapter } from './approvals/targetActionCurrentIntent';
-import type { StoredCredentials } from '@/persistence';
+import {
+  hasStoredSessionCredentialProvenance,
+  type StoredCredentials,
+} from '@/persistence';
 import { createDaemonPluginActionExecutor } from './createDaemonPluginActionExecutor';
-import type { RuntimeActionExecute } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol';
 import type {
   ExternalSessionPluginAdmissionOwner,
 } from './externalSessions/pluginExternalSessionAdmissionOwner';
@@ -23,6 +26,10 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
   & Readonly<{
     runtimeActionExecute?: RuntimeActionExecute;
     externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
+    /** The committed plugin-runtime owner for the built-in `action.invoke` Action. */
+    invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
+    /** The exact daemon external-session RPC owner for host-stamped API requests. */
+    hostExternalSessionAction?: ActionExecutorDeps['hostExternalSessionAction'];
   }>;
 
 export function createCredentialedTargetActionCurrentIntent(
@@ -49,6 +56,12 @@ export function createCliActionExecutor(
       ...(params.runtimeActionExecute
         ? { runtimeActionExecute: params.runtimeActionExecute }
         : {}),
+      ...(params.invokeContributedAction
+        ? { invokeContributedAction: params.invokeContributedAction }
+        : {}),
+      ...(params.hostExternalSessionAction
+        ? { hostExternalSessionAction: params.hostExternalSessionAction }
+        : {}),
       sessionTranscriptAction: async ({ actionId, input, context }) => await executeCliTranscriptAction({
         actionId,
         input,
@@ -62,13 +75,23 @@ export function createCliActionExecutor(
     },
   ).executor;
   const daemonAware = createDaemonPluginActionExecutor({ base });
+  const resolveContext = (context: Parameters<typeof base.execute>[2]) => ({
+    ...(context ?? {}),
+    surface: context?.surface ?? 'cli',
+    // API Tokens and unprovenanced synthetic credentials cannot assert that a
+    // person is present merely by entering through the CLI surface.
+    ...(hasStoredSessionCredentialProvenance(params.credentials)
+      ? {}
+      : { authority: 'account_automation' as const }),
+    actionsSettings: readActionsSettingsFromEnv() as any,
+  });
   return {
+    prepare: async (actionId, input, context) => {
+      const resolvedContext = resolveContext(context);
+      return await base.prepare(actionId, input, resolvedContext);
+    },
     execute: async (actionId, input, context) => {
-      const resolvedContext = {
-        ...(context ?? {}),
-        surface: context?.surface ?? 'cli',
-        actionsSettings: readActionsSettingsFromEnv() as any,
-      };
+      const resolvedContext = resolveContext(context);
       return await daemonAware.execute(actionId, input, resolvedContext);
     },
   };

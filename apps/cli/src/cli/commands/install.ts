@@ -4,6 +4,7 @@ import { getAgentCliRuntimeSpec, isBundledAgentId, type BundledAgentId } from '@
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { hasFlag, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import {
   requestUserPluginChange,
   resolveUserPluginChangeApproval,
@@ -78,18 +79,9 @@ function readAgentCliRuntimeDescriptor(
 
 function parseProviderInstallFlags(args: readonly string[]): Readonly<{ dryRun: boolean; skipIfInstalled: boolean }> {
   return {
-    dryRun: args.includes('--dry-run'),
-    skipIfInstalled: !args.includes('--force'),
+    dryRun: hasFlag(args, '--dry-run'),
+    skipIfInstalled: !hasFlag(args, '--force'),
   };
-}
-
-function readFlagValue(args: readonly string[], flag: string): string | null {
-  const index = args.indexOf(flag);
-  if (index < 0) return null;
-  const value = args[index + 1];
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }
 
 type PluginInstallSourceKind = 'path' | 'archive' | 'npm';
@@ -106,7 +98,7 @@ function parsePluginInstallFlags(args: readonly string[]): Readonly<{
   }
 
   return {
-    dryRun: args.includes('--dry-run'),
+    dryRun: hasFlag(args, '--dry-run'),
     sourceKind: (sourceKindRaw as PluginInstallSourceKind | null) ?? null,
     selector: readFlagValue(args, '--selector'),
     integrity: readFlagValue(args, '--integrity'),

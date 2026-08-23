@@ -31,6 +31,35 @@ const selectedPluginAttachment = {
   presentation: { label: 'Review #42', typeLabel: 'Review comment' },
 };
 
+const stagedMediaHandle = {
+  v: 1,
+  id: 'staged-content-1',
+  executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+  owner: { pluginId: 'acme.review-comments', localId: 'review-comment' },
+  mediaKind: 'image',
+  mimeType: 'image/png',
+  name: 'photo.png',
+  sizeBytes: 2048,
+  sha256: 'a'.repeat(64),
+} as const;
+
+const stagedImageAttachment = {
+  ...selectedPluginAttachment,
+  instanceId: 'staged-instance-1',
+  key: 'staged-image-1',
+  content: { kind: 'stagedMedia', handle: stagedMediaHandle },
+};
+
+const stagedVideoAttachment = {
+  ...selectedPluginAttachment,
+  instanceId: 'staged-instance-2',
+  key: 'staged-video-1',
+  content: {
+    kind: 'stagedMedia',
+    handle: { ...stagedMediaHandle, id: 'staged-content-2', mediaKind: 'video', mimeType: 'video/webm', name: 'clip.webm' },
+  },
+};
+
 describe('session user message send', () => {
   it('forwards a selected r1.0 composer attachment to the shared pre-persistence admission path', async () => {
     const { handlers, registrar } = createHarness();
@@ -67,6 +96,123 @@ describe('session user message send', () => {
         sentFrom: 'ui',
       },
     });
+  });
+
+  it('admits a blank attachment-only send whose media is still transfer-staged', async () => {
+    for (const attachment of [stagedImageAttachment, stagedVideoAttachment]) {
+      const { handlers, registrar } = createHarness();
+      const enqueueSessionUserMessage = vi.fn();
+      registerSessionUserMessageSendHandler(registrar, {
+        workingDirectory: process.cwd(),
+        enqueueSessionUserMessage,
+      });
+
+      const handler = handlers.get(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND);
+      expect(handler).toBeDefined();
+      if (!handler) return;
+
+      await expect(handler({
+        text: '',
+        localId: `pending-${attachment.instanceId}`,
+        meta: {
+          happierStructuredInputV1: {
+            v: 1,
+            composerAttachments: [attachment],
+          },
+        },
+      })).resolves.toEqual({ ok: true });
+
+      // The staged claim reaches the daemon finalizer untouched; only it may
+      // replace it with a durable SessionMedia reference.
+      expect(enqueueSessionUserMessage).toHaveBeenCalledWith({
+        text: '',
+        localId: `pending-${attachment.instanceId}`,
+        meta: {
+          happierStructuredInputV1: {
+            v: 1,
+            composerAttachments: [attachment],
+          },
+          source: 'ui',
+          sentFrom: 'ui',
+        },
+      });
+    }
+  });
+
+  it('rejects a blank attachment-only send whose staged media handle is unreadable', async () => {
+    const { handlers, registrar } = createHarness();
+    const enqueueSessionUserMessage = vi.fn();
+    registerSessionUserMessageSendHandler(registrar, {
+      workingDirectory: process.cwd(),
+      enqueueSessionUserMessage,
+    });
+
+    const handler = handlers.get(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND);
+    expect(handler).toBeDefined();
+    if (!handler) return;
+
+    await expect(handler({
+      text: '',
+      localId: 'pending-staged-expired-1',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [{
+            ...stagedImageAttachment,
+            content: { kind: 'stagedMedia', handle: { ...stagedMediaHandle, sha256: 'expired' } },
+          }],
+        },
+      },
+    })).resolves.toEqual({
+      ok: false,
+      error: 'session_structured_input_attachment_invalid',
+      errorCode: 'session_structured_input_attachment_invalid',
+    });
+
+    expect(enqueueSessionUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejoins the one media outcome when the caller retries after losing the response', async () => {
+    const { handlers, registrar } = createHarness();
+    const enqueueSessionUserMessage = vi.fn();
+    registerSessionUserMessageSendHandler(registrar, {
+      workingDirectory: process.cwd(),
+      enqueueSessionUserMessage,
+    });
+
+    const handler = handlers.get(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND);
+    expect(handler).toBeDefined();
+    if (!handler) return;
+
+    const request = {
+      text: '',
+      localId: 'pending-staged-retry-1',
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [stagedImageAttachment],
+        },
+      },
+    };
+
+    await expect(handler(request)).resolves.toEqual({ ok: true });
+    await expect(handler(request)).resolves.toEqual({ ok: true });
+    expect(enqueueSessionUserMessage).toHaveBeenCalledTimes(1);
+
+    await expect(handler({
+      ...request,
+      meta: {
+        happierStructuredInputV1: {
+          v: 1,
+          composerAttachments: [stagedVideoAttachment],
+        },
+      },
+    })).resolves.toEqual({
+      ok: false,
+      error: 'session_user_message_id_payload_conflict',
+      errorCode: 'session_user_message_id_payload_conflict',
+    });
+    expect(enqueueSessionUserMessage).toHaveBeenCalledTimes(1);
   });
 
   it('does not degrade a mixed selected attachment payload to its valid sibling', async () => {

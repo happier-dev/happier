@@ -1,6 +1,10 @@
 import chalk from 'chalk';
 
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
+import {
+  buildCliApiTokenContinuationEnvironment,
+  stripCliApiTokenEnvironment,
+} from '@/auth/cliApiToken';
 import { isTmuxAvailable, selectPreferredTmuxSessionName, TmuxUtilities } from '@/integrations/tmux';
 import { resolveHeadlessTmuxAgentLaunchConfig } from './resolveHeadlessTmuxAgentLaunchConfig';
 import { createTerminalAttachmentId } from '@/terminal/attachment/terminalAttachmentInfo';
@@ -11,11 +15,11 @@ function removeFlag(argv: string[], flag: string): string[] {
 
 function buildWindowEnv(): Record<string, string> {
   const excludedKeys = new Set(['TMUX', 'TMUX_PANE']);
-  return Object.fromEntries(
+  return stripCliApiTokenEnvironment(Object.fromEntries(
     Object.entries(process.env).filter(
       ([key, value]) => typeof value === 'string' && !excludedKeys.has(key),
     ),
-  ) as Record<string, string>;
+  ) as Record<string, string>);
 }
 
 async function resolveTmuxSessionName(params: {
@@ -78,7 +82,13 @@ export async function startHappyHeadlessInTmux(
       windowName,
       cwd: process.cwd(),
     },
-    { ...buildWindowEnv(), ...(launchSpec.env ?? {}) },
+    {
+      ...stripCliApiTokenEnvironment({
+        ...buildWindowEnv(),
+        ...(launchSpec.env ?? {}),
+      }),
+      ...buildCliApiTokenContinuationEnvironment(),
+    },
   );
 
   if (!result.success) {

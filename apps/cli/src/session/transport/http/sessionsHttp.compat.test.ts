@@ -6,7 +6,10 @@ import {
   createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
 
-import { fetchSessionByIdCompat } from './sessionsHttp';
+import {
+  applySessionAgentTransitionCutover,
+  fetchSessionByIdCompat,
+} from './sessionsHttp';
 
 describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
   it('falls back to scanning /v2/sessions pages when the single-session route is missing (404 Not found)', async () => {
@@ -113,5 +116,34 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     const res = await fetchSessionByIdCompat({ token: 't', sessionId: 's-final' });
     expect(res).toMatchObject({ id: 's-final', dataEncryptionKey: 'dek' });
     expect(getSpy).toHaveBeenCalledTimes(22);
+  });
+});
+
+describe('sessionControl.sessionsHttp.applySessionAgentTransitionCutover', () => {
+  it('fails closed when a retired divider-verification field appears in a success body', async () => {
+    vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      status: 200,
+      data: {
+        success: true,
+        dividerSeq: 7,
+        dividerVerificationRequired: true,
+      },
+    } as never);
+
+    await expect(applySessionAgentTransitionCutover({
+      token: 't',
+      sessionId: 's1',
+      currentView: {
+        kind: 'legacy_v0',
+        expectedMetadataVersion: 1,
+        metadataCiphertext: 'metadata',
+        expectedAgentStateVersion: 1,
+        agentStateCiphertext: null,
+      },
+      divider: {
+        localId: 'agent-transition:submitted-1',
+        content: { t: 'encrypted', c: 'divider' },
+      },
+    })).resolves.toEqual({ ok: false, effect: 'unknown', error: 'transport' });
   });
 });

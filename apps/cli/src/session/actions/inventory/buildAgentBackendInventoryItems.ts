@@ -1,19 +1,15 @@
-import { buildBackendTargetKey, buildBackendTargetKeyV2, type AccountSettings } from '@happier-dev/protocol'
+import {
+  buildBackendTargetKey,
+  buildBackendTargetKeyV2,
+  type AccountSettings,
+  type AgentBackendInventoryItem,
+} from '@happier-dev/protocol'
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot'
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle'
 import { listConfiguredAcpBackendsFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend'
 
 import { isBackendEnabled } from './backendAvailability'
-
-export type ActionBackendInventoryItem = Readonly<{
-  targetKey: string;
-  label: string;
-  enabled: boolean;
-  agentId?: string;
-  backendId?: string;
-  description?: string;
-}>
 
 function normalizeLimit(value: unknown): number | null {
   const parsed = Number(value)
@@ -23,7 +19,7 @@ function normalizeLimit(value: unknown): number | null {
 
 function buildCatalogBackendInventoryItems(
   accountSettings: AccountSettings | null,
-): readonly ActionBackendInventoryItem[] {
+): AgentBackendInventoryItem[] {
   const { agentDefinitionsById, catalogEntriesById } = readAgentCatalogSnapshot()
   return Object.keys(catalogEntriesById)
     .map((agentId) => {
@@ -39,6 +35,7 @@ function buildCatalogBackendInventoryItems(
         label: readAgentContributionDisplayTitle(contribution, agentId) ?? agentId,
         enabled: isBackendEnabled(accountSettings, [targetKey, legacyTargetKey]),
         agentId,
+        ...(contribution?.identity ? { identity: contribution.identity } : {}),
       }
     })
 }
@@ -46,7 +43,7 @@ function buildCatalogBackendInventoryItems(
 async function buildConfiguredAcpBackendInventoryItems(
   accountSettings: AccountSettings | null,
   happyHomeDir?: string,
-): Promise<readonly ActionBackendInventoryItem[]> {
+): Promise<AgentBackendInventoryItem[]> {
   const configuredBackends = await listConfiguredAcpBackendsFromAccountSettingsOrPlugins({
     settings: accountSettings ?? {},
     happyHomeDir,
@@ -78,7 +75,7 @@ export async function buildAgentBackendInventoryItems(params: Readonly<{
   includeDisabled?: boolean;
   accountSettings?: AccountSettings | null;
   happyHomeDir?: string;
-}>): Promise<readonly ActionBackendInventoryItem[]> {
+}>): Promise<AgentBackendInventoryItem[]> {
   const accountSettings = params.accountSettings ?? null
   const includeDisabled = params.includeDisabled === true
   const limit = normalizeLimit(params.limit)

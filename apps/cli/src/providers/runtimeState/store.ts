@@ -15,11 +15,7 @@ import {
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic as canonicalWriteJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
-import {
-  serializeProviderRuntimeStateRecordKey,
-  type ProviderRuntimeStateRecordByKind,
-  type ProviderRuntimeStateRecordKind,
-} from './keys';
+import { serializeProviderRuntimeStateRecordKey } from './keys';
 import {
   pruneProviderRuntimeStateV1,
   type ProviderRuntimeStatePruneContext,
@@ -30,14 +26,6 @@ export type ProviderRuntimeStateStoreDiagnostic = Readonly<{
   reason: ProviderRuntimeStateParseFailureReasonV1;
 }>;
 
-export type ProviderRuntimeStateTouch = {
-  [K in ProviderRuntimeStateRecordKind]: Readonly<{
-    kind: K;
-    key: ProviderRuntimeStateRecordByKind[K]['key'];
-    lastAccessedAt: number;
-  }>
-}[ProviderRuntimeStateRecordKind];
-
 export type ProviderRuntimeStateStore = Readonly<{
   path: string;
   read(): Promise<ProviderRuntimeStateFileV1>;
@@ -45,8 +33,6 @@ export type ProviderRuntimeStateStore = Readonly<{
     transform: (current: ProviderRuntimeStateFileV1) => ProviderRuntimeStateFileV1 | Promise<ProviderRuntimeStateFileV1>,
     pruneContext?: ProviderRuntimeStatePruneContext,
   ): Promise<ProviderRuntimeStateFileV1>;
-  touch(touch: ProviderRuntimeStateTouch): void;
-  flushTouches(pruneContext?: ProviderRuntimeStatePruneContext): Promise<ProviderRuntimeStateFileV1>;
 }>;
 
 export function resolveProviderRuntimeStatePath(happyHomeDir: string): string {
@@ -124,42 +110,6 @@ function cloneState(state: ProviderRuntimeStateFileV1): ProviderRuntimeStateFile
   return structuredClone(state);
 }
 
-function applyTouchToExistingRecord(
-  state: ProviderRuntimeStateFileV1,
-  touch: ProviderRuntimeStateTouch,
-): boolean {
-  let record: { lastAccessedAt: number } | undefined;
-  switch (touch.kind) {
-    case 'endpointHealth': {
-      const key = serializeProviderRuntimeStateRecordKey('endpointHealth', { key: touch.key });
-      record = state.endpointHealth.find((candidate) =>
-        serializeProviderRuntimeStateRecordKey('endpointHealth', candidate) === key);
-      break;
-    }
-    case 'catalogs': {
-      const key = serializeProviderRuntimeStateRecordKey('catalogs', { key: touch.key });
-      record = state.catalogs.find((candidate) =>
-        serializeProviderRuntimeStateRecordKey('catalogs', candidate) === key);
-      break;
-    }
-    case 'installationChecks': {
-      const key = serializeProviderRuntimeStateRecordKey('installationChecks', { key: touch.key });
-      record = state.installationChecks.find((candidate) =>
-        serializeProviderRuntimeStateRecordKey('installationChecks', candidate) === key);
-      break;
-    }
-    case 'modelLoadStates': {
-      const key = serializeProviderRuntimeStateRecordKey('modelLoadStates', { key: touch.key });
-      record = state.modelLoadStates.find((candidate) =>
-        serializeProviderRuntimeStateRecordKey('modelLoadStates', candidate) === key);
-      break;
-    }
-  }
-  if (!record || touch.lastAccessedAt <= record.lastAccessedAt) return false;
-  record.lastAccessedAt = touch.lastAccessedAt;
-  return true;
-}
-
 /**
  * Endpoint `activity` is the only runtime-state field the durable file never
  * carries: `normalizeProviderRuntimeStateFileForStartupV1` writes every record
@@ -200,7 +150,6 @@ export function createProviderRuntimeStateStore(input: Readonly<{
   const writeJsonAtomic = input.writeJsonAtomic ?? canonicalWriteJsonAtomic;
   let memory: ProviderRuntimeStateFileV1 | undefined;
   let tail: Promise<void> = Promise.resolve();
-  const pendingTouches = new Map<string, ProviderRuntimeStateTouch>();
 
   function enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = tail.then(operation, operation);
@@ -290,13 +239,6 @@ export function createProviderRuntimeStateStore(input: Readonly<{
     return memory;
   }
 
-  function validateTouch(touch: ProviderRuntimeStateTouch): string {
-    if (!Number.isFinite(touch.lastAccessedAt) || touch.lastAccessedAt < 0) {
-      throw new TypeError('Provider runtime-state touch time must be finite and non-negative');
-    }
-    return `${touch.kind}:${serializeProviderRuntimeStateRecordKey(touch.kind, { key: touch.key })}`;
-  }
-
   return {
     path,
     read: () => enqueue(async () => cloneState(await loadUnlocked())),
@@ -305,34 +247,5 @@ export function createProviderRuntimeStateStore(input: Readonly<{
       const candidate = await transform(cloneState(current));
       return cloneState(await commitUnlocked(candidate, pruneContext));
     })),
-    touch(touch): void {
-      const snapshot = structuredClone(touch);
-      const key = validateTouch(snapshot);
-      const existing = pendingTouches.get(key);
-      if (!existing || snapshot.lastAccessedAt > existing.lastAccessedAt) pendingTouches.set(key, snapshot);
-    },
-    flushTouches: (pruneContext = {}) => enqueue(async () => {
-      if (pendingTouches.size === 0) return cloneState(await loadUnlocked());
-      return await mutateLocked(async () => {
-        const current = await loadUnlocked();
-        const captured = new Map(pendingTouches);
-        pendingTouches.clear();
-        const candidate = cloneState(current);
-        let changed = false;
-        for (const touch of captured.values()) {
-          changed = applyTouchToExistingRecord(candidate, touch) || changed;
-        }
-        if (!changed) return cloneState(current);
-        try {
-          return cloneState(await commitUnlocked(candidate, pruneContext));
-        } catch (error) {
-          for (const [key, touch] of captured) {
-            const pending = pendingTouches.get(key);
-            if (!pending || touch.lastAccessedAt > pending.lastAccessedAt) pendingTouches.set(key, touch);
-          }
-          throw error;
-        }
-      });
-    }),
   };
 }

@@ -6,6 +6,7 @@ import {
   type ExternalSessionOperationReferenceV1,
   type ExternalSessionTakeoverStartInputV1,
   type ExternalSessionsSource,
+  type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
@@ -25,6 +26,15 @@ export type ContextualExternalSessionTakeoverRequest = Readonly<{
 
 export type ContextualExternalSessionTakeoverResolution = Readonly<{
   source: ExternalSessionsSource;
+  /**
+   * Static Agent-leaf evidence for the continuing single-writer contract of an
+   * external-linked takeover (C2). It is resolved with the source because both
+   * are facts of the same current configured source, and it must be known
+   * before any link or durable Start effect: an `unsupported` Agent may never
+   * reach the admitting phase runner with a committed link behind it.
+   */
+  externalLinkedTakeoverWriterSafety:
+    PluginAgentExternalLinkedTakeoverWriterSafetyV1;
 }>;
 
 export type ContextualExternalSessionTakeoverAdapter = Readonly<{
@@ -129,6 +139,18 @@ export function createContextualExternalSessionTakeoverAdapter(
           operationSignal ? { signal: operationSignal } : undefined,
         ),
       );
+      // Writer safety is a precondition of the requested storage mode, not a
+      // late phase-runner check. Resolving it here keeps an unsupported
+      // external-linked takeover from committing a canonical link and a
+      // durable operation it can never legally admit.
+      if (
+        request.targetStorageMode === 'external-linked'
+        && resolved.externalLinkedTakeoverWriterSafety !== 'native_prevention'
+      ) {
+        throw pluginFailure(
+          'plugin_external_takeover_writer_safety_unsupported',
+        );
+      }
       const linked = await runWhileAdmissionCurrent(
         options,
         async () => await dependencies.ensureLink({

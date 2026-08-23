@@ -543,7 +543,7 @@ describe('createActionToolExecutorBridge', () => {
               mcp: true,
               cli: true,
               rpc: false,
-              sdk: false,
+              api: false,
               plugin: false,
             },
             inputHints: null,

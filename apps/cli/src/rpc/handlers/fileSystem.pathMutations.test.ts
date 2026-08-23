@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { statSync } from 'node:fs';
@@ -92,6 +92,40 @@ describe('filesystem path mutations', () => {
         sizeBytes: 5,
         modifiedMs: 100.125,
       });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('statFile reports a status-change time an equal-size edit cannot hide', async () => {
+    // The exact failure a size+mtime revision cannot see: a rewrite that keeps
+    // the length and puts the modification time back. Only the status-change
+    // time separates those bytes, and no `utimes` call can restore it, so this
+    // is the fact a byte-sensitive revision is built from.
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-stat-'));
+    try {
+      const filePath = join(workspace, 'file.txt');
+      // A modification time set from one Date on both writes, so the two stats
+      // report it identically rather than merely closely.
+      const pinnedModified = new Date(1_700_000_000_000);
+      writeFileSync(filePath, 'hello', 'utf8');
+      utimesSync(filePath, pinnedModified, pinnedModified);
+
+      const mgr = createRpcHandlerManager();
+      registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+      const statFile = mgr.handlers.get(RPC_METHODS.STAT_FILE);
+      if (!statFile) throw new Error('expected statFile handler');
+
+      const before = await statFile({ path: 'file.txt' });
+
+      writeFileSync(filePath, 'world', 'utf8');
+      utimesSync(filePath, pinnedModified, pinnedModified);
+      const after = await statFile({ path: 'file.txt' });
+
+      expect(after.sizeBytes).toBe(before.sizeBytes);
+      expect(after.modifiedMs).toBe(before.modifiedMs);
+      expect(typeof before.changedMs).toBe('number');
+      expect(after.changedMs).toBeGreaterThan(before.changedMs);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

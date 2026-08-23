@@ -184,6 +184,103 @@ describe('createForkSessionLifecycleActionHandler', () => {
     mocks.declarationSource = 'cold';
   });
 
+  it('acknowledges a cancellation signal before entering the fork mutation owner', async () => {
+    const spawnSession = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: { fork: vi.fn() } }),
+      handlers: { spawnSession, stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+    }, { signal: controller.signal })).resolves.toEqual({
+      ok: false,
+      errorCode: 'cancelled',
+      errorMessage: 'cancelled',
+    });
+    expect(spawnSession).not.toHaveBeenCalled();
+    expect(mocks.fetchSessionByIdCompat).not.toHaveBeenCalled();
+  });
+
+  it('terminalizes cancellation while a native fork owner is pending', async () => {
+    mocks.nativeForkOpenModes.push('fork');
+    mocks.evaluateAgentSessionCapabilitySupport.mockReturnValue('supported');
+    const controller = new AbortController();
+    const abortError = Object.assign(new Error('Action operation cancelled'), {
+      name: 'AbortError',
+    });
+    let rejectNativeFork!: (error: unknown) => void;
+    let nativeForkSignal: AbortSignal | undefined;
+    mocks.attemptNativeForkOpen.mockImplementationOnce((input: Readonly<{ signal?: AbortSignal }>) => {
+      nativeForkSignal = input.signal;
+      return new Promise((_resolve, reject) => {
+        rejectNativeFork = reject;
+      });
+    });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: null }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+      deps: { awaitAgentSessionOpen: vi.fn() },
+    });
+
+    const result = handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'native',
+    }, { signal: controller.signal });
+    await vi.waitFor(() => expect(mocks.attemptNativeForkOpen).toHaveBeenCalledOnce());
+    expect(nativeForkSignal).toBe(controller.signal);
+    controller.abort(abortError);
+    rejectNativeFork(abortError);
+
+    await expect(result).resolves.toEqual({
+      ok: false,
+      errorCode: 'cancelled',
+      errorMessage: 'cancelled',
+    });
+  });
+
+  it('terminalizes cancellation while a provider fork surface is pending', async () => {
+    const controller = new AbortController();
+    const abortError = Object.assign(new Error('Action operation cancelled'), {
+      name: 'AbortError',
+    });
+    let rejectProviderFork!: (error: unknown) => void;
+    let providerForkSignal: AbortSignal | undefined;
+    mocks.attemptProviderNativeFork.mockImplementationOnce((input: Readonly<{ signal?: AbortSignal }>) => {
+      providerForkSignal = input.signal;
+      return new Promise((_resolve, reject) => {
+        rejectProviderFork = reject;
+      });
+    });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: { fork: vi.fn() } }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+    });
+
+    const result = handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'provider_native',
+    }, { signal: controller.signal });
+    await vi.waitFor(() => expect(mocks.attemptProviderNativeFork).toHaveBeenCalledOnce());
+    expect(providerForkSignal).toBe(controller.signal);
+    controller.abort(abortError);
+    rejectProviderFork(abortError);
+
+    await expect(result).resolves.toEqual({
+      ok: false,
+      errorCode: 'cancelled',
+      errorMessage: 'cancelled',
+    });
+  });
+
   it('routes a declared native fork through child spawn-open and does not invoke legacy or replay owners', async () => {
     mocks.nativeForkOpenModes.push('create', 'resume', 'fork');
     mocks.evaluateAgentSessionCapabilitySupport.mockReturnValue('supported');
@@ -210,11 +307,13 @@ describe('createForkSessionLifecycleActionHandler', () => {
       parentSessionId: 'parent-session',
       forkPoint: { type: 'seq', upToSeqInclusive: 7 },
       strategy: 'provider_native',
+      requestId: 'native-open-request',
     })).resolves.toEqual({ ok: true, childSessionId: 'child-native-open' });
     expect(mocks.attemptNativeForkOpen).toHaveBeenCalledWith(expect.objectContaining({
       forkPoint: { type: 'seq', upToSeqInclusive: 7 },
       targetSeqInclusive: 7,
       awaitAgentSessionOpen,
+      requestId: 'native-open-request',
     }));
     expect(mocks.attemptProviderNativeFork).not.toHaveBeenCalled();
     expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
@@ -278,9 +377,13 @@ describe('createForkSessionLifecycleActionHandler', () => {
       parentSessionId: 'parent-session',
       forkPoint: { type: 'latest' },
       strategy: 'native',
+      requestId: 'provider-native-request',
     })).resolves.toEqual({ ok: true, childSessionId: 'child-native' });
     expect(mocks.attemptProviderNativeFork).toHaveBeenCalledWith(
-      expect.objectContaining({ requestedStrategy: 'native' }),
+      expect.objectContaining({
+        requestedStrategy: 'native',
+        requestId: 'provider-native-request',
+      }),
     );
     expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
   });
@@ -298,8 +401,11 @@ describe('createForkSessionLifecycleActionHandler', () => {
       parentSessionId: 'parent-session',
       forkPoint: { type: 'latest' },
       strategy: 'native',
+      requestId: 'acp-request',
     })).resolves.toEqual({ ok: true, childSessionId: 'child-acp' });
-    expect(mocks.attemptAcpLatestFork).toHaveBeenCalledTimes(1);
+    expect(mocks.attemptAcpLatestFork).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'acp-request' }),
+    );
     // `auto` routes an ACP-forkable parent straight to the ACP lifecycle so one
     // surface invocation has one authoritative persisted strategy; the generic
     // native intent must inherit exactly that ordering.
@@ -532,6 +638,14 @@ describe('createForkSessionLifecycleActionHandler', () => {
     const secondSpawnNonce = mocks.createReplayForkSession.mock.calls[1]?.[0]?.spawnNonce;
     expect(firstSpawnNonce).toEqual(expect.any(String));
     expect(firstSpawnNonce).not.toBe(secondSpawnNonce);
+    expect(mocks.createReplayForkSession).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ requestId: 'attempt-a' }),
+    );
+    expect(mocks.createReplayForkSession).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ requestId: 'attempt-b' }),
+    );
   });
 
   it('coalesces concurrent deliveries of one fork attempt on its requestId', async () => {

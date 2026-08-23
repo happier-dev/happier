@@ -102,6 +102,17 @@ type CandidateIndexRecord = Readonly<{
     validation?: CandidateIndexValidation;
     continuationHistory?: readonly string[];
     indexGeneration?: string;
+    /**
+     * The Agent runtime generation that produced these rows, or `null` when the
+     * caller resolved no generation. `agentKey` names the Agent contribution, not
+     * the code behind it: a reload or upgrade keeps the same key while replacing
+     * the leaf that decides what a candidate is, what its `linkData` means, and
+     * which sessions the corpus contains. Without this, a successor would serve
+     * its predecessor's persisted rows and replay their `linkData` into its own
+     * link path. A record from another generation is not parsed at all, so the
+     * root request rebuilds and a continuation minted against it resets.
+     */
+    runtimeGeneration: string | null;
     candidates: readonly StoredCandidate[];
 }>;
 
@@ -110,6 +121,7 @@ type CandidateIndexCursor = Readonly<{
     kind: 'external_session_candidate_index';
     agentKey: string;
     sourceKey: string;
+    runtimeGeneration: string | null;
     indexGeneration: string;
     offset: number;
     byteOffset: number;
@@ -266,21 +278,29 @@ function digest(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+type CandidateIndexKeys = Readonly<{
+    agentKey: string;
+    sourceKey: string;
+    runtimeGeneration: string | null;
+}>;
+
 function resolveKeys(
     agentIdentity: PluginContributionIdentityV1,
     source: unknown,
-): Readonly<{ agentKey: string; sourceKey: string }> {
+    runtimeGeneration: string | null,
+): CandidateIndexKeys {
     const agentKey = digest(`${agentIdentity.pluginId}\u0000${agentIdentity.localId}`);
     const sourceKey = digest(canonicalJson(source));
     return Object.freeze({
         agentKey,
         sourceKey,
+        runtimeGeneration,
     });
 }
 
 function resolvePaths(
     activeServerDir: string,
-    keys: Readonly<{ agentKey: string; sourceKey: string }>,
+    keys: CandidateIndexKeys,
 ): Readonly<{ directory: string; indexPath: string; lockPath: string }> {
     const directory = join(
         activeServerDir,
@@ -302,8 +322,17 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
     if (process.platform !== 'win32') await chmod(path, 0o700);
 }
 
+/**
+ * Queueing for the candidate-index lock is unbounded work done on the caller's
+ * behalf — up to the 15s admission budget before a single byte of the build
+ * runs. A browse that was superseded or closed must stop queueing rather than
+ * acquire the lock and start crawling for nobody, so the caller's own signal is
+ * the admission fence. It never interrupts an effect that already holds the
+ * lock: a half-applied index write is worse than a redundant one.
+ */
 async function withCandidateIndexLock<TResult>(
     lockPath: string,
+    signal: AbortSignal | undefined,
     effect: () => Promise<TResult>,
 ): Promise<TResult> {
     return await withJsonOwnerFileLock({
@@ -312,6 +341,7 @@ async function withCandidateIndexLock<TResult>(
         staleAfterMs: 30_000,
         errorCode: 'external_session_candidate_index_lock_timeout',
         pollIntervalMs: 10,
+        ...(signal === undefined ? {} : { signal }),
     }, effect);
 }
 
@@ -719,7 +749,7 @@ function parseValidation(value: unknown): CandidateIndexValidation | null {
 
 function parseIndexRecord(
     raw: string,
-    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+    expected: CandidateIndexKeys,
 ): CandidateIndexRecord | null {
     try {
         const value = JSON.parse(raw) as unknown;
@@ -740,6 +770,7 @@ function parseIndexRecord(
             'state',
             'agentKey',
             'sourceKey',
+            'runtimeGeneration',
             'startToken',
             'scanCursor',
             'scanned',
@@ -752,6 +783,8 @@ function parseIndexRecord(
             || (record.state !== 'building' && record.state !== 'complete')
             || record.agentKey !== expected.agentKey
             || record.sourceKey !== expected.sourceKey
+            || (record.runtimeGeneration !== null && typeof record.runtimeGeneration !== 'string')
+            || record.runtimeGeneration !== expected.runtimeGeneration
             || typeof record.startToken !== 'string'
             || record.startToken.length === 0
             || (record.scanCursor !== null && typeof record.scanCursor !== 'string')
@@ -855,6 +888,7 @@ function parseIndexRecord(
             state: record.state,
             agentKey: expected.agentKey,
             sourceKey: expected.sourceKey,
+            runtimeGeneration: expected.runtimeGeneration,
             startToken: record.startToken,
             ...(head === undefined ? {} : { head }),
             scanCursor: record.scanCursor as string | null,
@@ -873,7 +907,7 @@ function parseIndexRecord(
 
 async function readIndexRecord(
     indexPath: string,
-    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+    expected: CandidateIndexKeys,
 ): Promise<CandidateIndexRecord | null> {
     const handle = await open(indexPath, 'r').catch(() => null);
     if (!handle) return null;
@@ -907,6 +941,7 @@ type CompleteCandidateIndexHeader = Readonly<{
     state: 'complete';
     agentKey: string;
     sourceKey: string;
+    runtimeGeneration: string | null;
     startToken: string;
     scanCursor: null;
     scanned: number;
@@ -922,6 +957,15 @@ type SerializedCompleteCandidateIndex = Readonly<{
     candidateByteOffsets: readonly number[];
 }>;
 
+/**
+ * The one serializer for every completed-generation write, including a warm
+ * validation checkpoint. `candidates` stays the last member of the object and
+ * every row carries its ordinal and content address, so the page-addressable
+ * reader keeps its bounded header window and its byte offsets. A validation
+ * checkpoint is written as a trailer after the array rather than a header field
+ * because its continuation history is bounded only by the candidate ceiling and
+ * would otherwise push `"candidates":[` past the header read window.
+ */
 function serializeCompleteIndexRecord(
     record: CandidateIndexRecord,
 ): SerializedCompleteCandidateIndex {
@@ -933,6 +977,7 @@ function serializeCompleteIndexRecord(
         state: 'complete',
         agentKey: record.agentKey,
         sourceKey: record.sourceKey,
+        runtimeGeneration: record.runtimeGeneration,
         startToken: record.startToken,
         scanCursor: null,
         scanned: record.scanned,
@@ -942,7 +987,12 @@ function serializeCompleteIndexRecord(
         candidateCount: record.candidates.length,
     } as const;
     const prefix = Buffer.from(`${JSON.stringify(header).slice(0, -1)},"candidates":[`, 'utf8');
-    const suffix = Buffer.from(']}\n', 'utf8');
+    const suffix = Buffer.from(
+        record.validation === undefined
+            ? ']}\n'
+            : `],"validation":${JSON.stringify(record.validation)}}\n`,
+        'utf8',
+    );
     const segments: Buffer[] = [prefix];
     const candidateByteOffsets: number[] = [];
     let byteOffset = prefix.byteLength;
@@ -983,10 +1033,27 @@ async function writeCompleteIndexRecord(
     return serialized;
 }
 
+/**
+ * The single persistence owner for the candidate index. A completed generation
+ * — with or without a validation checkpoint — always goes through the
+ * page-addressable serializer, so a checkpoint can never persist a complete
+ * record the reader rejects and cold-rebuilds.
+ */
+async function writeIndexRecord(
+    indexPath: string,
+    record: CandidateIndexRecord,
+): Promise<void> {
+    if (record.state === 'complete') {
+        await writeCompleteIndexRecord(indexPath, record);
+        return;
+    }
+    await writeJsonAtomic(indexPath, record);
+}
+
 function parseCompleteIndexHeader(
     raw: string,
     candidatesByteOffset: number,
-    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+    expected: CandidateIndexKeys,
 ): CompleteCandidateIndexHeader | null {
     try {
         const value = JSON.parse(raw) as unknown;
@@ -998,6 +1065,7 @@ function parseCompleteIndexHeader(
             'state',
             'agentKey',
             'sourceKey',
+            'runtimeGeneration',
             'startToken',
             'scanCursor',
             'scanned',
@@ -1013,6 +1081,8 @@ function parseCompleteIndexHeader(
             || record.state !== 'complete'
             || record.agentKey !== expected.agentKey
             || record.sourceKey !== expected.sourceKey
+            || (record.runtimeGeneration !== null && typeof record.runtimeGeneration !== 'string')
+            || record.runtimeGeneration !== expected.runtimeGeneration
             || typeof record.startToken !== 'string'
             || record.startToken.length === 0
             || record.scanCursor !== null
@@ -1033,6 +1103,7 @@ function parseCompleteIndexHeader(
             state: 'complete',
             agentKey: expected.agentKey,
             sourceKey: expected.sourceKey,
+            runtimeGeneration: expected.runtimeGeneration,
             startToken: record.startToken,
             scanCursor: null,
             scanned: record.scanned as number,
@@ -1049,7 +1120,7 @@ function parseCompleteIndexHeader(
 
 async function readCompleteIndexHeaderFromHandle(
     handle: FileHandle,
-    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+    expected: CandidateIndexKeys,
 ): Promise<CompleteCandidateIndexHeader | null> {
     const buffer = Buffer.alloc(COMPLETE_INDEX_HEADER_READ_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, 0);
@@ -1068,7 +1139,7 @@ async function readCompleteIndexHeaderFromHandle(
 
 async function readCompleteIndexHeader(
     indexPath: string,
-    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+    expected: CandidateIndexKeys,
 ): Promise<CompleteCandidateIndexHeader | null> {
     const handle = await open(indexPath, 'r').catch(() => null);
     if (!handle) return null;
@@ -1410,7 +1481,7 @@ function readPreparedChunk(page: ExternalSessionCandidatesPage): Readonly<{
 }
 
 function createBuildingRecord(
-    keys: Readonly<{ agentKey: string; sourceKey: string }>,
+    keys: CandidateIndexKeys,
     initialPage: ExternalSessionCandidatesPage,
 ): CandidateIndexRecord {
     const chunk = readPreparedChunk(initialPage);
@@ -1427,6 +1498,7 @@ function createBuildingRecord(
         state: 'building',
         agentKey: keys.agentKey,
         sourceKey: keys.sourceKey,
+        runtimeGeneration: keys.runtimeGeneration,
         startToken: candidateHeadAnchorToken(head),
         head,
         scanCursor: chunk.nextCursor,
@@ -1554,6 +1626,7 @@ function decodeIndexCursor(value: string): CandidateIndexCursor | null {
                 'kind',
                 'agentKey',
                 'sourceKey',
+                'runtimeGeneration',
                 'indexGeneration',
                 'offset',
                 'byteOffset',
@@ -1564,6 +1637,7 @@ function decodeIndexCursor(value: string): CandidateIndexCursor | null {
             || record.kind !== 'external_session_candidate_index'
             || typeof record.agentKey !== 'string'
             || typeof record.sourceKey !== 'string'
+            || (record.runtimeGeneration !== null && typeof record.runtimeGeneration !== 'string')
             || typeof record.indexGeneration !== 'string'
             || !/^[a-f0-9]{64}$/.test(record.indexGeneration)
             || !Number.isSafeInteger(record.offset)
@@ -1582,6 +1656,29 @@ function decodeIndexCursor(value: string): CandidateIndexCursor | null {
     }
 }
 
+/**
+ * A persisted row already carries every field the Agent candidate contract
+ * admits: `parseCandidate` in the invocation policy owner accepts exactly
+ * `remoteSessionId`, `updatedAtMs`, `title`, `createdAtMs`, `archived` and
+ * `linkData` and rejects any other key, and {@link StoredCandidate} persists all
+ * six. The one field a source may withhold from its bounded index chunk and
+ * still supply on an exact read is the title, because reading it can cost a
+ * transcript read the crawl deliberately avoids. So a stored row that already
+ * has a title is source-complete: re-reading it through the leaf can only
+ * return the same six values it already holds, at the cost of one Agent
+ * round-trip per row.
+ *
+ * Existence is not re-checked per row here either. The corpus digest that every
+ * root request revalidates is the single owner of create/delete/replace
+ * detection for a generation, and a continuation page is served from the exact
+ * digest-verified bytes of the generation it names; a per-row existence probe
+ * was a second decision-maker for the same fact, reachable only on the rows
+ * that happened to need a title.
+ */
+function isSourceCompleteStoredCandidate(candidate: StoredCandidate): boolean {
+    return candidate.title !== undefined;
+}
+
 async function hydrateAndPublishStoredCandidatePage(params: Readonly<{
     storedCandidates: readonly StoredCandidate[];
     nextCursor: string | null;
@@ -1595,7 +1692,7 @@ async function hydrateAndPublishStoredCandidatePage(params: Readonly<{
 }>): Promise<ExternalSessionCandidatesPage> {
     const candidates: ExternalSessionCandidatesPage['candidates'][number][] = [];
     for (const storedCandidate of params.storedCandidates) {
-        if (!params.hydrateCandidate) {
+        if (!params.hydrateCandidate || isSourceCompleteStoredCandidate(storedCandidate)) {
             candidates.push(storedCandidate);
             continue;
         }
@@ -1667,6 +1764,7 @@ async function serveIndexPage(
             kind: 'external_session_candidate_index',
             agentKey: record.agentKey,
             sourceKey: record.sourceKey,
+            runtimeGeneration: record.runtimeGeneration,
             indexGeneration: record.indexGeneration,
             offset: nextOffset,
             byteOffset,
@@ -1689,13 +1787,30 @@ async function serveIndexPage(
     });
 }
 
+/**
+ * The continuation the caller sent can no longer address a page: the generation
+ * it names is gone (rebuilt, retired with its Agent runtime, or replaced by a
+ * moved corpus), its body no longer verifies, or it was never a cursor this host
+ * minted. Every one of those has the same and only recovery — drop the
+ * continuation and rebuild the listing from the root — so they are one typed
+ * outcome rather than a request error the caller could usefully retry. Retrying
+ * a dead cursor can only fail again.
+ */
+export class ExternalSessionCandidateIndexCursorResetError extends Error {
+    constructor() {
+        super('External-session candidate index continuation is no longer addressable');
+        this.name = 'ExternalSessionCandidateIndexCursorResetError';
+    }
+}
+
+export function isExternalSessionCandidateIndexCursorResetError(
+    error: unknown,
+): error is ExternalSessionCandidateIndexCursorResetError {
+    return error instanceof ExternalSessionCandidateIndexCursorResetError;
+}
+
 function invalidCursor(): never {
-    throw new ExternalSessionProviderFailureError({
-        code: 'invalid_request',
-        operation: 'listCandidates',
-        message: 'External-session candidate index cursor is stale or invalid',
-        retryable: false,
-    });
+    throw new ExternalSessionCandidateIndexCursorResetError();
 }
 
 export async function executeExternalSessionCandidateQuery(params: Readonly<{
@@ -1707,6 +1822,17 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
     maxBytes?: number;
     searchTerm?: string;
     searchMode?: 'fast' | 'full';
+    /**
+     * Immutable generation id of the Agent runtime that will serve this query.
+     * A persisted index is only reused by the generation that built it; see
+     * `CandidateIndexRecord.runtimeGeneration`.
+     */
+    agentRuntimeGeneration?: string | null;
+    /**
+     * The caller's cancellation. It reaches the Agent leaf through the two
+     * request closures below and fences candidate-index lock admission here.
+     */
+    signal?: AbortSignal;
     listCandidates(request: Readonly<{
         cursor?: string;
         limit: number;
@@ -1741,7 +1867,11 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             retryable: false,
         });
     }
-    const keys = resolveKeys(params.agentIdentity, params.source);
+    const keys = resolveKeys(
+        params.agentIdentity,
+        params.source,
+        params.agentRuntimeGeneration ?? null,
+    );
     const paths = resolvePaths(params.activeServerDir, keys);
     const indexCursor = params.cursor ? decodeIndexCursor(params.cursor) : null;
     if (params.cursor && params.cursor.startsWith(INDEX_CURSOR_PREFIX) && !indexCursor) invalidCursor();
@@ -1770,6 +1900,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 || parsedHeader.indexGeneration !== indexCursor.indexGeneration
                 || parsedHeader.agentKey !== indexCursor.agentKey
                 || parsedHeader.sourceKey !== indexCursor.sourceKey
+                || parsedHeader.runtimeGeneration !== indexCursor.runtimeGeneration
                 || indexCursor.offset >= MAX_INDEX_CANDIDATES
             ) invalidCursor();
             header = parsedHeader;
@@ -1823,6 +1954,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                     kind: 'external_session_candidate_index',
                     agentKey: header.agentKey,
                     sourceKey: header.sourceKey,
+                    runtimeGeneration: header.runtimeGeneration,
                     indexGeneration: header.indexGeneration,
                     offset: indexCursor.offset + selectedCount,
                     byteOffset: nextByteOffset,
@@ -1848,9 +1980,10 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             current?.indexGeneration === header.indexGeneration
             && current.agentKey === header.agentKey
             && current.sourceKey === header.sourceKey
+            && current.runtimeGeneration === header.runtimeGeneration
         );
         if (bodyCorrupt) {
-            await withCandidateIndexLock(paths.lockPath, async () => {
+            await withCandidateIndexLock(paths.lockPath, params.signal, async () => {
                 if (!isCurrentGeneration(await readCompleteIndexHeader(paths.indexPath, keys))) return;
                 if (!candidateIndexFileIdentitiesEqual(
                     inspectedFileIdentity,
@@ -1868,12 +2001,12 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             maxBytes,
             hydrateCandidate: params.hydrateCandidate,
             invalidate: async () => {
-                await withCandidateIndexLock(paths.lockPath, async () => {
+                await withCandidateIndexLock(paths.lockPath, params.signal, async () => {
                     if (!isCurrentGeneration(await readCompleteIndexHeader(paths.indexPath, keys))) return;
                     await unlink(paths.indexPath).catch(() => undefined);
                 });
             },
-            publish: async (page) => await withCandidateIndexLock(paths.lockPath, async () => {
+            publish: async (page) => await withCandidateIndexLock(paths.lockPath, params.signal, async () => {
                 if (!isCurrentGeneration(await readCompleteIndexHeader(paths.indexPath, keys))) {
                     invalidCursor();
                 }
@@ -1891,7 +2024,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
 
     await ensurePrivateDirectory(paths.directory);
     const initialAnchor = candidateHeadAnchor(initialPage);
-    return await withCandidateIndexLock(paths.lockPath, async () => {
+    return await withCandidateIndexLock(paths.lockPath, params.signal, async () => {
         const freshBuilding = createBuildingRecord(keys, initialPage);
         const continuationWorkStartedAt = performance.now();
         let continuationCalls = 0;
@@ -1944,7 +2077,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
             });
         };
         const rebuildAndThrow = async (message: string): Promise<never> => {
-            await writeJsonAtomic(paths.indexPath, freshBuilding);
+            await writeIndexRecord(paths.indexPath, freshBuilding);
             throw sourceInvalid(message);
         };
         /**
@@ -1953,7 +2086,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
          * preparation progress instead of a typed source failure.
          */
         const rebuildAndReport = async (): Promise<ExternalSessionCandidatesPage> => {
-            await writeJsonAtomic(paths.indexPath, freshBuilding);
+            await writeIndexRecord(paths.indexPath, freshBuilding);
             return await preparationResponse(
                 initialPage,
                 [],
@@ -2059,7 +2192,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                         continuationHistory: snapshotContinuationHistory(continuationHistory),
                     }),
                 });
-                await writeJsonAtomic(paths.indexPath, validating);
+                await writeIndexRecord(paths.indexPath, validating);
                 return await preparationResponse(
                     page,
                     selectServablePreparingCandidatePage(record, limit),
@@ -2080,6 +2213,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 state: 'complete',
                 agentKey: record.agentKey,
                 sourceKey: record.sourceKey,
+                runtimeGeneration: record.runtimeGeneration,
                 startToken: record.startToken,
                 scanCursor: null,
                 scanned: record.scanned,
@@ -2088,7 +2222,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 indexGeneration,
                 candidates: sorted,
             });
-            await writeCompleteIndexRecord(paths.indexPath, complete);
+            await writeIndexRecord(paths.indexPath, complete);
             return await serveIndexPage(
                 complete,
                 0,
@@ -2151,7 +2285,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                     ...record,
                     validation,
                 });
-                await writeJsonAtomic(paths.indexPath, validating);
+                await writeIndexRecord(paths.indexPath, validating);
                 return await preparationResponse(
                     page,
                     selectServablePreparingCandidatePage(record, limit),
@@ -2196,7 +2330,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                         continuationHistory: initialContinuationHistory,
                     }),
                 });
-                await writeJsonAtomic(paths.indexPath, validating);
+                await writeIndexRecord(paths.indexPath, validating);
                 return await preparationResponse(
                     initialPage,
                     selectServablePreparingCandidatePage(record, limit),
@@ -2217,7 +2351,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
 
         const existing = await readIndexRecord(paths.indexPath, keys);
         if (!existing) {
-            await writeJsonAtomic(paths.indexPath, freshBuilding);
+            await writeIndexRecord(paths.indexPath, freshBuilding);
             return await preparationResponse(
                 initialPage,
                 [],
@@ -2254,6 +2388,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 state: 'building',
                 agentKey: existing.agentKey,
                 sourceKey: existing.sourceKey,
+                runtimeGeneration: existing.runtimeGeneration,
                 startToken: existing.startToken,
                 ...(existing.head === undefined ? {} : { head: existing.head }),
                 scanCursor,
@@ -2291,7 +2426,7 @@ export async function executeExternalSessionCandidateQuery(params: Readonly<{
                 }
                 if (canContinueWorkSlice()) continue;
                 const building = snapshotBuilding();
-                await writeJsonAtomic(paths.indexPath, building);
+                await writeIndexRecord(paths.indexPath, building);
                 return await preparationResponse(
                     page,
                     persistedPage,

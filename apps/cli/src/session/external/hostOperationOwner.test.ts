@@ -544,6 +544,57 @@ describe('external-session daemon host-operation owner', () => {
         expect(secondDispose).toHaveBeenCalledOnce();
     });
 
+    it('keeps a late follow acquisition inside the state machine when retirement raced it', async () => {
+        // Retirement can settle while acquisition is still in flight: the
+        // disposal that ran then had no handle to release. The subscription the
+        // operation hands back afterwards is still this follow's to clean up,
+        // so a pre-ceiling cleanup rejection must leave the exact handle
+        // discoverable through the owner rather than dropping it beside the
+        // state machine.
+        let disposeAttempts = 0;
+        const dispose = vi.fn(async () => {
+            disposeAttempts += 1;
+            if (disposeAttempts === 1) {
+                throw new Error('plugin disposer rejected');
+            }
+        });
+        const generationRetirement = new AbortController();
+        let generationCurrent = true;
+        let releaseAcquisition!: () => void;
+        const acquisitionGate = new Promise<void>((resolve) => {
+            releaseAcquisition = resolve;
+        });
+        const followExecute: ExternalSessionFollowHostOperation['execute'] =
+            vi.fn(async () => {
+                generationCurrent = false;
+                generationRetirement.abort();
+                await acquisitionGate;
+                return Object.freeze({
+                    status: 'following' as const,
+                    startingCursor: 'cursor-1',
+                    subscription: Object.freeze({ dispose }),
+                });
+            });
+        const owner = createExternalSessionHostOperationOwner();
+        const installation = await installOperations(owner, {
+            followOperation: unavailableFollowOperation(followExecute),
+        });
+        const binding = owner.bind(createBindingInput({
+            generationRetirementSignal: generationRetirement.signal,
+            isGenerationCurrent: () => generationCurrent,
+        }));
+
+        const followed = binding.executeFollow(followRequest());
+        releaseAcquisition();
+        await expect(followed).rejects.toThrow('plugin disposer rejected');
+        expect(dispose).toHaveBeenCalledOnce();
+
+        // The rejected cleanup is retried through the owner, on the exact
+        // handle acquisition handed back after retirement had already settled.
+        await installation.dispose();
+        expect(dispose).toHaveBeenCalledTimes(2);
+    });
+
     it('bounds active follows per bound session and rejects oversized events without retiring siblings', async () => {
         const disposals: Array<ReturnType<typeof vi.fn>> = [];
         const operationListeners: Array<

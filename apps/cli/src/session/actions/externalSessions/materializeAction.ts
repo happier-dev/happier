@@ -508,11 +508,8 @@ export function createExternalSessionMaterializeActionExecutor(
     const current = await readRecord(dependencies.activeServerDir, operationId);
     if (!current) return 'missing';
     if (
-      (
-        current.status !== 'completed'
-        && current.status !== 'discarded'
-      )
-      || current.terminalResult?.kind !== current.status
+      resolveExternalSessionOperationCompletionCompactionEligibility(current)
+        !== 'eligible'
       || !isImportBearingRequest(current.request)
     ) {
       return 'not_terminal';
@@ -548,17 +545,8 @@ export function createExternalSessionMaterializeActionExecutor(
       ? 'cleaned' as const
       : cleaned.status;
     if (
-      (
-        current.status === 'completed'
-        || current.status === 'discarded'
-      )
-      && (
-        stagingDisposition === 'cleaned'
-        || stagingDisposition === 'missing'
-      )
-      && resolveExternalSessionOperationCompletionCompactionEligibility(
-        current,
-      ) === 'eligible'
+      stagingDisposition === 'cleaned'
+      || stagingDisposition === 'missing'
     ) {
       await compactExternalSessionOperationRecordToCompletionReceipt({
         activeServerDir: dependencies.activeServerDir,
@@ -1793,7 +1781,7 @@ export function createExternalSessionMaterializeActionExecutor(
     if (stored.kind === 'completion_receipt') {
       return failure(
         'invalid_state',
-        'The completed operation no longer has private recovery state.',
+        'The settled operation no longer has private recovery state.',
       );
     }
     if (stored.kind === 'missing') {
@@ -2274,7 +2262,7 @@ export function createExternalSessionMaterializeActionExecutor(
       if (stored.kind === 'completion_receipt') {
         return failure(
           'invalid_state',
-          'The completed operation no longer has private recovery state.',
+          'The settled operation no longer has private recovery state.',
         );
       }
       if (stored.kind === 'missing') {
@@ -2304,7 +2292,7 @@ export function createExternalSessionMaterializeActionExecutor(
       if (stored.kind === 'completion_receipt') {
         return failure(
           'invalid_state',
-          'The completed operation no longer has private recovery state.',
+          'The settled operation no longer has private recovery state.',
         );
       }
       if (stored.kind === 'missing') {
@@ -2433,7 +2421,7 @@ export function createExternalSessionMaterializeActionExecutor(
       if (stored.kind === 'completion_receipt') {
         return failure(
           'invalid_state',
-          'The completed operation no longer has private recovery state.',
+          'The settled operation no longer has private recovery state.',
         );
       }
       if (stored.kind === 'missing') {
@@ -2658,7 +2646,7 @@ export function createExternalSessionMaterializeActionExecutor(
       if (admission.kind === 'completion_receipt') {
         return failure(
           'invalid_state',
-          'The completed materialization no longer has private recovery state.',
+          'The settled materialization no longer has private recovery state.',
         );
       }
       if (admission.kind === 'existing_record') {
@@ -2763,7 +2751,7 @@ export function createExternalSessionMaterializeActionExecutor(
           } else if (durableAdmission.kind === 'completion_receipt') {
             return failure(
               'invalid_state',
-              'The completed materialization no longer has private recovery state.',
+              'The settled materialization no longer has private recovery state.',
             );
           } else if (durableAdmission.kind === 'conflict') {
             return failure(

@@ -21,10 +21,6 @@ vi.mock('@/utils/proxy/socketIoProxy', () => ({
   getSocketIoProxyOptions: () => ({}),
 }));
 
-vi.mock('@/rpc/handlers/registerSessionHandlers', () => ({
-  registerSessionHandlers: () => undefined,
-}));
-
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: () => undefined,
@@ -32,18 +28,6 @@ vi.mock('@/ui/logger', () => ({
     debugLargeJson: () => undefined,
   },
 }));
-
-vi.mock('./rpc/RpcHandlerManager', () => {
-  class RpcHandlerManager {
-    registerHandler() {}
-    onSocketConnect() {}
-    onSocketDisconnect() {}
-    async handleRequest() {
-      return '';
-    }
-  }
-  return { RpcHandlerManager };
-});
 
 describe('ApiMachineClient updates', () => {
   afterEach(() => {

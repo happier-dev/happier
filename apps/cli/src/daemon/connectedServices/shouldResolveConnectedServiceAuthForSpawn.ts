@@ -1,5 +1,3 @@
-import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -22,6 +20,8 @@ function hasConnectedServiceBinding(payload: unknown): boolean {
   return false;
 }
 
-export function shouldResolveConnectedServiceAuthForSpawn(options: SpawnSessionOptions): boolean {
+export function shouldResolveConnectedServiceAuthForSpawn(
+  options: Readonly<{ connectedServices?: unknown }>,
+): boolean {
   return hasConnectedServiceBinding(options.connectedServices);
 }

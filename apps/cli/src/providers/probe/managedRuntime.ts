@@ -23,7 +23,7 @@ import type {
 } from '@/providers/spawn/resolve';
 
 import type { ProviderManagedCatalogRuntimePort } from './catalog';
-import type { ProviderProbeAuthenticatedFetch } from './client';
+import type { ProviderProbeManagedServiceRequest } from './client';
 
 type AcquireProviderCatalogRegistryLease = () => Promise<PluginRuntimeRegistryLease>;
 
@@ -254,9 +254,14 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
         ok: true as const,
         endpointUrl,
         access: Object.freeze({
-          fetch: ((request, init) => (
-            started.access.fetch(request, init)
-          )) satisfies ProviderProbeAuthenticatedFetch,
+          request: (async (request) => {
+            const response = await started.access.request(request);
+            return Object.freeze({
+              status: response.status,
+              headers: response.headers,
+              body: response.body,
+            });
+          }) satisfies ProviderProbeManagedServiceRequest,
         }),
         isCurrent: started.isCurrent,
         close: () => scope.release(),

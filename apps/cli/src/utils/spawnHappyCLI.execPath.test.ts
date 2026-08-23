@@ -50,6 +50,34 @@ describe('spawnHappyCLI runtime executable selection', () => {
     });
   });
 
+  it('keeps API Tokens and CLI continuation handoffs out of generic Happier children', async () => {
+    const spawnMock = vi.fn();
+    vi.doMock('child_process', async () => {
+      const actual = await vi.importActual<typeof import('child_process')>('child_process');
+      return { ...actual, spawn: spawnMock };
+    });
+
+    await withTempHappyCliEntrypoint(async (entrypoint) => {
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+        HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      mod.spawnHappyCLI(['--version'], {
+        env: {
+          PATH: '/bin',
+          HAPPIER_TOKEN: 'hap_v1_ambient_token_secret',
+          HAPPIER_CLI_API_TOKEN_HANDOFF_V1: 'hap_v1_handoff_token_secret',
+        },
+      });
+
+      const childEnv = spawnMock.mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv | undefined;
+      expect(childEnv?.HAPPIER_TOKEN).toBeUndefined();
+      expect(childEnv?.HAPPIER_CLI_API_TOKEN_HANDOFF_V1).toBeUndefined();
+    });
+  });
+
   it('spawns using the bun binary name when subprocess runtime is bun (not running under bun)', async () => {
     const spawnMock = vi.fn();
     vi.doMock('child_process', async () => {

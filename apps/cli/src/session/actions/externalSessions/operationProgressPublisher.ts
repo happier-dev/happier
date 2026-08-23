@@ -3,6 +3,7 @@ import {
   writeSessionStateFieldToMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
 import {
+  externalSessionOperationRetainsPartialDiscardRecoveryV1,
   EXTERNAL_SESSION_OPERATION_METADATA_KEY,
   EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY,
   ExternalSessionOperationReferenceV1Schema,
@@ -11,6 +12,7 @@ import {
   isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1,
   projectExternalSessionOperationProgressV1,
   projectExternalSessionOperationSharedPresentationV1,
+  type ExternalSessionCanonicalOwnerEvidenceV1,
   type ExternalSessionOperationProgressV1,
   type ExternalSessionOperationRecordV1,
   type ExternalSessionOperationSharedPresentationV1,
@@ -54,12 +56,68 @@ type ExternalSessionOperationStagingDisposition =
   | 'not_ready'
   | 'not_terminal';
 
-function isExternalLinkedTakeoverCompletion(
+/**
+ * The strongest canonical-owner revision this record genuinely captured.
+ * Restart repair can prove only that an owner did not answer; it must not
+ * invent a revision for an owner the record never observed.
+ */
+function capturedCanonicalOwnerReference(
+  evidence: ExternalSessionCanonicalOwnerEvidenceV1,
+): Readonly<{
+  owner: 'pending_admission' | 'transcript_authority' | 'linked_session';
+  expectedRevision: number;
+}> {
+  if (evidence.pendingAdmissionRevision !== undefined) {
+    return {
+      owner: 'pending_admission',
+      expectedRevision: evidence.pendingAdmissionRevision,
+    };
+  }
+  if (evidence.transcriptAuthorityRevision !== undefined) {
+    return {
+      owner: 'transcript_authority',
+      expectedRevision: evidence.transcriptAuthorityRevision,
+    };
+  }
+  return {
+    owner: 'linked_session',
+    expectedRevision: evidence.linkedSessionRevision,
+  };
+}
+
+/**
+ * An external-linked takeover never writes private staging, in any state, so
+ * a settled one has nothing for the staging owner to clean before compaction.
+ */
+function hasStructurallyAbsentPrivateStaging(
   record: ExternalSessionOperationRecordV1,
 ): boolean {
-  return record.status === 'completed'
-    && record.request.plan === 'takeover'
+  return record.request.plan === 'takeover'
     && record.request.targetStorageMode === 'external-linked';
+}
+
+/**
+ * A settled record whose full form nothing can still act on: every terminal
+ * status qualifies except a cancelled operation whose explicit Discard still
+ * has durable server-side partial history to release.
+ */
+function isCompactableSettledRecord(
+  record: ExternalSessionOperationRecordV1,
+): boolean {
+  return REPLACEABLE_TERMINAL_STATUSES.has(record.status)
+    && !externalSessionOperationRetainsPartialDiscardRecoveryV1(record);
+}
+
+/**
+ * A settled record that owns no private staging, so the acknowledgement that
+ * settles it is already the last event that can touch the full record and it
+ * compacts with `not_applicable` staging on the spot.
+ */
+function isSettledRecordWithoutPrivateStaging(
+  record: ExternalSessionOperationRecordV1,
+): boolean {
+  return isCompactableSettledRecord(record)
+    && hasStructurallyAbsentPrivateStaging(record);
 }
 
 async function compactTerminalExternalSessionOperation(
@@ -379,7 +437,7 @@ export async function convergeExternalSessionOperationProgressProjection(
             dependencies.sessionAdmissionLockHeld,
         });
       }
-      if (isExternalLinkedTakeoverCompletion(record)) {
+      if (isSettledRecordWithoutPrivateStaging(record)) {
         await compactTerminalExternalSessionOperation(
           activeServerDir,
           record,
@@ -438,7 +496,7 @@ export async function convergeExternalSessionOperationProgressProjection(
     readSelectedPresentation: readPresentation,
     sessionAdmissionLockHeld: dependencies.sessionAdmissionLockHeld,
   });
-  if (isExternalLinkedTakeoverCompletion(record)) {
+  if (isSettledRecordWithoutPrivateStaging(record)) {
     await compactTerminalExternalSessionOperation(
       activeServerDir,
       record,
@@ -531,16 +589,10 @@ export async function repairExternalSessionOperationProgressProjections(
     >();
     for (const terminalRecord of sessionRecords) {
       const stagingIsStructurallyAbsent =
-        isExternalLinkedTakeoverCompletion(terminalRecord);
+        isSettledRecordWithoutPrivateStaging(terminalRecord);
       const requiresTerminalStagingCleanup =
-        (
-          terminalRecord.status === 'completed'
-          || terminalRecord.status === 'discarded'
-        )
-        && !(
-          terminalRecord.request.plan === 'takeover'
-          && terminalRecord.request.targetStorageMode === 'external-linked'
-        );
+        isCompactableSettledRecord(terminalRecord)
+        && !hasStructurallyAbsentPrivateStaging(terminalRecord);
       if (
         !stagingIsStructurallyAbsent
         && (
@@ -774,11 +826,14 @@ export async function repairExternalSessionOperationProgressProjections(
                       },
                       canonicalOwnerEvidence: {
                         ...current.canonicalOwnerEvidence,
+                        // Name the owner whose revision this record actually
+                        // captured. Nothing observes runtime control here, so
+                        // relabelling another owner's revision as
+                        // runtime-control evidence would be fabricated.
                         disagreement: {
-                          owner: 'runtime_control',
-                          expectedRevision:
-                            current.canonicalOwnerEvidence.runtimeControlRevision
-                            ?? current.canonicalOwnerEvidence.linkedSessionRevision,
+                          ...capturedCanonicalOwnerReference(
+                            current.canonicalOwnerEvidence,
+                          ),
                           observedRevision: 0,
                         },
                       },
@@ -832,7 +887,7 @@ export async function repairExternalSessionOperationProgressProjections(
           );
           const stagingDisposition =
             stagingDispositionByOperationId.get(record.operationId)
-            ?? (isExternalLinkedTakeoverCompletion(record)
+            ?? (isSettledRecordWithoutPrivateStaging(record)
               ? 'not_applicable'
               : undefined);
           if (stagingDisposition) {
@@ -1111,7 +1166,7 @@ export async function assertExternalSessionOperationProgressCanBeSelected(
       || receiptReference.data.operationId
         !== receiptPresentation.data.operationId
       || receiptReference.data.revision !== receiptPresentation.data.revision
-      || receiptPresentation.data.status !== 'completed'
+      || !REPLACEABLE_TERMINAL_STATUSES.has(receiptPresentation.data.status)
     ) {
       throw new Error('external_session_operation_projection_conflict');
     }
@@ -1321,7 +1376,7 @@ export async function publishExternalSessionOperationProgress(input: Readonly<{
           sessionAdmissionLockHeld: true,
         });
       }
-      if (isExternalLinkedTakeoverCompletion(acknowledged)) {
+      if (isSettledRecordWithoutPrivateStaging(acknowledged)) {
         await compactTerminalExternalSessionOperation(
           input.activeServerDir,
           acknowledged,

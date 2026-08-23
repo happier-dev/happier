@@ -21,6 +21,7 @@ import { prepareProviderLaunch } from '@/providers/lifecycle/prepareLaunch';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import type { ProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
+import { resolveAgentNativeSpawnDefinitiveRejection } from '@/providers/spawn/currentDefinitiveRejection';
 import {
     getActiveAccountSettingsSnapshot,
     subscribeActiveAccountSettingsSnapshot,
@@ -63,6 +64,26 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     processEnv: NodeJS.ProcessEnv;
 }>): Promise<PreparedDaemonProviderLaunch | DaemonProviderLaunchRefusal> {
+    const nativePreflight = resolveAgentNativeSpawnDefinitiveRejection({
+        agentId: input.catalogAgentId,
+        selection: {
+            modelId: input.modelSelection?.ref.modelId,
+            providerConnectionId: input.modelSelection?.ref.providerConnectionId,
+            acpSessionModeId: input.options.agentModeId,
+            sessionConfigOptionOverrides: input.options.sessionConfigOptionOverrides,
+        },
+    });
+    if (!nativePreflight.ok) {
+        return {
+            ok: false,
+            result: {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                errorMessage: 'Agent-native selection is invalid.',
+            },
+        };
+    }
+
     const appliedPluginRuntimeLease = await input.pluginRuntimeLease.acquire();
 
     if (typeof input.options.profileId === 'string' && input.options.profileId.trim().length > 0) {

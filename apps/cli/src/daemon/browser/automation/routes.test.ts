@@ -1,5 +1,6 @@
 import {
   BrowserAutomationActionResultV1Schema,
+  BrowserAutomationCancelActiveResultV1Schema,
   BrowserAutomationTimelineV1Schema,
   type BrowserAutomationActionRequestV1,
 } from '@happier-dev/protocol';
@@ -42,6 +43,24 @@ function snapshotRequest(): BrowserAutomationActionRequestV1 {
   } as BrowserAutomationActionRequestV1;
 }
 
+function clickRequest(
+  overrides: Partial<BrowserAutomationActionRequestV1> = {},
+): BrowserAutomationActionRequestV1 {
+  return {
+    v: 1,
+    automationRequestId: 'req_click',
+    browserSessionId: 'browser_session_1',
+    viewId: 'view_1',
+    navigationGeneration: 1,
+    requestedBy: 'agent',
+    requesterRef: agentRef,
+    actionKind: 'click',
+    payload: { locator: { kind: 'css', value: '#submit' } },
+    timeoutMs: 5_000,
+    ...overrides,
+  } as BrowserAutomationActionRequestV1;
+}
+
 describe('browser automation routes', () => {
   it('dispatches snapshot through the service into a BrowserAutomationActionResultV1', async () => {
     const result = await routes().routes.dispatch('browser.automation.snapshot', snapshotRequest());
@@ -50,10 +69,37 @@ describe('browser automation routes', () => {
     expect((result as { status?: string }).status).toBe('succeeded');
   });
 
+  // R-1 deciding check. An agent dispatching a mutating verb must cross the action-spec schema,
+  // the protocol request schema, the daemon route and the service, and reach the engine adapter.
+  // This failed with `invalid_parameters` while the protocol superRefine mandated a `leaseId` that
+  // no production code path could mint (G3/OE-1); it must fail again if that gate is reintroduced.
+  it('dispatches a mutating click through the action layer into the engine adapter', async () => {
+    const engine = adapter();
+    const { routes: r } = routes(createBrowserAutomationDaemonService({ adapter: engine }));
+
+    const result = await r.dispatch('browser.automation.click', clickRequest());
+
+    expect(engine.execute).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(engine.execute).mock.calls[0]?.[0]).toMatchObject({
+      actionKind: 'click',
+      automationRequestId: 'req_click',
+    });
+    expect(BrowserAutomationActionResultV1Schema.safeParse(result).success).toBe(true);
+    expect(result).toMatchObject({ status: 'succeeded', automationRequestId: 'req_click' });
+  });
+
   it('rejects an automation request whose actionKind does not match the action id', async () => {
-    const result = await routes().routes.dispatch('browser.automation.click', snapshotRequest());
+    const engine = adapter();
+    const { routes: r } = routes(createBrowserAutomationDaemonService({ adapter: engine }));
+
+    // `snapshot` payload dispatched at the `click` action id. The action-spec input schema pins
+    // `actionKind` to a literal per id, so this must be refused before the engine is reached —
+    // asserting the adapter was never called is what stops a blanket schema rejection (the old
+    // lease block) from passing this test for the wrong reason.
+    const result = await r.dispatch('browser.automation.click', snapshotRequest());
 
     expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(engine.execute).not.toHaveBeenCalled();
   });
 
   it('returns the timeline for browser.automation.timeline.get', async () => {
@@ -104,15 +150,14 @@ describe('browser automation routes', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
   });
 
-  it('dispatches cancelActive to the service and reports the outcome', async () => {
+  it('projects no active automation as the cancel command outcome', async () => {
     const { routes: r } = routes();
     const result = await r.dispatch('browser.automation.cancelActive', {
       browserSessionId: 'browser_session_1',
       viewId: 'view_1',
     });
 
-    // No active action -> a typed failed automation result (not a thrown error).
-    expect(BrowserAutomationActionResultV1Schema.safeParse(result).success).toBe(true);
-    expect((result as { status?: string }).status).toBe('failed');
+    expect(BrowserAutomationCancelActiveResultV1Schema.safeParse(result).success).toBe(true);
+    expect(result).toEqual({ v: 1, outcome: 'no_active', canceledCount: 0 });
   });
 });

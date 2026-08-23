@@ -167,6 +167,23 @@ export function createTransitionDepsHarness(
       ]),
       catalogEntriesById: {},
     })) as unknown as SessionAgentTransitionDeps['readAgentCatalogSnapshot'],
+    resolveCurrentProviderSpawnDefinitiveRejection: vi.fn(async (input: {
+      agentTargetKey: string;
+      selection: { modelId?: unknown; providerConnectionId?: unknown };
+    }) => {
+      const modelId = typeof input.selection.modelId === 'string' ? input.selection.modelId : null;
+      if (modelId === null) return { ok: true as const, ref: null };
+      return {
+        ok: true as const,
+        ref: {
+          agentTargetKey: input.agentTargetKey,
+          providerConnectionId: typeof input.selection.providerConnectionId === 'string'
+            ? input.selection.providerConnectionId
+            : null,
+          modelId,
+        },
+      };
+    }) as unknown as SessionAgentTransitionDeps['resolveCurrentProviderSpawnDefinitiveRejection'],
     waitForSessionIdle: vi.fn(async () => {
       calls.push('waitForIdle');
       return { ok: true as const, sessionId: TEST_SESSION_ID, idle: true as const, observedAt: 1 };

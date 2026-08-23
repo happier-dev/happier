@@ -424,6 +424,81 @@ describe('provider probe HTTP client', () => {
     })).rejects.toBeInstanceOf(ProviderProbeClientError);
   });
 
+  it('spends one wall budget across the whole redirect chain', async () => {
+    const wallTimeouts: number[] = [];
+    let clock = 0;
+    const client = createProviderProbeHttpClient({
+      resolveAddresses: async () => ['93.184.216.34'],
+      now: () => clock,
+      transport: async (request) => {
+        wallTimeouts.push(request.wallTimeMs);
+        clock += 12_000;
+        return wallTimeouts.length === 1
+          ? {
+              status: 302,
+              headers: { location: 'https://models.example/v2/models' },
+              body: Buffer.alloc(0),
+            }
+          : response();
+      },
+    });
+
+    await expect(client.getCatalog({
+      endpointUrl: 'https://models.example', path: '/models', parser: 'openai-models', publicHeaders: {}, ...authorizedDestination,
+    })).resolves.toMatchObject({ catalog: { models: [{ id: 'model-a' }] } });
+
+    expect(wallTimeouts).toEqual([
+      PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
+      PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs - 12_000,
+    ]);
+  });
+
+  it('bounds a managed authenticated response that returns headers and never finishes its body', async () => {
+    vi.useFakeTimers();
+    try {
+      let bodyCancelled = false;
+      const stalledBody = new ReadableStream<Uint8Array>({
+        start() {
+          // Headers are already delivered; the body never produces a chunk.
+        },
+        cancel() {
+          bodyCancelled = true;
+        },
+      });
+      const client = createProviderProbeHttpClient({
+        resolveAddresses: async () => ['127.0.0.1'],
+        transport: async () => {
+          throw new Error('the managed branch must not reach the pinned transport');
+        },
+      });
+
+      const settled = client.getCatalog({
+        endpointUrl: 'http://127.0.0.1:4096',
+        path: '/models',
+        parser: 'openai-models',
+        publicHeaders: {},
+        credentialPolicy: 'required',
+        managedRequest: async () => ({
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: stalledBody,
+        }),
+        ...authorizedDestination,
+      }).catch((error: unknown) => error);
+
+      await vi.advanceTimersByTimeAsync(
+        PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 1_000,
+      );
+
+      const error = await settled;
+      expect(error).toBeInstanceOf(ProviderProbeClientError);
+      expect(error).toMatchObject({ code: 'provider_endpoint_unreachable' });
+      expect(bodyCancelled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('maps transport errors without retaining raw secret-bearing messages', async () => {
     const client = createProviderProbeHttpClient({
       resolveAddresses: async () => ['93.184.216.34'],

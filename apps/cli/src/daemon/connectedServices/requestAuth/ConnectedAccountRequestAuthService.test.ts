@@ -597,6 +597,54 @@ describe('ConnectedAccountRequestAuthService', () => {
         expect(materializations).toBe(1);
     });
 
+    it('does not let a retiring subject fail a current subject that needs the same cold fill', async () => {
+        let retiringSubjectCurrent = true;
+        const retiringFill = deferred<Readonly<{ accessToken: string }>>();
+        const materializingSubjectIds: string[] = [];
+        const owner = createConnectedAccountRequestAuthService({
+            resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
+            // Mirrors the daemon materializer, which refuses once the exact subject
+            // it runs under stops being current.
+            materializeBearer: async (input) => {
+                materializingSubjectIds.push(input.subject.subjectId);
+                const material = input.subject.subjectId === 'session:test'
+                    ? await retiringFill.promise
+                    : { accessToken: 'token-one' };
+                if (!input.subject.isCurrent()) {
+                    throw new ConnectedAccountRequestAuthError('request_auth_not_active');
+                }
+                return material;
+            },
+            refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
+            reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
+        });
+        const retiringSubject = subject(accountBinding(), () => retiringSubjectCurrent);
+        const currentSubject = {
+            ...subject(accountBinding()),
+            subjectId: 'session:other',
+        };
+
+        const retiringLookup = owner
+            .lookupRequestAuth({ subject: retiringSubject, purpose })
+            .then(() => ({ code: 'unexpected_success' }), (error: unknown) => error);
+        await vi.waitFor(() => expect(materializingSubjectIds).toEqual(['session:test']));
+        const currentLookup = owner.lookupRequestAuth({
+            subject: currentSubject,
+            purpose,
+        });
+        await vi.waitFor(() => expect(materializingSubjectIds).toEqual([
+            'session:test',
+            'session:other',
+        ]));
+        retiringSubjectCurrent = false;
+        retiringFill.resolve({ accessToken: 'token-one' });
+
+        await expect(currentLookup).resolves.toMatchObject({ accessToken: 'token-one' });
+        await expect(retiringLookup).resolves.toMatchObject({
+            code: 'request_auth_not_active',
+        });
+    });
+
     it('keys credential content by revision while health-only truth does not churn the lease', async () => {
         let currentRevision = revision1;
         let health = 'unknown';

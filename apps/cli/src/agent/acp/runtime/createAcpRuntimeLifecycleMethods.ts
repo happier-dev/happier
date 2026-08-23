@@ -41,6 +41,44 @@ type AcpRuntimeLifecycleHooks = {
   }) => void;
 };
 
+/**
+ * A generic ACP runtime may return an explicit resumed id even though the
+ * standard ACP `session/load` response carries none. If it does, accepting a
+ * different one would silently convert a strict native return into a different
+ * conversation.
+ */
+export class AcpRuntimeResumeIdentityMismatchError extends Error {
+  readonly code = 'acp_runtime_resume_identity_mismatch';
+  readonly happierNativeResumeIdentityMismatch = true;
+
+  constructor(
+    readonly requestedSessionId: string,
+    readonly observedSessionId: string,
+  ) {
+    super('ACP resumed a different provider session than requested.');
+    this.name = 'AcpRuntimeResumeIdentityMismatchError';
+  }
+}
+
+function resolveStrictLoadedSessionId(
+  requestedSessionId: string,
+  loaded: Readonly<{ sessionId?: string | null }>,
+): string {
+  const observedSessionId = typeof loaded.sessionId === 'string'
+    ? loaded.sessionId.trim()
+    : '';
+  if (observedSessionId && observedSessionId !== requestedSessionId) {
+    throw new AcpRuntimeResumeIdentityMismatchError(
+      requestedSessionId,
+      observedSessionId,
+    );
+  }
+  // Standard ACP `session/load` has no returned id. A successful protocol load
+  // therefore accepts the requested id semantically; only an explicit,
+  // conflicting generic-backend return is rejected above.
+  return observedSessionId || requestedSessionId;
+}
+
 function normalizeReplayPromptText(value: unknown): string {
   return typeof value === 'string'
     ? value.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim()
@@ -314,14 +352,14 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
         try {
           if (backend.loadSessionWithReplayCapture && importHistory) {
             const loaded = await backend.loadSessionWithReplayCapture(resumeId);
-            params.state.sessionId = loaded.sessionId ?? resumeId;
+            params.state.sessionId = resolveStrictLoadedSessionId(resumeId, loaded);
             replay = Array.isArray(loaded.replay) ? loaded.replay : null;
           } else if (backend.loadSession) {
             const loaded = await backend.loadSession(resumeId);
-            params.state.sessionId = loaded.sessionId ?? resumeId;
+            params.state.sessionId = resolveStrictLoadedSessionId(resumeId, loaded);
           } else if (backend.loadSessionWithReplayCapture) {
             const loaded = await backend.loadSessionWithReplayCapture(resumeId);
-            params.state.sessionId = loaded.sessionId ?? resumeId;
+            params.state.sessionId = resolveStrictLoadedSessionId(resumeId, loaded);
           } else {
             throw new Error(`${params.provider} ACP backend does not support loading sessions`);
           }

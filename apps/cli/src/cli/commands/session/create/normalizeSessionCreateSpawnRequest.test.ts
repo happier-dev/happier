@@ -95,13 +95,16 @@ describe('normalizeSessionCreateSpawnRequest', () => {
     });
   });
 
-  it('fails closed instead of forwarding fields excluded from the V2 contract', async () => {
+  it('normalizes explicit environment variables into the strict V2 Action input', async () => {
     await expect(normalizeSessionCreateSpawnRequest({
       directory: '/repo/project',
       backendTargetKey: null,
-      tag: 'legacy-label',
-      environmentVariables: { TOKEN: 'secret' },
-    }, createDeps())).rejects.toThrow(/--tag, --env/);
+      environmentVariables: { TOKEN: 'secret', camelCase: 'daemon-compatible' },
+    }, createDeps())).resolves.toMatchObject({
+      input: {
+        environmentVariables: { TOKEN: 'secret', camelCase: 'daemon-compatible' },
+      },
+    });
   });
 
   it('rejects conflicting configuration aliases before Action dispatch', async () => {

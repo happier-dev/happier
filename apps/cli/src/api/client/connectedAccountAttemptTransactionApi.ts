@@ -1,4 +1,8 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import {
+  StoredJsonContentEnvelopeSchema,
+  type StoredJsonContentEnvelope,
+} from '@happier-dev/protocol';
 import axios from 'axios';
 import { z } from 'zod';
 
@@ -9,7 +13,7 @@ export type ConnectedAccountAttemptTransactionKind = 'oauth' | 'device';
 
 export type ConnectedAccountAttemptTransactionRecord = Readonly<{
   revision: number;
-  ciphertext: string;
+  content: StoredJsonContentEnvelope;
   expiresAtMs: number;
 }>;
 
@@ -17,7 +21,7 @@ export type ConnectedAccountAttemptTransactionStoreApi = Readonly<{
   create(input: Readonly<{
     kind: ConnectedAccountAttemptTransactionKind;
     attemptId: string;
-    ciphertext: string;
+    content: StoredJsonContentEnvelope;
     expiresAtMs: number;
   }>): Promise<ConnectedAccountAttemptTransactionRecord>;
   read(input: Readonly<{
@@ -28,7 +32,7 @@ export type ConnectedAccountAttemptTransactionStoreApi = Readonly<{
     kind: ConnectedAccountAttemptTransactionKind;
     attemptId: string;
     expectedRevision: number;
-    ciphertext: string;
+    content: StoredJsonContentEnvelope;
     expiresAtMs: number;
   }>): Promise<ConnectedAccountAttemptTransactionRecord>;
   delete(input: Readonly<{
@@ -42,6 +46,7 @@ export type ConnectedAccountAttemptTransactionApiErrorCode =
   | 'connected_account_attempt_transaction_not_found'
   | 'connected_account_attempt_transaction_conflict'
   | 'connected_account_attempt_transaction_expiry_invalid'
+  | 'connected_account_attempt_transaction_storage_mode_mismatch'
   | 'connected_account_attempt_transaction_contract_invalid';
 
 export class ConnectedAccountAttemptTransactionApiError extends Error {
@@ -56,7 +61,7 @@ export class ConnectedAccountAttemptTransactionApiError extends Error {
 
 const TransactionRecordSchema = z.object({
   revision: z.number().int().min(1),
-  ciphertext: z.string().min(1).max(524_288),
+  content: StoredJsonContentEnvelopeSchema,
   expiresAtMs: z.number().int().positive(),
 }).strict();
 
@@ -65,6 +70,7 @@ const TransactionErrorSchema = z.object({
     'connected_account_attempt_transaction_not_found',
     'connected_account_attempt_transaction_conflict',
     'connected_account_attempt_transaction_expiry_invalid',
+    'connected_account_attempt_transaction_storage_mode_mismatch',
   ]),
 }).strict();
 
@@ -104,7 +110,7 @@ export function createConnectedAccountAttemptTransactionApi(
       const response = await axios.post(
         transactionUrl(input.kind, input.attemptId),
         {
-          ciphertext: input.ciphertext,
+          content: input.content,
           expiresAtMs: input.expiresAtMs,
         },
         {
@@ -142,7 +148,7 @@ export function createConnectedAccountAttemptTransactionApi(
         transactionUrl(input.kind, input.attemptId),
         {
           expectedRevision: input.expectedRevision,
-          ciphertext: input.ciphertext,
+          content: input.content,
           expiresAtMs: input.expiresAtMs,
         },
         {
@@ -166,6 +172,22 @@ export function createConnectedAccountAttemptTransactionApi(
           ),
         },
       );
+      if (response.status === 404) {
+        // DELETE is idempotent: an exact absent record is the outcome this
+        // cleanup asked for. Reporting it as a failure keeps the terminal
+        // response and its attempt slot held for an operation that can never
+        // succeed again.
+        const parsed = TransactionErrorSchema.safeParse(response.data);
+        if (
+          !parsed.success
+          || parsed.data.error !== 'connected_account_attempt_transaction_not_found'
+        ) {
+          throw new ConnectedAccountAttemptTransactionApiError(
+            'connected_account_attempt_transaction_contract_invalid',
+          );
+        }
+        return;
+      }
       if (response.status !== 200) throwResponseError(response.data);
       if (
         !response.data

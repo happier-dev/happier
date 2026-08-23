@@ -12,7 +12,11 @@ import type {
   updateSessionMarkerRunnerManagedDependencyRetention,
 } from '@/daemon/sessionRegistry';
 import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '@/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
-import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import {
+  createAgentSessionRunnerFactoryBinding,
+  createHostDeclarativeAcpRunnerBinding,
+  type AgentSessionRunnerBindingV1,
+} from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { ensurePluginStoreDirectories } from '@/plugins/store/paths';
 import {
   PluginRegistryCommitRecordSchema,
@@ -63,6 +67,22 @@ function retainedAgent(input?: Readonly<{
   });
 }
 
+function retainedHostDeclarativeAgent(input: Readonly<{
+  pluginId: string;
+  immutableGenerationId: string;
+}>) {
+  return createHostDeclarativeAcpRunnerBinding({
+    kind: 'host_declarative_acp_v1',
+    v: 1,
+    pluginId: input.pluginId,
+    pluginVersion: '1.0.0',
+    agentId: 'codex',
+    qualifiedAgentId: `${input.pluginId}/agents/codex`,
+    localAgentId: 'codex',
+    immutableGenerationId: input.immutableGenerationId,
+  });
+}
+
 async function commitHardRevision(
   happyHomeDir: string,
   revision: number,
@@ -102,7 +122,7 @@ async function commitHardRevision(
 }
 
 async function createPublishedAuthority(
-  retained: ReturnType<typeof retainedAgent> = retainedAgent(),
+  retained: AgentSessionRunnerBindingV1 = retainedAgent(),
 ) {
   const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-foreground-promotion-'));
   await commitHardRevision(happyHomeDir, 0);
@@ -136,6 +156,64 @@ const attachRunnerRetainedPluginGenerations = async (
 ) => await input.attach();
 
 describe('promoteForegroundDaemonServiceAuthority', () => {
+  it.each([
+    ['reserved', 'happier.agent.codex', 'bundled_first_party'],
+    ['external', 'acme.agent.codex', 'external'],
+  ] as const)('proves %s host-declarative bindings with the canonical manifest authority', async (
+    _kind,
+    pluginId,
+    retainedManifestAuthority,
+  ) => {
+    const retained = retainedHostDeclarativeAgent({
+      pluginId,
+      immutableGenerationId: 'generation-codex',
+    });
+    const fixture = await createPublishedAuthority(retained);
+    try {
+      const tracked: TrackedSession = {
+        pid: 4242,
+        happySessionId: fixture.sessionId,
+        startedBy: 'happy directly - likely by user from terminal',
+        processStartTimeMs: 2_000,
+        processCommandHash: 'a'.repeat(64),
+      };
+      const readPluginImmutableGenerationIntegrityCurrentness =
+        vi.fn(async () => true);
+
+      await expect(promoteForegroundDaemonServiceAuthority({
+        happyHomeDir: fixture.happyHomeDir,
+        publicReleaseRing: 'stable',
+        trackedSessions: new Map([[tracked.pid, tracked]]),
+        canonicalSessionId: fixture.sessionId,
+        foregroundPid: tracked.pid,
+        authorityFilePath: fixture.authorityFilePath,
+        retainedAgent: retained,
+        runner: fixture.runner,
+        capabilityDigest: fixture.published.capabilityDigest,
+        invocationContext: {
+          cwd: '/workspace',
+          environment: {},
+          providerBindingActive: false,
+        },
+        persistAuthorityPath: async () => true,
+        persistRunnerAgentImmutableGenerationId: async () => true,
+        persistRunnerManagedDependencyRetention: async () => true,
+        attachRunnerRetainedPluginGenerations,
+        readPluginImmutableGenerationIntegrityCurrentness,
+      })).resolves.toBe(true);
+
+      expect(readPluginImmutableGenerationIntegrityCurrentness)
+        .toHaveBeenCalledWith(
+          retained.pluginId,
+          retained.immutableGenerationId,
+          undefined,
+          retainedManifestAuthority,
+        );
+    } finally {
+      await rm(fixture.happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not promote authority published before a durable hard revocation', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-foreground-hard-promotion-'));
     try {
@@ -713,6 +791,8 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       vi.fn(async () => true);
     const persistRunnerManagedDependencyRetention =
       vi.fn(async () => true);
+    const readPluginImmutableGenerationIntegrityCurrentness =
+      vi.fn(async () => true);
 
     const promotion = promoteForegroundDaemonServiceAuthority({
       happyHomeDir: fixture.happyHomeDir,
@@ -729,12 +809,22 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         environment: {
           PROVIDER_SECRET: 'secret-value',
         },
+        agentCliLaunch: {
+          localAgentId: 'codex',
+          spec: {
+            source: 'override',
+            resolvedPath: '/workspace/.profile/bin/codex',
+            command: '/workspace/.profile/bin/codex',
+            args: [],
+          },
+        },
         providerBindingActive: true,
       },
       persistAuthorityPath,
       persistRunnerAgentImmutableGenerationId,
       persistRunnerManagedDependencyRetention,
       attachRunnerRetainedPluginGenerations,
+      readPluginImmutableGenerationIntegrityCurrentness,
     });
 
     await Promise.resolve();
@@ -776,6 +866,13 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         qualifiedDependencyIds: [],
       },
     });
+    expect(readPluginImmutableGenerationIntegrityCurrentness)
+      .toHaveBeenCalledWith(
+        bundledArtifact.record.pluginId,
+        bundledArtifact.record.immutableGenerationId,
+        'codex',
+        undefined,
+      );
     expect(tracked).toMatchObject({
       agentRuntimeDaemonServiceAuthorityFilePath:
         fixture.authorityFilePath,
@@ -786,6 +883,15 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       runnerAgentInvocationContext: {
         cwd: '/workspace',
         environment: {},
+        agentCliLaunch: {
+          localAgentId: 'codex',
+          spec: {
+            source: 'override',
+            resolvedPath: '/workspace/.profile/bin/codex',
+            command: '/workspace/.profile/bin/codex',
+            args: [],
+          },
+        },
         providerBindingActive: false,
       },
     });

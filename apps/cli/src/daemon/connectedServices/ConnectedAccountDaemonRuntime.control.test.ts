@@ -3,6 +3,8 @@ import {
   PluginConnectedAccountDescriptorContributionV2Schema,
 } from '@happier-dev/protocol';
 
+import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
+
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import {
   createConnectedAccountContributionRegistry,
@@ -174,7 +176,14 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
     const registry = {
       generation: 'generation-1',
       connectedAccountContributions: {
-        list: () => [{ ref: service }],
+        // The real registry publishes the same cold facts from `list` and `describe`;
+        // a double that omits either makes a cold read look like an absent service.
+        list: () => [runtimeLease],
+        describe: (ref: PluginContributionRef) => (
+          ref.pluginId === service.pluginId && ref.localId === service.localId
+            ? runtimeLease
+            : null
+        ),
       },
       resolveConnectedAccountRuntime: vi.fn(async () => runtimeLease),
       connectedAccountRuntimeInvoker: { invokeAuthentication },
@@ -395,6 +404,206 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
     expect(invokeWithReceipt).not.toHaveBeenCalled();
   });
 
+  it('returns the committed revocation when the caller aborts inside credential deletion', async () => {
+    const controller = new AbortController();
+    const deleteCredential = vi.fn(async () => {
+      controller.abort();
+      return { success: true as const };
+    });
+    const runtimeLease = Object.freeze({
+      ref: service,
+      descriptor,
+      generation: 'generation-1',
+      immutableGenerationId: 'artifact-1',
+      runtime: {},
+      isCurrent: () => true,
+    });
+    const lease = () => ({
+      registry: {
+        generation: 'generation-1',
+        connectedAccountContributions: {
+          list: () => [runtimeLease],
+          describe: (ref: PluginContributionRef) => (
+            ref.pluginId === service.pluginId && ref.localId === service.localId
+              ? runtimeLease
+              : null
+          ),
+        },
+        resolveConnectedAccountRuntime: vi.fn(async () => runtimeLease),
+      },
+      source: 'active' as const,
+      release: vi.fn(async () => undefined),
+    });
+    const runtime = createConnectedAccountDaemonRuntime({
+      reloadController: {
+        acquireRuntimeRegistry: vi.fn(async () => lease()),
+        tryAcquireRuntimeRegistry: vi.fn(() => lease()),
+        isRuntimeRegistryCurrent: vi.fn(() => true),
+      } as unknown as PluginReloadController,
+      persistence: {
+        profiles: { list: vi.fn(async () => []) },
+        configuration: {
+          read: vi.fn(async () => null),
+          replace: vi.fn(),
+          destroyAttempt: vi.fn(),
+          secrets: { has: vi.fn(async () => false), read: vi.fn(async () => null) },
+        },
+        attempts: {
+          accounts: { readExact: vi.fn(async () => null) },
+          oauth: { create: vi.fn() },
+          settlement: { settle: vi.fn() },
+        },
+      } as unknown as ConnectedAccountDaemonPersistence,
+      configurationConsequences: { assertAvailable: vi.fn(), apply: vi.fn() },
+      revocation: {
+        token: 'token-1',
+        establishedRuntimeOwner: {
+          invokeWithReceipt: vi.fn(async () => ({
+            result: { status: 'remoteUnsupported' as const },
+            basis: {
+              credentialRevision: 'credential-1',
+              credentialConfigurationRevision: 'configuration-1',
+              runtimeConfigurationRevision: 'configuration-1',
+              generation: 'generation-1',
+              immutableGenerationId: 'artifact-1',
+              isCurrent: () => true,
+              prepareCredentialReplacement: () => {
+                throw new Error('not used by revoke');
+              },
+            },
+          })),
+        } as unknown as Pick<
+          QualifiedConnectedAccountEstablishedRuntimeOwner,
+          'invokeWithReceipt'
+        >,
+        resolveV4Support: () => 'advertised',
+        deleteCredential,
+      },
+    });
+
+    await expect(runtime.control({
+      operation: 'revokeAccount',
+      account,
+      cleanupGroupReferences: true,
+    }, { signal: controller.signal })).resolves.toEqual({
+      status: 'revoked',
+      account,
+      remoteStatus: 'remoteUnsupported',
+    });
+    expect(deleteCredential).toHaveBeenCalledOnce();
+  });
+
+  it('completes the post-commit configuration consequence when the caller aborts at commit', async () => {
+    const controller = new AbortController();
+    const target = Object.freeze({
+      kind: 'service' as const,
+      service,
+      modeId: 'oauth',
+    });
+    let record: ConnectedAccountConfigurationRecord = {
+      revision: 'configuration-1',
+      values: { endpoint: 'https://old.example.test' },
+      secretRefs: { clientSecret: 'saved-secret-1' },
+    };
+    const replaceForControl = vi.fn(async () => {
+      record = {
+        revision: 'configuration-2',
+        values: { endpoint: 'https://new.example.test' },
+        secretRefs: { clientSecret: 'saved-secret-1' },
+      };
+      controller.abort();
+      return { status: 'committed' as const, record };
+    });
+    const applyConfigurationConsequence = vi.fn<ConfigurationConsequenceApply>(
+      async () => undefined,
+    );
+    const runtimeLease = Object.freeze({
+      ref: service,
+      descriptor,
+      generation: 'generation-1',
+      immutableGenerationId: 'artifact-1',
+      runtime: {},
+      isCurrent: () => true,
+    });
+    const lease = () => ({
+      registry: {
+        generation: 'generation-1',
+        connectedAccountContributions: {
+          list: () => [runtimeLease],
+          describe: (ref: PluginContributionRef) => (
+            ref.pluginId === service.pluginId && ref.localId === service.localId
+              ? runtimeLease
+              : null
+          ),
+        },
+        resolveConnectedAccountRuntime: vi.fn(async () => runtimeLease),
+      },
+      source: 'active' as const,
+      release: vi.fn(async () => undefined),
+    });
+    const runtime = createConnectedAccountDaemonRuntime({
+      reloadController: {
+        acquireRuntimeRegistry: vi.fn(async () => lease()),
+        tryAcquireRuntimeRegistry: vi.fn(() => lease()),
+        isRuntimeRegistryCurrent: vi.fn(() => true),
+      } as unknown as PluginReloadController,
+      persistence: {
+        profiles: {
+          list: vi.fn(async () => [{
+            ref: account,
+            status: 'connected' as const,
+            authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned' as const,
+            credentialRevision: 'credential-1',
+            configurationReady: true,
+            configurationRevision: null,
+            scopes: [],
+          }]),
+        },
+        configuration: {
+          read: vi.fn(async () => record),
+          replaceForControl,
+          replace: vi.fn(),
+          destroyAttempt: vi.fn(),
+          secrets: {
+            has: vi.fn(async (id: string) => id.startsWith('saved-secret-')),
+            read: vi.fn(async () => 'secret'),
+          },
+        },
+        attempts: {
+          accounts: { readExact: vi.fn(async () => null) },
+          oauth: { create: vi.fn() },
+          settlement: { settle: vi.fn() },
+        },
+      } as unknown as ConnectedAccountDaemonPersistence,
+      configurationConsequences: {
+        assertAvailable: vi.fn(async () => undefined),
+        apply: applyConfigurationConsequence,
+      },
+      revocation: {} as never,
+    });
+
+    await expect(runtime.control({
+      operation: 'replaceConfiguration',
+      target,
+      expectedRevision: 'configuration-1',
+      values: { endpoint: 'https://new.example.test' },
+      secretValues: {},
+    }, { signal: controller.signal })).resolves.toMatchObject({
+      status: 'configurationCommitted',
+      target,
+      configuration: { revision: 'configuration-2' },
+    });
+    expect(applyConfigurationConsequence).toHaveBeenCalledTimes(1);
+    expect(applyConfigurationConsequence).toHaveBeenCalledWith({
+      account,
+      authenticationModeId: 'oauth',
+      configurationScope: 'service',
+      behavior: 'refresh',
+      runtimeConfigurationRevision: 'configuration-2',
+    });
+  });
+
   it('describes one current qualified service and owns normalized configuration read/replace', async () => {
     const records = new Map<string, ConnectedAccountConfigurationRecord>();
     let nextRevision = 2;
@@ -539,7 +748,14 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
     const registry = {
       generation: 'generation-1',
       connectedAccountContributions: {
-        list: () => [{ ref: service }],
+        // The real registry publishes the same cold facts from `list` and `describe`;
+        // a double that omits either makes a cold read look like an absent service.
+        list: () => [runtimeLease],
+        describe: (ref: PluginContributionRef) => (
+          ref.pluginId === service.pluginId && ref.localId === service.localId
+            ? runtimeLease
+            : null
+        ),
       },
       resolveConnectedAccountRuntime: vi.fn(async () => runtimeLease),
       connectedAccountRuntimeInvoker: {
@@ -907,6 +1123,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       generationCurrent(): boolean;
     }>) {
       const registrations: ConnectedAccountRuntimeRegistration[] = [];
+      const activations: string[] = [];
       const contributions = createConnectedAccountContributionRegistry({
         generation: 'generation-1',
         immutableGenerationIdsByPluginId: new Map([[service.pluginId, 'artifact-1']]),
@@ -917,6 +1134,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
           definition: descriptor,
         }] satisfies readonly ResolvedConnectedAccountDescriptorContribution[],
         activateOnDemand: async (ref) => {
+          activations.push(ref.localId);
           if (!input.published) return;
           registrations.push({
             pluginId: ref.pluginId,
@@ -938,7 +1156,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         source: 'active' as const,
         release: vi.fn(async () => undefined),
       });
-      return createConnectedAccountDaemonRuntime({
+      const daemon = createConnectedAccountDaemonRuntime({
         reloadController: {
           acquireRuntimeRegistry: vi.fn(async () => lease()),
           tryAcquireRuntimeRegistry: vi.fn(() => lease()),
@@ -967,10 +1185,14 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         },
         revocation: {} as never,
       });
+      return { daemon, activations };
     }
 
-    it('names an unresolvable declared service instead of the untyped control catch-all', async () => {
-      const daemon = createDaemonOverRealRegistry({
+    it('describes a declared service from the descriptor without activating its plugin', async () => {
+      // `published: false` means activation would publish no runtime. Discovery must
+      // not depend on that: the descriptor, generation identity and currentness are
+      // host-side facts, so the answer is the same and the plugin is never entered.
+      const { daemon, activations } = createDaemonOverRealRegistry({
         published: false,
         generationCurrent: () => true,
       });
@@ -978,15 +1200,18 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       await expect(daemon.control({
         operation: 'describeService',
         service,
-      })).resolves.toEqual({
-        status: 'unavailable',
-        code: 'connected_account_service_unavailable',
+      })).resolves.toMatchObject({
+        status: 'described',
+        service,
+        generation: 'generation-1',
+        immutableGenerationId: 'artifact-1',
       });
+      expect(activations).toEqual([]);
     });
 
     it('keeps a retired generation distinguishable from an unavailable service', async () => {
       let current = true;
-      const daemon = createDaemonOverRealRegistry({
+      const { daemon } = createDaemonOverRealRegistry({
         published: true,
         generationCurrent: () => current,
       });
@@ -1006,7 +1231,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
     });
 
     it('refuses an undeclared service without inventing a runtime for it', async () => {
-      const daemon = createDaemonOverRealRegistry({
+      const { daemon } = createDaemonOverRealRegistry({
         published: true,
         generationCurrent: () => true,
       });

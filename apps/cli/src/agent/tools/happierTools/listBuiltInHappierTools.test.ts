@@ -78,7 +78,7 @@ function createRegistryWithPluginTool(params?: Readonly<{
             mcp: true,
             cli: true,
             rpc: false,
-            sdk: false,
+            api: false,
             plugin: false,
           },
           inputHints: null,

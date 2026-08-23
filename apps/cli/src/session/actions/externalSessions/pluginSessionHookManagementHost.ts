@@ -191,6 +191,34 @@ function findCurrentRuntime(
     return current && hasExternalSessionHooks(current) ? current : null;
 }
 
+/**
+ * Every Agent the current catalog declares as an External Sessions participant.
+ *
+ * Passive inventory owes a row to an installed Agent that simply has not run
+ * yet, and it must produce that row without starting the plugin, so membership
+ * is decided by the manifest-declared `surfaces.externalSession` projection —
+ * the same activation-free catalog fact the Browse surface resolves sources
+ * from — rather than by the presence of an already-activated runtime lease.
+ */
+function listCatalogExternalSessionsAgents(
+    registry: ResolvedExecutablePluginRuntimeRegistry,
+): readonly PluginContributionIdentityV1[] {
+    const byKey = new Map<string, PluginContributionIdentityV1>();
+    for (
+        const definition of registry.contributes.agentDefinitionsById.values()
+    ) {
+        const identity = definition.identity;
+        if (
+            !identity
+            || !definition.richDefinition?.definition.surfaces?.externalSession
+        ) {
+            continue;
+        }
+        byKey.set(agentKey(identity), identity);
+    }
+    return [...byKey.values()];
+}
+
 function listCurrentExternalSessionsRuntimes(
     registry: ResolvedExecutablePluginRuntimeRegistry,
 ): readonly CurrentExternalSessionsRuntime[] {
@@ -341,6 +369,38 @@ async function projectCurrentCustody(input: Readonly<{
     return custody;
 }
 
+/**
+ * Shell dialects whose serialized hook command each platform can actually
+ * execute.
+ *
+ * A plugin declares the shell its Agent runs a hook entry through and the host
+ * serializes the command for exactly that shell. A variant selected for a
+ * platform whose shells cannot run its dialect would install an entry that can
+ * never fire while status reported a ready installation, so resolution refuses
+ * it instead. Keyed by dialect id rather than the SDK union so a newly declared
+ * dialect must be added here deliberately.
+ */
+const EXECUTABLE_SHELL_DIALECTS_BY_PLATFORM: Readonly<Record<
+    'darwin' | 'linux' | 'win32',
+    ReadonlySet<string>
+>> = {
+    darwin: new Set(['posix']),
+    linux: new Set(['posix']),
+    win32: new Set(['windows_cmd', 'powershell_encoded']),
+};
+
+function variantRunsOnPlatform(
+    variant: NonNullable<
+        CurrentRuntime['lease']['externalSessionHooks']
+    >['installationVariants'][number],
+    platform: 'darwin' | 'linux' | 'win32',
+): boolean {
+    const executable = EXECUTABLE_SHELL_DIALECTS_BY_PLATFORM[platform];
+    return variant.events.every(
+        (event) => executable.has(event.command.shellDialect),
+    );
+}
+
 function resolveStructurallyCompatibleVariant(
     current: CurrentRuntime,
     record: ExternalSessionHookInstallationRecord,
@@ -460,6 +520,9 @@ async function resolveInstallation(
             .find((variant) => variant.variantId === resolved.variantId);
     if (!selectedVariant) {
         return { ok: false, reason: 'operation_failed' };
+    }
+    if (!variantRunsOnPlatform(selectedVariant, platform)) {
+        return { ok: false, reason: 'installation_unsupported' };
     }
     return {
         ok: true,
@@ -1033,7 +1096,9 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                         target,
                         {
                             listCurrentAgents: () =>
-                                current.map((entry) => entry.agent),
+                                listCatalogExternalSessionsAgents(
+                                    registryLease.registry,
+                                ),
                             readCustodyPage: async (request) =>
                                 await dependencies.readInventoryPage({
                                     activeServerDir,
@@ -1059,15 +1124,22 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                         ),
                                     );
                                     if (!runtime) {
+                                        // Catalog-current but not activated:
+                                        // durable custody is still the whole
+                                        // truth, and without it nothing is
+                                        // installed for this Agent on this
+                                        // machine. Reporting anything worse
+                                        // would invent a failure that passive
+                                        // facts cannot support, and resolving
+                                        // hook support would require starting
+                                        // the plugin.
                                         return custody
                                             ? {
                                                 state: 'unavailable',
                                                 installationId:
                                                     custody.installationId,
                                             }
-                                            : attention(
-                                                'agent_unavailable',
-                                            );
+                                            : { state: 'not_installed' };
                                     }
                                     if (!hasExternalSessionHooks(runtime)) {
                                         return custody
@@ -1598,22 +1670,14 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                 if (resolution.value.readiness.kind === 'needs_attention') {
                     return failure('installation_unsupported', false);
                 }
-                const listener = await input.listener.catch(() => null);
-                if (!listener) return failure('listener_unavailable', true);
-                const preview = await planInstallPreview({
-                    resolution: resolution.value,
-                    listener,
-                    dependencies,
-                });
-                if (!preview.ok) {
-                    return failure(
-                        preview.code,
-                        preview.code === 'operation_failed',
-                    );
-                }
-                if (preview.preview.previewId !== target.expectedPreviewId) {
-                    return failure('concurrent_edit', true);
-                }
+                // Receipt recognition comes before the preview is recomputed.
+                // A preview digests the agent configuration's current bytes,
+                // and an accepted install has already appended its owned
+                // entries to those bytes, so an exact replay can never
+                // reproduce the preview id it was admitted with. The durable
+                // record is the receipt; the replacement and concurrent-edit
+                // checks below still run, against the identities the accepted
+                // install recorded.
                 const existingRecord =
                     await dependencies.readInstallationRecord(recordPath({
                         activeServerDir,
@@ -1666,6 +1730,22 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                             revision: existingRecord.revision,
                         }),
                     });
+                }
+                const listener = await input.listener.catch(() => null);
+                if (!listener) return failure('listener_unavailable', true);
+                const preview = await planInstallPreview({
+                    resolution: resolution.value,
+                    listener,
+                    dependencies,
+                });
+                if (!preview.ok) {
+                    return failure(
+                        preview.code,
+                        preview.code === 'operation_failed',
+                    );
+                }
+                if (preview.preview.previewId !== target.expectedPreviewId) {
+                    return failure('concurrent_edit', true);
                 }
                 const credentials: Awaited<ReturnType<
                     QualifiedExternalSessionHookListener[

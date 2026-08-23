@@ -119,7 +119,7 @@ describe('happier session run start (plaintext integration)', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_plain_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        ['run', 'start', 'sess_integration_run_start_plain_123', '--intent', 'review', '--agent', 'claude', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',

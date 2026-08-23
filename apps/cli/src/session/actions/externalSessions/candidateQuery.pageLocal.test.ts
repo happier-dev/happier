@@ -161,7 +161,10 @@ vi.mock('node:crypto', async () => {
     };
 });
 
-import { executeExternalSessionCandidateQuery } from './candidateQuery';
+import {
+    executeExternalSessionCandidateQuery,
+    ExternalSessionCandidateIndexCursorResetError,
+} from './candidateQuery';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeBytesAtomic } from '@/utils/fs/writeJsonAtomic';
 
@@ -387,11 +390,7 @@ describe('External Sessions persisted candidate-index page locality', () => {
             return actualConcat(list, totalLength);
         });
         try {
-            await expect(query(cursor)).rejects.toMatchObject({
-                code: 'invalid_request',
-                operation: 'listCandidates',
-                retryable: false,
-            });
+            await expect(query(cursor)).rejects.toBeInstanceOf(ExternalSessionCandidateIndexCursorResetError);
         } finally {
             concatSpy.mockRestore();
         }
@@ -471,11 +470,7 @@ describe('External Sessions persisted candidate-index page locality', () => {
             await writeBytesAtomic(indexPath, validBytes);
         });
 
-        await expect(staleQuery).rejects.toMatchObject({
-            code: 'invalid_request',
-            operation: 'listCandidates',
-            retryable: false,
-        });
+        await expect(staleQuery).rejects.toBeInstanceOf(ExternalSessionCandidateIndexCursorResetError);
         await expect(fsPromisesActual.readFile(indexPath)).resolves.toEqual(validBytes);
     });
 

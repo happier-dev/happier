@@ -213,6 +213,14 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
           generation: 'generation-1',
         },
       },
+      runnerAgentInvocationContext: Object.freeze({
+        cwd: '/tmp/project',
+        environment: Object.freeze({}),
+        providerBindingActive: true,
+      }),
+      extraEnvForChildWithMessage: {
+        PROVIDER_SECRET: 'must-not-become-daemon-authority',
+      },
     });
 
     await expect(resolveWindowsTerminalWebhook(
@@ -225,7 +233,15 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
             agentId: 'agent',
             backendId: 'agent',
           },
+          runnerAgentInvocationContext: {
+            cwd: '/tmp/project',
+            environment: {},
+            providerBindingActive: true,
+          },
         });
+        expect(JSON.stringify(tracked)).not.toContain(
+          'must-not-become-daemon-authority',
+        );
         tracked.happySessionId = 'session-8888';
       },
     )).resolves.toMatchObject({

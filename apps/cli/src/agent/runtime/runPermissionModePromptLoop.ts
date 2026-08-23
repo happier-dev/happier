@@ -54,6 +54,7 @@ import {
 } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { buildSessionReferenceContextBlockForDispatch } from '@/agent/runtime/prompt/sessionReferenceBlock';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
+import { isAgentNativeResumeIdentityMismatchError } from '@/session/agentTransition/agentNativeReturn';
 import {
   createSessionProviderInputConsumer,
   PendingQueueMaterializationAuthError,
@@ -615,6 +616,14 @@ export async function runPermissionModePromptLoop(opts: {
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
   initialResumeId?: string;
   strictInitialResume?: boolean;
+  /**
+   * The host invalidates a requested native identity before a failed strict
+   * resume can be observed by a later departure capture.
+   */
+  onStrictInitialResumeFailure?: ((params: Readonly<{
+    resumeId: string;
+    error: unknown;
+  }>) => void | Promise<void>) | null;
   startRuntimeBeforeFirstPrompt?: boolean;
   onAfterStart?: (() => void | Promise<void>) | null;
   onBeforeReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
@@ -761,6 +770,18 @@ export async function runPermissionModePromptLoop(opts: {
   let nextSessionIsFresh = normalizedResumeId.length === 0;
   let announceInitialResume = normalizedResumeId.length > 0;
   let strictInitialResumePending = opts.strictInitialResume === true && normalizedResumeId.length > 0;
+  const reportStrictInitialResumeFailure = async (error: unknown): Promise<boolean> => {
+    if (
+      !strictInitialResumePending
+      || !isAgentNativeResumeIdentityMismatchError(error)
+    ) return false;
+    // Clear this before awaiting the owner callback. A callback failure still
+    // must not re-enter another path that interprets the same offered identity
+    // as accepted.
+    strictInitialResumePending = false;
+    await opts.onStrictInitialResumeFailure?.({ resumeId: normalizedResumeId, error });
+    return true;
+  };
   if (normalizedResumeId) {
     snapshotFreshForNextPromptBoundary = opts.session.getMetadataSnapshot() !== null;
   }
@@ -840,7 +861,25 @@ export async function runPermissionModePromptLoop(opts: {
         await refreshSessionSnapshotBeforeTurnBestEffort();
       }
       overrideSync.syncFromMetadata();
-      const eagerStart = await ensureRuntimeStarted();
+      let eagerStart: { startedFreshSessionForTurn: boolean; exitRequested: boolean };
+      try {
+        eagerStart = await ensureRuntimeStarted();
+      } catch (error) {
+        // A resume request does not make every startup fault an identity fact.
+        // Quota, overload, auth and ordinary transport failures retain the
+        // provider's normal error path; only its typed strict-native mismatch
+        // can invalidate the same-machine record or fail closed as identity.
+        if (
+          strictInitialResumePending
+          && !isAbortLikeError(error)
+          && isAgentNativeResumeIdentityMismatchError(error)
+        ) {
+          await reportStrictInitialResumeFailure(error);
+          strictInitialResumePending = false;
+          throw new StrictInitialResumeError('Strict initial resume failed', error);
+        }
+        throw error;
+      }
       if (eagerStart.exitRequested) return;
       const pendingDrainResult = await inputConsumer.drainPending({
         shouldContinue: async () => (await (opts.beforePendingMaterialize?.() ?? true)) !== false,
@@ -1361,10 +1400,10 @@ export async function runPermissionModePromptLoop(opts: {
         // provider having taken custody, which must leave the seed live.
         confirmProviderAccepted();
         // Ordinary turns settle here, so the next prompt reads a retired seed with the
-        // ordering unchanged. A turn that fails after acceptance never reaches this line;
-        // the iteration's `finally` drains the same in-flight retirement instead.
+        // ordering unchanged. Native strict-resume acceptance is intentionally later:
+        // transport custody proves only the replay seed, while the provider's completion
+        // boundary proves whether the requested native identity actually resumed.
         await drainReplaySeedSettlement();
-        strictInitialResumePending = false;
       };
       if (
         await transitionAndDispatchProviderInput(dispatchProviderPrompt)
@@ -1388,7 +1427,9 @@ export async function runPermissionModePromptLoop(opts: {
         strictInitialResumePending
         && !(error instanceof StrictInitialResumeError)
         && !isAbortLikeError(error)
+        && isAgentNativeResumeIdentityMismatchError(error)
       ) {
+        await reportStrictInitialResumeFailure(error);
         strictInitialResumePending = false;
         const formatted = opts.formatPromptErrorMessage(error);
         opts.messageBuffer.addMessage(`Resume failed; cannot continue: ${formatted}`, 'status');
@@ -1435,10 +1476,20 @@ export async function runPermissionModePromptLoop(opts: {
             // Abort-like errors are the shutdown signal and are re-thrown so teardown proceeds.
             try {
               await opts.runtime.waitForTurnCompletion();
+              strictInitialResumePending = false;
             } catch (completionError) {
               if (isAbortLikeError(completionError)) {
                 throw completionError;
               }
+              if (await reportStrictInitialResumeFailure(completionError)) {
+                shouldSendReady = false;
+                suppressFlushTurnFailure = true;
+                throw new StrictInitialResumeError('Strict initial resume failed', completionError);
+              }
+              // A generic completion failure is loop-local. It cannot prove a
+              // requested native identity mismatched, so it must not erase the
+              // native-return record or turn into a strict identity failure.
+              strictInitialResumePending = false;
               if (!isRuntimeTurnFailureAlreadySurfaced(completionError)) {
                 await publishPromptLoopAgentMessage(opts, {
                   type: 'message',

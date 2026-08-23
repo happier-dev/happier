@@ -223,10 +223,9 @@ describe('prepareExecuteSpawnSessionRequest metadata privacy authority', () => {
       },
       catalogAgentId: 'codex',
     });
-    expect(mocks.ensureSessionDirectory).toHaveBeenCalledWith({
-      directory: '/private/worktree',
-      approvedNewDirectoryCreation: true,
-    });
+    // Preparation resolves the owner-derived workspace but performs no
+    // filesystem work: creation belongs after the definitive refusals.
+    expect(mocks.ensureSessionDirectory).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       sessionAttachPayload: {
         snapshot: {

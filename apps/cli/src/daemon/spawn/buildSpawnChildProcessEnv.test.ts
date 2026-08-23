@@ -151,6 +151,23 @@ describe('buildSpawnChildProcessEnv', () => {
     expect(env.HAPPIER_STACK_PROCESS_KIND).toBeUndefined();
   });
 
+  it('keeps API Tokens and CLI continuation handoffs out of generic agent children', () => {
+    const env = buildSpawnChildProcessEnv({
+      processEnv: {
+        PATH: '/bin',
+        HAPPIER_TOKEN: 'hap_v1_ambient_token_secret',
+        HAPPIER_CLI_API_TOKEN_HANDOFF_V1: 'hap_v1_handoff_token_secret',
+      },
+      extraEnv: {
+        HAPPIER_TOKEN: 'hap_v1_profile_token_secret',
+        HAPPIER_CLI_API_TOKEN_HANDOFF_V1: 'hap_v1_profile_handoff_secret',
+      },
+    });
+
+    expect(env.HAPPIER_TOKEN).toBeUndefined();
+    expect(env.HAPPIER_CLI_API_TOKEN_HANDOFF_V1).toBeUndefined();
+  });
+
   it('does not force debug file logging for prod-shaped daemon-spawned runners', () => {
     const env = buildSpawnChildProcessEnv({
       processEnv: { PATH: '/bin' },

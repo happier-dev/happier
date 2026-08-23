@@ -100,18 +100,6 @@ function resolveConfiguration(
   };
 }
 
-function rejectUnsupportedLegacyFields(request: SessionCreateSpawnRequest): void {
-  const unsupported = [
-    request.tag ? '--tag' : null,
-    request.environmentVariables ? '--env' : null,
-    request.runtimeDescriptorV1 ? '--runtime-descriptor-json' : null,
-    request.host ? '--host' : null,
-  ].filter((field): field is string => field !== null);
-  if (unsupported.length > 0) {
-    invalidSessionCreateArgument(`${unsupported.join(', ')} is not part of the V2 Session creation contract.`);
-  }
-}
-
 function resolveAgentTarget(
   request: SessionCreateSpawnRequest,
   deps: SessionCreateSpawnRequestNormalizerDeps,
@@ -174,15 +162,15 @@ async function resolveExecutionTarget(
 
 /**
  * The sole CLI argv-to-Action adapter for ordinary Session creation. It keeps
- * legacy spellings at the CLI boundary and emits only the strict public V2
- * payload consumed by `session.spawn_new`.
+ * legacy spellings at the CLI boundary and emits the strict canonical V2
+ * payload consumed by `session.spawn_new`. The public API transport projects
+ * its host-owned execution target at the Action-surface owner.
  */
 export async function normalizeSessionCreateSpawnRequest(
   request: SessionCreateSpawnRequest,
   suppliedDeps?: SessionCreateSpawnRequestNormalizerDeps,
 ): Promise<NormalizedSessionCreateSpawnRequest> {
   const deps = suppliedDeps ?? defaultNormalizerDeps();
-  rejectUnsupportedLegacyFields(request);
 
   const directory = nonEmptyString(request.directory);
   if (!directory) {
@@ -240,6 +228,7 @@ export async function normalizeSessionCreateSpawnRequest(
     ...(request.transcriptStorage ? { transcriptStorage: request.transcriptStorage } : {}),
     ...(request.terminal ? { terminal: request.terminal } : {}),
     ...(profileId ? { profileId } : {}),
+    ...(request.environmentVariables ? { environmentVariables: request.environmentVariables } : {}),
   };
   const parsed = SessionSpawnNewInputV2Schema.safeParse(candidate);
   if (!parsed.success) {

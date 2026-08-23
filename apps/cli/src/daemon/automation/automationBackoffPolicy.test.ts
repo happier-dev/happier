@@ -47,6 +47,36 @@ describe('nextAutomationBackoffMs', () => {
     ).toBe('permanent');
   });
 
+  it('classifies a generation conflict through the shared owner instead of treating every 4xx as permanent', () => {
+    expect(classifyAutomationWorkerError({ response: { status: 409 } })).toBe('transient');
+    expect(nextAutomationRetryDelayMs({
+      failureCount: 3,
+      error: { response: { status: 409 } },
+    })).toBe(4_000);
+  });
+
+  it('honours an authoritative server Retry-After over its own backoff curve', () => {
+    expect(nextAutomationRetryDelayMs({
+      failureCount: 0,
+      error: { response: { status: 429, headers: { 'retry-after': '30' } } },
+    })).toBe(30_000);
+  });
+
+  it('never waits past the permanent cadence for an oversized Retry-After', () => {
+    expect(nextAutomationRetryDelayMs({
+      failureCount: 0,
+      error: { response: { status: 503, headers: { 'retry-after': '86400' } } },
+    })).toBe(300_000);
+  });
+
+  it('keeps unclassifiable failures on the liveness backoff curve', () => {
+    expect(classifyAutomationWorkerError(new Error('something odd happened'))).toBe('transient');
+    expect(nextAutomationRetryDelayMs({
+      failureCount: 2,
+      error: new Error('something odd happened'),
+    })).toBe(2_000);
+  });
+
   it('uses fixed delay for permanent errors and exponential delay for transient errors', () => {
     const permanentDelay = nextAutomationRetryDelayMs({
       failureCount: 3,

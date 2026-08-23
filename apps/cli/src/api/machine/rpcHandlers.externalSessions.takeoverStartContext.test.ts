@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const mocks = vi.hoisted(() => ({
+  executeExternalSessionLinkEnsureAction: vi.fn(),
+}));
+
+vi.mock('@/session/actions/externalSessions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/session/actions/externalSessions')>(),
+  executeExternalSessionLinkEnsureAction: mocks.executeExternalSessionLinkEnsureAction,
+}));
+
 import {
   createExternalSessionRpcActionExecutor,
   registerMachineExternalSessionsRpcHandlers,
@@ -13,6 +22,9 @@ describe('external-session takeover Start RPC context', () => {
 
     expect(registration.pluginAdmissionOwner).toEqual({
       takeoverStart: expect.any(Function),
+    });
+    expect(registration.hostExternalSessionActionExecutor).toEqual({
+      execute: expect.any(Function),
     });
     await expect(registration.pluginAdmissionOwner!.takeoverStart!(
       {},
@@ -107,6 +119,37 @@ describe('external-session takeover Start RPC context', () => {
       },
     });
     expect(start).toHaveBeenCalledWith(input, {
+      signal: controller.signal,
+    });
+  });
+
+  it('forwards canonical cancellation into link.ensure rather than dropping it at the RPC switch', async () => {
+    const executor = createExternalSessionRpcActionExecutor(
+      {} as never,
+      null,
+      null,
+      { start: vi.fn() } as never,
+      null,
+      null,
+      null,
+      null,
+    );
+    const controller = new AbortController();
+    const input = { machineId: 'machine-1', providerId: 'codex' };
+    mocks.executeExternalSessionLinkEnsureAction.mockResolvedValueOnce({
+      ok: false,
+      errorCode: 'cancelled',
+    });
+
+    await expect(executor.execute(
+      'sessions.external.link.ensure',
+      input,
+      { surface: 'api', signal: controller.signal },
+    )).resolves.toEqual({
+      ok: true,
+      result: { ok: false, errorCode: 'cancelled' },
+    });
+    expect(mocks.executeExternalSessionLinkEnsureAction).toHaveBeenCalledWith(input, {
       signal: controller.signal,
     });
   });

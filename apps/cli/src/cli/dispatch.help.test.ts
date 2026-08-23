@@ -69,6 +69,8 @@ describe('dispatchCli root help', () => {
     expect(output.logs).toContainEqual(expect.stringContaining('happier - AI CLI On the Go'));
     expect(output.logs).toContainEqual(expect.stringContaining('happier codex'));
     expect(output.logs).toContainEqual(expect.stringContaining('happier resume [<session-id-or-prefix>]'));
+    expect(output.logs).toContainEqual(expect.stringContaining('happier --api-token <token>'));
+    expect(output.logs).toContainEqual(expect.stringContaining('Create API Tokens in Settings'));
     expect(output.logs.join('\n')).not.toMatch(/^\s*happier sessions(?:\s|$)/m);
     expect(output.logs).not.toContainEqual(expect.stringContaining('Claude Code Options'));
   });
@@ -81,7 +83,7 @@ describe('dispatchCli root help', () => {
     });
 
     expect(defaultHandlerSpy).not.toHaveBeenCalled();
-    expect(output.logs).toContainEqual(expect.stringContaining('"kind":"capabilities_describe"'));
+    expect(output.stdoutChunks).toContainEqual(expect.stringContaining('"kind":"capabilities_describe"'));
   });
 
   it('prints version after prefix-only server selection flags without invoking the default backend handler', async () => {

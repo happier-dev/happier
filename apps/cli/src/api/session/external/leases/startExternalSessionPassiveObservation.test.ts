@@ -375,12 +375,12 @@ describe('startExternalSessionPassiveObservation', () => {
         expect(resolveLinkInput).toHaveBeenCalledOnce();
     });
 
-    it('rejects more than 100 persisted policies before acquiring observation or follow work', async () => {
+    it('restores its bounded set when persisted policies exceed the 100-policy bound', async () => {
         const sessions = Array.from({ length: 101 }, (_, index) => ({
             id: `session-${index}`,
         }));
 
-        await expect(listCurrentExternalSessionPassivePolicies({
+        const policies = await listCurrentExternalSessionPassivePolicies({
             machineId: 'machine-1',
             signal: new AbortController().signal,
             readCredentials: async () => ({ token: 'token' } as never),
@@ -405,7 +405,15 @@ describe('startExternalSessionPassiveObservation', () => {
                 },
             }),
             resolveLinkInput: async ({ sessionId }) => resolvedInput(sessionId),
-        })).rejects.toThrow('exceeded its 100-policy bound');
+        });
+
+        // Refusing the whole inventory turned 101 valid persisted policies
+        // into zero background follows, because the restore that consumes this
+        // inventory swallows its rejection.
+        expect(policies).toHaveLength(100);
+        expect(policies.map((policy) => policy.sessionId)).toEqual(
+            sessions.slice(0, 100).map((session) => session.id),
+        );
     });
 
     it('restores file-backed passive observation before transcript follow only after connectivity resumes', async () => {

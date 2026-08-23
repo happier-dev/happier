@@ -216,6 +216,14 @@ import type {
   TargetActionCurrentIntentRequest,
   TargetActionCurrentIntentResult,
 } from '@/plugins/runtime/invocation/actionExecutor';
+import type { DaemonPatVerifier } from './auth/daemonPatVerifier';
+import {
+  registerDaemonExternalActionRoute,
+} from './externalActions/registerDaemonExternalActionRoute';
+import type {
+  ExternalActionExecutor,
+  ResolveExternalActionTarget,
+} from './externalActions/executeExternalAction';
 
 const DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
 const DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY = 'HAPPIER_DAEMON_CONTROL_BODY_LIMIT_BYTES';
@@ -224,6 +232,12 @@ const DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN = /^[a-f0-9]{16}$/;
 const DaemonDistClosureFingerprintSchema = z.string().regex(DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN);
 type DaemonSelfRestartRequest = Readonly<{
   successorDistClosureFingerprint?: string;
+}>;
+type DaemonExternalActionApi = Readonly<{
+  currentServerId: string;
+  verifyPat: DaemonPatVerifier;
+  executor: ExternalActionExecutor;
+  resolveTarget: ResolveExternalActionTarget;
 }>;
 const DEFAULT_SPAWN_NONCE_PENDING_TTL_MS = 5 * 60_000;
 
@@ -646,6 +660,7 @@ export function createDaemonControlApp({
   requestSelfRestart,
   pluginChangeService,
   pluginActionCurrentIntent,
+  externalActionApi,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
@@ -777,6 +792,8 @@ export function createDaemonControlApp({
   pluginActionCurrentIntent?: (
     request: TargetActionCurrentIntentRequest
   ) => Promise<TargetActionCurrentIntentResult>;
+  /** Public PAT-only ingress; intentionally outside the daemon control-token guard. */
+  externalActionApi?: DaemonExternalActionApi;
 }): FastifyInstance {
   const normalizedRuntimeId = runtimeId.trim();
   const normalizedControlToken = controlToken.trim();
@@ -796,6 +813,12 @@ export function createDaemonControlApp({
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const typed = app.withTypeProvider<ZodTypeProvider>();
+  if (externalActionApi) {
+    registerDaemonExternalActionRoute(app, {
+      currentMachineId: machineId,
+      ...externalActionApi,
+    });
+  }
   const runtimeAuthReportClaims = new Map<string, Readonly<{
     claimedAtMs: number;
     result: Promise<unknown>;
@@ -3754,6 +3777,7 @@ export function startDaemonControlServer({
   requestSelfRestart,
   pluginChangeService,
   pluginActionCurrentIntent,
+  externalActionApi,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
@@ -3869,6 +3893,8 @@ export function startDaemonControlServer({
   pluginActionCurrentIntent?: (
     request: TargetActionCurrentIntentRequest
   ) => Promise<TargetActionCurrentIntentResult>;
+  /** Public PAT-only ingress; intentionally outside the daemon control-token guard. */
+  externalActionApi?: DaemonExternalActionApi;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = createDaemonControlApp({
@@ -3919,7 +3945,8 @@ export function startDaemonControlServer({
       requestSelfRestart,
       pluginChangeService,
       pluginActionCurrentIntent,
-	    });
+      externalActionApi,
+    });
 
     app.listen({ port: resolveDaemonControlListenPort(process.env), host: '127.0.0.1' }, (err, address) => {
       if (err) {

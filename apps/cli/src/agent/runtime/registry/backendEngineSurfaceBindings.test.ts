@@ -70,7 +70,7 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
     };
   }
 
-  it('projects runtime-provided attach and checkpoint surfaces without requiring terminal support', () => {
+  it('projects runtime-provided attach and checkpoint surfaces without requiring terminal support', async () => {
     const attach = {
       attach: vi.fn(async () => ({ ok: true as const, value: { exitCode: 0 } })),
     } satisfies NonNullable<NonNullable<AgentRuntime['surfaces']>['attach']>;
@@ -104,7 +104,9 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
       diagnostics: [],
     });
 
-    expect(surfaces.attach).toBe(attach);
+    await expect(surfaces.attach!.attach({ sessionId: 'session-1', metadata: {} }))
+      .resolves.toEqual({ ok: true, value: { exitCode: 0 } });
+    expect(attach.attach).toHaveBeenCalledWith({ sessionId: 'session-1', metadata: {} });
     expect(surfaces.checkpoint).toBe(checkpoint);
     expect(surfaces.terminalRuntime).toBeNull();
   });
@@ -350,6 +352,115 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
     resolveExport({ ok: true, value: { bundle: {} } });
 
     await expect(exportOperation).rejects.toThrow(/retired runtime generation/i);
+  });
+
+  it('rejects an attach result that resolves after its runtime generation retires', async () => {
+    let isCurrent = true;
+    let resolveAttach!: (value: Readonly<{ ok: true; value: Readonly<{ exitCode: number | null }> }>) => void;
+    const pendingAttach = new Promise<Readonly<{ ok: true; value: Readonly<{ exitCode: number | null }> }>>((resolve) => {
+      resolveAttach = resolve;
+    });
+    const runtime = {
+      executionRuns: {
+        open: async () => ({
+          send: async () => ({ status: 'admitted' as const }),
+          stop: async () => ({ status: 'requested' as const }),
+          watch: () => ({ dispose: () => undefined }),
+          dispose: async () => undefined,
+        }),
+      },
+      surfaces: {
+        attach: {
+          attach: async () => await pendingAttach,
+        },
+      },
+    } satisfies AgentRuntime;
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime,
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => isCurrent,
+      declaredAgentSurfaceFamilies: new Set(),
+      diagnostics: [],
+      createAgentRuntimeSurfaceInvocationContext: async () => ({} as never),
+    });
+
+    const attachOperation = surfaces.attach!.attach({ sessionId: 'session-1', metadata: {} });
+    isCurrent = false;
+    resolveAttach({ ok: true, value: { exitCode: 0 } });
+
+    await expect(attachOperation).rejects.toThrow(/retired runtime generation/i);
+  });
+
+  it('rejects an attach availability result that resolves after its runtime generation retires', async () => {
+    let isCurrent = true;
+    let resolveAvailability!: (value: Readonly<{ available: true }>) => void;
+    const pendingAvailability = new Promise<Readonly<{ available: true }>>((resolve) => {
+      resolveAvailability = resolve;
+    });
+    const runtime = {
+      executionRuns: {
+        open: async () => ({
+          send: async () => ({ status: 'admitted' as const }),
+          stop: async () => ({ status: 'requested' as const }),
+          watch: () => ({ dispose: () => undefined }),
+          dispose: async () => undefined,
+        }),
+      },
+      surfaces: {
+        attach: {
+          evaluateAvailability: async () => await pendingAvailability,
+          attach: async () => ({ ok: true as const, value: { exitCode: 0 } }),
+        },
+      },
+    } satisfies AgentRuntime;
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime,
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => isCurrent,
+      declaredAgentSurfaceFamilies: new Set(),
+      diagnostics: [],
+      createAgentRuntimeSurfaceInvocationContext: async () => ({} as never),
+    });
+
+    const availabilityOperation = surfaces.attach!.evaluateAvailability!({
+      operation: 'attach',
+      sessionId: 'session-1',
+      metadata: {},
+    });
+    isCurrent = false;
+    resolveAvailability({ available: true });
+
+    await expect(availabilityOperation).rejects.toThrow(/retired runtime generation/i);
+  });
+
+  it('refuses to start an attach for an already retired runtime generation', async () => {
+    const attach = vi.fn(async () => ({ ok: true as const, value: { exitCode: 0 } }));
+    const runtime = {
+      executionRuns: {
+        open: async () => ({
+          send: async () => ({ status: 'admitted' as const }),
+          stop: async () => ({ status: 'requested' as const }),
+          watch: () => ({ dispose: () => undefined }),
+          dispose: async () => undefined,
+        }),
+      },
+      surfaces: { attach: { attach } },
+    } satisfies AgentRuntime;
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime,
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => false,
+      declaredAgentSurfaceFamilies: new Set(),
+      diagnostics: [],
+      createAgentRuntimeSurfaceInvocationContext: async () => ({} as never),
+    });
+
+    await expect(surfaces.attach!.attach({ sessionId: 'session-1', metadata: {} }))
+      .rejects.toThrow(/retired runtime generation/i);
+    expect(attach).not.toHaveBeenCalled();
   });
 
   it('keeps process, projection, cancellation, and terminal-result ownership in the existing host orchestration', async () => {

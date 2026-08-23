@@ -16,7 +16,9 @@ import {
     readQualifiedConnectedAccountGroupV4,
     readQualifiedConnectedAccountQuotaV4,
     requestQualifiedConnectedAccountQuotaRefreshV4,
+    QualifiedConnectedAccountCredentialConflictError,
     QualifiedConnectedAccountGroupConflictError,
+    mutateQualifiedConnectedAccountCredentialV4,
     updateQualifiedConnectedAccountGroupRuntimeStateV4,
     setQualifiedConnectedAccountGroupActiveAccountV4,
     unlinkQualifiedConnectedAccountQuotaV4,
@@ -234,6 +236,48 @@ describe("qualified Connected Account V4 API", () => {
             "https://server.example/v4/connect/qualified/group/runtime-state",
         );
         expect(vi.mocked(axios.patch).mock.calls[0]?.[1]).toEqual(patch);
+    });
+
+    it("preserves the server's closed credential-conflict discriminator at the HTTP boundary", async () => {
+        // Every 409 the credential endpoint can return names a DIFFERENT cause.
+        // Collapsing them into one settlement conflict hides capacity exhaustion
+        // and identity/authentication-mode mismatch from the caller.
+        const mutation = {
+            ref: { service, accountId: "provider/account" },
+            authenticationModeId: "token",
+            expectedCredentialRevision: null,
+            content: { t: "plain" as const, v: { token: "opaque" } },
+            metadata: { scopes: [] },
+        };
+        for (const error of [
+            "connect_connected_account_capacity_exhausted",
+            "connect_reconnect_provider_identity_mismatch",
+            "connect_authentication_mode_mismatch",
+        ]) {
+            vi.mocked(axios.post).mockResolvedValueOnce({ status: 409, data: { error } });
+            await expect(mutateQualifiedConnectedAccountCredentialV4({
+                token: "token",
+                mutation,
+            })).rejects.toMatchObject({
+                name: "QualifiedConnectedAccountCredentialConflictError",
+                status: 409,
+                // The daemon's status-based policies read `response.status`;
+                // keep the Axios-like shape so an unmapped cause still lands on
+                // the shared 409 path instead of escaping as an unknown error.
+                response: { status: 409 },
+                code: error,
+            } satisfies Partial<QualifiedConnectedAccountCredentialConflictError>);
+        }
+
+        vi.mocked(axios.post).mockResolvedValueOnce({ status: 409, data: { error: "not-a-known-code" } });
+        await expect(mutateQualifiedConnectedAccountCredentialV4({
+            token: "token",
+            mutation,
+        })).rejects.toMatchObject({
+            name: "QualifiedConnectedAccountCredentialConflictError",
+            status: 409,
+            code: "connected_account_credential_conflict_response_invalid",
+        });
     });
 
     it("reads exact credential and configuration snapshots and applies configuration CAS", async () => {

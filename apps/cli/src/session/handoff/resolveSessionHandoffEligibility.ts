@@ -4,7 +4,7 @@ import {
   resolveAgentIdFromSessionMetadata,
   type HandoffExportSessionMetadataV1,
 } from '@happier-dev/agents';
-import type { LinkedExternalSessionMetadataResolutionV1 } from '@happier-dev/protocol';
+import type { LinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
 import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
@@ -148,7 +148,7 @@ async function resolveExternalSessionHandoffEligibility(input: Readonly<{
 export async function resolveSessionHandoffEligibility(input: Readonly<{
   metadata: HandoffExportSessionMetadataV1;
   sourceMachineId: unknown;
-  externalSessionLinkResolution: LinkedExternalSessionMetadataResolutionV1;
+  externalSessionLinkAuthority: LinkedExternalSessionAuthorityV1;
   /** Host-only identity derived from the full Session metadata before Agent projection. */
   sessionAgentId?: CatalogAgentId | null;
   accountSettings?: Record<string, unknown> | null;
@@ -159,18 +159,17 @@ export async function resolveSessionHandoffEligibility(input: Readonly<{
   }
 
   const runtimeIdentity = resolveSessionRuntimeIdentityFallback({ metadata });
-  const externalSessionLinkResolution = input.externalSessionLinkResolution;
-  if (
-    !externalSessionLinkResolution.ok
-    && externalSessionLinkResolution.error !== 'linked_session_not_found'
-  ) {
+  // Storage authority is not re-derived here: an unresolved link is refused by
+  // the single protocol owner before it can be read as "hosted with us".
+  const externalSessionLinkAuthority = input.externalSessionLinkAuthority;
+  if (!externalSessionLinkAuthority.ok) {
     return {
       eligible: false,
-      reasonCode: externalSessionLinkResolution.error,
+      reasonCode: externalSessionLinkAuthority.error,
     };
   }
-  const externalSessionLink = externalSessionLinkResolution.ok
-    ? externalSessionLinkResolution.linkedSession
+  const externalSessionLink = externalSessionLinkAuthority.transcriptStorage === 'direct'
+    ? externalSessionLinkAuthority.linkedSession
     : null;
   const sessionAgentId = typeof input.sessionAgentId === 'string'
     ? input.sessionAgentId.trim() || null
@@ -189,7 +188,7 @@ export async function resolveSessionHandoffEligibility(input: Readonly<{
     return { eligible: false, reasonCode: 'source_machine_missing' };
   }
 
-  const storageMode: SessionStorageMode = externalSessionLink ? 'direct' : 'persisted';
+  const storageMode: SessionStorageMode = externalSessionLinkAuthority.transcriptStorage;
   // Bundled vendor handoff policy covers bundled Agents; every other installed
   // Agent hands off through its own contributed execution surfaces.
   if (!isBundledAgentId(agentId)) {

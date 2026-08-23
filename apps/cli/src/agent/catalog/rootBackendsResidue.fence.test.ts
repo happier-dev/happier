@@ -146,14 +146,12 @@ describe('dead host backend residue fences', () => {
     ])).toEqual([]);
   });
 
-  it('keeps Kiro auth parsing in the plugin leaf instead of the host ACP fallback', () => {
-    const builtInAuthSource = readFileSync(
-      resolve(repoRoot, 'apps/cli/src/agent/acp/catalog/builtIn/auth.ts'),
-      'utf8',
-    );
-
-    expect(builtInAuthSource).not.toMatch(/\bparseKiroWhoamiAccountLabel\b/);
-    expect(builtInAuthSource).not.toMatch(/\bdetectKiroAuthStatus\b/);
+  it('keeps the host ACP CLI detect/auth fallback retired in favor of declared Agent CLI metadata', () => {
+    expect(existsSync(resolve(repoRoot, 'apps/cli/src/agent/acp/catalog/builtIn/auth.ts'))).toBe(false);
+    expect(existsSync(resolve(repoRoot, 'apps/cli/src/agent/acp/catalog/builtIn/detect.ts'))).toBe(false);
+    expect(
+      existsSync(resolve(repoRoot, 'apps/cli/src/capabilities/cliAuth/createUnknownCliAuthSpec.ts')),
+    ).toBe(false);
   });
 
   it('keeps retired runtime adapter alias files out of the host core', () => {

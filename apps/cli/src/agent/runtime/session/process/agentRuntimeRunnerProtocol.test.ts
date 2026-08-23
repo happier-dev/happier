@@ -3,6 +3,7 @@ import { AgentSessionProviderCheckpointMaxJsonBytesV1 } from '@happier-dev/proto
 
 import {
   AgentRuntimeDaemonSessionDescriptorV1Schema,
+  projectAgentRuntimeDaemonSessionOpenAttestationRequestV1,
   AgentRuntimeDaemonSessionOpenRequestV1Schema,
   AgentRuntimeDaemonTurnContributionRequestV1Schema,
   AgentRuntimeDaemonTurnContributionsResultV1Schema,
@@ -112,6 +113,48 @@ describe('Runner Agent protocol', () => {
         unexpected: true,
       }).success,
     ).toBe(false);
+  });
+
+  it('carries strict native-return identity to the runner but not durable open attestation', () => {
+    const request = {
+      kind: 'resume' as const,
+      sessionId: 'session-resume',
+      cwd: '/workspace',
+      providerSessionId: 'provider-session-1',
+      strictNativeResumeIdentity: true,
+    };
+
+    expect(AgentRuntimeDaemonSessionOpenRequestV1Schema.parse(request))
+      .toMatchObject({ strictNativeResumeIdentity: true });
+    expect(projectAgentRuntimeDaemonSessionOpenAttestationRequestV1(request))
+      .not.toHaveProperty('strictNativeResumeIdentity');
+  });
+
+  it.each([
+    {
+      configMode: 'linked' as const,
+      stateMode: 'shared' as const,
+    },
+    {
+      configMode: 'isolated' as const,
+      stateMode: 'isolated' as const,
+    },
+  ])('keeps the resolved %o state-sharing policy through open attestation', (stateSharing) => {
+    const request = {
+      kind: 'create' as const,
+      sessionId: 'session-state-sharing',
+      cwd: '/workspace',
+      stateSharing,
+    };
+
+    expect(AgentRuntimeDaemonSessionOpenRequestV1Schema.parse(request))
+      .toMatchObject({ stateSharing });
+    expect(projectAgentRuntimeDaemonSessionOpenAttestationRequestV1(request))
+      .toMatchObject({ stateSharing });
+    expect(AgentRuntimeDaemonSessionOpenRequestV1Schema.safeParse({
+      ...request,
+      stateSharing: { ...stateSharing, unexpected: true },
+    }).success).toBe(false);
   });
 
   it('rejects fork-open Provider checkpoints above the canonical byte bound', () => {
@@ -294,6 +337,7 @@ describe('Runner Agent protocol', () => {
       createdWorkspaceRelativePaths: [
         '.happier/uploads/messages/session-1/local-1/review.png',
       ],
+      workingDirectory: '/tmp/session-1-workspace',
     } as const;
 
     const extracted = extractComposerStagedMediaAdmissionSettlement({

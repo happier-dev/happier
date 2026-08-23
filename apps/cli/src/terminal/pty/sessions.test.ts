@@ -927,6 +927,26 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
+  it('keeps API Tokens and CLI continuation handoffs out of PTY shells', () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig(),
+      now: () => 0,
+      env: {
+        SHELL: '/bin/bash',
+        HAPPIER_TOKEN: 'hap_v1_ambient_token_secret',
+        HAPPIER_CLI_API_TOKEN_HANDOFF_V1: 'hap_v1_handoff_token_secret',
+      },
+      platform: 'linux',
+    });
+
+    const ensured = manager.ensure({ terminalKey: 'token-safe-shell', cwd: '/tmp' });
+    expect(ensured.ok).toBe(true);
+    expect(provider.spawned[0]?.params.options.env).not.toHaveProperty('HAPPIER_TOKEN');
+    expect(provider.spawned[0]?.params.options.env).not.toHaveProperty('HAPPIER_CLI_API_TOKEN_HANDOFF_V1');
+  });
+
   it('emits a gap event when the cursor is too old', () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({

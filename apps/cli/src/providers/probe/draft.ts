@@ -76,8 +76,6 @@ function createEphemeralRuntimeStore(machineId: string): ProviderRuntimeStateSto
       state = await transform(state);
       return state;
     },
-    touch: () => undefined,
-    flushTouches: async () => state,
   };
 }
 

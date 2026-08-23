@@ -35,7 +35,6 @@ function resolveSurface(surface: unknown): ActionExecuteBeforeHookPayload['invoc
     || surface === 'mcp'
     || surface === 'cli'
     || surface === 'rpc'
-    || surface === 'sdk'
     || surface === 'plugin'
     ? surface
     : 'cli';

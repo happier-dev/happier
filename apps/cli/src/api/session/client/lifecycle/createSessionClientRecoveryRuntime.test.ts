@@ -73,7 +73,7 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     });
   }
 
-  it('uses the initial catch-up cursor and stops after success', async () => {
+  it('uses the initial catch-up cursor through the bounded retry window after success', async () => {
     axiosGetMock.mockResolvedValue({ data: { messages: [] } });
     const runtime = createRuntime({ initialAfterSeq: 3, lastObservedSeq: 99 });
 
@@ -81,8 +81,11 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(1_200);
 
-    expect(axiosGetMock).toHaveBeenCalledTimes(1);
-    expect(axiosGetMock.mock.calls[0]?.[1]).toMatchObject({ params: { afterSeq: 3 } });
+    expect(axiosGetMock).toHaveBeenCalledTimes(2);
+    expect(axiosGetMock.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 3 }) }),
+      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 3 }) }),
+    ]);
   });
 
   it('stops retrying after terminal authentication failure', async () => {

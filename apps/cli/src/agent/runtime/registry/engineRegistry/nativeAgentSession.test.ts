@@ -9,6 +9,7 @@ import type {
     AgentRuntimeFactory,
     AgentSessionCatalogControl,
     AgentSessionContinuationControl,
+    AgentSessionOpenRequest,
     AgentSessionConversationRollbackControl,
     AgentSessionRuntimeFactory,
     AgentSessionRuntimeContext,
@@ -17,6 +18,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     ProviderConnectionIdSchema,
+    accountSettingsParse,
     redactBugReportSensitiveText,
     type AgentProviderRequirementsV1,
     type SessionTurnMutationV1,
@@ -56,6 +58,10 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { logger } from '@/ui/logger';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import {
+    resetActiveAccountSettingsSnapshotForTests,
+    setActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import {
     createNativeAgentSessionHostServices,
@@ -398,6 +404,7 @@ function createLease(agentId: string): AgentRuntimeRegistrationLease {
         pluginId: 'acme.agent-plugin',
         pluginVersion: '1.0.0',
         agentId,
+        localAgentId: agentId,
         generation: 'generation-1',
         immutableGenerationId: null,
         hasPrimaryRuntime: true,
@@ -1028,6 +1035,81 @@ describe('native Agent session host adapter', () => {
         expect(sessionDispose).toHaveBeenCalledOnce();
         expect(hostServicesDispose).toHaveBeenCalledOnce();
         expect(retireRuntimeSource).toHaveBeenCalledTimes(2);
+    });
+
+    it('carries the account provider state-sharing choice into the native open request', async () => {
+        const agentId = 'acme-native-state-sharing';
+        const contributions = createExternalContributionFixtures(agentId);
+        let openedStateSharing: AgentSessionOpenRequest['stateSharing'];
+        const open = vi.fn(async (request: AgentSessionOpenRequest) => {
+            openedStateSharing = request.stateSharing;
+            return {
+                send: vi.fn(async () => ({ status: 'admitted' as const })),
+                watch: () => ({ dispose: () => undefined }),
+                dispose: vi.fn(async () => undefined),
+            };
+        });
+        const openStateSharingFor = async (
+            settings: Readonly<Record<string, unknown>>,
+        ): Promise<AgentSessionOpenRequest['stateSharing']> => {
+            openedStateSharing = undefined;
+            setActiveAccountSettingsSnapshot({
+                source: 'cache',
+                settings: accountSettingsParse(settings),
+                settingsVersion: 1,
+                loadedAtMs: 1,
+                settingsSecretsReadKeys: [],
+            });
+            const plan = await createNativeAgentRuntimeSessionPlan({
+                runtime: { sessions: { open } },
+                lease: createLease(agentId),
+                backend: contributions.backend,
+                agent: contributions.agent,
+                createSessionHostServiceOwners: () =>
+                    createSessionHostServiceOwners(),
+                sessionInput: buildPluginSessionBindingInput({
+                    credentials,
+                    directory: '/tmp/acme-native-state-sharing',
+                }),
+            });
+            if (!plan.config.createSessionRuntime) {
+                throw new Error('expected a session runtime factory');
+            }
+            await plan.config.createSessionRuntime({
+                directory: '/tmp/acme-native-state-sharing',
+                metadata: {},
+                machineId: 'machine-1',
+                session: createNativeSessionClientTestPort(
+                    'session-native-state-sharing',
+                ),
+                transcriptSession: {},
+                messageBuffer: {},
+                mcpServers: {},
+                permissionHandler: {},
+                getPermissionMode: () => 'default',
+                setThinking: () => undefined,
+                memoryRecallGuidanceEnabled: false,
+            } as never);
+            return openedStateSharing;
+        };
+
+        try {
+            expect(await openStateSharingFor({})).toEqual({
+                configMode: 'linked',
+                stateMode: 'shared',
+            });
+            // An Agent that materializes its own launch-time home never reaches
+            // the connected-service materializer, so the user's explicit choice
+            // only survives if the host puts it on the open request itself.
+            expect(await openStateSharingFor({
+                connectedServicesProviderStateSharingSettingsV1: {
+                    v: 1,
+                    byAgentId: { [agentId]: { stateMode: 'isolated' } },
+                },
+            })).toEqual({ configMode: 'linked', stateMode: 'isolated' });
+        } finally {
+            resetActiveAccountSettingsSnapshotForTests();
+        }
     });
 
     it('claims and redacts host-private late Profile environment immediately before native open', async () => {
@@ -3888,6 +3970,11 @@ describe('native Agent session host adapter', () => {
         );
         const providerBinding = {
             connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+            upstream: {
+                protocol: 'openai-responses' as const,
+                normalizedUrl: 'https://provider.example/v1',
+                credential: 'apiKey' as const,
+            },
             model: { id: 'next-model', name: 'Next model' },
             materialization: { v: 1 as const, kind: 'spawnEnv' as const },
         };
@@ -9705,6 +9792,7 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
         >>['terminalRemoteModeLoop']>;
         terminalLaunch: ReturnType<typeof vi.fn>;
         executeProviderSessionFollow: ReturnType<typeof vi.fn>;
+        executeFollow: ReturnType<typeof vi.fn>;
     }>;
 
     async function createTerminalFollowHarness(options: Readonly<{
@@ -9721,6 +9809,8 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
                 ) => void | Promise<void>;
             }>,
         ) => Promise<unknown>;
+        configuredSources?: readonly unknown[];
+        externalSessionProviderOps?: BackendExecutionSurfaces['externalSession'];
         launch: (request: HostTerminalLaunchRequest) => Promise<unknown>;
     }>): Promise<TerminalFollowHarness> {
         const base = createExternalContributionFixtures(options.agentId);
@@ -9762,13 +9852,29 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
                     },
                 },
             } as typeof base.agent
-            : base.agent;
+            : options.configuredSources
+                ? {
+                    ...base.agent,
+                    richDefinition: {
+                        ...base.agent.richDefinition,
+                        definition: {
+                            ...base.agent.richDefinition.definition,
+                            surfaces: {
+                                externalSession: {
+                                    sources: options.configuredSources,
+                                },
+                            },
+                        },
+                    },
+                } as typeof base.agent
+                : base.agent;
         const executeProviderSessionFollow = vi.fn(options.providerSessionFollow);
+        const executeFollow = vi.fn(async () => ({
+            status: 'unavailable' as const,
+            code: 'plugin_external_follow_unavailable',
+        }));
         const bindSession = vi.fn(() => ({
-            executeFollow: vi.fn(async () => ({
-                status: 'unavailable' as const,
-                code: 'plugin_external_follow_unavailable',
-            })),
+            executeFollow,
             executeProviderSessionFollow,
             retire: async () => undefined,
         }));
@@ -9790,6 +9896,9 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
         const executionSurfaces: BackendExecutionSurfaces = {
             ...createEmptyBackendExecutionSurfaces(),
             terminalRuntime: { launch: terminalLaunch },
+            ...(options.externalSessionProviderOps
+                ? { externalSession: options.externalSessionProviderOps }
+                : {}),
         };
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime: {
@@ -9872,8 +9981,94 @@ describe('native Agent terminal transcript follow admission (ES-PEP-03/ES-PEP-05
         if (!modeLoop) throw new Error('expected a terminal remote mode loop');
         created.operations.subscribeRuntimeEvents(() => undefined);
         await vi.waitFor(() => expect(open).toHaveBeenCalled());
-        return { modeLoop, terminalLaunch, executeProviderSessionFollow };
+        return { modeLoop, terminalLaunch, executeProviderSessionFollow, executeFollow };
     }
+
+    it('fails a configured Agent closed instead of following through the generic provider-session route', async () => {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+        try {
+            // A contribution whose configured sources cannot materialize — here
+            // by exceeding the canonical per-contribution source ceiling — makes
+            // the configured External Sessions lifecycle fail construction. That
+            // is not "this Agent has no configured source": the generic
+            // provider-session route resolves its own follow target through a
+            // second Account/materialization route, so it must not silently take
+            // over a configured Agent's terminal follow.
+            const harness = await createTerminalFollowHarness({
+                agentId: 'acme-configured-construction-failure-agent',
+                configuredSources: [{
+                    sourceKind: 'terminal',
+                    schema: {
+                        fields: [
+                            { name: 'kind', kind: 'literal', value: 'terminal' },
+                            { name: 'projectId', kind: 'string' },
+                        ],
+                    },
+                    key: {
+                        segments: [
+                            { kind: 'literal', value: 'terminal' },
+                            { kind: 'field', field: 'projectId' },
+                        ],
+                    },
+                    instances: Array.from({ length: 33 }, (_unused, index) => ({
+                        kind: 'default',
+                        constants: { projectId: `project-${index}` },
+                    })),
+                }],
+                externalSessionProviderOps: {
+                    validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
+                    listCandidates: vi.fn(async () => ({ candidates: [], nextCursor: null })),
+                    resolveLinkIdentity: vi.fn(async ({ source, remoteSessionId }) => ({
+                        source,
+                        remoteSessionId,
+                    })),
+                    pageTranscript: vi.fn(async () => ({
+                        items: [],
+                        nextCursor: null,
+                        tailCursor: null,
+                        hasMore: false,
+                        truncated: false,
+                    })),
+                    readAfterTranscript: vi.fn(async () => ({
+                        outcome: 'already_current' as const,
+                    })),
+                } as unknown as BackendExecutionSurfaces['externalSession'],
+                providerSessionFollow: async () => ({
+                    status: 'following' as const,
+                    startingCursor: 'generic-route-must-not-win',
+                    subscription: { dispose: async () => undefined },
+                }),
+                launch: async (request) => {
+                    const permitted = await request.runWithCurrentPublisherPermit(
+                        async () => ({
+                            type: 'control_returned' as const,
+                            reason: 'pending_input' as const,
+                        }),
+                    );
+                    if (permitted.status === 'blocked') {
+                        throw new HostTerminalModelSelectionBlockedError();
+                    }
+                    return permitted.value;
+                },
+            });
+
+            await expect(
+                harness.modeLoop.runTerminal({ entry: 'initial' }),
+            ).resolves.toEqual({ type: 'switch' });
+            expect(harness.executeProviderSessionFollow).not.toHaveBeenCalled();
+            expect(harness.executeFollow).not.toHaveBeenCalled();
+            // A non-declaring Agent still launches; follow simply degrades.
+            expect(harness.terminalLaunch).toHaveBeenCalledOnce();
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining('transcript follow'),
+                expect.objectContaining({
+                    code: 'plugin_external_follow_unavailable',
+                }),
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
 
     it('launches the terminal for a non-declaring Agent when the follow bind reports typed unavailability', async () => {
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);

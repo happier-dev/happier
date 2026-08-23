@@ -15,7 +15,7 @@ import {
   projectSessionOwnerCompatibilityViewV1,
   buildLinkedExternalSessionMetadataV1,
   resolveExternalHistoryImportV1FromMetadata,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   resolveLinkedExternalSessionMetadataV1,
   normalizeLinkedExternalSessionMetadataV1,
   normalizeCodexBackendMode,
@@ -93,7 +93,7 @@ function resolveSessionSummaryTitle(metadata: Readonly<Record<string, unknown>>)
 }
 
 function resolveExternalRemoteSessionId(metadata: Readonly<Record<string, unknown>>): string | null {
-  const externalSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  const externalSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   return normalizeNullableString(externalSession?.remoteSessionId);
 }
 
@@ -590,7 +590,7 @@ function metadataProvesExternalHistoryImportIdentity(
 }
 
 function metadataProvesConnectedServiceGroup(metadata: Readonly<Record<string, unknown>>, expectedGroupId: string): boolean {
-  const linkedSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  const linkedSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   return linkedSession?.source.kind === 'codexHome'
     && linkedSession.source.home === 'connectedService'
     && normalizeNullableString(linkedSession.source.connectedServiceGroupId) === expectedGroupId;
@@ -606,7 +606,7 @@ function metadataProvesExternalSessionIdentity(
     resolveSourceKey(source: ExternalSessionsSource): string | null;
   }>,
 ): boolean {
-  const linkedSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  const linkedSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   return linkedSession?.machineId === expected.machineId
     && linkedSession.agentId === expected.agentId
     && linkedSession.remoteSessionId === expected.remoteSessionId
@@ -617,7 +617,7 @@ function metadataProvesExternalSessionGroupIdentity(
   metadata: Readonly<Record<string, unknown>>,
   expected: Readonly<{ machineId: string; remoteSessionId: string; groupId: string }>,
 ): boolean {
-  const linkedSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  const linkedSession = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   return linkedSession?.machineId === expected.machineId
     && linkedSession.remoteSessionId === expected.remoteSessionId
     && linkedSession.source.kind === 'codexHome'

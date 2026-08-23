@@ -13,6 +13,7 @@ describe('leased Agent runtime resolution', () => {
             pluginId: 'acme.agent',
             pluginVersion: '1.0.0',
             agentId: 'assistant',
+            localAgentId: 'assistant',
             generation: '7',
             immutableGenerationId: null,
             hasPrimaryRuntime: true,
@@ -43,7 +44,7 @@ describe('leased Agent runtime resolution', () => {
             }),
         });
         const lease: AgentRuntimeRegistrationLease = Object.freeze({
-            pluginId: 'acme.agent', pluginVersion: '1.0.0', agentId: 'assistant', generation: '7', immutableGenerationId: null, hasPrimaryRuntime: true, isCurrent: () => true,
+            pluginId: 'acme.agent', pluginVersion: '1.0.0', agentId: 'assistant', localAgentId: 'assistant', generation: '7', immutableGenerationId: null, hasPrimaryRuntime: true, isCurrent: () => true,
             retirementSignal,
             createAgentRuntimeSurfaceInvocationContext:
                 createUnexpectedAgentRuntimeSurfaceInvocationContext,
@@ -70,7 +71,7 @@ describe('leased Agent runtime resolution', () => {
             attach: vi.fn(async () => ({ ok: true as const, value: { exitCode: 0 } })),
         });
         const lease: AgentRuntimeRegistrationLease = Object.freeze({
-            pluginId: 'acme.agent', pluginVersion: '1.0.0', agentId: 'assistant', generation: '7', immutableGenerationId: null, hasPrimaryRuntime: true, isCurrent: () => true,
+            pluginId: 'acme.agent', pluginVersion: '1.0.0', agentId: 'assistant', localAgentId: 'assistant', generation: '7', immutableGenerationId: null, hasPrimaryRuntime: true, isCurrent: () => true,
             retirementSignal,
             createAgentRuntimeSurfaceInvocationContext:
                 createUnexpectedAgentRuntimeSurfaceInvocationContext,
@@ -98,7 +99,7 @@ describe('leased Agent runtime resolution', () => {
             attach: vi.fn(async () => ({ ok: true as const, value: { exitCode: 0 } })),
         });
         const lease: AgentRuntimeRegistrationLease = Object.freeze({
-            pluginId: 'acme.agent', pluginVersion: '1.0.0', agentId: 'assistant', generation: '7', immutableGenerationId: null, hasPrimaryRuntime: true, isCurrent: () => true,
+            pluginId: 'acme.agent', pluginVersion: '1.0.0', agentId: 'assistant', localAgentId: 'assistant', generation: '7', immutableGenerationId: null, hasPrimaryRuntime: true, isCurrent: () => true,
             retirementSignal: new AbortController().signal,
             createAgentRuntimeSurfaceInvocationContext:
                 createUnexpectedAgentRuntimeSurfaceInvocationContext,
@@ -122,7 +123,7 @@ describe('leased Agent runtime resolution', () => {
         const retirement = new AbortController();
         let current = true;
         const lease: AgentRuntimeRegistrationLease = Object.freeze({
-            pluginId: 'acme.agent', pluginVersion: '1.0.0', agentId: 'assistant', generation: '7', immutableGenerationId: null, hasPrimaryRuntime: true, isCurrent: () => current,
+            pluginId: 'acme.agent', pluginVersion: '1.0.0', agentId: 'assistant', localAgentId: 'assistant', generation: '7', immutableGenerationId: null, hasPrimaryRuntime: true, isCurrent: () => current,
             retirementSignal: retirement.signal,
             createAgentRuntimeSurfaceInvocationContext:
                 createUnexpectedAgentRuntimeSurfaceInvocationContext,

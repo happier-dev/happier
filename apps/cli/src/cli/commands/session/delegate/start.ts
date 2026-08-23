@@ -10,23 +10,37 @@ import { normalizeBackendTargetKeysFromCsv } from '../shared/normalizeBackendTar
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
 import { normalizeSessionStartActionResults } from '../shared/sessionStartActionResults';
+import { assertSessionCommandArguments } from '../shared/assertSessionCommandArguments';
 
 export async function cmdSessionDelegateStart(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
-  const json = wantsJson(argv);
-  const [idOrPrefix = ''] = readCommandPositionals(argv, {
+  assertSessionCommandArguments(argv, {
+    usage: `Usage: ${SESSION_HELP_LINES.delegateStart}`,
     startIndex: 2,
-    valueFlags: ['--backends', '--backend', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
+    booleanFlags: ['--json'],
+    valueFlags: ['--backends', '--backend', '--agent', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
+    maxPositionals: 2,
+  });
+  const json = wantsJson(argv);
+  const [idOrPrefix = '', positionalInstructions = ''] = readCommandPositionals(argv, {
+    startIndex: 2,
+    valueFlags: ['--backends', '--backend', '--agent', '--instructions', '--permission-mode', '--retention', '--run-class', '--io-mode'],
   });
   if (!idOrPrefix) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.delegateStart}`);
   }
 
-  const backendsRaw = readFlagValue(argv, '--backends') ?? readFlagValue(argv, '--backend');
+  const backendsRaw = readFlagValue(argv, '--backends')
+    ?? readFlagValue(argv, '--backend')
+    ?? readFlagValue(argv, '--agent');
   const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendsRaw);
-  const instructions = readFlagValue(argv, '--instructions') ?? '';
+  const explicitInstructions = readFlagValue(argv, '--instructions') ?? '';
+  if (explicitInstructions && positionalInstructions) {
+    throw new Error(`Usage: ${SESSION_HELP_LINES.delegateStart}`);
+  }
+  const instructions = explicitInstructions || positionalInstructions;
 
   const permissionMode = readFlagValue(argv, '--permission-mode') ?? undefined;
   const retentionPolicy = readFlagValue(argv, '--retention') ?? undefined;

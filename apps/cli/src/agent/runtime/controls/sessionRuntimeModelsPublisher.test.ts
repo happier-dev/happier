@@ -592,6 +592,11 @@ describe('createSessionRuntimeModelsPublisher', () => {
       policy: 'live',
       providerBinding: {
         connectionId,
+        upstream: {
+          protocol: 'openai-responses',
+          normalizedUrl: 'https://provider.example/v1',
+          credential: 'apiKey',
+        },
         model: {
           id: 'provider-current',
           name: 'Authorized Provider model',

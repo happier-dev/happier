@@ -343,6 +343,63 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('passes the reserved external Action envelope through raw only for its stamped server origin', async () => {
+    const encryptionKey = new Uint8Array(32).fill(31);
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine-1',
+      encryptionKey,
+      encryptionVariant: 'dataKey',
+      logger: () => {},
+    });
+    const serverOrigin = { kind: 'action.api.serverOrigin' } as const;
+    const rawEnvelope = {
+      actionId: 'session.get',
+      envelope: { v: 1, target: { kind: 'machine', machineId: 'machine-1' }, input: {} },
+      principal: {
+        accountId: 'account-1',
+        principalId: 'principal-1',
+        credentialId: 'credential-1',
+        authority: 'account_automation',
+      },
+      placement: {
+        machineId: 'machine-1',
+        target: { kind: 'machine', machineId: 'machine-1' },
+      },
+    };
+    const rawResult = {
+      v: 1,
+      actionId: 'session.get',
+      execution: { ok: false, errorCode: 'target_not_local', error: 'target_not_local' },
+    };
+    const handler = vi.fn(async (params: unknown, context) => {
+      expect(params).toEqual(rawEnvelope);
+      expect(context?.authorization).toEqual(serverOrigin);
+      return rawResult;
+    });
+    rpc.registerHandler('daemon.actions.external.dispatch', handler);
+
+    await expect(rpc.handleRequest({
+      method: 'machine-1:daemon.actions.external.dispatch',
+      params: rawEnvelope,
+      authorization: serverOrigin,
+    } as Parameters<typeof rpc.handleRequest>[0])).resolves.toEqual(rawResult);
+
+    const missingOrigin = await rpc.handleRequest({
+      method: 'machine-1:daemon.actions.external.dispatch',
+      params: rawEnvelope,
+    } as Parameters<typeof rpc.handleRequest>[0]);
+    expect(typeof missingOrigin).toBe('string');
+    expect(decrypt(
+      encryptionKey,
+      'dataKey',
+      decodeBase64(missingOrigin as string),
+    )).toEqual({
+      error: RPC_ERROR_MESSAGES.FORBIDDEN,
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('passes the reserved Automation reply-handoff envelope through raw only for the stamped server origin', async () => {
     const encryptionKey = new Uint8Array(32).fill(17);
     const rpc = new RpcHandlerManager({

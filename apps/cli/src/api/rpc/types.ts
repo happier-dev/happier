@@ -22,7 +22,22 @@ import type {
 export type RpcLocalActionContext = Readonly<Pick<
     ActionExecutorContext,
     'surface' | 'callerPermissionMode' | 'causalPermissionAuthority'
->>;
+> & {
+    operationProgress?: Readonly<{
+        update(progress: Readonly<{
+            label?: string;
+            phase?: string;
+            current?: number;
+            total?: number;
+        }>): void;
+    }>;
+    operationOwnerUpdate?: Readonly<{
+        update(update: Readonly<{
+            progress?: Readonly<{ label?: string; phase?: string; current?: number; total?: number }>;
+            domainRef?: import('@happier-dev/protocol/actions').ActionOperationDomainRefV1;
+        }>): void;
+    }>;
+}>;
 
 export type RpcHandlerContext = Readonly<{
     signal: AbortSignal;

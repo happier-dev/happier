@@ -112,7 +112,7 @@ export function createSessionClientRecoveryRuntime(
             void catchUpSessionMessages({
                 afterSeq: params.getStartupMessageCatchUpInitialAfterSeq(),
             })
-                .catch((error) => {
+                .then(() => true, (error) => {
                     if (isAuthenticationError(error)) {
                         logger.debug('[API] Startup transcript catch-up retry failed with terminal auth', {
                             error: serializeAxiosErrorForLog(error),

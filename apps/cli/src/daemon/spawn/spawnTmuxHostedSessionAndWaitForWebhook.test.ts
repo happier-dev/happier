@@ -111,6 +111,14 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
           generation: 'generation-1',
         },
       },
+      runnerAgentInvocationContext: Object.freeze({
+        cwd: '/tmp/project',
+        environment: Object.freeze({}),
+        providerBindingActive: true,
+      }),
+      extraEnvForChildWithMessage: {
+        PROVIDER_SECRET: 'must-not-become-daemon-authority',
+      },
     };
     const pending = (await import(
       './spawnTmuxHostedSessionAndWaitForWebhook'
@@ -127,7 +135,15 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
         agentId: 'agent',
         backendId: 'agent',
       },
+      runnerAgentInvocationContext: {
+        cwd: '/tmp/project',
+        environment: {},
+        providerBindingActive: true,
+      },
     });
+    expect(JSON.stringify(tracked)).not.toContain(
+      'must-not-become-daemon-authority',
+    );
     input.pidToAwaiter.get(4242)?.({
       ...tracked,
       happySessionId: 'session-4242',

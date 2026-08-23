@@ -17,6 +17,18 @@ type StatFileResponse =
       kind?: 'file' | 'directory' | 'other';
       sizeBytes?: number;
       modifiedMs?: number;
+      /**
+       * The file's status-change time.
+       *
+       * Size and modification time do not answer for content: a rewrite that
+       * preserves length and restores mtime, and any filesystem whose mtime
+       * granularity is coarser than the edit, both leave them identical for
+       * different bytes. A write always advances the status-change time and no
+       * `utimes` call can put it back, so this is the byte-sensitive fact
+       * callers need to tell one revision of a file from the next. Optional
+       * because an older daemon does not report it.
+       */
+      changedMs?: number;
     }>
   | Readonly<{ success: false; error: string }>;
 
@@ -73,6 +85,7 @@ export function registerPathMutationHandlers(
         kind,
         sizeBytes: stats.size,
         modifiedMs: stats.mtimeMs,
+        changedMs: stats.ctimeMs,
       };
     } catch (error) {
       const nodeError = error as NodeJS.ErrnoException;

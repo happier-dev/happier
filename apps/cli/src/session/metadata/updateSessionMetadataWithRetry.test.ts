@@ -10,7 +10,7 @@ import {
   openSessionOwnerMetadataEnvelopeV1,
   projectSessionOwnerCompatibilityViewV1,
   readExternalHistoryImportV1FromMetadata,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   removeLinkedExternalSessionMetadataV1,
   sealSessionOwnerMetadataEnvelopeV1,
 } from '@happier-dev/protocol';
@@ -226,7 +226,7 @@ describe('updateSessionMetadataWithRetry', () => {
       sharedMetadata: JSON.parse(patch.sharedMetadata.ciphertext),
       ownerMetadata: opened.ownerMetadata,
     });
-    expect(readLinkedExternalSessionV1FromMetadata(compatibility)).toBeNull();
+    expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(compatibility)).toBeNull();
     expect(readExternalHistoryImportV1FromMetadata(compatibility)).toEqual({
       v: 1,
       agentId: 'example',

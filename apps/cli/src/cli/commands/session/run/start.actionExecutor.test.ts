@@ -43,7 +43,7 @@ describe('happier session run start (action executor)', () => {
           'sess-1',
           '--intent',
           'review',
-          '--backend',
+          '--agent',
           'agent:claude',
           '--permission-mode',
           'read_only',

@@ -16,6 +16,7 @@ import {
     cleanupForkChildBestEffort,
     fetchForkChildSessionOrThrow,
 } from './forkChildSessionRecovery';
+import { resolveEstablishedForkLineageCutoff } from './resolveEstablishedForkLineageCutoff';
 import { normalizeForkProviderSessionId } from './forkProviderSessionId';
 import type {
     ForkBackendResolution,
@@ -35,6 +36,7 @@ export async function attemptAcpLatestFork(params: Readonly<{
     parentMetadata: ForkLifecycleMetadata;
     directory: string;
     effectiveCutoffSeqInclusive: number;
+    requestId?: string | null;
     forkIsConfiguredAcp: boolean;
     spawnNonce: string;
     forkBackendResolution: ForkBackendResolution;
@@ -97,6 +99,10 @@ export async function attemptAcpLatestFork(params: Readonly<{
             if (childSessionId === params.parentSessionId) {
                 return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
             }
+            const requestId = typeof params.requestId === 'string'
+                && params.requestId.trim().length > 0
+                ? params.requestId.trim()
+                : null;
 
             try {
                 const childRaw = await fetchForkChildSessionOrThrow({ token: params.credentials.token, sessionId: childSessionId });
@@ -113,9 +119,15 @@ export async function attemptAcpLatestFork(params: Readonly<{
                         forkV1: {
                             v: 1,
                             parentSessionId: params.parentSessionId,
-                            parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+                            parentCutoffSeqInclusive: resolveEstablishedForkLineageCutoff({
+                                metadata,
+                                parentSessionId: params.parentSessionId,
+                                requestId,
+                                fallbackCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+                            }),
                             createdAtMs: Date.now(),
                             strategy: 'acp_fork_latest',
+                            ...(requestId ? { requestId } : {}),
                             agentHint: {
                                 agentId: params.forkBackendResolution.agentHintAgentId,
                                 ...(providerBackendMode ? { backendMode: providerBackendMode } : {}),

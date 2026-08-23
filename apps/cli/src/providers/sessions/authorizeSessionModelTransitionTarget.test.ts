@@ -148,6 +148,11 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
       ...active(selection, { runtimeBindingBasis: basis }),
       providerBinding: {
         connectionId: selection.providerConnectionId,
+        upstream: {
+          protocol: basis.endpoint.protocol,
+          normalizedUrl: basis.endpoint.normalizedUrl,
+          credential: 'apiKey',
+        },
         model: { id: selection.modelId, name: selection.modelId },
         materialization: {
           v: 1,
@@ -176,7 +181,14 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
     await expect(authorize(selection)).resolves.toMatchObject({
       selection,
       policy: 'restart_session',
-      providerBinding: activeTarget.providerBinding,
+      providerBinding: {
+        ...activeTarget.providerBinding,
+        upstream: {
+          protocol: 'openai-responses',
+          normalizedUrl: 'https://provider.example/v1',
+          credential: 'apiKey',
+        },
+      },
       sessionBindingMetadata: activeTarget.sessionBindingMetadata,
       runtimeBindingBasis: basis,
     });
@@ -193,6 +205,11 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
       ...active(activeSelection, { runtimeBindingBasis: basis }),
       providerBinding: {
         connectionId: activeSelection.providerConnectionId,
+        upstream: {
+          protocol: basis.endpoint.protocol,
+          normalizedUrl: basis.endpoint.normalizedUrl,
+          credential: 'apiKey',
+        },
         model: {
           id: activeSelection.modelId,
           name: activeSelection.modelId,
@@ -247,6 +264,11 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
       ...active(selection, { runtimeBindingBasis: basis }),
       providerBinding: {
         connectionId: selection.providerConnectionId,
+        upstream: {
+          protocol: basis.endpoint.protocol,
+          normalizedUrl: basis.endpoint.normalizedUrl,
+          credential: 'apiKey',
+        },
         model: { id: selection.modelId, name: selection.modelId },
         materialization: {
           v: 1,
@@ -518,6 +540,11 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
       ...active(selection, { runtimeBindingBasis: basis }),
       providerBinding: {
         connectionId: selection.providerConnectionId!,
+        upstream: {
+          protocol: basis.endpoint.protocol,
+          normalizedUrl: basis.endpoint.normalizedUrl,
+          credential: 'apiKey',
+        },
         model: { id: selection.modelId, name: selection.modelId },
         materialization: { v: 1, kind: 'spawnEnv' },
       },

@@ -264,6 +264,47 @@ describe('runInstallCliCommand', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install plugin update <pluginId>'));
   });
 
+  it('reads plugin install flags written in the --flag=value form', async () => {
+    const log = vi.fn();
+    const error = vi.fn();
+
+    await runInstallCliCommand(
+      makeContext(['install', 'plugin', 'acme-published-plugin', '--kind=npm', '--selector=1.2.3', '--dry-run']),
+      {
+        log,
+        error,
+        exit: vi.fn() as never,
+        runDoctorCommand: vi.fn(),
+        invokeAgentCliInstall: vi.fn(),
+      },
+    );
+
+    expect(error).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('Dry run: would request installNpm for acme-published-plugin.');
+  });
+
+  it('rejects --integrity=<sri> written in the --flag=value form for a non-archive install', async () => {
+    const log = vi.fn();
+    const error = vi.fn();
+    const exit = vi.fn() as never;
+
+    await runInstallCliCommand(
+      makeContext(['install', 'plugin', '/tmp/acme-plugin-root', '--integrity=sha256-Zm9vYmFy']),
+      {
+        log,
+        error,
+        exit,
+        runDoctorCommand: vi.fn(),
+        invokeAgentCliInstall: vi.fn(),
+      },
+    );
+
+    expect(error).toHaveBeenCalledWith(
+      expect.anything(),
+      '--integrity is only valid for archive plugin installs',
+    );
+  });
+
   it('prints usage for provider help requests', async () => {
     const log = vi.fn();
     const error = vi.fn();

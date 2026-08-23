@@ -183,6 +183,41 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
     expect(mocks.spawnWindowsHostedSessionAndWaitForWebhook).toHaveBeenCalledWith(expect.objectContaining({ sanitizeDiagnosticText }));
   }, ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS);
 
+  it('forwards the admitted runner invocation context to regular, tmux, and Windows tracked-session producers', async () => {
+    const runnerAgentInvocationContext = Object.freeze({
+      cwd: '/tmp/happier-project',
+      environment: Object.freeze({}),
+      providerBindingActive: true,
+    });
+    const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
+
+    await routeSpawnModeAndWaitForWebhook({
+      ...createParams(),
+      runnerAgentInvocationContext,
+    });
+
+    expect(mocks.spawnTmuxHostedSessionAndWaitForWebhook)
+      .toHaveBeenLastCalledWith(expect.objectContaining({
+        runnerAgentInvocationContext,
+      }));
+    expect(mocks.spawnRegularProcessAndWaitForWebhook)
+      .toHaveBeenLastCalledWith(expect.objectContaining({
+        runnerAgentInvocationContext,
+      }));
+
+    mocks.resolveWindowsRemoteSessionConsoleMode
+      .mockReturnValueOnce('windows_terminal');
+    await routeSpawnModeAndWaitForWebhook({
+      ...createParams(),
+      runnerAgentInvocationContext,
+    });
+
+    expect(mocks.spawnWindowsHostedSessionAndWaitForWebhook)
+      .toHaveBeenLastCalledWith(expect.objectContaining({
+        runnerAgentInvocationContext,
+      }));
+  }, ROUTE_SPAWN_MODE_TEST_TIMEOUT_MS);
+
   it('threads one live-runner retention decision through tmux, regular/cgroup, and Windows launch owners', async () => {
     const tracked = {
       pid: 42,

@@ -20,6 +20,7 @@ import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registr
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
+import { resolveNativeAgentSessionStateSharingPolicy } from '@/agent/runtime/registry/engineRegistry/stateSharingPolicy';
 
 import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
 
@@ -161,6 +162,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     const profile = resolveExecutionProfileReference(profileId, params.lease.pluginId);
     const launchEnvironment = buildLaunchEnvironment(params.options);
     const boundedOpenInputs = Object.freeze({
+        stateSharing: resolveNativeAgentSessionStateSharingPolicy(params.lease.agentId),
         ...(launchEnvironment ? { launchEnvironment } : {}),
         ...(params.options.modelSelection
             ? { modelSelection: params.options.modelSelection }
@@ -252,8 +254,8 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             const context: AgentRuntimeContext = Object.freeze({
                 plugin: Object.freeze({ id: params.lease.pluginId, version: params.lease.pluginVersion }),
                 contribution: Object.freeze({
-                    id: params.lease.agentId,
-                    qualifiedId: `${params.lease.pluginId}/agents/${params.lease.agentId}`,
+                    id: params.lease.localAgentId,
+                    qualifiedId: `${params.lease.pluginId}/agents/${params.lease.localAgentId}`,
                 }),
                 surface: 'agent',
                 signal,

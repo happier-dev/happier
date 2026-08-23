@@ -79,6 +79,24 @@ describe.each(['legacy', 'dataKey'] as const)('session input encryption and equa
     expect(decryptSessionPayload({ ctx, ciphertextBase64: first })).toEqual(payload);
     expect(decryptSessionPayload({ ctx, ciphertextBase64: second })).toEqual(payload);
   });
+
+  it('makes an explicit idempotency key deterministic while binding the nonce to the payload', () => {
+    const payload = { role: 'agent', content: { type: 'event', data: { type: 'message', text: 'divider' } } };
+    const params = { ctx, payload, idempotencyKey: 'agent-transition-divider:local-1' };
+    const changedPayload = {
+      ...params,
+      payload: { role: 'agent', content: { type: 'event', data: { type: 'message', text: 'changed' } } },
+    };
+
+    const first = encryptSessionPayload(params);
+    const retry = encryptSessionPayload(params);
+    const changed = encryptSessionPayload(changedPayload);
+
+    expect(retry).toBe(first);
+    expect(changed).not.toBe(first);
+    expect(decryptSessionPayload({ ctx, ciphertextBase64: first })).toEqual(payload);
+    expect(decryptSessionPayload({ ctx, ciphertextBase64: changed })).toEqual(changedPayload.payload);
+  });
 });
 
 describe('decryptStoredSessionPayload (plaintext)', () => {

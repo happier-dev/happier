@@ -193,6 +193,58 @@ describe('createVoiceInferenceTtsSegmentManager', () => {
     });
   });
 
+  it('retires a stream whose client never asks for its prefetched segments', async () => {
+    vi.useFakeTimers();
+    const root = await createTempDir();
+    const audioPath = join(root, 'segment.wav');
+    await writeFile(audioPath, Buffer.from('audio'));
+    const pending = deferred<void>();
+    const cancelTts = vi.fn(async () => {});
+    let synthesizedCount = 0;
+    const manager = createVoiceInferenceTtsSegmentManager({
+      voiceInferenceWorker: {
+        synthesizeTts: vi.fn(async (input: any) => {
+          synthesizedCount += 1;
+          // The second prefetched segment never finishes: an abandoned start must
+          // cancel it instead of leaving the worker running for the daemon lifetime.
+          if (synthesizedCount > 1) await pending.promise;
+          return {
+            requestId: input.requestId,
+            output: input.output,
+            filePath: audioPath,
+            sizeBytes: 5,
+            name: 'segment.wav',
+          };
+        }),
+        cancelTts,
+      },
+      streamRoot: root,
+      prefetchDepth: 2,
+      ackTimeoutMs: 100,
+    });
+
+    const started = await manager.start({
+      requestId: 'tts-stream-abandoned',
+      text: 'First sentence. Second sentence. Third sentence.',
+      packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      voiceId: null,
+      speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+    if (!started.ok) throw new Error('start failed');
+
+    // The client disappears immediately after start: it never calls next, so no
+    // per-segment ack deadline is ever created.
+    await vi.advanceTimersByTimeAsync(150);
+
+    await expect(manager.status({ streamId: started.streamId, generation: started.generation })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'stream_not_found',
+    });
+    expect(cancelTts).toHaveBeenCalledWith(expect.stringContaining('tts-stream-abandoned'));
+    pending.resolve();
+  });
+
   it('does not emit done before the delivered segment is playback-acked', async () => {
     const root = await createTempDir();
     const audioPath = join(root, 'segment.wav');

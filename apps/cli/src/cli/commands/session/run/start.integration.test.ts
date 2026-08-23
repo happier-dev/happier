@@ -67,6 +67,17 @@ describe('happier session run start (integration)', () => {
         }));
         return;
       }
+      if (req.method === 'GET' && url.pathname === '/v1/machines/machine-integration-1') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          machine: {
+            id: 'machine-integration-1',
+            dataEncryptionKey: dataEncryptionKeyBase64,
+          },
+        }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -77,6 +88,12 @@ describe('happier session run start (integration)', () => {
           contentKeyFingerprint: null,
           updatedAt: 1,
         }));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/v2/sessions/lookup-by-tags') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ sessions: [] }));
         return;
       }
       if (req.method === 'GET' && url.pathname === `/v2/sessions`) {
@@ -206,7 +223,7 @@ describe('happier session run start (integration)', () => {
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--agent', 'claude', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -312,7 +329,7 @@ describe('happier session run start (integration)', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--agent', 'claude', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -363,7 +380,7 @@ describe('happier session run start (integration)', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--agent', 'claude', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -389,7 +406,7 @@ describe('happier session run start (integration)', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude,codex', '--json'],
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--agent', 'claude,codex', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -419,7 +436,7 @@ describe('happier session run start (integration)', () => {
 
     try {
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'qa_cli_run', '--backend', 'codex', '--json'],
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'qa_cli_run', '--agent', 'codex', '--json'],
         { readCredentialsFn },
       );
 
@@ -464,7 +481,7 @@ describe('happier session run start (integration)', () => {
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--backend', 'claude', '--json'],
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'review', '--agent', 'claude', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -494,7 +511,7 @@ describe('happier session run start (integration)', () => {
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(
-        ['run', 'start', 'sess_inte', '--intent', 'review', '--backend', 'claude', '--json'],
+        ['run', 'start', 'sess_inte', '--intent', 'review', '--agent', 'claude', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -545,7 +562,7 @@ describe('happier session run start (integration)', () => {
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'voice_agent', '--backend', 'claude', '--json'],
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'voice_agent', '--agent', 'claude', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -610,7 +627,7 @@ describe('happier session run start (integration)', () => {
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
       await handleSessionCommand(
-        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'delegate', '--backend', 'acpBackend:review-bot', '--json'],
+        ['run', 'start', 'sess_integration_run_start_123', '--intent', 'delegate', '--agent', 'acpBackend:review-bot', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',

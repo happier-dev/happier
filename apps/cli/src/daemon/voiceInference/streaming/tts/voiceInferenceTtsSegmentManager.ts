@@ -46,6 +46,12 @@ export type VoiceInferenceTtsSegmentWorker = Readonly<{
 }>;
 
 export type VoiceInferenceTtsSegmentManager = Readonly<{
+  /**
+   * Daemon-owned temp root for this manager's streams. Exposed so a caller that
+   * must stage stream-scoped bytes on disk (segmented TTS diagnostics) uses the
+   * same resolved root instead of re-deriving the default.
+   */
+  streamRoot: string;
   start: (input: DaemonVoiceInferenceTtsStreamStartRequest) => Promise<DaemonVoiceInferenceTtsStreamStartResponse>;
   next: (input: DaemonVoiceInferenceTtsStreamNextRequest) => Promise<DaemonVoiceInferenceTtsStreamNextResponse>;
   ack: (input: DaemonVoiceInferenceTtsStreamAckRequest) => Promise<DaemonVoiceInferenceTtsStreamAckResponse>;
@@ -54,11 +60,22 @@ export type VoiceInferenceTtsSegmentManager = Readonly<{
   dispose: () => Promise<void>;
 }>;
 
+export type VoiceInferenceTtsStreamClosedOutcome = 'completed' | 'discarded';
+
 export type CreateVoiceInferenceTtsSegmentManagerOptions = Readonly<{
   voiceInferenceWorker: VoiceInferenceTtsSegmentWorker;
   streamRoot?: string;
   prefetchDepth?: number;
   ackTimeoutMs?: number;
+  /**
+   * Fired exactly once per stream, from the single terminal path, so an owner
+   * that staged stream-scoped bytes (segmented TTS diagnostics) retires them
+   * with the stream instead of holding them until daemon shutdown.
+   */
+  onStreamClosed?: (input: Readonly<{
+    streamId: string;
+    outcome: VoiceInferenceTtsStreamClosedOutcome;
+  }>) => void;
 }>;
 
 type SegmentState = {
@@ -84,6 +101,7 @@ type TtsStreamSession = {
   state: 'open' | 'error' | 'closed';
   waiters: Array<() => void>;
   errorEvent: Extract<DaemonVoiceInferenceTtsStreamEvent, { type: 'error' }> | null;
+  abandonTimer: ReturnType<typeof setTimeout> | null;
 };
 
 function errorResponse(error: unknown, retryable?: boolean): DaemonVoiceInferenceError {
@@ -147,12 +165,41 @@ export function createVoiceInferenceTtsSegmentManager(
     ).length;
   }
 
+  /**
+   * The stream is abandoned when the client stops driving it. Armed from start —
+   * before any segment is delivered — because a client that vanishes right after
+   * start has no delivered segment and therefore no per-segment ack deadline,
+   * and its prefetched audio, staged diagnostics and in-flight synthesis would
+   * otherwise be held for the daemon's whole lifetime.
+   */
+  function refreshAbandonDeadline(session: TtsStreamSession): void {
+    if (session.abandonTimer) {
+      clearTimeout(session.abandonTimer);
+      session.abandonTimer = null;
+    }
+    if (session.state === 'closed') {
+      return;
+    }
+    session.abandonTimer = setTimeout(() => {
+      session.abandonTimer = null;
+      void closeSession(session, { cancelWorker: true, outcome: 'discarded' });
+    }, ackTimeoutMs);
+    (session.abandonTimer as { unref?: () => void }).unref?.();
+  }
+
   async function closeSession(
     session: TtsStreamSession,
-    optionsForClose?: Readonly<{ cancelWorker?: boolean }>,
+    optionsForClose: Readonly<{ cancelWorker?: boolean; outcome: VoiceInferenceTtsStreamClosedOutcome }>,
   ): Promise<void> {
+    if (session.state === 'closed') {
+      return;
+    }
     session.state = 'closed';
     sessions.delete(session.streamId);
+    if (session.abandonTimer) {
+      clearTimeout(session.abandonTimer);
+      session.abandonTimer = null;
+    }
     for (const segment of session.segments) {
       if (segment.ackTimer) {
         clearTimeout(segment.ackTimer);
@@ -162,12 +209,13 @@ export function createVoiceInferenceTtsSegmentManager(
         segment.controller.abort();
         segment.controller = null;
       }
-      if (optionsForClose?.cancelWorker === true && segment.status === 'synthesizing') {
+      if (optionsForClose.cancelWorker === true && segment.status === 'synthesizing') {
         await options.voiceInferenceWorker.cancelTts(segment.requestId).catch(() => undefined);
       }
       segment.event = null;
     }
     notify(session);
+    options.onStreamClosed?.({ streamId: session.streamId, outcome: optionsForClose.outcome });
   }
 
   function markError(session: TtsStreamSession, segment: SegmentState, error: unknown): void {
@@ -266,18 +314,25 @@ export function createVoiceInferenceTtsSegmentManager(
 
   function nextReadyEvent(session: TtsStreamSession): DaemonVoiceInferenceTtsStreamEvent | null {
     if (session.errorEvent) {
-      return session.errorEvent;
+      // Delivering the terminal event ends the stream: retiring it here is what
+      // keeps an errored session (and anything staged for it) from outliving the
+      // client that will never come back for it.
+      const errorEvent = session.errorEvent;
+      void closeSession(session, { cancelWorker: true, outcome: 'discarded' });
+      return errorEvent;
     }
     const readySegment = session.segments.find((segment) =>
       segment.status === 'ready' && !segment.delivered && segment.event,
     );
     if (!readySegment?.event) {
       if (session.segments.every((segment) => segment.status === 'acked')) {
-        return {
+        const doneEvent = {
           type: 'done',
           streamId: session.streamId,
           generation: session.generation,
-        };
+        } as const;
+        void closeSession(session, { outcome: 'completed' });
+        return doneEvent;
       }
       return null;
     }
@@ -289,7 +344,7 @@ export function createVoiceInferenceTtsSegmentManager(
     // truth but is not an audio-prefetch pacing signal.
     readySegment.event = null;
     readySegment.ackTimer = setTimeout(() => {
-      void closeSession(session, { cancelWorker: true });
+      void closeSession(session, { cancelWorker: true, outcome: 'discarded' });
     }, ackTimeoutMs);
     (readySegment.ackTimer as { unref?: () => void }).unref?.();
     scheduleMore(session);
@@ -297,6 +352,7 @@ export function createVoiceInferenceTtsSegmentManager(
   }
 
   const manager: VoiceInferenceTtsSegmentManager = {
+    streamRoot,
     start: async (input) => {
       try {
         const segments = segmentTextForDaemonTts(input.text);
@@ -325,8 +381,10 @@ export function createVoiceInferenceTtsSegmentManager(
           state: 'open',
           waiters: [],
           errorEvent: null,
+          abandonTimer: null,
         };
         sessions.set(streamId, session);
+        refreshAbandonDeadline(session);
         scheduleMore(session, input.prefetchDepth ?? defaultPrefetchDepth);
         return {
           ok: true,
@@ -345,6 +403,7 @@ export function createVoiceInferenceTtsSegmentManager(
       if (!session) {
         return streamError('stream_not_found', 'daemon_voice_inference_tts_stream_not_found');
       }
+      refreshAbandonDeadline(session);
       const ready = nextReadyEvent(session);
       if (ready) {
         return {
@@ -391,9 +450,10 @@ export function createVoiceInferenceTtsSegmentManager(
       segment.status = 'acked';
       segment.event = null;
       scheduleMore(session);
+      refreshAbandonDeadline(session);
       const complete = session.segments.every((candidate) => candidate.status === 'acked');
       if (complete) {
-        await closeSession(session);
+        await closeSession(session, { outcome: 'completed' });
       }
       return {
         ok: true,
@@ -408,7 +468,7 @@ export function createVoiceInferenceTtsSegmentManager(
       if (!session) {
         return streamError('stream_not_found', 'daemon_voice_inference_tts_stream_not_found');
       }
-      await closeSession(session, { cancelWorker: true });
+      await closeSession(session, { cancelWorker: true, outcome: 'discarded' });
       return {
         ok: true,
         streamId: input.streamId,
@@ -441,12 +501,13 @@ export function createVoiceInferenceTtsSegmentManager(
         return await disposePromise;
       }
       disposePromise = (async () => {
-        await Promise.all([...sessions.values()].map((session) => closeSession(session, { cancelWorker: true })));
+        await Promise.all([...sessions.values()].map((session) =>
+          closeSession(session, { cancelWorker: true, outcome: 'discarded' }),
+        ));
       })();
       return await disposePromise;
     },
   };
 
-  void streamRoot;
   return manager;
 }

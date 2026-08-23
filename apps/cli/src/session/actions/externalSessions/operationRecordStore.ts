@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import {
   decideExternalSessionOperationUpdateV1,
+  externalSessionOperationRetainsPartialDiscardRecoveryV1,
   ExternalSessionOperationAuthorIntentV1Schema,
   ExternalSessionOperationReferenceV1Schema,
   ExternalSessionOperationRecordV1Schema,
@@ -122,7 +123,12 @@ const MAX_EXTERNAL_SESSION_OPERATION_RECORD_INVENTORY = 10_000;
 const EXTERNAL_SESSION_OPERATION_INVENTORY_LOCK_TIMEOUT_MS = 30_000;
 const EXTERNAL_SESSION_OPERATION_COMPLETION_RECEIPT_RETENTION_MS =
   24 * 60 * 60 * 1_000;
-const TERMINAL_OPERATION_STATUSES = new Set([
+/**
+ * The settled statuses. A completion receipt records a *settled* operation,
+ * not only a successful one: `completedAtMs` is the settlement instant and the
+ * retained presentation carries whichever settled status the record ended on.
+ */
+const TERMINAL_OPERATION_STATUSES: ReadonlySet<string> = new Set([
   'completed',
   'cancelled',
   'discarded',
@@ -326,11 +332,11 @@ const ExternalSessionOperationCompletionReceiptV1Schema = z.object({
       message: 'Completion receipt presentation must match its operation reference.',
     });
   }
-  if (receipt.presentation.status !== 'completed') {
+  if (!TERMINAL_OPERATION_STATUSES.has(receipt.presentation.status)) {
     context.addIssue({
       code: 'custom',
       path: ['presentation', 'status'],
-      message: 'Completion receipt presentation must be completed.',
+      message: 'Completion receipt presentation must be settled.',
     });
   }
   if (
@@ -1406,22 +1412,32 @@ export type ExternalSessionOperationCompletionCompactionResult = Readonly<
     reason:
       | 'operation_not_found'
       | 'stale_revision'
-      | 'operation_not_completed'
+      | 'operation_not_settled'
+      | 'partial_discard_recovery_retained'
       | 'projection_unacknowledged'
       | 'staging_not_clean';
   }
 >;
 
+/**
+ * A settled operation may be replaced by its minimal receipt once nothing can
+ * still act on the full record. Completed, cancelled, and discarded are the
+ * settled statuses; a cancelled operation whose explicit Discard still has
+ * durable server-side partial history to release keeps its full record because
+ * that record is the only pointer to the state Discard must remove.
+ */
 export function resolveExternalSessionOperationCompletionCompactionEligibility(
   record: ExternalSessionOperationRecordV1,
-): 'eligible' | 'operation_not_completed' {
+): 'eligible' | 'operation_not_settled' | 'partial_discard_recovery_retained' {
   if (
-    record.status !== 'completed'
-    || record.terminalResult?.kind !== 'completed'
+    !TERMINAL_OPERATION_STATUSES.has(record.status)
+    || record.terminalResult?.kind !== record.status
   ) {
-    return 'operation_not_completed';
+    return 'operation_not_settled';
   }
-  return 'eligible';
+  return externalSessionOperationRetainsPartialDiscardRecoveryV1(record)
+    ? 'partial_discard_recovery_retained'
+    : 'eligible';
 }
 
 export async function compactExternalSessionOperationRecordToCompletionReceipt(

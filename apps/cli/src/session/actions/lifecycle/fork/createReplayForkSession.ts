@@ -32,6 +32,7 @@ export async function createReplayForkSession(params: Readonly<{
     parentMetadata: ForkLifecycleMetadata;
     directory: string;
     effectiveCutoffSeqInclusive: number;
+    requestId?: string | null;
     spawnNonce: string;
     forkPointType: 'seq' | 'latest';
     replaySummaryRunner: ReplaySummaryRunner | null | undefined;
@@ -61,9 +62,10 @@ export async function createReplayForkSession(params: Readonly<{
     );
     const replayChildDirectory = replayForkContinuation?.directory ?? params.directory;
     const replayRuntimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(replayLaunchMetadata) ?? undefined;
-    const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
+    const connectedServiceForkLaunchContext = createConnectedServiceForkLaunchContext({
         inherited: params.inheritedForkOverrides,
-    }).inherited;
+    });
+    const inheritedForkOverrides = connectedServiceForkLaunchContext.inherited;
     const recipeResult = await buildReplaySeededSpawnRecipe({
         credentials: params.credentials,
         cwd: params.directory,
@@ -80,6 +82,7 @@ export async function createReplayForkSession(params: Readonly<{
         // The fork lifecycle already admitted this exact cutoff; persisted
         // lineage must keep naming it rather than a retrieval-resolved one.
         lineageCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
+        requestId: params.requestId,
         extraMetadata: {
             ...inheritedForkOverrides.metadata,
             ...params.forkBackendResolution.metadataOverlay,
@@ -132,6 +135,7 @@ export async function createReplayForkSession(params: Readonly<{
                     cutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
                 },
             },
+            connectedServiceChildLaunch: connectedServiceForkLaunchContext.childLaunch,
             directTransport: {
                 spawn: async (request) => await params.spawnSession({
                     ...request,
@@ -141,6 +145,12 @@ export async function createReplayForkSession(params: Readonly<{
                         ? { environmentVariables: { ...replayForkContinuation.environmentVariables } }
                         : {}),
                     ...inheritedForkOverrides.spawn,
+                    // A rejoined child keeps the identity persisted by its
+                    // first creation; the canonical creator supplies it on
+                    // the request after authenticating that row.
+                    ...(request.connectedServiceMaterializationIdentityV1
+                        ? { connectedServiceMaterializationIdentityV1: request.connectedServiceMaterializationIdentityV1 }
+                        : {}),
                 } satisfies SpawnSessionOptions),
                 resolveSpawnSessionByNonce: async () => ({ status: 'unsupported' as const }),
             },

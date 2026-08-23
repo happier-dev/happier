@@ -47,7 +47,10 @@ import {
   type HostExternalTranscriptItem,
   type HostExternalTranscriptReadResult,
 } from './privateContract';
-import type { ContextualExternalSessionTakeoverAdapter } from './contextualTakeoverAdmission';
+import type {
+  ContextualExternalSessionTakeoverAdapter,
+  ContextualExternalSessionTakeoverResolution,
+} from './contextualTakeoverAdmission';
 import {
   buildConfiguredExternalSessionSourceSnapshot,
   type ConfiguredExternalSessionSourceRefusal,
@@ -330,7 +333,7 @@ export type ConfiguredPluginExternalSessionsComposition = Readonly<{
   resolveAuthorSource(
     ref: AuthorTakeoverRef,
     options?: Readonly<{ signal?: AbortSignal }>,
-  ): Promise<Readonly<{ source: ExternalSessionsSource }>>;
+  ): Promise<ContextualExternalSessionTakeoverResolution>;
   compositionPort: ExternalSessionsCompositionPort;
   dispose: () => void;
 }>;
@@ -787,6 +790,13 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
   isCurrent: () => boolean;
   activeServerDir?: string;
   resolveProviderOps: (agentId: string) => Promise<PluginExternalSessionsProviderOps | null>;
+  /**
+   * Immutable generation of the Agent plugin behind `agentId`. The candidate
+   * index this adapter shares with the daemon's own Browse path is qualified by
+   * it, so both must read it from the same runtime lease: disagreeing values
+   * would make each caller reject and rebuild the other's index forever.
+   */
+  resolveAgentRuntimeGeneration?: (agentId: string) => string | null;
   attach?: NonNullable<Parameters<typeof createPluginExternalSessionsAdapter>[0]['attach']>;
   contextualTakeover?: ContextualExternalSessionTakeoverAdapter;
   followTranscript?: NonNullable<
@@ -882,10 +892,12 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
         return await executeExternalSessionCandidateQuery({
           activeServerDir: candidateIndexServerDir,
           agentIdentity: entry.agentIdentity,
+          agentRuntimeGeneration: params.resolveAgentRuntimeGeneration?.(entry.agentId) ?? null,
           source,
           ...(cursor ? { cursor } : {}),
           limit,
           maxBytes,
+          ...(signal ? { signal } : {}),
           listCandidates: async (request) => await ops.listCandidates({
             source,
             ...request,
@@ -1284,7 +1296,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
   const resolveAuthorSource = async (
     rawRef: AuthorTakeoverRef,
     options?: Readonly<{ signal?: AbortSignal }>,
-  ): Promise<Readonly<{ source: ExternalSessionsSource }>> => {
+  ): Promise<ContextualExternalSessionTakeoverResolution> => {
     const ref = readAuthorRef(rawRef);
     const assertAuthorSourceCurrent = (): void => {
       if (options?.signal?.aborted) {
@@ -1327,7 +1339,11 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       ...(options?.signal ? { signal: options.signal } : {}),
     }, ops);
     assertAuthorSourceCurrent();
-    return Object.freeze({ source: identity.source });
+    return Object.freeze({
+      source: identity.source,
+      externalLinkedTakeoverWriterSafety:
+        ops.externalLinkedTakeoverWriterSafety ?? 'unsupported',
+    });
   };
   const compositionPort: ExternalSessionsCompositionPort = Object.freeze({
     resolveFollowTarget: async (input: CompositionResolveInput) => await domain.compositionPort.resolveFollowTarget(input),
@@ -1376,6 +1392,7 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
   isCurrent: () => boolean;
   activeServerDir?: string;
   resolveProviderOps: (agentId: string) => Promise<PluginExternalSessionsProviderOps | null>;
+  resolveAgentRuntimeGeneration?: (agentId: string) => string | null;
   attach?: NonNullable<Parameters<typeof createPluginExternalSessionsAdapter>[0]['attach']>;
   contextualTakeover?: ContextualExternalSessionTakeoverAdapter;
   followTranscript?: NonNullable<
@@ -1430,6 +1447,9 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
       isCurrent: () => lifecycleIsCurrent(revision, accountRevision),
       ...(params.activeServerDir ? { activeServerDir: params.activeServerDir } : {}),
       resolveProviderOps: params.resolveProviderOps,
+      ...(params.resolveAgentRuntimeGeneration
+        ? { resolveAgentRuntimeGeneration: params.resolveAgentRuntimeGeneration }
+        : {}),
       retirementSignal: retirement.signal,
       ...(params.attach ? { attach: params.attach } : {}),
       ...(params.contextualTakeover ? { contextualTakeover: params.contextualTakeover } : {}),
@@ -1586,7 +1606,7 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
   const resolveAuthorSource = async (
     ref: AuthorTakeoverRef,
     options?: Readonly<{ signal?: AbortSignal }>,
-  ): Promise<Readonly<{ source: ExternalSessionsSource }>> => (
+  ): Promise<ContextualExternalSessionTakeoverResolution> => (
     await current().resolveAuthorSource(ref, options)
   );
   const compositionPort: ExternalSessionsCompositionPort = Object.freeze({

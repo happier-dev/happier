@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RuntimeOutboundTranscriptDispatchFacetV1 } from '@happier-dev/agents';
-import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
@@ -194,7 +194,7 @@ describe('SessionHostBridge execution surfaces', () => {
     await expect(bridge.resolveSessionHandoffEligibility({
       metadata: agentMetadata,
       sourceMachineId: metadata.machineId,
-      externalSessionLinkResolution: resolveLinkedExternalSessionMetadataV1(metadata),
+      externalSessionLinkAuthority: resolveLinkedExternalSessionAuthorityV1(metadata),
       sessionAgentId: 'acme.handoff',
     })).resolves.toEqual({
       eligible: true,

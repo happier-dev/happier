@@ -1,7 +1,7 @@
 import {
   ExternalSessionMaterializeStartInputV1Schema,
   projectExternalSessionOperationProgressV1,
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   type ExternalSessionOperationActionResponseV1,
   type ExternalSessionOperationAuthorIntentV1,
   type ExternalSessionOperationRecordV1,
@@ -222,7 +222,7 @@ export function createExternalSessionMaterializeStartActionExecutor(
       if (admission.kind === 'completion_receipt') {
         return failure(
           'invalid_state',
-          'The completed materialization no longer has private recovery state.',
+          'The settled materialization no longer has private recovery state.',
         );
       }
       if (admission.kind === 'existing_record') {
@@ -299,7 +299,7 @@ export function createDefaultExternalSessionMaterializeStartActionExecutor(
         throw new Error('external_session_materialize_start_source_unavailable');
       }
       const linked = loaded.session;
-      const persisted = readLinkedExternalSessionV1FromMetadata(linked.metadata);
+      const persisted = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(linked.metadata);
       if (!persisted?.qualifiedIdentity) {
         throw new Error('external_session_materialize_start_source_unavailable');
       }

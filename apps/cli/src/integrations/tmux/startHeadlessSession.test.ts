@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TmuxCommandResult, TmuxSpawnOptions } from '@/integrations/tmux';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
+import { CLI_API_TOKEN_HANDOFF_ENV, withCliApiToken } from '@/auth/cliApiToken';
 
 vi.mock('chalk', () => ({
   default: {
@@ -49,7 +50,7 @@ vi.mock('./resolveHeadlessTmuxAgentLaunchConfig', () => ({
 }));
 
 describe.sequential('startHappyHeadlessInTmux', () => {
-  const trackedEnvKeys = ['TMUX', 'TMUX_PANE', 'HAPPY_TEST_FOO'] as const;
+  const trackedEnvKeys = ['TMUX', 'TMUX_PANE', 'HAPPY_TEST_FOO', 'HAPPIER_TOKEN', CLI_API_TOKEN_HANDOFF_ENV] as const;
   const baselineEnv: Record<string, string | undefined> = Object.fromEntries(
     trackedEnvKeys.map((key) => [key, process.env[key]]),
   );
@@ -117,6 +118,19 @@ describe.sequential('startHappyHeadlessInTmux', () => {
     expect(env?.TMUX).toBeUndefined();
     expect(env?.TMUX_PANE).toBeUndefined();
     expect(env?.HAPPY_TEST_FOO).toBe('bar');
+  });
+
+  it('passes a selected API Token only to the Happier tmux continuation', async () => {
+    process.env.HAPPIER_TOKEN = 'hap_v1_ambient_token_secret';
+    const { startHappyHeadlessInTmux } = await import('./startHeadlessSession');
+
+    await withCliApiToken('hap_v1_flag_token_secret', async () => {
+      await startHappyHeadlessInTmux([]);
+    });
+
+    const env = mockSpawnInTmux.mock.calls[0]?.[2] as Record<string, string> | undefined;
+    expect(env?.HAPPIER_TOKEN).toBeUndefined();
+    expect(env?.[CLI_API_TOKEN_HANDOFF_ENV]).toBe('hap_v1_flag_token_secret');
   });
 
   it('suppresses human launch output when the caller owns machine-readable output', async () => {

@@ -522,3 +522,102 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(resolved.diagnostics.blockIds).toContain('plugin_prompt_asset.acme.prompts/instructions');
   });
 });
+
+describe('resolveEffectiveCodingPromptText launch-profile coding prompt overrides', () => {
+  function settingsWithProfile(overrides: unknown): Record<string, unknown> {
+    return {
+      codingPromptBehaviorV1: {
+        v: 1,
+        sessionTitleUpdates: 'ongoing',
+        responseOptions: 'agent',
+      },
+      profiles: [{
+        v: 2,
+        id: 'focused',
+        name: 'Focused',
+        extraEnvironmentVariables: [],
+        defaultPermissionModeByTargetKey: {},
+        defaultPersistenceModeByTargetKey: {},
+        compatibilityByTargetKey: {},
+        codingPromptBehaviorOverrides: overrides,
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    };
+  }
+
+  it('applies a sparse profile override over the account coding prompt default', async () => {
+    const out = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: settingsWithProfile({ sessionTitleUpdates: 'disabled', responseOptions: 'disabled' }),
+      profileId: 'focused',
+      executionRunsFeatureEnabled: false,
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('# Attachments');
+    expect(out).not.toContain('# Session title');
+    expect(out).not.toContain('# Options');
+  });
+
+  it('inherits every account value the profile does not override', async () => {
+    const out = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: settingsWithProfile({ responseOptions: 'disabled' }),
+      profileId: 'focused',
+      executionRunsFeatureEnabled: false,
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('# Session title');
+    expect(out).not.toContain('# Options');
+  });
+
+  it('leaves the account default in place when no profile is selected', async () => {
+    const out = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: settingsWithProfile({ sessionTitleUpdates: 'disabled', responseOptions: 'disabled' }),
+      profileId: null,
+      executionRunsFeatureEnabled: false,
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('# Session title');
+    expect(out).toContain('# Options');
+  });
+
+  it('reaches the shell-bridge tool appendix, while the base plan keeps its tool-delivery constraint', async () => {
+    const out = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: settingsWithProfile({ sessionTitleUpdates: 'initial' }),
+      profileId: 'focused',
+      executionRunsFeatureEnabled: false,
+      toolDelivery: 'shell_bridge',
+      toolDeliverySessionId: 's1',
+      toolDeliveryDirectory: '/tmp/worktree',
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    // The profile's `initial` mode reaches the appendix that owns title guidance...
+    expect(out).toContain('rename the session before replying');
+    // ...and the base plan still suppresses its own title section under shell bridge.
+    expect(out).not.toContain('# Session title');
+  });
+
+  it('suppresses shell-bridge title guidance when the profile disables it', async () => {
+    const out = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: settingsWithProfile({ sessionTitleUpdates: 'disabled' }),
+      profileId: 'focused',
+      executionRunsFeatureEnabled: false,
+      toolDelivery: 'shell_bridge',
+      toolDeliverySessionId: 's1',
+      toolDeliveryDirectory: '/tmp/worktree',
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('Happier tools are available through the CLI bridge');
+    expect(out).not.toContain('change_title');
+    expect(out).not.toContain('rename the session');
+  });
+});

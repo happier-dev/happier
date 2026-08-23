@@ -48,6 +48,12 @@ import {
 import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { createVoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
+import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
+import {
+  createVoiceAccountOperationService,
+  declaresAdmittedMediatedOperations,
+} from '@/plugins/runtime/fetch/voiceAccountCredentialBinding';
 import {
   createDaemonPluginRawCredentialMaterializer,
 } from '@/plugins/runtime/credentials/daemonRawCredentialMaterializer';
@@ -126,6 +132,7 @@ function resolveSpeechCredentialAccess(input: Readonly<{
   providerSettings: Readonly<Record<string, unknown>>;
   accountSettings: Readonly<Record<string, unknown>>;
   machineId: string | null;
+  mediated: VoiceCredentialAccess<'speech'>['mediated'];
   raw: VoiceCredentialAccess<'speech'>['raw'];
 }>): VoiceCredentialAccess<'speech'> {
   const declaration = input.contribution.credentials;
@@ -148,8 +155,11 @@ function resolveSpeechCredentialAccess(input: Readonly<{
     if (requirementActive) throw credentialUnavailable();
     return UNAVAILABLE_SPEECH_CREDENTIALS;
   }
-  if (!input.raw) throw credentialUnavailable();
-  return Object.freeze({ phase: 'speech', mediated: null, raw: input.raw });
+  // Mediated and raw access are independent declarations. A contribution that
+  // declares only host-mediated operations is fully usable without a raw
+  // grant, and one that declares only a raw grant is unaffected by mediation.
+  if (!input.raw && !input.mediated) throw credentialUnavailable();
+  return Object.freeze({ phase: 'speech', mediated: input.mediated, raw: input.raw });
 }
 
 export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
@@ -209,9 +219,17 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           grant.realm === 'daemon' && grant.phase === 'speech'
         )) === true
       )) === true;
+      // Mediated access is declared exactly as the client realm declares it.
+      // The Account-operation owner decides which phases a contribution kind
+      // may reach, so this seam asks it rather than re-encoding the phase.
+      const hasDeclaredMediatedSpeechAccess =
+        declaresAdmittedMediatedOperations(speech.contribution);
+      let createMediatedOperationAccess:
+        | ((signal: AbortSignal, isCurrent: () => boolean) => VoiceCredentialAccess<'speech'>['mediated'])
+        | null = null;
       if (
         manifest
-        && hasDeclaredRawSpeechAccess
+        && (hasDeclaredRawSpeechAccess || hasDeclaredMediatedSpeechAccess)
         && (lease.registry.generation === undefined
           || speech.generation === String(lease.registry.generation))
       ) {
@@ -228,7 +246,23 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
         }
         const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
-        if (dependencies && lifecycle) {
+        if (hasDeclaredMediatedSpeechAccess && lifecycle) {
+          const voiceProviders = lease.registry.contributes.voiceProviders ?? [];
+          const transport = createGlobalFetchRuntime();
+          createMediatedOperationAccess = (signal, isCurrent) => createVoiceAccountOperationService({
+            voiceProviders,
+            provider: target,
+            kind: 'speech',
+            credentialResolver: createVoiceCredentialResolver({
+              machineId: params.machineId ?? null,
+              getSnapshot: readAccountSettingsSnapshot,
+            }),
+            isCurrent: () => speech.isCurrent() && lifecycle.isCurrent() && isCurrent(),
+            signal,
+            transport,
+          });
+        }
+        if (hasDeclaredRawSpeechAccess && dependencies && lifecycle) {
           const raw = createDaemonPluginRawCredentialMaterializer({
             binding: {
               manifest,
@@ -294,6 +328,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
                 providerSettings,
                 accountSettings: snapshot.settings as unknown as Readonly<Record<string, unknown>>,
                 machineId: params.machineId ?? null,
+                mediated: createMediatedOperationAccess?.(signal, isCurrent) ?? null,
                 raw: rawCredentialMaterializer
                   ? createInvocationVoiceRawCredentialAccess({
                       materializer: rawCredentialMaterializer,

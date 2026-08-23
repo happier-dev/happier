@@ -43,6 +43,16 @@ type DownloadSession = {
 export type TransferSessionStoreDeps = Readonly<{
   ttlMs: number;
   tempRoot?: string | null;
+  /**
+   * Who triggers expiry for this store.
+   *
+   * `owner` (default) means the constructing owner already schedules the sweep
+   * and stays the single trigger — the direct-peer import manager does, coupling
+   * it to idle shutdown and to its own membership mirror. `self` arms the
+   * store's own deadline for a store nothing else sweeps, whose sessions would
+   * otherwise hold their descriptor and temp file until the process exits.
+   */
+  expiryTrigger?: 'owner' | 'self';
 }>;
 
 export class TransferSessionStore {
@@ -51,12 +61,17 @@ export class TransferSessionStore {
   private readonly baseTempRoot: string;
   private readonly tempRoot: string;
   private readonly ttlMs: number;
+  private readonly ownsExpiryTrigger: boolean;
+  private readonly pendingClosures = new Set<Promise<void>>();
+  private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+  private expiryTimerAt: number | null = null;
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
   private abandonedRootSweepPromise: Promise<void> | null = null;
 
   constructor(deps: TransferSessionStoreDeps) {
     this.ttlMs = Math.max(1000, Math.floor(deps.ttlMs));
+    this.ownsExpiryTrigger = deps.expiryTrigger === 'self';
     const overrideTempRoot = typeof deps.tempRoot === 'string' && deps.tempRoot.trim().length > 0
       ? deps.tempRoot.trim()
       : null;
@@ -117,28 +132,107 @@ export class TransferSessionStore {
         if (released) return;
         released = true;
         session.activeOperationCount -= 1;
+        // An idle session is eligible for the autonomous sweep again; the sweep
+        // deliberately ignores sessions with work in flight, so its deadline is
+        // only knowable once the last operation releases.
+        this.scheduleExpirySweep();
       },
     };
   }
 
+  /**
+   * Sweep expired sessions and resolve once every descriptor they held is
+   * closed and every temp file they owned is gone.
+   *
+   * Callers that delete the underlying files next must await this: releasing
+   * the map entry without awaiting `close()` leaves a live handle on the file,
+   * and on Windows a concurrent delete of that path fails while it is open.
+   */
+  async cleanupExpired(now = Date.now()): Promise<void> {
+    await Promise.all(this.collectExpiredClosures(now));
+  }
+
   cleanupExpiredBestEffort(now = Date.now()): void {
-    if (this.disposed) return;
+    // Same sweep, not awaited: hot RPC paths only need the sessions retired.
+    // `settleClosures()` and `dispose()` still join the closures it started.
+    for (const closure of this.collectExpiredClosures(now)) {
+      closure.catch(() => undefined);
+    }
+  }
+
+  /** Resolves once every closure started by a best-effort sweep has finished. */
+  async settleClosures(): Promise<void> {
+    while (this.pendingClosures.size > 0) {
+      await Promise.all([...this.pendingClosures]);
+    }
+  }
+
+  private collectExpiredClosures(now: number): readonly Promise<void>[] {
+    if (this.disposed) return [];
+    const closures: Promise<void>[] = [];
 
     for (const [uploadId, session] of this.uploads) {
       if (session.expiresAt > now || session.activeOperationCount > 0) continue;
       this.uploads.delete(uploadId);
-      session.file.close().catch(() => undefined);
-      rm(session.tempPath, { force: true }).catch(() => undefined);
+      closures.push(this.trackClosure(async () => {
+        await session.file.close().catch(() => undefined);
+        await rm(session.tempPath, { force: true }).catch(() => undefined);
+      }));
     }
 
     for (const [downloadId, session] of this.downloads) {
       if (session.expiresAt > now || session.activeOperationCount > 0) continue;
       this.downloads.delete(downloadId);
-      session.file.close().catch(() => undefined);
-      if (session.deleteFileOnClose) {
-        rm(session.filePath, { force: true }).catch(() => undefined);
-      }
+      closures.push(this.trackClosure(async () => {
+        await session.file.close().catch(() => undefined);
+        if (session.deleteFileOnClose) {
+          await rm(session.filePath, { force: true }).catch(() => undefined);
+        }
+      }));
     }
+
+    this.scheduleExpirySweep();
+    return closures;
+  }
+
+  private trackClosure(operation: () => Promise<void>): Promise<void> {
+    const closure = operation().finally(() => {
+      this.pendingClosures.delete(closure);
+    });
+    this.pendingClosures.add(closure);
+    return closure;
+  }
+
+  /**
+   * Arm the store's own expiry sweep.
+   *
+   * Without it an abandoned session (the client process died between `init` and
+   * the first chunk) holds its descriptor and temp file until some unrelated
+   * request happens to sweep, which for a store whose only traffic is that one
+   * transfer means until the daemon exits.
+   */
+  private scheduleExpirySweep(): void {
+    if (!this.ownsExpiryTrigger) return;
+    const nextExpiryAt = this.getNextExpiryAt();
+    if (nextExpiryAt === null) {
+      this.clearExpiryTimer();
+      return;
+    }
+    if (this.expiryTimer && this.expiryTimerAt !== null && this.expiryTimerAt <= nextExpiryAt) return;
+    this.clearExpiryTimer();
+    this.expiryTimerAt = nextExpiryAt;
+    this.expiryTimer = setTimeout(() => {
+      this.expiryTimer = null;
+      this.expiryTimerAt = null;
+      this.cleanupExpiredBestEffort();
+    }, Math.min(2_147_483_647, Math.max(0, nextExpiryAt - Date.now())));
+    this.expiryTimer.unref?.();
+  }
+
+  private clearExpiryTimer(): void {
+    if (this.expiryTimer) clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+    this.expiryTimerAt = null;
   }
 
   getNextExpiryAt(): number | null {
@@ -198,6 +292,7 @@ export class TransferSessionStore {
       activeOperationCount: 0,
     };
     this.uploads.set(uploadId, session);
+    this.scheduleExpirySweep();
     return session;
   }
 
@@ -286,6 +381,7 @@ export class TransferSessionStore {
       activeOperationCount: 0,
     };
     this.downloads.set(downloadId, session);
+    this.scheduleExpirySweep();
     return session;
   }
 
@@ -326,12 +422,14 @@ export class TransferSessionStore {
     }
 
     this.disposed = true;
+    this.clearExpiryTimer();
     const uploads = [...this.uploads.values()];
     const downloads = [...this.downloads.values()];
     this.uploads.clear();
     this.downloads.clear();
 
     this.disposePromise = (async () => {
+      await this.settleClosures();
       await Promise.all([
         ...uploads.map(async (session) => {
           await session.file.close().catch(() => undefined);

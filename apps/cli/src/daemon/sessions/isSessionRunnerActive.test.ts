@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { TrackedSession } from '../types';
 import { isSessionRunnerActive, probeSessionRunnerServiceability } from './isSessionRunnerActive';
@@ -29,6 +29,57 @@ describe('probeSessionRunnerServiceability', () => {
       readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'io_error', errorMessage: 'read failed' }),
       probeCapability: async () => ({ state: 'servable' }),
     })).resolves.toEqual({ state: 'runner_unknown', reason: 'runner_presence_unproven' });
+  });
+
+  it('proves runner absence when a live lock PID belongs to a newer process generation', async () => {
+    const probeCapability = vi.fn(async () => ({ state: 'servable' as const }));
+    await expect(probeSessionRunnerServiceability({
+      sessionId: 'sess_1',
+      trackedSessions: [],
+      readProcessRunState: async () => 'servable',
+      readSessionRunnerLockStatus: async () => ({ ok: true, lock: {
+        sessionId: 'sess_1', pid: 123, acquiredAtMs: 1, processStartTimeMs: 1_000,
+      } }),
+      readProcessIdentityByPid: async (pid) => ({ pid, processStartTimeMs: 2_000, command: 'other' }),
+      probeCapability,
+    })).resolves.toEqual({ state: 'runner_absent' });
+    expect(probeCapability).not.toHaveBeenCalled();
+  });
+
+  it('lets atomic acquisition replace a stopped lock with a matching process generation', async () => {
+    const probeCapability = vi.fn(async () => ({ state: 'servable' as const }));
+    await expect(probeSessionRunnerServiceability({
+      sessionId: 'sess_1',
+      trackedSessions: [],
+      readProcessRunState: async () => 'stopped',
+      readSessionRunnerLockStatus: async () => ({ ok: true, lock: {
+        sessionId: 'sess_1', pid: 123, acquiredAtMs: 1, processStartTimeMs: 1_000,
+      } }),
+      readProcessIdentityByPid: async (pid) => ({ pid, processStartTimeMs: 1_000, command: 'runner' }),
+      probeCapability,
+    })).resolves.toEqual({ state: 'runner_absent' });
+    expect(probeCapability).not.toHaveBeenCalled();
+  });
+
+  it('accepts predecessor fingerprint evidence when it proves a live lock PID was reused', async () => {
+    const probeCapability = vi.fn(async () => ({ state: 'servable' as const }));
+    await expect(probeSessionRunnerServiceability({
+      sessionId: 'sess_1',
+      trackedSessions: [],
+      readProcessRunState: async () => 'servable',
+      readSessionRunnerLockStatus: async () => ({ ok: true, lock: {
+        sessionId: 'sess_1',
+        pid: 123,
+        acquiredAtMs: 1,
+        processCommandHash: 'a'.repeat(64),
+        processInstanceFingerprint: 'darwin-ps:old',
+      } }),
+      readProcessIdentityByPid: async (pid) => ({ pid, processStartTimeMs: 2_000, command: 'other' }),
+      readProcessInstanceFingerprint: (_pid, expectedFingerprint) =>
+        expectedFingerprint === 'darwin-ps:old' ? 'darwin-ps:new' : null,
+      probeCapability,
+    })).resolves.toEqual({ state: 'runner_absent' });
+    expect(probeCapability).not.toHaveBeenCalled();
   });
 });
 

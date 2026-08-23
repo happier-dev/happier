@@ -2769,6 +2769,172 @@ describe('createExternalSessionObservationReconciler', () => {
         expect(newDispose).toHaveBeenCalledTimes(1);
     });
 
+    it('retries the retained observer cleanup before acquiring a replacement on the same resource', async () => {
+        const cleanupFailure = new Error('observer cleanup rejected');
+        const firstDispose = vi.fn<() => Promise<void>>()
+            .mockRejectedValueOnce(cleanupFailure)
+            .mockResolvedValue(undefined);
+        const secondDispose = vi.fn(async () => {});
+        const acquireObserver = vi.fn(async () => ({
+            dispose: acquireObserver.mock.calls.length === 1
+                ? firstDispose
+                : secondDispose,
+        }));
+        const reconcileResource = vi.fn(async (): Promise<TestReconcileResult> => result(
+            ['native-1', 'reconciled'],
+        ));
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver,
+            reconcileResource,
+        });
+        const pooled = resource({ resourceKey: 'pooled-observer' });
+
+        await expect(reconciler.reconcileLink({
+            resource: pooled,
+            link: link(1),
+            demand: demanded({ fallbackDemand: true }),
+            onFacts: () => {},
+        })).resolves.toEqual({ state: 'observing' });
+        expect(acquireObserver).toHaveBeenCalledTimes(1);
+
+        // Observer demand drops to reconcile-only and the disposer rejects, so the
+        // exact physical observer stays retained and inactive under this resource.
+        await expect(reconciler.reconcileLink({
+            resource: pooled,
+            link: link(1),
+            demand: demanded({ passiveEvent: false, fallbackDemand: true }),
+            onFacts: () => {},
+        })).rejects.toBe(cleanupFailure);
+        expect(firstDispose).toHaveBeenCalledTimes(1);
+        expect(acquireObserver).toHaveBeenCalledTimes(1);
+
+        // Demand returns for the same resource. The retained cleanup must be retried
+        // before any replacement is acquired: overwriting the retained record makes
+        // the first physical observer unreachable and it can never be disposed.
+        await expect(reconciler.reconcileLink({
+            resource: pooled,
+            link: link(1),
+            demand: demanded({ fallbackDemand: true }),
+            onFacts: () => {},
+        })).resolves.toEqual({ state: 'observing' });
+        expect(firstDispose).toHaveBeenCalledTimes(2);
+        expect(acquireObserver).toHaveBeenCalledTimes(2);
+
+        await reconciler.dispose();
+        expect(secondDispose).toHaveBeenCalledTimes(1);
+        expect(firstDispose).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not acquire a replacement when demand disappears while the retained cleanup runs', async () => {
+        const cleanupFailure = new Error('observer cleanup rejected');
+        let pendingRemoval: Promise<unknown> | null = null;
+        const acquireObserver = vi.fn(async () => ({
+            dispose: vi.fn<() => Promise<void>>()
+                .mockRejectedValueOnce(cleanupFailure)
+                .mockImplementationOnce(async () => {
+                    // The retained cleanup is real plugin I/O: the observing
+                    // session can be removed before it settles.
+                    pendingRemoval = reconciler.removeLink(link(1));
+                }),
+        }));
+        const reconcileResource = vi.fn(async (): Promise<TestReconcileResult> => ({
+            purpose: 'observation_evidence',
+            outcomes: [],
+        }));
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver,
+            reconcileResource,
+        });
+        const pooled = resource({ resourceKey: 'pooled-observer' });
+
+        await reconciler.reconcileLink({
+            resource: pooled,
+            link: link(2),
+            demand: demanded({ passiveEvent: false, fallbackDemand: true }),
+            onFacts: () => {},
+        });
+        await reconciler.reconcileLink({
+            resource: pooled,
+            link: link(1),
+            demand: demanded({ fallbackDemand: true }),
+            onFacts: () => {},
+        });
+        expect(acquireObserver).toHaveBeenCalledTimes(1);
+
+        await expect(reconciler.reconcileLink({
+            resource: pooled,
+            link: link(1),
+            demand: demanded({ passiveEvent: false, fallbackDemand: true }),
+            onFacts: () => {},
+        })).rejects.toBe(cleanupFailure);
+
+        await expect(reconciler.reconcileLink({
+            resource: pooled,
+            link: link(1),
+            demand: demanded({ fallbackDemand: true }),
+            onFacts: () => {},
+        })).resolves.toEqual({ state: 'superseded' });
+        await expect(pendingRemoval).resolves.toEqual({ removed: true });
+
+        // The retained observer was released by the retry, and the pooled resource
+        // keeps only reconcile-only demand, so nothing may be acquired for it.
+        expect(acquireObserver).toHaveBeenCalledTimes(1);
+
+        await reconciler.dispose();
+        expect(acquireObserver).toHaveBeenCalledTimes(1);
+    });
+
+    it('retains the exact observer when the acquire-time staleness release rejects', async () => {
+        const cleanupFailure = new Error('observer cleanup rejected');
+        const staleDispose = vi.fn<() => Promise<void>>()
+            .mockRejectedValueOnce(cleanupFailure)
+            .mockRejectedValueOnce(cleanupFailure)
+            .mockResolvedValue(undefined);
+        let settleAcquire: () => void = () => {};
+        let markAcquireStarted: () => void = () => {};
+        const acquireStarted = new Promise<void>((resolveStarted) => {
+            markAcquireStarted = resolveStarted;
+        });
+        const acquireObserver = vi.fn(
+            () => new Promise<{ dispose: () => Promise<void> }>((resolveAcquire) => {
+                settleAcquire = () => resolveAcquire({ dispose: staleDispose });
+                markAcquireStarted();
+            }),
+        );
+        const reconciler = createExternalSessionObservationReconciler({
+            acquireObserver,
+        });
+
+        const started = reconciler.reconcileLink({
+            resource: resource(),
+            link: link(1),
+            demand: demanded(),
+            onFacts: () => {},
+        });
+        const startedOutcome = started.then(() => null, (error: unknown) => error);
+        await acquireStarted;
+
+        // Terminal disposal begins while the acquire is still in flight, so the
+        // acquire-time staleness fence — not stopObserver — performs the first
+        // release of the physical observer, and that release rejects.
+        const firstDisposal = reconciler.dispose();
+        const firstDisposalOutcome = firstDisposal.then(
+            () => null,
+            (error: unknown) => error,
+        );
+        settleAcquire();
+
+        expect(await firstDisposalOutcome).toBe(cleanupFailure);
+        expect(await startedOutcome).toBe(cleanupFailure);
+        expect(staleDispose).toHaveBeenCalledTimes(2);
+
+        // The physical observer was acquired and never released, so it is still
+        // this host's to dispose: terminal disposal must retry the exact same
+        // cleanup rather than abandon the record.
+        await expect(reconciler.dispose()).resolves.toBeUndefined();
+        expect(staleDispose).toHaveBeenCalledTimes(3);
+    });
+
     it('retries the exact observer cleanup when terminal disposal is retried', async () => {
         const cleanupFailure = new Error('observer cleanup rejected');
         const disposeObserver = vi.fn()

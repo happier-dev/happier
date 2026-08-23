@@ -3,6 +3,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
   EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1,
   EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1,
+  ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1,
   MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
   MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
   MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
@@ -12,6 +13,7 @@ import {
   PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
   TRANSFER_RELAY_V2_SOCKET_EVENT,
   type ExternalSessionTranscriptInvalidationV1,
+  type ActionOperationSnapshotPushV1,
   type ExternalSessionOperationSocketCommandV1,
   type ExternalSessionOperationSocketResponseV1,
   type ExternalSessionStatusDemandDaemonMessageV1,
@@ -52,6 +54,7 @@ export interface ServerToDaemonEvents {
 export interface DaemonToServerEvents {
   'machine-alive': (data: { machineId: string; time: number }) => void;
   'session-end': (data: { sid: string; time: number; exit?: any }) => void;
+  [ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1]: (data: ActionOperationSnapshotPushV1) => void;
   'external-session-transcript-invalidated': (data: ExternalSessionTranscriptInvalidationV1) => void;
   [EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1]: (
     data: ExternalSessionOperationSocketCommandV1,

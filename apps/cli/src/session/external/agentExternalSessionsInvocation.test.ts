@@ -17,6 +17,11 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
+    MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS,
+    MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES,
+} from '@happier-dev/protocol';
+
+import {
     EXTERNAL_SESSIONS_INVOCATION_POLICY,
     createBoundedAgentExternalSessionsContribution,
     type BoundedAgentExternalSessionsContribution,
@@ -1437,7 +1442,12 @@ describe('bounded Agent External Sessions invocation', () => {
     );
 
     it('counts canonical UTF-8 bytes across the whole result envelope inclusively', async () => {
-        const maximum = EXTERNAL_SESSIONS_INVOCATION_POLICY.resolveSource.maxSerializedBytes;
+        // The caller-supplied budget is the binding ceiling here: Protocol caps
+        // a source itself at 64 KiB, so the resolveSource envelope ceiling can
+        // no longer be reached by padding the source. Clamping the request to a
+        // small budget still proves the count is whole-envelope, inclusive and
+        // measured in UTF-8 bytes rather than code units.
+        const maximum = 4_096;
         const makeResult = (padding: string) => ({
             ok: true as const,
             value: { source: { kind: 'fixture', padding } },
@@ -1447,16 +1457,61 @@ describe('bounded Agent External Sessions invocation', () => {
         const exact = createWrapper({
             contribution: contributionWith(() => makeResult(exactPadding)),
         });
-        expect((await exact.resolveSource(requestFor('resolveSource'))).ok).toBe(true);
+        expect((await exact.resolveSource({
+            ...requestFor('resolveSource'),
+            maxSerializedBytes: maximum,
+        })).ok).toBe(true);
 
         const oversized = createWrapper({
             contribution: contributionWith(() => makeResult(`${exactPadding}🙂`)),
         });
-        await expect(oversized.resolveSource(requestFor('resolveSource'))).resolves.toEqual({
+        await expect(oversized.resolveSource({
+            ...requestFor('resolveSource'),
+            maxSerializedBytes: maximum,
+        })).resolves.toEqual({
             ok: false,
             code: 'agent_error',
             retryable: false,
         });
+    });
+
+    it('admits contribution sources only through the canonical Protocol source parser', async () => {
+        // The wrapper must not restate source limits. Protocol owns the kind
+        // bound, the already-trimmed kind rule and the serialized-byte budget;
+        // a second grammar here silently disagreed with every other reader.
+        expect(EXTERNAL_SESSIONS_INVOCATION_POLICY.sourceKindMaxCodeUnits)
+            .toBe(MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS);
+        expect(EXTERNAL_SESSIONS_INVOCATION_POLICY.sourceMaxSerializedBytes)
+            .toBe(MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES);
+
+        for (const kind of [
+            'x'.repeat(MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS + 1),
+            ' fixture',
+            'fixture ',
+        ]) {
+            const called = vi.fn();
+            const wrapped = createWrapper({
+                contribution: contributionWith((method) => {
+                    called(method);
+                    return successFor(method);
+                }),
+            });
+            await expect(wrapped.resolveSource({
+                ...requestFor('resolveSource'),
+                source: { kind } as AgentExternalSessionSource,
+            })).resolves.toEqual({ ok: false, code: 'invalid_request', retryable: false });
+            expect(called, kind).not.toHaveBeenCalled();
+        }
+
+        // A contribution-returned source travels the same canonical parser.
+        const returnedUntrimmedKind = createWrapper({
+            contribution: contributionWith(() => ({
+                ok: true as const,
+                value: { source: { kind: ' fixture' } },
+            })),
+        });
+        await expect(returnedUntrimmedKind.resolveSource(requestFor('resolveSource')))
+            .resolves.toEqual({ ok: false, code: 'agent_error', retryable: false });
     });
 
     it('counts strict failure envelopes and rejects oversized source input before leaf admission', async () => {

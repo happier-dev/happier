@@ -5,7 +5,7 @@ import {
   resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import {
-  resolveLinkedExternalSessionMetadataV1,
+  resolveLinkedExternalSessionAuthorityV1,
 } from '@happier-dev/protocol';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
@@ -33,8 +33,8 @@ export async function exportSessionHandoffAgentBundle(params: Readonly<{
   const eligibility = await bridge.resolveSessionHandoffEligibility({
     metadata: agentMetadata,
     sourceMachineId: metadata.machineId,
-    externalSessionLinkResolution:
-      resolveLinkedExternalSessionMetadataV1(metadata),
+    externalSessionLinkAuthority:
+      resolveLinkedExternalSessionAuthorityV1(metadata),
     ...(!isBundledAgentId(sessionAgentId ?? '') && sessionAgentId
       ? { sessionAgentId }
       : {}),

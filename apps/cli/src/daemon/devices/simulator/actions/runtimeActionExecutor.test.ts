@@ -249,6 +249,75 @@ describe('daemon simulator runtime action executor', () => {
         expect(dispatchAction).toHaveBeenCalledOnce();
     });
 
+    it('rejects Action ID/event and input-control kind mismatches before simulator dispatch', async () => {
+        const mod = await import('./runtimeActionExecutor').catch(() => null);
+
+        expect(mod?.createSimulatorDaemonRuntimeActionExecutor).toBeTypeOf('function');
+        if (!mod?.createSimulatorDaemonRuntimeActionExecutor) return;
+
+        const dispatchAction = vi.fn(async () => ({
+            v: 1 as const,
+            eventType: 'simulator.control.send' as const,
+            status: 'accepted' as const,
+            diagnostics: [],
+        }));
+        const execute = mod.createSimulatorDaemonRuntimeActionExecutor({
+            featureGate: allowAllFeatureGate,
+            routes: {
+                getSnapshot: async () => ({
+                    v: 1,
+                    machineId: 'machine_1',
+                    generatedAt: 2_000,
+                    refreshState: 'idle',
+                    resources: [],
+                    diagnostics: [],
+                }),
+                dispatchAction,
+            },
+        });
+        const tapEvent = {
+            type: 'simulator.control.send' as const,
+            control: {
+                v: 1 as const,
+                kind: 'tap' as const,
+                streamId: 'stream_1',
+                sourceId: 'source_1',
+                eventId: 'tap_1',
+                leaseId: 'lease_1',
+                x: 0.5,
+                y: 0.5,
+            },
+        };
+        const swipeEvent = {
+            type: 'simulator.control.send' as const,
+            control: {
+                v: 1 as const,
+                kind: 'swipe' as const,
+                streamId: 'stream_1',
+                sourceId: 'source_1',
+                eventId: 'swipe_1',
+                leaseId: 'lease_1',
+                fromX: 0.1,
+                fromY: 0.1,
+                toX: 0.9,
+                toY: 0.9,
+            },
+        };
+
+        for (const args of [
+            runtimeArgs({ actionId: 'devices.simulator.lease.acquire', input: tapEvent }),
+            runtimeArgs({ actionId: 'devices.simulator.sideband.request', input: tapEvent }),
+            runtimeArgs({ actionId: 'devices.simulator.input.tap', input: swipeEvent }),
+        ]) {
+            await expect(execute(args)).resolves.toEqual({
+                ok: false,
+                errorCode: 'invalid_parameters',
+                error: 'invalid_parameters',
+            });
+        }
+        expect(dispatchAction).not.toHaveBeenCalled();
+    });
+
     it('keeps fps scalar actions and scale fail-closed until stream producers own them', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 

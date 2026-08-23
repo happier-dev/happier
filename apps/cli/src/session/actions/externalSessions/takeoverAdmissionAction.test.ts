@@ -1266,6 +1266,129 @@ describe('external-session persisted takeover admission action', () => {
     }
   });
 
+  it('recovers a definitively rejected precommit admission that already advanced the operation revision', async () => {
+    const activeServerDir = await mkdtemp(join(
+      tmpdir(),
+      'happier-takeover-admission-precommit-rejection-',
+    ));
+    const release = vi.fn(async () => undefined);
+    const admission = deferredAdmissionOutcome();
+    const initial = admissionReadyRecord();
+    // Reproduces the admission owner's own committed authority refresh: before
+    // sending the Server command it CASes `record.revision -> revision + 1`
+    // with refreshed transcript/pending authority evidence. Any recovery that
+    // marks failure at the action's pre-preparation revision is already stale.
+    const spawnSession = vi.fn(async () => {
+      const latest = await readExternalSessionOperationRecord(
+        activeServerDir,
+        initial.operationId,
+      );
+      if (!latest) throw new Error('expected an admitting operation record');
+      const prepared = await mutateExternalSessionOperationRecordAtRevision(
+        activeServerDir,
+        latest.operationId,
+        latest.revision,
+        (fresh) => ({
+          ...fresh,
+          revision: fresh.revision + 1,
+          canonicalOwnerEvidence: {
+            ...fresh.canonicalOwnerEvidence,
+            linkedSessionRevision: 5,
+            transcriptAuthorityRevision: 9,
+            pendingAdmissionRevision: 6,
+          },
+          updatedAtMs: 100,
+        }),
+      );
+      if (!prepared.ok) throw new Error('expected prepared authority commit');
+      return { type: 'success' as const, sessionId: 'session-1' };
+    });
+    try {
+      await writeExternalSessionOperationRecord(activeServerDir, initial);
+      const executor = createExternalSessionTakeoverAdmissionActionExecutor({
+        activeServerDir,
+        operationExclusion: {
+          acquire: vi.fn(async (operationRequest) => ({
+            status: 'acquired' as const,
+            claim: {
+              record: {
+                schemaVersion: 1 as const,
+                claimId: 'resume-claim-1',
+                ownerId: 'takeover-admission-test',
+                request: operationRequest,
+                acquiredAtMs: 1,
+                renewedAtMs: 1,
+                expiresAtMs: 20_001,
+              },
+              renew: async () => true,
+              release,
+            },
+          })),
+        },
+        prepareSpawn: async () => resolvedSpawn({
+          directory: '/workspace',
+          existingSessionId: 'session-1',
+        }),
+        spawnResolvedTakeoverSession,
+        spawnSession,
+        admissionWaiter: {
+          isPending: vi.fn(() => true),
+          register: vi.fn(() => ({
+            outcome: admission.outcome,
+            readOutcome: vi.fn(() => null),
+            cancel: vi.fn(),
+          })),
+          settle: vi.fn(),
+        },
+        isHostedAdmissionAvailable: () => true,
+        createAttemptId: () => 'attempt-1',
+        nowMs: () => 100,
+      });
+
+      const resultPromise = executor.resume({
+        sessionId: 'session-1',
+        operationId: initial.operationId,
+        revision: initial.revision,
+      });
+      await vi.waitFor(() => expect(spawnSession).toHaveBeenCalledOnce());
+      admission.settle({
+        status: 'failed',
+        errorCode: 'persisted_takeover_admission_storage_mode_conflict',
+      });
+
+      await expect(resultPromise).resolves.toMatchObject({
+        ok: true,
+        progress: {
+          status: 'failed',
+          phase: 'admitting',
+          retryTargetPhase: 'admitting',
+          error: { code: 'admission_failed', retryable: true },
+        },
+      });
+      const recovered = await readExternalSessionOperationRecord(
+        activeServerDir,
+        initial.operationId,
+      );
+      expect(recovered).toMatchObject({
+        status: 'failed',
+        phase: 'admitting',
+        retryTargetPhase: 'admitting',
+        error: { code: 'admission_failed', retryable: true },
+        bindings: { targetRuntimeAttemptId: 'attempt-1' },
+      });
+      // The refreshed authority evidence stays intact so the operation stays
+      // eligible for the canonical authority-reconciliation Retry route.
+      expect(recovered?.canonicalOwnerEvidence).toMatchObject({
+        transcriptAuthorityRevision: 9,
+        pendingAdmissionRevision: 6,
+      });
+      expect(isExternalSessionPersistedTakeoverAdmissionReady(recovered!))
+        .toBe(true);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the claim until delayed strict admission fails after ordinary spawn readiness', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-admission-'));
     const admission = deferredAdmissionOutcome();

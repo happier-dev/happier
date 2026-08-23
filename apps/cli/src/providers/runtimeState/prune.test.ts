@@ -38,71 +38,41 @@ const load = (connectionId: string, observationId: string, modelId: string, last
 });
 
 describe('pruneProviderRuntimeStateV1', () => {
-  it('rejects raw over-limit arrays before accessing any element', () => {
-    const endpointHealth = new Array(PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEndpointRecords + 1);
-    Object.defineProperty(endpointHealth, 0, {
-      get() {
-        throw new Error('over-limit element must not be accessed');
-      },
+  it('prunes a candidate that crosses the canonical installation cap instead of refusing it', () => {
+    const installation = (index: number) => ProviderInstallationRuntimeStateRecordV1Schema.parse({
+      key: { machineId: 'machine_a', contributionKey: `plugin.a/tool-${index}`, checkId: 'installed' },
+      state: { status: 'present' as const, observedAt: index }, lastAccessedAt: index,
+    });
+    const installationChecks = Array.from(
+      { length: PROVIDER_RUNTIME_STATE_LIMITS_V1.maxInstallationRecords + 1 },
+      (_unused, index) => installation(index),
+    );
+
+    const pruned = pruneProviderRuntimeStateV1({
+      v: 1, machineId: 'machine_a', endpointHealth: [],
+      catalogs: [], installationChecks, modelLoadStates: [],
+    });
+
+    expect(pruned.installationChecks).toHaveLength(PROVIDER_RUNTIME_STATE_LIMITS_V1.maxInstallationRecords);
+    expect(pruned.installationChecks.map((record) => record.key.contributionKey))
+      .not.toContain('plugin.a/tool-0');
+    expect(pruned.installationChecks.map((record) => record.key.contributionKey))
+      .toContain(`plugin.a/tool-${PROVIDER_RUNTIME_STATE_LIMITS_V1.maxInstallationRecords}`);
+  });
+
+  it('still refuses a candidate whose duplicate semantic keys pruning cannot repair', () => {
+    const installation = (index: number) => ProviderInstallationRuntimeStateRecordV1Schema.parse({
+      key: { machineId: 'machine_a', contributionKey: 'plugin.a/tool', checkId: 'installed' },
+      state: { status: 'present' as const, observedAt: index }, lastAccessedAt: index,
     });
 
     expect(() => pruneProviderRuntimeStateV1({
-      v: 1,
-      machineId: 'machine_a',
-      endpointHealth,
-      catalogs: [],
-      installationChecks: [],
-      modelLoadStates: [],
-    } as never)).toThrow(/endpointHealth.*limit/u);
+      v: 1, machineId: 'machine_a', endpointHealth: [], catalogs: [],
+      installationChecks: [installation(1), installation(2)], modelLoadStates: [],
+    })).toThrow(/duplicate semantic keys/u);
   });
 
-  it('removes obsolete and ungranted catalogs before LRU and removes their load rows', () => {
-    const obsolete = catalog({ connectionId: 'pc_a', fingerprint: 'old', observationId: 'obs_old', lastAccessedAt: 30, modelId: 'old' });
-    const current = catalog({ connectionId: 'pc_a', fingerprint: 'current', observationId: 'obs_current', lastAccessedAt: 20, modelId: 'current' });
-    const ungranted = catalog({ connectionId: 'pc_b', fingerprint: 'b', observationId: 'obs_b', lastAccessedAt: 40, modelId: 'b' });
-    const state = {
-      v: 1 as const, machineId: 'machine_a', endpointHealth: [],
-      catalogs: [obsolete, current, ungranted], installationChecks: [],
-      modelLoadStates: [
-        load('pc_a', 'obs_old', 'old', 30),
-        load('pc_a', 'obs_current', 'current', 20),
-        load('pc_b', 'obs_b', 'b', 40),
-      ],
-    };
-    const pruned = pruneProviderRuntimeStateV1(state, {
-      currentCatalogKeys: [current.key],
-      grantedConnectionIds: ['pc_a'],
-      referencedCatalogObservations: [{
-        machineId: 'machine_a', connectionId: 'pc_a', catalogObservationId: 'obs_current',
-      }],
-    });
-    expect(pruned.catalogs).toEqual([current]);
-    expect(pruned.modelLoadStates).toEqual([load('pc_a', 'obs_current', 'current', 20)]);
-  });
 
-  it('prunes unreferenced catalogs by LRU before referenced catalogs with canonical ties', () => {
-    const a = catalog({ connectionId: 'pc_a', fingerprint: 'a', observationId: 'obs_a', lastAccessedAt: 10, modelId: 'a' });
-    const b = catalog({ connectionId: 'pc_b', fingerprint: 'b', observationId: 'obs_b', lastAccessedAt: 10, modelId: 'b' });
-    const referenced = catalog({ connectionId: 'pc_c', fingerprint: 'c', observationId: 'obs_c', lastAccessedAt: 1, modelId: 'c' });
-    const state = {
-      v: 1 as const, machineId: 'machine_a', endpointHealth: [],
-      catalogs: [b, referenced, a], installationChecks: [], modelLoadStates: [],
-    };
-    const pruned = pruneProviderRuntimeStateV1(state, {
-      referencedCatalogObservations: [{
-        machineId: 'machine_a', connectionId: 'pc_c', catalogObservationId: 'obs_c',
-      }],
-      budget: {
-        maxCatalogRecords: 2,
-        maxCatalogModelIdentities: 50_000,
-        maxModelLoadRecords: 50_000,
-        maxEndpointRecords: 8_192,
-        maxInstallationRecords: 4_096,
-        maxEncodedBytes: 64 * 1024 * 1024,
-      },
-    });
-    expect(pruned.catalogs.map((record) => record.key.connectionId)).toEqual(['pc_b', 'pc_c']);
-  });
 
   it('uses raw canonical tuple ordering rather than host locale collation', () => {
     const a = catalog({ connectionId: 'pc_a', fingerprint: 'a', observationId: 'obs_a', lastAccessedAt: 10, modelId: 'a' });

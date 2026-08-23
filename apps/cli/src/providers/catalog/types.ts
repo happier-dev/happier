@@ -70,8 +70,18 @@ export type AssembleProviderConnectionCatalogInput = Readonly<{
   compatibilityByModelId?: ReadonlyMap<string, ProviderCatalogCompatibilityPresentation>;
   /** States already selected by the health owner for the current authorization fingerprint. */
   currentEndpointHealthByTemplateId?: ReadonlyMap<string, ProviderEndpointRuntimeStateV1>;
-  /** Persisted selection retained only as a stale presentation row while authorization is unavailable. */
+  /**
+   * Persisted selection retained as a current-only stale presentation row when
+   * the assembled catalog cannot represent it: authorization is unavailable, or
+   * the two-sided freeform policy makes catalog membership not the authority.
+   */
   currentSelectionForRecovery?: ProviderBoundModelRef;
+  /**
+   * Whether the target Agent accepts model ids the Provider catalog never lists.
+   * Required with `currentSelectionForRecovery` for the freeform retention rule;
+   * omitted it defaults to the closed side.
+   */
+  agentSupportsFreeformModelIds?: boolean;
 }>;
 
 export type ProviderCatalogModelReferenceResolution =

@@ -30,8 +30,7 @@ import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
 import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
 import type { BrowserDiagnosticsActionRoutes } from '@/daemon/browser/diagnostics/actionRoutes';
 import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
-import { createBrowserDaemonRuntimeActionExecutor } from '@/daemon/browser/actions/runtimeActionExecutor';
-import { createBrowserDaemonFeatureGate } from '@/daemon/browser/featureGate';
+import { createDaemonRuntimeActionExecutor } from '@/daemon/runtimeActionExecutor';
 import type {
   BrowserRecordingComposerAttachInput,
   BrowserRecordingComposerAttachResult,
@@ -391,29 +390,26 @@ export class ApiClient {
   }
 
   /**
-   * Returns a daemon-owned browser action executor that resolves the current route owner at
-   * invocation time. Plugin registries survive browser route replacement and plugin reloads, so
-   * capturing a route object here would make the Plugin action surface stale.
+   * Returns the daemon-owned runtime Action executor with current route owners resolved at each
+   * invocation. Plugin registries survive route replacement and plugin reloads, so capturing a
+   * route object here would make the Plugin action surface stale.
    */
   createBrowserRuntimeActionExecutor(): RuntimeActionExecute {
-    const featureGate = createBrowserDaemonFeatureGate({
+    return createDaemonRuntimeActionExecutor({
       env: process.env,
+      resolveRouteOwners: () => ({
+        browserControl: this.getBrowserDaemonControlRoutes?.() ?? null,
+        browserContext: this.getBrowserDaemonContextRoutes?.() ?? null,
+        browserAutomation: this.getBrowserDaemonAutomationRoutes?.() ?? null,
+        browserDiagnostics: this.getBrowserDiagnosticsActionRoutes?.() ?? null,
+        browserRecording: this.getBrowserRecordingRoutes?.() ?? null,
+        attachBrowserRecordingToComposer: this.attachBrowserRecordingToComposer,
+        localServices: this.getLocalServicesRuntimeActionRoutes?.() ?? null,
+        simulatorPreview: this.getSimulatorPreviewRoutes?.() ?? null,
+        peerMediationObservability: this.getPeerMediationObservabilityRuntimeActionContext?.() ?? null,
+      }),
       resolveServerFeaturesSnapshot: () => this.getCachedServerFeaturesSnapshot?.(),
     });
-
-    return async (args) => {
-      args.context.signal?.throwIfAborted();
-      await featureGate.refresh();
-      args.context.signal?.throwIfAborted();
-      const control = this.getBrowserDaemonControlRoutes?.() ?? null;
-      const execute = createBrowserDaemonRuntimeActionExecutor({
-        ...(control ? { control } : {}),
-        featureGate,
-      });
-      const result = await execute(args);
-      args.context.signal?.throwIfAborted();
-      return result;
-    };
   }
 
   async getServerFeaturesSnapshot(

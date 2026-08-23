@@ -1,4 +1,6 @@
 import {
+  AgentProviderRequirementsV1Schema,
+  ProviderBoundModelRefSchema,
   ProviderModelDescriptorV1Schema,
   ProviderCredentialTransportV1Schema,
   SessionProviderBindingMetadataV1Schema,
@@ -13,6 +15,7 @@ import {
   providerCredentialFormatKind,
   readOwnRecordValue,
   readProviderSettingsFromAccountSettingsV1,
+  resolveProviderCatalogReferenceV1,
   resolveProviderManagedRuntimeDeclarationV1,
   type AgentProviderRequirementsV1,
   type ProviderBindingAuthorizationTicketV1,
@@ -59,6 +62,7 @@ import { resolveProviderSourceFacts, type ResolvedProviderSourceFacts } from '..
 import { resolveProviderModelCompatibility } from '../catalog/compatibility';
 import type {
   ResolvedManagedProviderRuntime,
+  ResolvedContributionRegistry,
   ResolvedProviderContribution,
 } from '@/plugins/projection/registry/types';
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
@@ -666,10 +670,16 @@ export function providerConnectionResolutionError(
   }
 }
 
-function selectedModel(input: Readonly<{
+/**
+ * One catalog-reference decision for both the definitive pre-launch phase and
+ * the eventual authorization.  A launch may add a current runtime observation;
+ * the pre-launch phase intentionally has no such observation and therefore
+ * rejects only a model the static/manual catalog already proves invalid.
+ */
+function resolveProviderCatalogModel(input: Readonly<{
   modelId: string;
-  record: ResolvedProviderConnectionRecord;
-  facts: ResolvedProviderSourceFacts;
+  connectionId: string;
+  catalog: ResolvedProviderSourceFacts['catalog'];
   providerSettings: ProviderSettingsV1;
   supportsFreeformModelIds: boolean;
   runtimeProbe?: ProviderModelDescriptorV1;
@@ -683,11 +693,11 @@ function selectedModel(input: Readonly<{
   }
   const manualModels = readOwnRecordValue(
     input.providerSettings.manualModelsByConnectionId,
-    input.record.connectionId,
+    input.connectionId,
   ) ?? [];
   const merged = mergeProviderCatalogV1({
-    staticModels: 'staticModels' in input.facts.catalog
-      ? input.facts.catalog.staticModels
+    staticModels: 'staticModels' in input.catalog
+      ? input.catalog.staticModels
       : [],
     manualModels,
     probeState: {
@@ -700,17 +710,151 @@ function selectedModel(input: Readonly<{
         : null,
       staleProbeModels: [],
     },
-    ...('membershipPolicy' in input.facts.catalog
-      && input.facts.catalog.membershipPolicy
-      ? { membershipPolicy: input.facts.catalog.membershipPolicy }
+    ...('membershipPolicy' in input.catalog
+      && input.catalog.membershipPolicy
+      ? { membershipPolicy: input.catalog.membershipPolicy }
       : {}),
   });
-  const listed = merged.rows.find((row) => row.descriptor.id === input.modelId);
-  if (listed) return listed.descriptor;
-  if (input.facts.catalog.manualModelPolicy === 'allowed' && input.supportsFreeformModelIds) {
-    return ProviderModelDescriptorV1Schema.parse({ id: input.modelId, name: input.modelId });
+  // Catalog membership is not the authority over whether a Provider model is
+  // real. The Protocol reference resolver owns that decision — including the
+  // two-sided freeform policy — so spawn authorization cannot become a second,
+  // stricter answer to the same question the picker already asked.
+  const resolution = resolveProviderCatalogReferenceV1({
+    modelId: input.modelId,
+    activeRows: merged.rows,
+    staleRows: merged.staleRows,
+    manualModelPolicy: input.catalog.manualModelPolicy,
+    agentSupportsFreeformModelIds: input.supportsFreeformModelIds,
+  });
+  if (resolution.status === 'listed') return resolution.row.descriptor;
+  if (resolution.status === 'not_currently_listed') {
+    return ProviderModelDescriptorV1Schema.parse(resolution.descriptor);
   }
   return null;
+}
+
+function selectedModel(input: Readonly<{
+  modelId: string;
+  record: ResolvedProviderConnectionRecord;
+  facts: ResolvedProviderSourceFacts;
+  providerSettings: ProviderSettingsV1;
+  supportsFreeformModelIds: boolean;
+  runtimeProbe?: ProviderModelDescriptorV1;
+  runtimeCatalogSnapshotExists: boolean;
+}>): ProviderModelDescriptorV1 | null {
+  return resolveProviderCatalogModel({
+    modelId: input.modelId,
+    connectionId: input.record.connectionId,
+    catalog: input.facts.catalog,
+    providerSettings: input.providerSettings,
+    supportsFreeformModelIds: input.supportsFreeformModelIds,
+    ...(input.runtimeProbe ? { runtimeProbe: input.runtimeProbe } : {}),
+    runtimeCatalogSnapshotExists: input.runtimeCatalogSnapshotExists,
+  });
+}
+
+export type ProviderSpawnDefinitiveRejectionResult =
+  | Readonly<{ ok: true }>
+  | Readonly<{ ok: false; error: ProviderErrorV1 }>;
+
+/**
+ * Side-effect-free subset of provider launch authority.
+ *
+ * This owns only facts that the current Account settings and cold plugin
+ * manifest prove locally.  It deliberately does not resolve endpoints, DNS,
+ * grants, activation, runtime observations, credentials, or materialization:
+ * those retain their normal launch-time owners and may still fail after a
+ * Session cutover.
+ */
+export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
+  selection: unknown;
+  agentTargetKey: string;
+  agentId: string;
+  accountSettings: unknown;
+  registry: Pick<
+    ResolvedContributionRegistry,
+    'agentDefinitionsById' | 'providersByContributionKey'
+  >;
+}>): ProviderSpawnDefinitiveRejectionResult {
+  const selection = ProviderBoundModelRefSchema.safeParse(input.selection);
+  if (!selection.success) {
+    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent') };
+  }
+  if (selection.data.agentTargetKey !== input.agentTargetKey) {
+    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent') };
+  }
+  const connectionId = selection.data.providerConnectionId;
+  if (connectionId === null) return { ok: true };
+
+  const providerSettings = readProviderSettingsFromAccountSettingsV1(input.accountSettings).settings;
+  const connection = providerSettings.connections.find((candidate) => candidate.id === connectionId);
+  if (!connection) {
+    return {
+      ok: false,
+      error: createProviderErrorV1('provider_connection_not_found', { connectionId }),
+    };
+  }
+
+  // The cold source projection: a contribution connection resolves its manifest
+  // through the registry, a custom one carries its own template.  Only a
+  // contribution can declare the managed runtime a managedLocal deployment needs.
+  let catalog: ResolvedProviderContribution['definition']['catalog'];
+  if (connection.source.kind === 'contribution') {
+    const source = input.registry.providersByContributionKey?.get(connection.source.contributionKey);
+    if (!source) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_contribution_unavailable', { connectionId }),
+      };
+    }
+    if (connection.deployment.kind === 'managedLocal' && !source.definition.managedRuntime) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_connection_not_found', { connectionId }),
+      };
+    }
+    catalog = source.definition.catalog;
+  } else {
+    if (connection.deployment.kind === 'managedLocal') {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_connection_not_found', { connectionId }),
+      };
+    }
+    catalog = connection.source.template.catalog;
+  }
+
+  const rawSupport = input.registry.agentDefinitionsById.get(input.agentId)
+    ?.definition.providerRequirements;
+  if (rawSupport === undefined) {
+    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', { connectionId }) };
+  }
+  const support = AgentProviderRequirementsV1Schema.safeParse(rawSupport);
+  if (!support.success) {
+    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', { connectionId }) };
+  }
+
+  // The cold manifest is the complete set of model ids only when the Provider
+  // declares no runtime probe.  A probe-capable Provider can report a model the
+  // manifest never listed, so an unlisted id is not proven invalid here and the
+  // launch owner decides it against the live catalog observation instead.
+  if (!('probes' in catalog)) {
+    const model = resolveProviderCatalogModel({
+      modelId: selection.data.modelId,
+      connectionId,
+      catalog,
+      providerSettings,
+      supportsFreeformModelIds: support.data.supportsFreeformModelIds,
+      runtimeCatalogSnapshotExists: false,
+    });
+    if (!model) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_model_not_found', { connectionId }),
+      };
+    }
+  }
+  return { ok: true };
 }
 
 function destinationNameMatches(
@@ -745,6 +889,11 @@ function selectRuntimeTransport(input: Readonly<{
 export function resolveProviderSpawnAuthorization(
   input: ResolveProviderSpawnAuthorizationInput,
 ): ProviderSpawnAuthorizationResult {
+  // The cold definitive-rejection phase is deliberately not re-run here.  It
+  // answers the same questions from strictly less evidence — no resolved
+  // connection record, no runtime catalog observation, and the lease registry
+  // rather than this call's own — so consulting it would make it a second,
+  // stricter authority over facts this owner resolves below.
   const connectionId = input.selection.ref.providerConnectionId;
   if (connectionId === null || input.selection.ref.agentTargetKey !== input.agentTargetKey) {
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent') };

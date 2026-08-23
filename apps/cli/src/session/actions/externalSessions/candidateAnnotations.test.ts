@@ -6,15 +6,45 @@ import {
     SessionOwnerMetadataV1Schema,
 } from '@happier-dev/protocol';
 
+import {
+    resolveExternalSessionTagLookupCandidates,
+} from '@/api/session/external/linking/externalSessionTagLookupCandidates';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { annotateExternalSessionCandidates } from './candidateAnnotations';
 import { resolveExternalSessionCandidateIdentityKey } from './candidateQuery';
 
 const fetchSessionsPageMock = vi.hoisted(() => vi.fn());
+const lookupSessionsByTagsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
     fetchSessionsPage: fetchSessionsPageMock,
+    lookupSessionsByTags: lookupSessionsByTagsMock,
 }));
+
+const indexedTagRouteUnavailable = async () => ({ state: 'unavailable' } as const);
+
+/**
+ * The tag a candidate would own once linked, derived through the same canonical
+ * owner `link.ensure` uses. A lookup built from any other identity input returns
+ * nothing from the fixtures below, so these tests fail on a wrong derivation.
+ */
+function canonicalCandidateLookupTag(params: Readonly<{
+    machineId: string;
+    agentId: Parameters<typeof resolveExternalSessionTagLookupCandidates>[0]['agentId'];
+    remoteSessionId: string;
+    source: Parameters<typeof resolveExternalSessionTagLookupCandidates>[0]['source'];
+    sourceKey: string;
+}>): string {
+    return resolveExternalSessionTagLookupCandidates({
+        machineId: params.machineId,
+        agentId: params.agentId,
+        remoteSessionId: params.remoteSessionId,
+        source: params.source,
+        releasedPersistedSource: params.source,
+        sourceKey: params.sourceKey,
+        releasedSourceKeys: [params.sourceKey],
+    })[0].tag;
+}
 
 const plainAccountEncryptionCurrentness = {
     mode: 'plain',
@@ -35,9 +65,20 @@ describe('annotateExternalSessionCandidates', () => {
             SessionOwnerMetadataV1Schema.parse(ownerMetadata),
         );
         fetchSessionsPageMock.mockReset();
-        fetchSessionsPageMock
-            .mockResolvedValueOnce({
-                sessions: [{
+        lookupSessionsByTagsMock.mockReset();
+        const sourceKey = resolveExternalSessionsSourceKey({
+            kind: 'codexHome',
+            home: 'user',
+        })!;
+        const tagFor = (remoteSessionId: string) => canonicalCandidateLookupTag({
+            machineId: 'machine-1',
+            agentId: 'codex',
+            remoteSessionId,
+            source: { kind: 'codexHome', home: 'user' },
+            sourceKey,
+        });
+        const rowsByTag = new Map<string, unknown>([
+            [tagFor('remote-linked'), {
                     id: 'linked-session',
                     encryptionMode: 'plain',
                     metadataLayoutVersion: 1,
@@ -56,7 +97,8 @@ describe('annotateExternalSessionCandidates', () => {
                         },
                     }),
                     materializedThroughSourceAt: 100,
-                }, {
+            }],
+            [tagFor('remote-imported'), {
                     id: 'imported-session',
                     encryptionMode: 'plain',
                     metadataLayoutVersion: 1,
@@ -75,15 +117,13 @@ describe('annotateExternalSessionCandidates', () => {
                         },
                     }),
                     materializedThroughSourceAt: 80,
-                }],
-                hasNext: false,
-                nextCursor: null,
-            })
-            .mockResolvedValueOnce({
-                sessions: [],
-                hasNext: false,
-                nextCursor: null,
-            });
+            }],
+        ]);
+        lookupSessionsByTagsMock.mockImplementation(async ({ tags }: { tags: readonly string[] }) => ({
+            state: 'available' as const,
+            tags,
+            sessions: tags.flatMap((tag) => (rowsByTag.has(tag) ? [rowsByTag.get(tag)] : [])),
+        }));
 
         const result = await annotateExternalSessionCandidates({
             credentials: {
@@ -108,8 +148,10 @@ describe('annotateExternalSessionCandidates', () => {
             fetchPage: fetchSessionsPageMock,
             decryptMetadata: tryDecryptSessionOwnerMetadataView,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
+            lookupByTags: lookupSessionsByTagsMock,
         });
 
+        expect(fetchSessionsPageMock).not.toHaveBeenCalled();
         expect(result).toEqual({
             annotationsIncomplete: false,
             candidates: [
@@ -126,6 +168,116 @@ describe('annotateExternalSessionCandidates', () => {
                 }),
             ],
         });
+    });
+
+    it('splits the served page into indexed tag lookups inside the wire limit and never scans Session pages', async () => {
+        fetchSessionsPageMock.mockReset();
+        lookupSessionsByTagsMock.mockReset();
+        lookupSessionsByTagsMock.mockImplementation(async ({ tags }: { tags: readonly string[] }) => ({
+            state: 'available' as const,
+            tags,
+            sessions: [],
+        }));
+
+        const result = await annotateExternalSessionCandidates({
+            credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+            machineId: 'machine-1',
+            agentId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            candidates: Array.from({ length: 5 }, (_unused, index) => ({
+                remoteSessionId: `remote-${index}`,
+                updatedAtMs: index,
+            })),
+            sourceKeyOwner: {
+                sourceKey: 'codexHome:user:::',
+                resolveSourceKey: resolveExternalSessionsSourceKey,
+            },
+        }, {
+            fetchPage: fetchSessionsPageMock,
+            decryptMetadata: () => null,
+            getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
+            lookupByTags: lookupSessionsByTagsMock,
+        });
+
+        const requestedTags = lookupSessionsByTagsMock.mock.calls
+            .map((call) => (call[0] as { tags: readonly string[] }).tags);
+        expect(requestedTags.map((tags) => tags.length)).toEqual([4, 1]);
+        expect(requestedTags.flat()).toEqual(Array.from({ length: 5 }, (_unused, index) => (
+            canonicalCandidateLookupTag({
+                machineId: 'machine-1',
+                agentId: 'codex',
+                remoteSessionId: `remote-${index}`,
+                source: { kind: 'codexHome', home: 'user' },
+                sourceKey: 'codexHome:user:::',
+            })
+        )));
+        expect(fetchSessionsPageMock).not.toHaveBeenCalled();
+        expect(result.annotationsIncomplete).toBe(false);
+    });
+
+    it('stops the indexed lookup and rejects when the caller cancels mid-page', async () => {
+        fetchSessionsPageMock.mockReset();
+        lookupSessionsByTagsMock.mockReset();
+        const abortController = new AbortController();
+        lookupSessionsByTagsMock.mockImplementation(async ({ tags }: { tags: readonly string[] }) => {
+            abortController.abort();
+            return { state: 'available' as const, tags, sessions: [] };
+        });
+
+        await expect(annotateExternalSessionCandidates({
+            credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+            machineId: 'machine-1',
+            agentId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            candidates: Array.from({ length: 8 }, (_unused, index) => ({
+                remoteSessionId: `remote-${index}`,
+                updatedAtMs: index,
+            })),
+            sourceKeyOwner: {
+                sourceKey: 'codexHome:user:::',
+                resolveSourceKey: resolveExternalSessionsSourceKey,
+            },
+            signal: abortController.signal,
+        }, {
+            fetchPage: fetchSessionsPageMock,
+            decryptMetadata: () => null,
+            getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
+            lookupByTags: lookupSessionsByTagsMock,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+
+        expect(lookupSessionsByTagsMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops the bounded compatibility scan and rejects when the caller cancels mid-scan', async () => {
+        fetchSessionsPageMock.mockReset();
+        lookupSessionsByTagsMock.mockReset();
+        lookupSessionsByTagsMock.mockImplementation(indexedTagRouteUnavailable);
+        const abortController = new AbortController();
+        fetchSessionsPageMock.mockImplementation(async ({ cursor }: { cursor?: string }) => {
+            abortController.abort();
+            return { sessions: [], hasNext: true, nextCursor: cursor ? `${cursor}-next` : 'next' };
+        });
+
+        await expect(annotateExternalSessionCandidates({
+            credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+            machineId: 'machine-1',
+            agentId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
+            maxPages: 10,
+            sourceKeyOwner: {
+                sourceKey: 'codexHome:user:::',
+                resolveSourceKey: resolveExternalSessionsSourceKey,
+            },
+            signal: abortController.signal,
+        }, {
+            fetchPage: fetchSessionsPageMock,
+            decryptMetadata: () => null,
+            getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
+            lookupByTags: lookupSessionsByTagsMock,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+
+        expect(fetchSessionsPageMock).toHaveBeenCalledTimes(1);
     });
 
     it('projects live links, released conversion tombstones, and publication time from canonical session owners', async () => {
@@ -180,6 +332,7 @@ describe('annotateExternalSessionCandidates', () => {
             fetchPage,
             decryptMetadata: ({ rawSession }) => rawSession.metadata as Record<string, unknown>,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
+            lookupByTags: indexedTagRouteUnavailable,
         });
 
         expect(result).toEqual({
@@ -225,6 +378,7 @@ describe('annotateExternalSessionCandidates', () => {
             fetchPage,
             decryptMetadata: () => null,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
+            lookupByTags: indexedTagRouteUnavailable,
         });
 
         expect(fetchPage).toHaveBeenCalledTimes(4);
@@ -295,6 +449,7 @@ describe('annotateExternalSessionCandidates', () => {
             fetchPage,
             decryptMetadata: ({ rawSession }) => rawSession.metadata as Record<string, unknown>,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
+            lookupByTags: indexedTagRouteUnavailable,
         });
 
         expect(result).toEqual({

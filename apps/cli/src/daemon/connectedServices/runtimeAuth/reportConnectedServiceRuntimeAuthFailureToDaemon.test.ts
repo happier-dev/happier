@@ -757,6 +757,35 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     expect(logger.debug).toHaveBeenCalled();
   });
 
+  it('never logs a raw local path, secret, resume id, or stack from a report failure', async () => {
+    const logger = { debug: vi.fn() };
+    const raw = Object.assign(
+      new Error(
+        "EACCES: permission denied, open '/Users/someone/work/.happier/runtime-auth.json'"
+        + ' authorization=Bearer sk-abcdefghijklmnop resumeId=codex-thread-9911',
+      ),
+      { code: 'EACCES' },
+    );
+    const notify = vi.fn(async () => {
+      throw raw;
+    });
+
+    await expect(reportConnectedServiceRuntimeAuthFailureToDaemon({
+      sessionId: 'sess_1',
+      classification,
+      notify,
+      logger,
+    })).resolves.toMatchObject({ handled: false });
+
+    expect(logger.debug).toHaveBeenCalled();
+    const logged = logger.debug.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
+    expect(logged).not.toContain('/Users/someone/work');
+    expect(logged).not.toContain('sk-abcdefghijklmnop');
+    expect(logged).not.toContain('codex-thread-9911');
+    expect(logged).not.toContain('reportConnectedServiceRuntimeAuthFailureToDaemon.test');
+    expect(logged).toContain('EACCES');
+  });
+
   it('enqueues a sanitized outbox report when daemon notification fails', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-helper-');
     try {

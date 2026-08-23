@@ -11,6 +11,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node
 import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { configuration } from './configuration';
+import { resolveCliApiToken } from './auth/cliApiToken';
 import { resolveDaemonStateCandidatePaths } from './daemon/ownership/daemonOwnershipPaths';
 import {
   DaemonPublicReleaseChannelLabelSchema,
@@ -646,17 +647,39 @@ export type AccountEncryptionCredentials =
     type: 'dataKey', publicKey: Uint8Array, machineKey: Uint8Array
   };
 
-export type Credentials = {
+/**
+ * Invocation-only credential provenance. It is deliberately not persisted:
+ * a stored bearer proves an interactive CLI session, while a selected API
+ * Token is Account automation and must never inherit present-user authority.
+ */
+export type CredentialProvenance = 'stored_session' | 'api_token';
+
+type CredentialProvenanceMarker = Readonly<{
+  /** Missing provenance is intentionally treated as Account automation. */
+  credentialProvenance?: CredentialProvenance;
+}>;
+
+export type Credentials = CredentialProvenanceMarker & {
   token: string,
   encryption: AccountEncryptionCredentials
 }
 
-export type TokenOnlyCredentials = {
+export type TokenOnlyCredentials = CredentialProvenanceMarker & {
   token: string;
   encryption: null;
 }
 
 export type StoredCredentials = Credentials | TokenOnlyCredentials;
+
+/**
+ * Only the credential reader may attest an interactive stored CLI session.
+ * Synthetic/legacy callers without this marker fail closed as automation.
+ */
+export function hasStoredSessionCredentialProvenance(
+  credentials: StoredCredentials | null | undefined,
+): boolean {
+  return credentials?.credentialProvenance === 'stored_session';
+}
 
 export async function readCredentials(): Promise<Credentials | null> {
   const credentials = await readStoredCredentials();
@@ -664,6 +687,15 @@ export async function readCredentials(): Promise<Credentials | null> {
 }
 
 export async function readStoredCredentials(): Promise<StoredCredentials | null> {
+  const apiToken = resolveCliApiToken();
+  if (apiToken) {
+    return {
+      token: apiToken,
+      encryption: null,
+      credentialProvenance: 'api_token',
+    };
+  }
+
   const primaryPath = configuration.privateKeyFile;
   const legacyPath = configuration.legacyPrivateKeyFile;
   const canUseLegacy =
@@ -682,7 +714,8 @@ export async function readStoredCredentials(): Promise<StoredCredentials | null>
         encryption: {
           type: 'legacy',
           secret: decodeBase64(credentials.secret)
-        }
+        },
+        credentialProvenance: 'stored_session',
       };
     } else if (credentials.encryption) {
       return {
@@ -691,12 +724,14 @@ export async function readStoredCredentials(): Promise<StoredCredentials | null>
           type: 'dataKey',
           publicKey: decodeBase64(credentials.encryption.publicKey),
           machineKey: decodeBase64(credentials.encryption.machineKey)
-        }
+        },
+        credentialProvenance: 'stored_session',
       }
     }
     return {
       token: credentials.token,
       encryption: null,
+      credentialProvenance: 'stored_session',
     };
   } catch {
     return null

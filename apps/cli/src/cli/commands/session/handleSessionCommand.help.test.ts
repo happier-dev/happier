@@ -24,12 +24,12 @@ describe('handleSessionCommand help output', () => {
       expect(output.text()).toContain('happier session set-model <session-id-or-prefix-or-tag> <model-id> [--json]');
       expect(output.text()).toContain('happier session archive <session-id-or-prefix-or-tag> [--json]');
       expect(output.text()).toContain('happier session unarchive <session-id-or-prefix-or-tag> [--json]');
-      expect(output.text()).toContain('happier session history <session-id-or-prefix-or-tag> [--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json]');
+      expect(output.text()).toContain('happier session history <session-id-or-prefix-or-tag> [--tail N|--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json]');
       expect(output.text()).toContain('happier session actions list [--json]');
       expect(output.text()).toContain('happier session actions describe <action-id> [--json]');
       expect(output.text()).toContain(SESSION_HELP_LINES.actionsExecute);
-      expect(output.text()).toContain('happier session run start <session-id-or-prefix-or-tag> --intent <review|plan|delegate|task|voice_agent|memory_hints|scm_commit_message|scm_diff_summary> --backend <backend-target> [--instructions <text>] [--permission-mode <mode>] [--retention <ephemeral|resumable>] [--run-class <bounded|long_lived>] [--io-mode <request_response|streaming>] [--json]');
-      expect(output.text()).toContain('happier session run list <session-id-or-prefix-or-tag> [--backend <backend-target>] [--status <running|succeeded|failed|cancelled|timeout>] [--limit <count>] [--json]');
+      expect(output.text()).toContain('happier session run start <session-id-or-prefix-or-tag> --intent <review|plan|delegate|task|voice_agent|memory_hints|scm_commit_message|scm_diff_summary> --agent <agent-id> [--instructions <text>] [--permission-mode <mode>] [--retention <ephemeral|resumable>] [--run-class <bounded|long_lived>] [--io-mode <request_response|streaming>] [--json]');
+      expect(output.text()).toContain('happier session run list <session-id-or-prefix-or-tag> [--agent <agent-id>] [--status <running|succeeded|failed|cancelled|timeout>] [--limit <count>] [--json]');
       expect(output.text()).toContain('happier session run send <session-id-or-prefix-or-tag> <run-id> <message> [--resume] [--json]');
       expect(output.text()).toContain('happier session run stop <session-id-or-prefix-or-tag> <run-id> [--json]');
       expect(output.text()).toContain('happier session run action <session-id-or-prefix-or-tag> <run-id> <action-id> [--input-json <json>] [--json]');
@@ -48,7 +48,7 @@ describe('handleSessionCommand help output', () => {
     ['stop', 'happier session stop <session-id-or-prefix-or-tag> [--json]'],
     ['archive', 'happier session archive <session-id-or-prefix-or-tag> [--json]'],
     ['unarchive', 'happier session unarchive <session-id-or-prefix-or-tag> [--json]'],
-    ['history', 'happier session history <session-id-or-prefix-or-tag> [--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json]'],
+    ['history', 'happier session history <session-id-or-prefix-or-tag> [--tail N|--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json]'],
     ['set-title', 'happier session set-title <session-id-or-prefix-or-tag> <title> [--json]'],
     ['set-permission-mode', 'happier session set-permission-mode <session-id-or-prefix-or-tag> <mode> [--json]'],
     ['set-model', 'happier session set-model <session-id-or-prefix-or-tag> <model-id> [--json]'],
@@ -89,8 +89,8 @@ describe('handleSessionCommand help output', () => {
     [['review', 'start', '--help'], 'happier session review start <session-id-or-prefix-or-tag> --engines <id1,id2> --instructions <text> [--json]'],
     [['plan', '--help'], 'happier session plan start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]'],
     [['plan', 'start', '--help'], 'happier session plan start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]'],
-    [['delegate', '--help'], 'happier session delegate start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]'],
-    [['delegate', 'start', '--help'], 'happier session delegate start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]'],
+    [['delegate', '--help'], SESSION_HELP_LINES.delegateStart],
+    [['delegate', 'start', '--help'], SESSION_HELP_LINES.delegateStart],
     [['voice-agent', '--help'], 'happier session voice-agent start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]'],
     [['voice-agent', 'start', '--help'], 'happier session voice-agent start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]'],
     [['voice_agent', 'start', '--help'], 'happier session voice-agent start <session-id-or-prefix-or-tag> --backends <id1,id2> --instructions <text> [--json]'],

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { HandoffExportSessionMetadataV1 } from '@happier-dev/agents';
 import { buildOpenCodeRuntimeIdentityDescriptorV1 } from '@happier-dev/plugins-opencode/agent/identity/runtimeDescriptor';
-import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
 import { resolveSessionHandoffEligibility } from './resolveSessionHandoffEligibility';
 
 function resolveEligibilityFromOwnerMetadata(input: Readonly<{
@@ -19,8 +19,8 @@ function resolveEligibilityFromOwnerMetadata(input: Readonly<{
     // separately proves that production callers supply the strict handoff projection.
     metadata: metadata as HandoffExportSessionMetadataV1,
     sourceMachineId: metadata.machineId,
-    externalSessionLinkResolution:
-      resolveLinkedExternalSessionMetadataV1(metadata),
+    externalSessionLinkAuthority:
+      resolveLinkedExternalSessionAuthorityV1(metadata),
     accountSettings: input.accountSettings,
     sessionAgentId: input.sessionAgentId,
     ...input.runtimeDeps,

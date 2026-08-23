@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
@@ -13,6 +15,9 @@ import {
   normalizeActionExecuteResult,
   unwrapCliActionSuccessPayload,
 } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+
+type CliActionExecutorLike = Pick<ReturnType<typeof createCliActionExecutor>, 'execute'>;
+type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
 function parseInputJsonOrThrow(raw: string | null): unknown {
   const trimmed = (raw ?? '').trim();
@@ -80,48 +85,72 @@ export async function cmdSessionActionsExecute(
     process.exit(1);
   }
 
-  await ensureCliActionPolicySettings(credentials);
-
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
-  if (!sessionTarget.ok) {
-    if (json) {
-      await printJsonEnvelope({
-        ok: false,
-        kind: 'session_actions_execute',
-        error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
-      });
-      return;
+  const usesApiToken = credentials.credentialProvenance === 'api_token';
+  let sessionId: string;
+  let executor: CliActionExecutorLike;
+  if (usesApiToken) {
+    // A PAT intentionally carries no Account E2EE material. Resolve only the
+    // selector here, then let the daemon that owns the Session execute the
+    // public Action through the credentials-backed external adapter.
+    const sessionTarget = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+    if (!sessionTarget.ok) {
+      if (json) {
+        await printJsonEnvelope({
+          ok: false,
+          kind: 'session_actions_execute',
+          error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
+        });
+        return;
+      }
+      throw new Error(sessionTarget.code);
     }
-    throw new Error(sessionTarget.code);
-  }
+    sessionId = sessionTarget.sessionId;
+    executor = createCliActionExecutorFromCredentials({ credentials });
+  } else {
+    await ensureCliActionPolicySettings(credentials);
 
-  const executor = sessionTarget.mode === 'plain'
-    ? createCliActionExecutor({
-        token: credentials.token,
-        credentials,
-        sessionId: sessionTarget.sessionId,
-        ctx: sessionTarget.ctx,
-        mode: sessionTarget.mode,
-        rawSession: sessionTarget.rawSession,
-      })
-    : createCliActionExecutor({
-        token: credentials.token,
-        credentials,
-        sessionId: sessionTarget.sessionId,
-        ctx: sessionTarget.ctx,
-        mode: sessionTarget.mode,
-        rawSession: sessionTarget.rawSession,
-      });
+    const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+    if (!sessionTarget.ok) {
+      if (json) {
+        await printJsonEnvelope({
+          ok: false,
+          kind: 'session_actions_execute',
+          error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) },
+        });
+        return;
+      }
+      throw new Error(sessionTarget.code);
+    }
+    sessionId = sessionTarget.sessionId;
+    const executorParams: CliActionExecutorParams = sessionTarget.mode === 'plain'
+      ? {
+          token: credentials.token,
+          credentials,
+          sessionId,
+          ctx: null,
+          mode: 'plain',
+          rawSession: sessionTarget.rawSession,
+        }
+      : {
+          token: credentials.token,
+          credentials,
+          sessionId,
+          ctx: sessionTarget.ctx,
+          mode: 'e2ee',
+          rawSession: sessionTarget.rawSession,
+        };
+    executor = createCliActionExecutor(executorParams);
+  }
   const input = withResolvedSessionInput(
     actionId,
     parseInputJsonOrThrow(readFlagValue(argv, '--input-json')),
-    sessionTarget.sessionId,
+    sessionId,
   );
   const actionRes = await executor.execute(
     actionId as ActionId,
     input,
     {
-      defaultSessionId: sessionTarget.sessionId,
+      defaultSessionId: sessionId,
       surface: 'cli',
       ...(effectiveActionRequestId ? { actionRequestId: effectiveActionRequestId } : {}),
       ...(resumeActionRequest ? { resumeActionRequest: true } : {}),
@@ -162,7 +191,7 @@ export async function cmdSessionActionsExecute(
       ok: true,
       kind: 'session_actions_execute',
       data: {
-        sessionId: sessionTarget.sessionId,
+        sessionId,
         actionId,
         result: successPayload,
       },
@@ -171,5 +200,5 @@ export async function cmdSessionActionsExecute(
   }
 
   console.log(chalk.green('✓'), 'action executed');
-  await writeJsonStdout({ sessionId: sessionTarget.sessionId, actionId, result: successPayload }, { pretty: true });
+  await writeJsonStdout({ sessionId, actionId, result: successPayload }, { pretty: true });
 }

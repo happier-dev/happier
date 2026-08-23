@@ -19,6 +19,13 @@ import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
 import { errorFrame } from '@happier-dev/cli-common/output';
 import packageJson from '../../package.json';
 import { resolveExplicitSpawnScopedEnvironmentFromProcessEnv } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
+import {
+  redactCliApiTokenArgv,
+  takeCliApiTokenEnvironment,
+  takePrefixCliApiTokenFlag,
+  validateCliApiTokenEnvironment,
+  withCliApiToken,
+} from '@/auth/cliApiToken';
 
 function isTopLevelVersionRequest(args: readonly string[]): boolean {
   return args.length === 1 && (args[0] === '--version' || args[0] === '-v');
@@ -142,6 +149,63 @@ async function rejectTmuxInvocation(args: readonly string[], message: string): P
   process.exit(1);
 }
 
+async function reportInvalidGlobalArguments(args: readonly string[], error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  if (wantsJson(args)) {
+    await printJsonEnvelope(
+      {
+        ok: false,
+        kind: 'cli_dispatch',
+        error: {
+          code: 'invalid_arguments',
+          message,
+        },
+      },
+      { exitCode: 1 },
+    );
+    return;
+  }
+  console.error(errorFrame('Error:', [message]));
+  process.exit(1);
+}
+
+async function applyGlobalInvocationOptions(
+  argsRaw: readonly string[],
+  ambientApiToken: ReturnType<typeof takeCliApiTokenEnvironment>,
+): Promise<Readonly<{
+  args: string[];
+  apiToken: string | null;
+}>> {
+  let args = [...argsRaw];
+  let apiToken: string | null = null;
+
+  while (true) {
+    const tokenFlag = takePrefixCliApiTokenFlag(args);
+    if (tokenFlag) {
+      if (apiToken !== null) {
+        throw new Error('--api-token may be supplied only once.');
+      }
+      apiToken = tokenFlag.token;
+      args = tokenFlag.rest;
+      continue;
+    }
+
+    if (!hasEphemeralServerSelectionPrefixArgs(args)) break;
+    const { applyEphemeralServerSelectionFromPrefixArgs } = await import('@/server/serverSelection');
+    const selectedArgs = await applyEphemeralServerSelectionFromPrefixArgs(args);
+    if (selectedArgs.length === args.length) break;
+    args = selectedArgs;
+  }
+
+  // Validate the env form at the same CLI boundary when it remains the selected
+  // credential. A valid explicit flag deliberately wins over an irrelevant env value.
+  if (apiToken === null && ambientApiToken !== null) {
+    apiToken = validateCliApiTokenEnvironment(ambientApiToken);
+  }
+
+  return { args, apiToken };
+}
+
 async function launchCommandInTmux(
   args: string[],
   command: string | undefined,
@@ -189,7 +253,36 @@ export async function dispatchCli(params: Readonly<{
   terminalRuntime: TerminalRuntimeFlags | null;
   rawArgv: string[];
   signal?: AbortSignal;
+  /** @internal Root global options have been consumed for this dispatch. */
+  globalOptionsApplied?: boolean;
 }>): Promise<void> {
+  if (!params.globalOptionsApplied) {
+    // Consume these process-wide input variables before any command can create
+    // a generic child. The selected value continues only in invocation-local
+    // memory; a tmux re-exec receives the dedicated one-shot handoff instead.
+    const ambientApiToken = takeCliApiTokenEnvironment();
+    let globalOptions: Awaited<ReturnType<typeof applyGlobalInvocationOptions>>;
+    try {
+      globalOptions = await applyGlobalInvocationOptions(params.args, ambientApiToken);
+    } catch (error) {
+      await reportInvalidGlobalArguments(params.args, error);
+      return;
+    }
+
+    const dispatchWithGlobalOptions = async () => await dispatchCli({
+      ...params,
+      args: globalOptions.args,
+      rawArgv: redactCliApiTokenArgv(params.rawArgv),
+      globalOptionsApplied: true,
+    });
+    if (globalOptions.apiToken !== null) {
+      await withCliApiToken(globalOptions.apiToken, dispatchWithGlobalOptions);
+      return;
+    }
+    await dispatchWithGlobalOptions();
+    return;
+  }
+
   let args = [...params.args];
   const { terminalRuntime, rawArgv } = params;
   let signal = params.signal;
@@ -220,19 +313,8 @@ export async function dispatchCli(params: Readonly<{
     debugCliStart(rawArgv);
   }
 
-  try {
-    if (hasEphemeralServerSelectionPrefixArgs(args)) {
-      const { applyEphemeralServerSelectionFromPrefixArgs } = await import('@/server/serverSelection');
-      args = await applyEphemeralServerSelectionFromPrefixArgs(args);
-    }
-  } catch (error) {
-    console.error(errorFrame('Error:', [error instanceof Error ? error.message : String(error)]));
-    process.exit(1);
-    return;
-  }
-
-  // Prefix-only global server flags are consumed above, so version/help must
-  // be rechecked before command dispatch can fall through to the default agent.
+  // Prefix-only global flags are consumed before this dispatch, so version/help
+  // must be rechecked before command dispatch can fall through to the default agent.
   if (isTopLevelVersionRequest(args)) {
     console.log(packageJson.version);
     return;

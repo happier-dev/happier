@@ -37,6 +37,7 @@ import {
   serializeProviderBindingLaunchHandoffForEnv,
 } from '@/plugins/runtime/providerBindings/handoff';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
+import { bindAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { prepareForegroundAgentRuntimeBootstrapForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 import { logger } from '@/ui/logger';
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
@@ -193,7 +194,6 @@ export async function resolveForegroundFinalPluginPrerequisites(params: Readonly
     logWarn: (message) => logger.warn(message),
     connectedServiceAuth: null,
     providerBindingPrerequisitesOnly: true,
-    runtimePrerequisitesAlreadyResolved: true,
   });
 }
 
@@ -450,6 +450,49 @@ export async function prepareForegroundAgentRuntimeAdmission(
   };
 
   try {
+    // The Provider decision runs before any runner bootstrap material is
+    // written. Cleanup removes those files, but it cannot un-activate an Agent
+    // runtime contribution, so every Provider refusal this owner can already
+    // establish is established first.
+    const providerLaunch = await prepareForegroundProviderLaunch({
+      request,
+      lease,
+    });
+    if (providerLaunch && !providerLaunch.ok) {
+      if (
+        'kind' in providerLaunch
+        && providerLaunch.kind === 'managed_provider_requires_daemon'
+      ) {
+        return refusal(createProviderErrorV1(
+          'provider_agent_runtime_unsupported',
+          {
+            connectionId:
+              request.selection?.ref.providerConnectionId ?? undefined,
+            machineId: request.machineId,
+          },
+        ));
+      }
+      return refusal(providerLaunch.error);
+    }
+    if (providerLaunch?.ok && providerLaunch.kind !== 'provider') {
+      return refusal(createProviderErrorV1(
+        'provider_agent_runtime_unsupported',
+        {
+          connectionId:
+            request.selection?.ref.providerConnectionId ?? undefined,
+          machineId: request.machineId,
+        },
+      ));
+    }
+    const activeProviderLaunch =
+      providerLaunch?.ok && providerLaunch.kind === 'provider'
+        ? providerLaunch
+        : null;
+    if (activeProviderLaunch) {
+      providerCleanup = activeProviderLaunch.cleanupOnExit;
+      transferProviderLaunchMaterializationCleanupOwnership =
+        activeProviderLaunch.transferLaunchMaterializationCleanupOwnership;
+    }
     const bridge = await prepareForegroundAgentRuntimeBootstrapForLease({
       target: request.backendTarget,
       lease,
@@ -490,45 +533,6 @@ export async function prepareForegroundAgentRuntimeAdmission(
       lease,
       agentId: request.agentId,
     });
-    const providerLaunch = await prepareForegroundProviderLaunch({
-      request,
-      lease,
-    });
-    if (providerLaunch && !providerLaunch.ok) {
-      if (
-        'kind' in providerLaunch
-        && providerLaunch.kind === 'managed_provider_requires_daemon'
-      ) {
-        return refusal(createProviderErrorV1(
-          'provider_agent_runtime_unsupported',
-          {
-            connectionId:
-              request.selection?.ref.providerConnectionId ?? undefined,
-            machineId: request.machineId,
-          },
-        ));
-      }
-      return refusal(providerLaunch.error);
-    }
-    if (providerLaunch?.ok && providerLaunch.kind !== 'provider') {
-      return refusal(createProviderErrorV1(
-        'provider_agent_runtime_unsupported',
-        {
-          connectionId:
-            request.selection?.ref.providerConnectionId ?? undefined,
-          machineId: request.machineId,
-        },
-      ));
-    }
-    const activeProviderLaunch =
-      providerLaunch?.ok && providerLaunch.kind === 'provider'
-        ? providerLaunch
-        : null;
-    if (activeProviderLaunch) {
-      providerCleanup = activeProviderLaunch.cleanupOnExit;
-      transferProviderLaunchMaterializationCleanupOwnership =
-        activeProviderLaunch.transferLaunchMaterializationCleanupOwnership;
-    }
     const providerEnvironment: Readonly<Record<string, string>> =
       activeProviderLaunch
         ? Object.freeze({
@@ -1096,6 +1100,14 @@ export async function prepareForegroundAgentRuntimeAdmission(
               invocationContext: Object.freeze({
                 cwd: request.directory,
                 environment: Object.freeze({}),
+                ...(finalSpawnEnvironment.agentCliLaunchSpec
+                  ? {
+                      agentCliLaunch: bindAgentCliLaunchSpec({
+                        localAgentId: retainedAgent.localAgentId,
+                        spec: finalSpawnEnvironment.agentCliLaunchSpec,
+                      }),
+                    }
+                  : {}),
                 providerBindingActive: false,
               }),
               authority: Object.freeze({

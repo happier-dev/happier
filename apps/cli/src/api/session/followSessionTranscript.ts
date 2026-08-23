@@ -7,14 +7,23 @@ import {
 } from './sessionTranscriptActionInput';
 
 type SessionTranscriptFollowLease = Readonly<{
+    sessionId: string;
     leaseId: string;
     idleTtlMs: number;
     release: () => Promise<void>;
 }>;
 
+export type SessionTranscriptFollowLeaseIdentity = Readonly<{
+    sessionId: string;
+    leaseId: string;
+}>;
+
 export type SessionTranscriptFollowLeaseRegistry = Readonly<{
     retain: (lease: SessionTranscriptFollowLease) => boolean;
-    release: (leaseId: string, expectedLease?: SessionTranscriptFollowLease) => Promise<void>;
+    release: (
+        identity: SessionTranscriptFollowLeaseIdentity,
+        expectedLease?: SessionTranscriptFollowLease,
+    ) => Promise<boolean>;
     dispose: () => Promise<void>;
     activeCount: () => number;
     resolveIdleTtlMs: (requestedIdleTtlMs: unknown) => number;
@@ -29,6 +38,7 @@ type SessionTranscriptFollowLeaseRegistryParams = Readonly<{
 type FollowSessionTranscriptParams<TItem> = Readonly<{
     store: FileBackedTranscriptSessionStore<TItem>;
     registry: SessionTranscriptFollowLeaseRegistry;
+    sessionId: string;
     input?: unknown;
     onUpdate?: (update: Readonly<{
         items: readonly TItem[];
@@ -49,33 +59,41 @@ export function createSessionTranscriptFollowLeaseRegistry(
     let disposed = false;
     let disposePromise: Promise<void> | null = null;
 
-    const clearLeaseTimer = (leaseId: string): void => {
-        const timer = timers.get(leaseId);
+    const getLeaseKey = (identity: SessionTranscriptFollowLeaseIdentity): string => JSON.stringify([
+        identity.sessionId,
+        identity.leaseId,
+    ]);
+
+    const clearLeaseTimer = (leaseKey: string): void => {
+        const timer = timers.get(leaseKey);
         if (timer) {
             clearTimeout(timer);
-            timers.delete(leaseId);
+            timers.delete(leaseKey);
         }
     };
 
     const release = async (
-        leaseId: string,
+        identity: SessionTranscriptFollowLeaseIdentity,
         expectedLease?: SessionTranscriptFollowLease,
-    ): Promise<void> => {
-        const lease = leases.get(leaseId);
-        if (expectedLease !== undefined && lease !== expectedLease) return;
-        clearLeaseTimer(leaseId);
-        if (!lease) return;
-        leases.delete(leaseId);
+    ): Promise<boolean> => {
+        const leaseKey = getLeaseKey(identity);
+        const lease = leases.get(leaseKey);
+        if (expectedLease !== undefined && lease !== expectedLease) return false;
+        clearLeaseTimer(leaseKey);
+        if (!lease) return false;
+        leases.delete(leaseKey);
         await lease.release();
+        return true;
     };
 
-    const scheduleIdleExpiry = (leaseId: string, idleTtlMs: number): void => {
-        clearLeaseTimer(leaseId);
+    const scheduleIdleExpiry = (identity: SessionTranscriptFollowLeaseIdentity, idleTtlMs: number): void => {
+        const leaseKey = getLeaseKey(identity);
+        clearLeaseTimer(leaseKey);
         const timer = setTimeout(() => {
-            void release(leaseId);
+            void release(identity);
         }, idleTtlMs);
         timer.unref?.();
-        timers.set(leaseId, timer);
+        timers.set(leaseKey, timer);
     };
 
     const resolveIdleTtlMs = (requestedIdleTtlMs: unknown): number => {
@@ -89,9 +107,9 @@ export function createSessionTranscriptFollowLeaseRegistry(
         disposePromise ??= (async () => {
             disposed = true;
             const results = await Promise.allSettled(
-                [...leases.keys()].map((leaseId) => release(leaseId)),
+                [...leases.values()].map((lease) => release(lease, lease)),
             );
-            for (const leaseId of [...timers.keys()]) clearLeaseTimer(leaseId);
+            for (const leaseKey of [...timers.keys()]) clearLeaseTimer(leaseKey);
             const failures = results
                 .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
                 .map((result) => result.reason);
@@ -105,13 +123,15 @@ export function createSessionTranscriptFollowLeaseRegistry(
     return {
         retain: (lease) => {
             if (disposed) return false;
-            if (leases.has(lease.leaseId)) {
-                void release(lease.leaseId);
+            const identity = { sessionId: lease.sessionId, leaseId: lease.leaseId };
+            const leaseKey = getLeaseKey(identity);
+            if (leases.has(leaseKey)) {
+                void release(identity);
             } else if (leases.size >= params.maxLeases) {
                 return false;
             }
-            leases.set(lease.leaseId, lease);
-            scheduleIdleExpiry(lease.leaseId, lease.idleTtlMs);
+            leases.set(leaseKey, lease);
+            scheduleIdleExpiry(identity, lease.idleTtlMs);
             return true;
         },
         release,
@@ -172,6 +192,7 @@ export async function followSessionTranscript<TItem>(
         void runUpdate(update);
     });
     const lease = {
+        sessionId: params.sessionId,
         leaseId,
         idleTtlMs,
         release: async () => {
@@ -199,7 +220,7 @@ export async function followSessionTranscript<TItem>(
         });
     } catch (readError) {
         try {
-            await params.registry.release(leaseId, lease);
+            await params.registry.release(lease, lease);
         } finally {
             throw readError;
         }

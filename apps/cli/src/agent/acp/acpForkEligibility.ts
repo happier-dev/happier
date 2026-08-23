@@ -2,7 +2,7 @@ import {
   AGENTS_CORE,
 } from '@happier-dev/agents';
 import {
-  readLinkedExternalSessionV1FromMetadata,
+  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
 } from '@happier-dev/protocol';
 
@@ -75,7 +75,7 @@ function resolveLegacyRuntimeBackendModeEligibility(metadata: Record<string, unk
   const topLevelEligibility = readAgentKeyedBackendModeEligibility(metadata, agentId);
   if (topLevelEligibility !== null) return topLevelEligibility;
 
-  const externalSessionLink = readLinkedExternalSessionV1FromMetadata(metadata);
+  const externalSessionLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   if (externalSessionLink?.agentId === agentId) {
     const externalSessionEligibility = readAgentKeyedBackendModeEligibility(externalSessionLink, agentId);
     if (externalSessionEligibility !== null) return externalSessionEligibility;

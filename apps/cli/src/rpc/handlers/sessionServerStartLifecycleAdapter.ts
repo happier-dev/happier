@@ -1,8 +1,16 @@
 import type { SessionLifecycleActionHandler } from '@/session/actions/lifecycle/sessionLifecycleTypes';
+import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import type { SpawnSessionNonceResolver } from '@/session/services/awaitSpawnedSessionId';
 import type { DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
 
 export type MachineSessionServerStartSpawnLifecycleTransportOptions = Readonly<{
+    spawnLifecycleHandler: SessionLifecycleActionHandler;
+    resolveSpawnSessionByNonce?: SpawnSessionNonceResolver;
+}>;
+
+export type MachineSessionDirectTargetTransportOptions = Readonly<{
+    machineId: string;
     spawnLifecycleHandler: SessionLifecycleActionHandler;
     resolveSpawnSessionByNonce?: SpawnSessionNonceResolver;
 }>;
@@ -44,5 +52,30 @@ export function createMachineSessionServerStartSpawnLifecycleTransport(
             resolveOptions?.signal?.throwIfAborted();
             return result;
         },
+    };
+}
+
+/**
+ * The exact-daemon transport is shared by the server-origin receiver and
+ * host-stamped local Action ingress. It replaces only the transport beneath
+ * the canonical Session Action owner; target normalization and lifecycle
+ * authority remain there.
+ */
+export function createMachineSessionDirectTargetTransport(
+    options: MachineSessionDirectTargetTransportOptions,
+): SessionSpawnDirectTargetTransport {
+    return {
+        machineId: options.machineId,
+        prepare: async (request, prepareOptions) =>
+            await prepareSessionCreationTarget({
+                request,
+                ...(prepareOptions?.signal ? { signal: prepareOptions.signal } : {}),
+            }),
+        spawnedSession: createMachineSessionServerStartSpawnLifecycleTransport({
+            spawnLifecycleHandler: options.spawnLifecycleHandler,
+            ...(options.resolveSpawnSessionByNonce
+                ? { resolveSpawnSessionByNonce: options.resolveSpawnSessionByNonce }
+                : {}),
+        }),
     };
 }

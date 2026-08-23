@@ -3,7 +3,6 @@ import {
   buildBackendTargetKeyV2,
   ProviderBoundModelRefSchema,
   ProviderConnectionIdSchema,
-  readSessionProviderBindingMetadataV1,
   SessionModelSelectionResolutionError,
   SessionModelTransitionResultV1Schema,
   type ProviderConnectionId,
@@ -11,7 +10,10 @@ import {
   type SessionModelTransitionResultV1,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents';
+import {
+  resolveAmbientProviderConnectionForModelIntent,
+  resolveModelSelectionIntentFromSessionMetadata,
+} from '@happier-dev/agents';
 import {
   createModelIntentMetadataCasCandidate,
   runModelIntentAtAuthoritativeDisposition,
@@ -89,15 +91,25 @@ function resolveRequestedSelection(params: Readonly<{
       providerConnectionId: null,
       modelId: 'default',
     };
+  let providerConnectionId: string | null;
+  if (params.hasExplicitProviderConnectionId) {
+    providerConnectionId = params.explicitProviderConnectionId;
+  } else {
+    const ambient = resolveAmbientProviderConnectionForModelIntent({
+      metadata,
+      agentTargetKey,
+      sessionActive: params.sessionTarget.rawSession.active === true,
+    });
+    if (ambient.status === 'unreadable') {
+      throw new SessionModelSelectionResolutionError(ambient.code);
+    }
+    providerConnectionId = ambient.providerConnectionId;
+  }
   return {
     currentSelection,
     selection: ProviderBoundModelRefSchema.parse({
       agentTargetKey,
-      providerConnectionId: params.hasExplicitProviderConnectionId
-        ? params.explicitProviderConnectionId
-        : params.sessionTarget.rawSession.active === true
-          ? readSessionProviderBindingMetadataV1(metadata)?.connectionId ?? null
-          : currentSelection.providerConnectionId,
+      providerConnectionId,
       modelId: params.modelId,
     }),
   };

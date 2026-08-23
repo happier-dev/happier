@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 
 const resolveSessionTransportContext = vi.fn();
 const listExecutionRuns = vi.fn();
@@ -63,7 +64,7 @@ describe('happier session run list', () => {
     const output = captureConsoleJsonOutput();
     try {
       await handleSessionCommand(
-        ['run', 'list', 'sess-1', '--backend', 'agent:claude', '--status', 'running', '--limit', '5', '--json'],
+        ['run', 'list', 'sess-1', '--agent', 'agent:claude', '--status', 'running', '--limit', '5', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -106,6 +107,33 @@ describe('happier session run list', () => {
     }
   });
 
+  it('rejects retired --backend before credential checks', async () => {
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleSessionCommand(
+        ['run', 'list', 'sess-1', '--backend', 'agent:claude', '--json'],
+        { readCredentialsFn },
+      );
+
+      expect(output.json()).toEqual({
+        v: 1,
+        ok: false,
+        kind: 'session_run_list',
+        error: {
+          code: 'invalid_arguments',
+          message: `Usage: ${SESSION_HELP_LINES.runList}`,
+        },
+      });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
   it('rejects an out-of-range limit before reading credentials', async () => {
     const readCredentialsFn = vi.fn(async () => null);
     const { cmdSessionRunList } = await import('./list');
@@ -132,12 +160,12 @@ describe('happier session run list', () => {
     expect(resolveSessionTransportContext).not.toHaveBeenCalled();
   });
 
-  it('rejects a malformed backend target before reading credentials', async () => {
+  it('rejects a malformed Agent target before reading credentials', async () => {
     const readCredentialsFn = vi.fn(async () => null);
     const { cmdSessionRunList } = await import('./list');
 
     await expect(cmdSessionRunList(
-      ['session', 'run', 'sess-prefix', '--backend', 'claude,codex'],
+      ['session', 'run', 'sess-prefix', '--agent', 'claude,codex'],
       { readCredentialsFn },
     )).rejects.toThrow('Usage: happier session run list');
 
@@ -150,7 +178,7 @@ describe('happier session run list', () => {
       code: 'invalid_arguments',
       message: 'Invalid --status "". Expected one of: running, succeeded, failed, cancelled, timeout.',
     }],
-    ['--backend', {
+    ['--agent', {
       message: expect.stringContaining('Usage: happier session run list'),
     }],
   ] as const)('rejects %s without a value before reading credentials', async (flag, expectedError) => {

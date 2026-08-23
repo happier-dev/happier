@@ -153,6 +153,10 @@ export async function waitForIdleViaSocket(params: Readonly<{
   const preferProjectionUpdates = params.preferProjectionUpdates === true;
   const readyCompletesPendingUserTurns = params.readyCompletesPendingUserTurns !== false;
   let observedTurnProgress = activeTaskInFlight;
+  // `pendingCount` counts queue rows, not rows already claimed for delivery. Retain the known
+  // input count until its successor is observed, otherwise the delivery transition can look idle.
+  let pendingInputTurnsAwaitingMaterialization =
+    preferProjectionUpdates && pendingUserTurns > 0 ? pendingUserTurns : 0;
   const hasTurnInFlight = () => activeTaskInFlight || pendingUserTurns > 0;
   const initiallyIdle = isIdle(initial) && !hasTurnInFlight();
   const idleConfirmMs = initiallyIdle ? resolveSessionControlWaitIdleConfirmMs() : 0;
@@ -200,6 +204,11 @@ export async function waitForIdleViaSocket(params: Readonly<{
     }, timeoutMs);
 
     const applyRecheckedTurnActivity = (latestTurnActivity: SessionTurnActivity): boolean => {
+      if (!latestTurnActivity.turnInFlight && pendingInputTurnsAwaitingMaterialization > 0) {
+        requiresTranscriptIdleEvidence = true;
+        waitingForIdleAfterFreshBusy = true;
+        return false;
+      }
       pendingUserTurns = latestTurnActivity.pendingUserTurns;
       activeTaskInFlight = latestTurnActivity.activeTaskInFlight;
       if (latestTurnActivity.turnInFlight) {
@@ -325,6 +334,30 @@ export async function waitForIdleViaSocket(params: Readonly<{
       if (!parsed.success) return;
       const update: UpdateContainer = parsed.data;
 
+      if (update.body?.t === 'pending-changed') {
+        if (!preferProjectionUpdates) return;
+        const body = update.body;
+        const sessionId = body.sid ?? body.sessionId;
+        if (sessionId !== params.sessionId) return;
+
+        const projectedActivity = detectSessionTurnActivityFromProjection(body);
+        if (!projectedActivity?.turnInFlight) return;
+
+        pendingUserTurns = projectedActivity.pendingUserTurns;
+        activeTaskInFlight = projectedActivity.activeTaskInFlight;
+        pendingInputTurnsAwaitingMaterialization = Math.max(
+          pendingInputTurnsAwaitingMaterialization,
+          projectedActivity.pendingUserTurns,
+        );
+        observedTurnProgress = true;
+        waitingForIdleAfterFreshBusy = true;
+        if (idleConfirmTimer) {
+          clearTimeout(idleConfirmTimer);
+          idleConfirmTimer = null;
+        }
+        return;
+      }
+
       if (update.body?.t === 'update-session') {
         const body = update.body as any;
         if (String(body.id ?? '') !== params.sessionId) return;
@@ -365,6 +398,9 @@ export async function waitForIdleViaSocket(params: Readonly<{
             }
             return;
           }
+          if (pendingInputTurnsAwaitingMaterialization > 0) {
+            return;
+          }
           if (!canUseTerminalProjection) {
             return;
           }
@@ -402,6 +438,9 @@ export async function waitForIdleViaSocket(params: Readonly<{
               clearTimeout(idleConfirmTimer);
               idleConfirmTimer = null;
             }
+            return;
+          }
+          if (pendingInputTurnsAwaitingMaterialization > 0) {
             return;
           }
           if (!canUseTerminalProjection) {
@@ -453,7 +492,11 @@ export async function waitForIdleViaSocket(params: Readonly<{
       }
 
       if (update.body?.t !== 'new-message') return;
-      if (preferProjectionUpdates && !requiresTranscriptIdleEvidence) return;
+      if (
+        preferProjectionUpdates
+        && !requiresTranscriptIdleEvidence
+        && pendingInputTurnsAwaitingMaterialization === 0
+      ) return;
       const body = update.body as any;
       if (String(body.sid ?? '') !== params.sessionId) return;
 
@@ -465,6 +508,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
       if (!decrypted) return;
 
       if (isSessionUserMessage(decrypted)) {
+        pendingInputTurnsAwaitingMaterialization = Math.max(0, pendingInputTurnsAwaitingMaterialization - 1);
         pendingUserTurns += 1;
         requiresTranscriptIdleEvidence = true;
         waitingForIdleAfterFreshBusy = true;
@@ -495,6 +539,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
         observedTurnProgress = true;
       }
       if (lifecycleEvent === 'task_started') {
+        pendingInputTurnsAwaitingMaterialization = Math.max(0, pendingInputTurnsAwaitingMaterialization - 1);
         observedTurnProgress = true;
       }
 

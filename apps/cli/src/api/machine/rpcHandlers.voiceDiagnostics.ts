@@ -23,7 +23,9 @@ export function registerMachineVoiceDiagnosticsRpcHandlers(input: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   diagnostics: VoiceDiagnosticsController;
 }>): Readonly<{ dispose(): Promise<void> }> {
-  const downloadStore = new TransferSessionStore({ ttlMs: 5 * 60_000 });
+  // Nothing else sweeps this store: an export the client abandoned after `init`
+  // would otherwise hold its descriptor on the artifact until the daemon exits.
+  const downloadStore = new TransferSessionStore({ ttlMs: 5 * 60_000, expiryTrigger: 'self' });
   const downloads = createTransferSessionLifecycle({ store: downloadStore, chunkSizeBytes: 256 * 1024 });
   const internalError = () => ({ ok: false as const, error: 'internal_error', errorCode: 'internal_error' });
   const invalidParameters = () => ({ success: false as const, error: 'invalid_parameters', errorCode: 'invalid_parameters' });
@@ -49,7 +51,10 @@ export function registerMachineVoiceDiagnosticsRpcHandlers(input: Readonly<{
   });
   input.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_DELETE_ALL, async () => {
     try {
-      downloadStore.cleanupExpiredBestEffort();
+      // Every export handle must be closed before retention unlinks the files it
+      // is serving: an expired session whose descriptor is still closing keeps
+      // the artifact open, and deleting an open file fails on Windows.
+      await downloadStore.cleanupExpired();
       await Promise.all(downloadStore.listDownloadSessionIds().map(async (downloadId) => {
         await downloads.abortDownloadTransferSession({ downloadId });
       }));

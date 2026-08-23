@@ -1,16 +1,26 @@
 import chalk from 'chalk';
 
+import { ok } from '@happier-dev/cli-common/output';
+
 import type { StoredCredentials } from '@/persistence';
-import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
+import { assertSessionCommandArguments } from './shared/assertSessionCommandArguments';
 
 export async function cmdSessionWait(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
+  assertSessionCommandArguments(argv, {
+    usage: 'Usage: happier session wait <session-id-or-prefix> [--timeout <seconds>] [--json]',
+    startIndex: 1,
+    booleanFlags: ['--json'],
+    valueFlags: ['--timeout'],
+    maxPositionals: 1,
+  });
   const json = wantsJson(argv);
   const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1, valueFlags: ['--timeout'] });
   if (!idOrPrefix) {
@@ -65,6 +75,5 @@ export async function cmdSessionWait(
     await printJsonEnvelope({ ok: true, kind: 'session_wait', data: { sessionId: result.sessionId, idle: true, observedAt: result.observedAt } });
     return;
   }
-  console.log(chalk.green('✓'), 'session idle');
-  await writeJsonStdout({ sessionId: result.sessionId, idle: true, observedAt: result.observedAt }, { pretty: true });
+  console.log(ok('Session idle'));
 }

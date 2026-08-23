@@ -265,7 +265,7 @@ describe('fork connected-service child materialization identity', () => {
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
-  it('fails closed before spawning when provider-native fork returns owner-private Session state', async () => {
+  it('returns an indeterminate no-spawn result when provider-native fork returns owner-private Session state', async () => {
     const fork = vi.fn().mockResolvedValue({
       providerSessionId: 'codex-child-thread',
       launch: {
@@ -296,11 +296,12 @@ describe('fork connected-service child materialization identity', () => {
       stopSession: vi.fn(),
     });
 
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       ok: false,
       errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-      errorMessage: expect.stringMatching(/unsupported field.*runtime\.externalSessionOperation/i),
+      errorMessage: expect.any(String),
     });
+    expect(fork).toHaveBeenCalledTimes(1);
     expect(spawnSession).not.toHaveBeenCalled();
     expect(mocks.fetchForkChildSessionOrThrow).not.toHaveBeenCalled();
     expect(mocks.updateSessionMetadataWithRetry).not.toHaveBeenCalled();

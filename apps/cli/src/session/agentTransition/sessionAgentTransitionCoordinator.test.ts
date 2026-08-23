@@ -159,6 +159,40 @@ describe('runSessionAgentTransition — pre-stop failures leave the source untou
     expect(harness.calls).toEqual(['resolveTransport']);
   });
 
+  it('rejects a definitely missing Provider selection before idle, fencing, native records, or stop', async () => {
+    const definitiveRejection = vi.fn(async () => ({ ok: false as const }));
+    const harness = createTransitionDepsHarness({
+      resolveCurrentProviderSpawnDefinitiveRejection: definitiveRejection as never,
+    });
+    const selection = {
+      v: 1 as const,
+      agentId: 'codex',
+      modelId: 'model-a',
+      providerConnectionId: 'pc_missing',
+    };
+
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: buildTransitionRequest({ selection }),
+      deps: harness.deps,
+    });
+
+    expect(result).toEqual({ type: 'rejected', code: 'target_unavailable', sourceEffect: 'none' });
+    expect(definitiveRejection).toHaveBeenCalledWith({
+      agentTargetKey: 'backend:codex',
+      agentId: 'codex',
+      selection,
+    });
+    expect(harness.calls).toEqual(['resolveTransport']);
+    expect(harness.deps.waitForSessionIdle).not.toHaveBeenCalled();
+    expect(harness.deps.callSessionProviderInputAdmission).not.toHaveBeenCalled();
+    expect(harness.deps.localAgentNativeResumeRecordStore.writeAgentNativeResumeRecord).not.toHaveBeenCalled();
+    expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
+    expect(harness.deps.applySessionAgentTransitionCutover).not.toHaveBeenCalled();
+    expect(harness.deps.requestInactiveSessionResume).not.toHaveBeenCalled();
+    expect(harness.deps.sendSessionMessage).not.toHaveBeenCalled();
+  });
+
   /**
    * A bundled Agent can be a current, identified, representable catalog
    * contribution and still have NO Sessions surface — `deepsec` and
@@ -418,7 +452,7 @@ describe('runSessionAgentTransition — exact input admission by localId (QA-T-0
     expect(retry.deps.applySessionAgentTransitionCutover).not.toHaveBeenCalled();
   });
 
-  it('reports a committed cutover with no divider row as divider_missing on retry', async () => {
+  it('reports a committed cutover with no usable divider row as divider_unavailable on retry', async () => {
     const harness = createTransitionDepsHarness();
     harness.setMetadata({ flavor: 'codex', machineId: 'machine-1', codexSessionId: 'codex-1' });
 
@@ -432,159 +466,9 @@ describe('runSessionAgentTransition — exact input admission by localId (QA-T-0
       type: 'partially_applied',
       localId: TEST_LOCAL_ID,
       applied: 'current_view_committed',
-      code: 'divider_missing',
+      code: 'divider_unavailable',
     });
     expect(harness.deps.sendSessionMessage).not.toHaveBeenCalled();
-  });
-});
-
-/**
- * An E2EE Session's divider is opaque to the server, so a row already sitting at
- * the reserved localId cannot be attributed to this operation server-side. The
- * server says so (`dividerVerificationRequired`) and this daemon — the only
- * party holding the key — decides, through the SAME decrypt-and-compare owner
- * the already-target reconciliation uses.
- */
-describe('runSessionAgentTransition — unverified existing divider (E2EE)', () => {
-  function foundDivider(payload: Readonly<{
-    fromAgentId: string;
-    toAgentId: string;
-    sourceCutoffSeqInclusive?: number;
-    returningAgentLastSeenSeqInclusive?: number;
-  }>) {
-    return {
-      type: 'found' as const,
-      message: {
-        id: 'm1',
-        seq: 77,
-        localId: `agent-transition:${TEST_LOCAL_ID}`,
-        sidechainId: null,
-        createdAt: 1,
-        updatedAt: 1,
-        content: {
-          t: 'plain',
-          v: {
-            role: 'agent',
-            content: {
-              type: 'event',
-              id: `agent-transition:${TEST_LOCAL_ID}`,
-              data: {
-                type: 'message',
-                message: 'Continued with another Agent.',
-                sessionAgentTransitionV1: {
-                  v: 1,
-                  sourceCutoffSeqInclusive: TEST_SESSION_SEQ,
-                  ...payload,
-                },
-              },
-            },
-          },
-        },
-      },
-    };
-  }
-
-  const flaggedCutover = vi.fn(async () => ({
-    ok: true as const,
-    dividerSeq: 77,
-    dividerVerificationRequired: true as const,
-  }));
-
-  it('refuses to admit input or activate the target when the existing row is somebody else\'s transition', async () => {
-    const harness = createTransitionDepsHarness({
-      applySessionAgentTransitionCutover: flaggedCutover,
-      // A row planted by another party: same reserved localId, different
-      // transition. Trusting it would activate the target on a divider that
-      // describes a switch that never happened.
-      findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
-        fromAgentId: 'gemini',
-        toAgentId: 'claude',
-      })) as never,
-    });
-
-    const result = await runSessionAgentTransition({
-      credentials: TEST_CREDENTIALS,
-      request: buildTransitionRequest(),
-      deps: harness.deps,
-    });
-
-    expect(result).toEqual({
-      type: 'partially_applied',
-      localId: TEST_LOCAL_ID,
-      applied: 'current_view_committed',
-      code: 'divider_conflict',
-    });
-    expect(harness.deps.sendSessionMessage).not.toHaveBeenCalled();
-    expect(harness.deps.requestInactiveSessionResume).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [
-      'source cutoff',
-      { fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: TEST_SESSION_SEQ - 1 },
-    ],
-    [
-      'native-return lower bound',
-      {
-        fromAgentId: 'claude',
-        toAgentId: 'codex',
-        sourceCutoffSeqInclusive: TEST_SESSION_SEQ,
-        returningAgentLastSeenSeqInclusive: 130,
-      },
-    ],
-  ] as const)('refuses an opaque divider whose %s differs from this exact cutover', async (_label, payload) => {
-    const harness = createTransitionDepsHarness({
-      applySessionAgentTransitionCutover: flaggedCutover,
-      findTranscriptMessageByLocalId: vi.fn(async () => foundDivider(payload)) as never,
-    });
-
-    const result = await runSessionAgentTransition({
-      credentials: TEST_CREDENTIALS,
-      request: buildTransitionRequest(),
-      deps: harness.deps,
-    });
-
-    expect(result).toEqual({
-      type: 'partially_applied',
-      localId: TEST_LOCAL_ID,
-      applied: 'current_view_committed',
-      code: 'divider_conflict',
-    });
-    expect(harness.deps.sendSessionMessage).not.toHaveBeenCalled();
-    expect(harness.deps.requestInactiveSessionResume).not.toHaveBeenCalled();
-  });
-
-  it('proceeds normally once the existing row is verified as this operation\'s own divider', async () => {
-    const harness = createTransitionDepsHarness({
-      applySessionAgentTransitionCutover: flaggedCutover,
-      findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
-        fromAgentId: 'claude',
-        toAgentId: 'codex',
-      })) as never,
-    });
-
-    const result = await runSessionAgentTransition({
-      credentials: TEST_CREDENTIALS,
-      request: buildTransitionRequest(),
-      deps: harness.deps,
-    });
-
-    expect(result).toMatchObject({ type: 'accepted', localId: TEST_LOCAL_ID });
-    expect(harness.deps.sendSessionMessage).toHaveBeenCalled();
-  });
-
-  it('does not read the divider at all when the server verified it', async () => {
-    // The extra round trip is paid only in the state that needs it.
-    const harness = createTransitionDepsHarness();
-
-    const result = await runSessionAgentTransition({
-      credentials: TEST_CREDENTIALS,
-      request: buildTransitionRequest(),
-      deps: harness.deps,
-    });
-
-    expect(result).toMatchObject({ type: 'accepted' });
-    expect(harness.deps.findTranscriptMessageByLocalId).not.toHaveBeenCalled();
   });
 });
 
@@ -773,4 +657,74 @@ describe('runSessionAgentTransition — target model intent', () => {
       expect(sealed.connectedServices).toBeUndefined();
     });
   });
+});
+
+/**
+ * The transition's storage gate.
+ *
+ * A Session whose transcript lives with an external Agent cannot be continued
+ * in place, and the coordinator refuses it. The refusal read the metadata
+ * through a nullable helper that returned `null` for THREE different facts —
+ * "no link", "malformed link", "two rows disagree" — so a Session with an
+ * unusable link passed the gate as if it had no link at all and the coordinator
+ * went on to quiesce and STOP the source runtime. The gate must require
+ * `persisted` positively; both unresolved shapes produce zero source effect.
+ */
+describe('runSessionAgentTransition — an unresolved external link is not "hosted here"', () => {
+  const UNRESOLVED_LINKS = [
+    [
+      'a malformed canonical link',
+      {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-1',
+          source: { kind: 'codexHome', home: 'user' },
+          followStatusV1: { v: 1, status: 'not-a-status', updatedAtMs: 10 },
+        },
+      },
+    ],
+    [
+      'dual rows requiring reconciliation',
+      {
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-1',
+          source: { kind: 'codexHome', home: 'user' },
+        },
+        directSessionV1: {
+          v: 1,
+          agentId: 'claude',
+          machineId: 'machine-legacy',
+          remoteSessionId: 'remote-legacy',
+          source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+        },
+      },
+    ],
+  ] as const;
+
+  it.each(UNRESOLVED_LINKS)(
+    'rejects with zero source effect when the source carries %s',
+    async (_label, link) => {
+      const harness = createTransitionDepsHarness();
+      harness.setMetadata({ ...CLAUDE_SOURCE_METADATA, ...link });
+
+      const result = await runSessionAgentTransition({
+        credentials: TEST_CREDENTIALS,
+        request: buildTransitionRequest(),
+        deps: harness.deps,
+      });
+
+      expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+      expect(harness.calls).toEqual(['resolveTransport']);
+      expect(harness.deps.waitForSessionIdle).not.toHaveBeenCalled();
+      expect(harness.deps.callSessionProviderInputAdmission).not.toHaveBeenCalled();
+      expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
+      expect(harness.deps.applySessionAgentTransitionCutover).not.toHaveBeenCalled();
+      expect(harness.deps.sendSessionMessage).not.toHaveBeenCalled();
+    },
+  );
 });

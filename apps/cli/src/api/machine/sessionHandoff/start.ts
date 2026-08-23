@@ -1,6 +1,7 @@
 import os from 'node:os';
 
 import {
+  resolveLinkedExternalSessionAuthorityV1,
   type SessionHandoffMetadataV2,
   type SessionHandoffStartRequest,
   SessionHandoffStartRequestSchema,
@@ -222,6 +223,19 @@ export function createSessionHandoffStartActionHandler(
     const metadata = await loadSessionMetadata(parsed.data.sessionId, parsed.data.sourceMachineId);
     if (!metadata) {
       return { ok: false, errorCode: 'session_not_found' } as const;
+    }
+    // Storage authority is the SOURCE daemon's to derive, from the full owner
+    // metadata it just loaded, and it is derived HERE — before the operation
+    // claim, before any stop, before any export. Every stop below is
+    // irreversible for the caller, so a Session whose link cannot be resolved
+    // must produce zero effect rather than be carried through as "persisted".
+    const sourceTranscriptAuthority = resolveLinkedExternalSessionAuthorityV1(metadata);
+    if (!sourceTranscriptAuthority.ok) {
+      return {
+        ok: false,
+        errorCode: sourceTranscriptAuthority.error,
+        error: `${sourceTranscriptAuthority.error}:${sourceTranscriptAuthority.reason}`,
+      } as const;
     }
     const workspaceTransferValidation = validateSessionHandoffWorkspaceTransferSourcePath({
       metadata,

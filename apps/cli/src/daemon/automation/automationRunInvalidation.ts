@@ -1,3 +1,5 @@
+import { AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1 } from '@happier-dev/protocol';
+
 import type { Update } from '@/api/types';
 import { abortAutomationRunForAuthoritativeCancellation } from './automationRunCancellation';
 
@@ -14,6 +16,7 @@ type AutomationRunInvalidation = Readonly<{
   state: Extract<Update['body'], Readonly<{ t: 'automation-run-updated' }>>['state'];
   machineId: string | null | undefined;
   attempt: number | undefined;
+  cause: string | undefined;
 }>;
 
 function getAutomationRunInvalidation(update: Update): AutomationRunInvalidation | null {
@@ -24,6 +27,7 @@ function getAutomationRunInvalidation(update: Update): AutomationRunInvalidation
       state: body.state,
       machineId: body.machineId,
       attempt: body.attempt,
+      cause: undefined,
     };
   }
   if (body.t === 'automation-run-state-changed') {
@@ -32,6 +36,7 @@ function getAutomationRunInvalidation(update: Update): AutomationRunInvalidation
       state: body.currentState,
       machineId: body.claimedByMachineId,
       attempt: undefined,
+      cause: body.cause,
     };
   }
   return null;
@@ -61,7 +66,17 @@ export function getAutomationRunInvalidationAction(params: Readonly<{
     || invalidation.attempt === params.active.attempt;
   if (stateIsCurrent && machineIsCurrent && attemptIsCurrent) return 'none';
 
-  return invalidation.state === 'cancelled' ? 'authoritative-cancellation' : 'abort';
+  // A Run cancelled after its dispatch was permitted can only be published as
+  // uncertain: the server cannot claim an outcome nothing established. The
+  // explicit cause is what still makes the user's cancellation authoritative
+  // here, so this machine stops the execution it started instead of merely
+  // abandoning a stale attempt. Any other uncertainty stays a generic abort.
+  const authoritativelyCancelled = invalidation.state === 'cancelled'
+    || (
+      invalidation.state === 'outcome_uncertain'
+      && invalidation.cause === AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1
+    );
+  return authoritativelyCancelled ? 'authoritative-cancellation' : 'abort';
 }
 
 /** Applies the worker's one invocation-local currentness decision. */

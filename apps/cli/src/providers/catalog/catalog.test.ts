@@ -606,6 +606,47 @@ describe('provider catalog exact-reference and picker projection', () => {
     });
   });
 
+  it('retains an authorized freeform current selection the catalog never listed', () => {
+    const connection = resolvedConnection();
+    const freeformRef = ProviderBoundModelRefSchema.parse({
+      agentTargetKey: 'codex', providerConnectionId: 'pc_a', modelId: 'vendor/never-listed',
+    });
+    const assemble = (agentSupportsFreeformModelIds: boolean) => assembleProviderConnectionCatalog({
+      agentTargetKey: 'codex', connection, providerSettings: settings(connection),
+      runtimeState: runtimeState({ catalogs: [catalogRecord({ models: [{ id: 'probe-current' }] })] }),
+      catalogRuntimeKey: currentCatalogKey,
+      compatibilityByModelId: compatibilityMap(['default', 'Case', 'probe-current', 'vendor/never-listed']),
+      currentSelectionForRecovery: freeformRef,
+      agentSupportsFreeformModelIds,
+    });
+
+    // The canonical reference resolver, not catalog membership, decides whether a
+    // Provider model id is real when both sides permit freeform ids.
+    const withoutRecovery = assembleProviderConnectionCatalog({
+      agentTargetKey: 'codex', connection, providerSettings: settings(connection),
+      runtimeState: runtimeState({ catalogs: [catalogRecord({ models: [{ id: 'probe-current' }] })] }),
+      catalogRuntimeKey: currentCatalogKey,
+      compatibilityByModelId: compatibilityMap(['default', 'Case', 'probe-current']),
+    });
+    expect(resolveProviderCatalogModelRef({
+      catalog: withoutRecovery, ref: freeformRef, agentSupportsFreeformModelIds: true,
+    })).toMatchObject({ status: 'not_currently_listed', provenance: 'model_id' });
+    expect(resolveProviderCatalogModelRef({
+      catalog: withoutRecovery, ref: freeformRef, agentSupportsFreeformModelIds: false,
+    })).toMatchObject({ status: 'not_found', errorCode: 'provider_model_not_found' });
+
+    const permitted = assemble(true);
+    expect(projectProviderCatalogForPicker({
+      catalogs: [permitted], modelVisibilityByRef: {}, currentSelection: freeformRef,
+    }).groups[0]?.rows.map((row) => row.ref.modelId)).toContain('vendor/never-listed');
+
+    // Two-sided policy: an Agent that rejects freeform ids gets no phantom row.
+    const refused = assemble(false);
+    expect(projectProviderCatalogForPicker({
+      catalogs: [refused], modelVisibilityByRef: {}, currentSelection: freeformRef,
+    }).groups[0]?.rows.map((row) => row.ref.modelId)).not.toContain('vendor/never-listed');
+  });
+
   it('renders stale and fully pruned refs only under the two-sided freeform policy', () => {
     const connection = resolvedConnection();
     const assembled = assembleProviderConnectionCatalog({

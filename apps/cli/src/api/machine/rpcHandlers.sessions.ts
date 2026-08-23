@@ -5,6 +5,7 @@ import {
 } from '@/rpc/handlers/sessionLifecycle';
 import { registerSessionAgentTransitionRpcHandlers } from '@/rpc/handlers/sessionAgentTransition';
 import { registerMachineSessionServerStartRpcHandler } from '@/rpc/handlers/sessionServerStartMachineBinding';
+import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import { MACHINE_SESSION_LIFECYCLE_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import {
   createMachineSessionLifecycleActionExecutor,
@@ -16,12 +17,15 @@ import { readStoredCredentials } from '@/persistence';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { RpcHandlerRegistrar } from '../rpc/types';
 import type { MachineRpcHandlerDeps, MachineRpcHandlers } from './rpcHandlers';
+import type { RegisterActionSpecRpcHandlersParams } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 
 export function registerMachineSessionRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager & RpcHandlerRegistrar;
   handlers: MachineRpcHandlers;
   deps?: MachineRpcHandlerDeps;
-}>): void {
+}>): Readonly<{
+  sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+}> {
   const spawnLifecycleHandler = createMachineSessionSpawnRpcHandler({
     handlers: { spawnSession: params.handlers.spawnSession },
   });
@@ -38,17 +42,20 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
       ? { requireSessionCreationOutcome: true }
       : {}),
   });
-  if (params.deps?.sessionServerStart) {
-    registerMachineSessionServerStartRpcHandler(params.rpcHandlerManager, {
+  const sessionSpawnDirectTargetTransport = params.deps?.sessionServerStart
+    ? registerMachineSessionServerStartRpcHandler(params.rpcHandlerManager, {
       ...params.deps.sessionServerStart,
       spawnLifecycleHandler,
       ...(params.handlers.resolveSpawnSessionByNonce
         ? { resolveSpawnSessionByNonce: params.handlers.resolveSpawnSessionByNonce }
         : {}),
-    });
-  }
+    })
+    : undefined;
   registerSessionSpawnNewRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
+    ...(params.deps?.actionOperations
+      ? { observeExecution: params.deps.actionOperations.observeExecution }
+      : {}),
   });
   registerSessionLifecycleRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
@@ -70,6 +77,9 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
       },
     }),
     scopes: MACHINE_SESSION_LIFECYCLE_RPC_SCOPES,
+    ...(params.deps?.actionOperations
+      ? { observeExecution: params.deps.actionOperations.observeExecution }
+      : {}),
   });
   registerSessionAgentTransitionRpcHandlers(params.rpcHandlerManager, {
     readCredentials: readStoredCredentials,
@@ -84,4 +94,7 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
       ? { machineAdmissionTransport: params.deps.sessionServerStart.machineAdmissionTransport }
       : {}),
   });
+  return sessionSpawnDirectTargetTransport
+    ? { sessionSpawnDirectTargetTransport }
+    : {};
 }
