@@ -87,6 +87,13 @@ export type AgentSessionRuntimeEvent = {
        */
       nativeSessionLogPath?: string;
     }
+  | {
+      kind: 'available-commands';
+      commands: Readonly<{
+        name: string;
+        description?: string;
+      }>[];
+    }
   | ({
       turnId: string;
       agentTurnId?: string;

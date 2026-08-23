@@ -1,17 +1,11 @@
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { normalizeSlashCommandName } from '@happier-dev/protocol';
 
 export type SlashCommandDetail = {
   command: string;
   description?: string;
 };
-
-function normalizeCommandName(name: unknown): string | null {
-  if (typeof name !== 'string') return null;
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  return trimmed.startsWith('/') ? trimmed.slice(1) : trimmed;
-}
 
 export function normalizeAvailableCommands(input: unknown): SlashCommandDetail[] {
   if (!Array.isArray(input)) return [];
@@ -21,7 +15,7 @@ export function normalizeAvailableCommands(input: unknown): SlashCommandDetail[]
   for (const item of input) {
     if (!item || typeof item !== 'object') continue;
     const obj = item as Record<string, unknown>;
-    const command = normalizeCommandName(obj.name);
+    const command = normalizeSlashCommandName(obj.name);
     if (!command) continue;
     if (seen.has(command)) continue;
     seen.add(command);

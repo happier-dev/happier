@@ -12,6 +12,7 @@ import {
     ExternalSessionsAgentIdSchema,
     materializeSessionInputCausalPermissionAuthorityV1,
     projectAgentSessionProviderBindingV1,
+    readLeadingSlashCommandName,
     readSessionProviderBindingMetadataV1,
     registerSensitiveDiagnosticValues,
     SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
@@ -143,6 +144,10 @@ import {
 import type { ExternalSessionHostOperationPort } from '@/session/external/hostOperationOwner';
 import type { RuntimeExactProviderInputOutcome } from '@/agent/runtime/session/input/providerInputOutcome';
 import { createAgentSessionTurnInvariant } from '@/agent/runtime/session/turn/agentSessionTurnInvariant';
+import {
+    normalizeAvailableCommands,
+    publishSlashCommandsToMetadata,
+} from '@/agent/acp/commands/publishSlashCommands';
 import { logger } from '@/ui/logger';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import {
@@ -1759,6 +1764,7 @@ export function createNativeAgentSessionOperations(
         ...(expectedProviderSessionId ? { expectedProviderSessionId } : {}),
     });
     let deliveryOutcomeHandler: ((outcome: PluginRuntimePromptDeliveryOutcome) => void) | null = null;
+    let providerNativeCommandNames = new Set<string>();
     const inputCorrelations = new Map<string, NativeInputCorrelation>();
     const acceptedInputIds = new Set<string>();
     const rejectedInputIds = new Set<string>();
@@ -2094,6 +2100,16 @@ export function createNativeAgentSessionOperations(
         }
         if (observation.status === 'ignored') return;
         const event = observation.event;
+        if (event.kind === 'available-commands') {
+            const details = normalizeAvailableCommands(event.commands);
+            providerNativeCommandNames = new Set(details.map((detail) => detail.command));
+            if (interactionLifecycle?.updateMetadata) {
+                publishSlashCommandsToMetadata({
+                    session: { updateMetadata: interactionLifecycle.updateMetadata },
+                    details,
+                });
+            }
+        }
         if (event.kind === 'runtime-ended' && event.diagnostic) {
             runtimeEndedIssue = buildNativeAgentSessionRuntimeIssue({
                 diagnostic: event.diagnostic,
@@ -2740,6 +2756,10 @@ export function createNativeAgentSessionOperations(
         : Object.freeze({});
     return Object.freeze({
         ...directHostControls,
+        isProviderNativeCommand(prompt: string) {
+            const commandName = readLeadingSlashCommandName(prompt);
+            return commandName !== null && providerNativeCommandNames.has(commandName);
+        },
         ...(publications
             ? {
                 models: publications.modelsSource,

@@ -194,6 +194,7 @@ describe('General Sessions package-local projections', () => {
         expect(sessions.SessionRuntimeIssueV1Schema).toBe(protocol.SessionRuntimeIssueV1Schema);
         expect(sessions.isSlashCommandSupported).toBe(protocol.isSlashCommandSupported);
         expect(sessions.normalizeSlashCommandName).toBe(protocol.normalizeSlashCommandName);
+        expect(sessions.readLeadingSlashCommandName).toBe(protocol.readLeadingSlashCommandName);
         expect(sessions.readSlashCommandNames).toBe(protocol.readSlashCommandNames);
         expect(sessions.resolveTranscriptBodySessionMessageRole).toBe(protocol.resolveTranscriptBodySessionMessageRole);
     });

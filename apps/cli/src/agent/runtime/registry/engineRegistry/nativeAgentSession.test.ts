@@ -42,6 +42,7 @@ import {
     type HostTerminalLaunchRequest,
 } from '@/agent/runtime/session/terminal/contract';
 import type { Credentials } from '@/persistence';
+import type { Metadata } from '@/api/types';
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import type {
     ResolvedAgentContribution,
@@ -7621,6 +7622,65 @@ describe('native Agent session host adapter', () => {
             kind: 'provider-session-id',
             providerSessionId: 'provider-session-buffered',
         })]);
+    });
+
+    it('projects the native command catalog through the existing slash-command metadata owner', () => {
+        const buffered: AgentSessionRuntimeEvent[] = [{
+            sequence: 1,
+            sessionId: 'session-commands',
+            emittedAtMs: 1,
+            kind: 'available-commands',
+            commands: [
+                { name: '/goal', description: 'Set the session goal' },
+                { name: 'SKILL:Review' },
+            ],
+        }];
+        const session: AgentSessionRuntime = {
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            watch(listener) {
+                for (const event of buffered.splice(0)) listener(event);
+                return { dispose: vi.fn() };
+            },
+            dispose: vi.fn(),
+        };
+        const updates: Array<(metadata: Metadata) => Metadata> = [];
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-commands',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [],
+            {
+                onTurnTerminal: () => undefined,
+                updateMetadata: (updater) => { updates.push(updater); },
+            },
+        );
+
+        runtime.subscribeRuntimeEvents(() => undefined);
+
+        expect(updates).toHaveLength(1);
+        expect(runtime.isProviderNativeCommand?.('/goal fix authentication')).toBe(true);
+        expect(runtime.isProviderNativeCommand?.('/SKILL:Review')).toBe(true);
+        expect(runtime.isProviderNativeCommand?.('/unknown')).toBe(false);
+        expect(updates[0]!({
+            path: '/tmp/test',
+            host: 'test',
+            homeDir: '/tmp',
+            happyHomeDir: '/tmp/.happier',
+            happyLibDir: '/tmp/.happier/lib',
+            happyToolsDir: '/tmp/.happier/tools',
+        })).toMatchObject({
+            slashCommands: ['goal', 'skill:review'],
+            slashCommandDetails: [
+                { command: 'goal', description: 'Set the session goal' },
+                { command: 'skill:review' },
+            ],
+        });
     });
 
     it('joins the exact host user-message anchor with the native provider checkpoint', async () => {

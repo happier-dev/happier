@@ -2,9 +2,19 @@ import { describe, expect, it } from 'vitest';
 
 import {
   isSlashCommandSupported,
+  readLeadingSlashCommandName,
   normalizeSlashCommandName,
   readSlashCommandNames,
 } from './slashCommands.js';
+
+describe('readLeadingSlashCommandName', () => {
+  it('extracts only a leading slash command token', () => {
+    expect(readLeadingSlashCommandName('/goal fix authentication')).toBe('goal');
+    expect(readLeadingSlashCommandName('  /SKILL:Review  ')).toBe('skill:review');
+    expect(readLeadingSlashCommandName('run /goal')).toBeNull();
+    expect(readLeadingSlashCommandName('//goal')).toBeNull();
+  });
+});
 
 describe('normalizeSlashCommandName', () => {
   it('normalizes goal and /goal to the same name', () => {

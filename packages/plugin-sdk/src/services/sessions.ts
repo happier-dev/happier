@@ -28,6 +28,7 @@ import {
     AgentPermissionIntentV1Schema as protocolAgentPermissionIntentV1Schema,
     isSlashCommandSupported as protocolIsSlashCommandSupported,
     normalizeSlashCommandName as protocolNormalizeSlashCommandName,
+    readLeadingSlashCommandName as protocolReadLeadingSlashCommandName,
     readPendingLocalId as protocolReadPendingLocalId,
     readSlashCommandNames as protocolReadSlashCommandNames,
     resolveTranscriptBodySessionMessageRole as protocolResolveTranscriptBodySessionMessageRole,
@@ -216,6 +217,8 @@ export const SessionUsageLimitRecoveryV1Schema: SessionSchema<SessionUsageLimitR
 export const isSlashCommandSupported: (slashCommands: unknown, commandName: string) => boolean = protocolIsSlashCommandSupported;
 /** @realm any */
 export const normalizeSlashCommandName: (value: unknown) => string | null = protocolNormalizeSlashCommandName;
+/** @realm any */
+export const readLeadingSlashCommandName: (value: unknown) => string | null = protocolReadLeadingSlashCommandName;
 /** @realm any */
 export const readSlashCommandNames: (value: unknown) => readonly string[] = protocolReadSlashCommandNames;
 /** @realm any */

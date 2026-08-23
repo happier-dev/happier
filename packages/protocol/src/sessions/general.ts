@@ -23,6 +23,7 @@ export {
 export {
   isSlashCommandSupported,
   normalizeSlashCommandName,
+  readLeadingSlashCommandName,
   readSlashCommandNames,
 } from './slashCommands.js';
 export { readPendingLocalId } from './pending/pendingLocalId.js';

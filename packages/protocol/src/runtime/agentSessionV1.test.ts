@@ -281,6 +281,11 @@ describe('AgentSessionRuntimeEventV1Schema', () => {
       },
       { ...base, kind: 'runtime-ended', cause: 'providerEnded', retryable: false },
       { ...base, kind: 'provider-session-id', providerSessionId: 'native-session-1' },
+      {
+        ...base,
+        kind: 'available-commands',
+        commands: [{ name: '/goal', description: 'Set a session goal' }],
+      },
       { ...turn, kind: 'file-edit', editId: 'edit-1', path: '/tmp/file', diff: '+hello' },
       { ...base, kind: 'usage-observed', observationId: 'usage-1', source: 'provider', scope: 'session_final', tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 } },
       { ...base, kind: 'context-compaction', compactionId: 'compact-1', trigger: 'automatic', phase: 'completed' },

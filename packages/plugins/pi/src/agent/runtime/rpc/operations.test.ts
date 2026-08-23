@@ -26,6 +26,8 @@ import { createPiRuntimeOperations } from './operations.js';
 type Capture = {
   specs: Extract<PluginProtocolClientSpec, { kind: 'jsonStream' }>[];
   written: unknown[];
+  availableCommands?: readonly Readonly<{ name: string; description?: string }>[];
+  commandCatalogRequestCount?: number;
   versionProbeCount?: number;
   versionOutput?: string;
   systemToolResolveCount?: number;
@@ -45,6 +47,17 @@ function createRuntimeContext(capture: Capture) {
       } };
     },
     async write(record: JsonValue) {
+      if (isRecord(record) && record.type === 'get_commands' && typeof record.id === 'string') {
+        capture.commandCatalogRequestCount = (capture.commandCatalogRequestCount ?? 0) + 1;
+        await capture.listener?.({
+          type: 'response',
+          id: record.id,
+          command: 'get_commands',
+          success: true,
+          data: { commands: capture.availableCommands ?? [] },
+        });
+        return;
+      }
       capture.written.push(record);
     },
     dispose: async () => undefined,
@@ -240,6 +253,67 @@ function configuration(options: Readonly<Record<string, string>>): AgentSessionC
 }
 
 describe('createPiRuntimeOperations', () => {
+  it('publishes the process command catalog once for native command dispatch', async () => {
+    const capture: Capture = {
+      specs: [],
+      written: [],
+      availableCommands: [
+        { name: 'goal', description: 'Set the session goal' },
+        { name: '/SKILL:Review' },
+      ],
+    };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+
+    expect(capture.commandCatalogRequestCount).toBe(1);
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'available-commands',
+      commands: [
+        { name: 'goal', description: 'Set the session goal' },
+        { name: 'skill:review' },
+      ],
+    }));
+
+    await runtime.dispose();
+  });
+
+  it('settles an acknowledged provider command that does not start an agent turn', async () => {
+    const capture: Capture = {
+      specs: [],
+      written: [],
+      availableCommands: [{ name: 'goal' }],
+    };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+
+    const submission = sendPrompt(runtime, '/goal fix authentication');
+    await waitForWrittenCount(capture, 1);
+    expect(capture.written[0]).toEqual(expect.objectContaining({
+      type: 'prompt',
+      message: '/goal fix authentication',
+    }));
+    await ackCommandAt(capture, 0);
+    await waitForWrittenCount(capture, 2);
+    expect(capture.written[1]).toEqual(expect.objectContaining({ type: 'get_state' }));
+    await ackCommandAt(capture, 1, {
+      sessionId: 'pi-provider-session-1',
+      isStreaming: false,
+      isCompacting: false,
+    });
+
+    await expect(submission).resolves.toEqual({ status: 'admitted' });
+    expect(events.map((event) => event.kind)).toEqual(expect.arrayContaining([
+      'input-accepted',
+      'turn-start',
+      'turn-complete',
+    ]));
+    expect(events.some((event) => event.kind === 'turn-failed')).toBe(false);
+
+    await runtime.dispose();
+  });
+
   it('exposes the native AgentSessionRuntime contract directly at the Pi RPC owner', async () => {
     const capture: Capture = { specs: [], written: [] };
     const runtime = await createRuntime(capture);

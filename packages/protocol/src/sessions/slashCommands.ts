@@ -30,6 +30,21 @@ export function normalizeSlashCommandName(value: unknown): string | null {
 }
 
 /**
+ * Read the normalized command name from the first token of a user prompt.
+ *
+ * This deliberately recognizes only a single leading slash. Host-owned syntax
+ * such as `//...` and slashes embedded in ordinary prose are not provider
+ * commands.
+ */
+export function readLeadingSlashCommandName(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trimStart();
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return null;
+  const [token] = trimmed.split(/\s/u, 1);
+  return normalizeSlashCommandName(token);
+}
+
+/**
  * Normalize a raw `slash_commands` value into the list of supported command names. Returns an empty
  * list for any non-array (fail-closed) and drops every malformed entry.
  */

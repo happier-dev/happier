@@ -73,6 +73,7 @@ export { isSlashCommandSupported } from '../services/sessions.js';
 export { normalizeSessionAttachmentUploadPath } from '../services/sessions.js';
 export { normalizeSlashCommandName } from '../services/sessions.js';
 export { readHappierStructuredInputV1FromMeta } from '../services/sessions.js';
+export { readLeadingSlashCommandName } from '../services/sessions.js';
 export { readPendingLocalId } from '../services/sessions.js';
 export { readSlashCommandNames } from '../services/sessions.js';
 export { readStructuredInputMentionSourcesV1 } from '../services/sessions.js';

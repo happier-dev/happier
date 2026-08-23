@@ -4,6 +4,7 @@ export const AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 = Object.freeze([
   'input-custody-unknown',
   'input-delivery-failed',
   'provider-session-id',
+  'available-commands',
   'turn-start',
   'turn-progress',
   'turn-agent-id-observed',

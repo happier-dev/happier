@@ -348,6 +348,13 @@ const LifecycleSchemas = [
      */
     nativeSessionLogPath: z.string().trim().min(1).max(4_096).optional(),
   }).strict(),
+  EventBaseSchema.extend({
+    kind: z.literal('available-commands'),
+    commands: z.array(z.object({
+      name: z.string().trim().min(1).max(2_000),
+      description: z.string().max(20_000).optional(),
+    }).strict()).max(4_096),
+  }).strict(),
   z.object({
     ...TurnEventBaseShape,
     kind: z.literal('turn-start'),

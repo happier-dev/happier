@@ -18,6 +18,10 @@ import type {
 } from '@happier-dev/plugin-sdk';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import {
+  normalizeSlashCommandName,
+  readLeadingSlashCommandName,
+} from '@happier-dev/plugin-sdk/sessions';
+import {
   createAgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBufferResult,
@@ -67,6 +71,11 @@ type PiRuntimeOperationsParams = Readonly<{
   resumeSessionId?: string | null;
   sessionId: string;
   eagerStart?: boolean;
+}>;
+
+type PiAvailableCommand = Readonly<{
+  name: string;
+  description?: string;
 }>;
 
 type RuntimeEventHandler = (event: AgentSessionRuntimeEvent) => void;
@@ -154,6 +163,19 @@ function diagnostic(code: string, message: string): PluginDiagnosticData {
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizePiAvailableCommands(value: unknown): readonly PiAvailableCommand[] {
+  const commands = isRecord(value) && Array.isArray(value.commands) ? value.commands : [];
+  const byName = new Map<string, PiAvailableCommand>();
+  for (const command of commands) {
+    if (!isRecord(command)) continue;
+    const name = normalizeSlashCommandName(command.name);
+    if (!name || byName.has(name)) continue;
+    const description = readString(command.description) ?? undefined;
+    byName.set(name, Object.freeze({ name, ...(description ? { description } : {}) }));
+  }
+  return Object.freeze([...byName.values()].sort((left, right) => left.name.localeCompare(right.name)));
 }
 
 function normalizeEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
@@ -288,6 +310,7 @@ function createRuntimeOperations(params: Readonly<{
   initialSessionId: string | null;
   subscribeRuntimeEvents: (handler: RuntimeEventHandler) => () => void;
   publishRuntimeEvent: RuntimeEventPublisher;
+  isProviderNativeCommand: (prompt: string) => boolean;
   refreshModels?: () => void;
 }>): RuntimeOperationsWithRecordHandler {
   const runtimeEventProjector = createPiRuntimeEventProjector();
@@ -420,6 +443,22 @@ function createRuntimeOperations(params: Readonly<{
         turnId: turn.turnId,
         ...(terminalProviderTurnId ? { agentTurnId: terminalProviderTurnId } : {}),
       });
+    settledTurnFailure = null;
+    clearActiveTurn();
+    completion?.resolve();
+  }
+
+  function settleProviderNativeCommandWithoutAgentTurn(): void {
+    const turn = activeTurn;
+    if (!turn) return;
+    const completion = pendingCompletion;
+    params.publishRuntimeEvent({
+      kind: 'turn-complete',
+      sessionId: params.sessionId,
+      emittedAtMs: Date.now(),
+      turnId: turn.turnId,
+      ...(turn.agentTurnId ? { agentTurnId: turn.agentTurnId } : {}),
+    });
     settledTurnFailure = null;
     clearActiveTurn();
     completion?.resolve();
@@ -618,6 +657,7 @@ function createRuntimeOperations(params: Readonly<{
         bufferFailure: null,
       };
       pendingPromptAdmission = admission;
+      const providerNativeCommand = params.isProviderNativeCommand(prompt);
       const accept = () => {
         admission.onAccepted();
         readOrBeginTurn(null, admission.turnId, 'host');
@@ -642,6 +682,19 @@ function createRuntimeOperations(params: Readonly<{
         pendingPromptAdmission = null;
         replayBufferedRecords();
         admission.bufferedRecords.dispose();
+        if (providerNativeCommand && activeTurn && !activeTurnStartObserved) {
+          const state = await params.rpc.send({ type: 'get_state' }, 30_000)
+            .then((response) => isRecord(response.data) ? response.data as PiRpcStateData : null)
+            .catch(() => null);
+          if (
+            activeTurn
+            && !activeTurnStartObserved
+            && state?.isStreaming !== true
+            && state?.isCompacting !== true
+          ) {
+            settleProviderNativeCommandWithoutAgentTurn();
+          }
+        }
       } catch (error) {
         const promptError = error instanceof Error ? error : new Error(String(error));
         if (admission.bufferFailure !== null) {
@@ -999,11 +1052,13 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
     },
   }, executable));
   const subscribers = new Set<RuntimeEventHandler>();
+  let retainedAvailableCommandsEvent: AgentSessionRuntimeEvent | null = null;
   let malformedRuntimeEventPublished = false;
   let terminalRuntimeEventPublished = false;
   let sequence = 0;
   const publishParsedRuntimeEvent = (event: AgentSessionRuntimeEvent): void => {
     if (terminalRuntimeEventPublished) return;
+    if (event.kind === 'available-commands') retainedAvailableCommandsEvent = event;
     for (const subscriber of subscribers) {
       subscriber(event);
     }
@@ -1063,6 +1118,22 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
       operations?.handleRuntimeRecord(record);
     },
   });
+  let availableCommands: readonly PiAvailableCommand[] = [];
+  try {
+    const response = await rpc.send({ type: 'get_commands' }, 30_000);
+    availableCommands = normalizePiAvailableCommands(response.data);
+    publishRuntimeEvent({
+      kind: 'available-commands',
+      sessionId: params.sessionId,
+      emittedAtMs: Date.now(),
+      commands: availableCommands,
+    });
+  } catch (error) {
+    params.logger.warn('[PiRuntime] Command catalog refresh failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  const availableCommandNames = new Set(availableCommands.map((command) => command.name));
   const modelsSource = params.models
     ? createPiSessionModelsSource({
         readState: async () => (await rpc.send({ type: 'get_state' }, 30_000)).data,
@@ -1081,11 +1152,16 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
     initialSessionId: params.initialSessionId ?? null,
     subscribeRuntimeEvents(handler) {
       subscribers.add(handler);
+      if (retainedAvailableCommandsEvent) handler(retainedAvailableCommandsEvent);
       return () => {
         subscribers.delete(handler);
       };
     },
     publishRuntimeEvent,
+    isProviderNativeCommand(prompt) {
+      const name = readLeadingSlashCommandName(prompt);
+      return name !== null && availableCommandNames.has(name);
+    },
     ...(modelsSource ? { refreshModels: () => { void modelsSource.refresh(); } } : {}),
   });
   let modelsBinding: ReturnType<AgentSessionModelsService['bind']> | null = null;
