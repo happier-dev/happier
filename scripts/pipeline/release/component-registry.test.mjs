@@ -16,7 +16,35 @@ test('release target registry covers the local release CLI surface exactly', () 
     'cli',
     'stack',
     'server_runner',
+    'plugin_sdk',
+    'sdk',
   ]);
+});
+
+test('plugin SDK pair and public SDK each have a release component, while bundled protocol and agent changes are candidate-affecting', () => {
+  const pluginPair = deriveVersionedComponentChanges(classifyChangedPaths([
+    'packages/plugin-ui/src/components/Button.tsx',
+  ]));
+  assert.equal(pluginPair.plugin_sdk, true);
+  assert.equal(pluginPair.sdk, false);
+
+  const publicSdk = deriveVersionedComponentChanges(classifyChangedPaths([
+    'packages/sdk/src/index.ts',
+  ]));
+  assert.equal(publicSdk.plugin_sdk, false);
+  assert.equal(publicSdk.sdk, true);
+
+  const protocol = deriveVersionedComponentChanges(classifyChangedPaths([
+    'packages/protocol/src/actions/registry.ts',
+  ]));
+  assert.equal(protocol.plugin_sdk, true);
+  assert.equal(protocol.sdk, true);
+
+  const agents = deriveVersionedComponentChanges(classifyChangedPaths([
+    'packages/agents/src/runtime/agentRuntime.ts',
+  ]));
+  assert.equal(agents.plugin_sdk, true);
+  assert.equal(agents.sdk, true);
 });
 
 test('packages/cli-common changes trigger cli/stack/server versioned component bumps', () => {

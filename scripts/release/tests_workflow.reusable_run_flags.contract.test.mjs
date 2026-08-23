@@ -21,6 +21,12 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
     default: false,
     type: 'boolean',
   });
+  assert.equal(
+    parsed?.concurrency?.group,
+    'tests-${{ github.workflow }}-${{ github.ref }}',
+    'the reusable tests workflow must not share its caller concurrency group and cancel the caller',
+  );
+  assert.equal(parsed?.concurrency?.['cancel-in-progress'], true);
 
   const defaultJobs = {
     'ui-e2e': 'run_ui_e2e',
@@ -49,6 +55,12 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
     );
   }
 
+  assert.equal(
+    parsed?.jobs?.stress?.if,
+    '${{ inputs.run_stress }}',
+    'scheduled reusable callers must be able to enable the stress job through its authoritative run flag',
+  );
+
   for (const path of [
     '.github/workflows/self-host-e2e.yml',
     '.github/workflows/stress-tests.yml',
@@ -66,5 +78,14 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
     for (const call of calls) {
       assert.equal(call?.with?.select_jobs_explicitly, true, `${path} must explicitly select reusable jobs`);
     }
+  }
+
+  const stressWorkflow = YAML.parse(await readWorkflow('.github/workflows/stress-tests.yml'));
+  const stressCall = Object.values(stressWorkflow?.jobs ?? {}).find(
+    (job) => job?.uses === './.github/workflows/tests.yml',
+  );
+  assert.equal(stressCall?.with?.run_stress, true);
+  for (const input of ['run_server_db_contract', 'run_installers_smoke', 'run_binary_smoke']) {
+    assert.equal(stressCall?.with?.[input], false, `stress workflow must disable the unrelated true-default ${input} lane`);
   }
 });

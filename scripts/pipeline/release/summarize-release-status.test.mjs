@@ -99,6 +99,31 @@ test('summary JSON is deterministic for equivalent observation order and metadat
   assert.equal(JSON.stringify(first), JSON.stringify(second));
 });
 
+test('status schema preserves bounded package publication identities without introducing a special surface schema', () => {
+  const result = summarizeReleaseStatus(input({
+    requestedSurfaces: [{ id: 'npm_plugin_sdk', required: true, evidence: 'verified' }],
+    surfaces: [{
+      id: 'npm_plugin_sdk',
+      result: 'success',
+      identity: {
+        package: '@happier-dev/plugin-sdk',
+        version: '0.1.0-preview.7',
+        integrity: 'sha512-plugin-sdk',
+        sourceSha: SOURCE_SHA,
+        verified: true,
+      },
+    }],
+  }));
+  assert.equal(result.kind, 'happier.release-status.v1');
+  assert.deepEqual(result.surfaces[0].identity, {
+    integrity: 'sha512-plugin-sdk',
+    package: '@happier-dev/plugin-sdk',
+    sourceSha: SOURCE_SHA,
+    verified: true,
+    version: '0.1.0-preview.7',
+  });
+});
+
 test('accepted owner outcomes remain published rather than being presented as shipped verification', () => {
   const result = summarizeReleaseStatus(input({
     requestedSurfaces: [{ id: 'mobile', required: true, evidence: 'accepted' }],

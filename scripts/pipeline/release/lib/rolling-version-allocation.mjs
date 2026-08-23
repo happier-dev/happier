@@ -30,7 +30,21 @@ const PRODUCT_SOURCES = Object.freeze({
     githubTagPrefix: 'ui-web-v',
     npmPackage: '',
   }),
+  plugin_sdk: Object.freeze({
+    githubTagPrefix: 'plugin-sdk-v',
+    npmPackages: ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui'],
+  }),
+  sdk: Object.freeze({
+    githubTagPrefix: 'sdk-v',
+    npmPackage: '@happier-dev/sdk',
+  }),
 });
+
+/** @param {{ npmPackage?: string; npmPackages?: string[] }} product */
+function getNpmPackages(product) {
+  if (Array.isArray(product.npmPackages)) return product.npmPackages.filter(Boolean);
+  return product.npmPackage ? [product.npmPackage] : [];
+}
 
 /**
  * @param {string} version
@@ -135,6 +149,37 @@ function compareBuildOrder(left, right) {
 function latestBuild(builds) {
   const sorted = [...builds].sort(compareBuildOrder);
   return sorted.at(-1) ?? null;
+}
+
+/** @param {{ run: number; attempt: number | null }} left @param {{ run: number; attempt: number | null }} right */
+function sameBuild(left, right) {
+  return compareBuildOrder(left, right) === 0;
+}
+
+/**
+ * A lockstep npm product is caught up only when every package identity has
+ * the same rolling build.  The allocator owns this fact so a failed second
+ * publication retries the missing tarball instead of minting a new version.
+ *
+ * @param {{ npmPackage?: string; npmPackages?: string[] }} product
+ * @param {Array<{ run: number; attempt: number | null; version: string; surface: 'github' | 'npm'; target?: string }>} builds
+ * @param {{ run: number; attempt: number | null }} candidate
+ * @param {'github' | 'npm' | 'all'} publishSurface
+ */
+function isBuildPublishedForSurface(product, builds, candidate, publishSurface) {
+  const matches = (surface, target) => builds.some((build) => (
+    build.surface === surface
+    && (target === undefined || build.target === target)
+    && sameBuild(build, candidate)
+  ));
+  if (publishSurface === 'npm') {
+    const npmPackages = getNpmPackages(product);
+    return npmPackages.length > 1
+      ? npmPackages.every((npmPackage) => matches('npm', npmPackage))
+      : matches('npm');
+  }
+  if (publishSurface === 'github') return matches('github');
+  return matches('github') || matches('npm');
 }
 
 /**
@@ -330,11 +375,13 @@ export async function resolveRollingPublishVersion(opts) {
   const explicitVersion = String(opts.explicitVersion ?? '').trim();
   const publishSurface = opts.publishSurface ?? 'all';
 
-  /** @type {Array<{ version: string; surface: 'github' | 'npm' }>} */
+  /** @type {Array<{ version: string; surface: 'github' | 'npm'; target?: string }>} */
   const publishedVersions = [];
   /** @type {string[]} */
   const sourceLabels = [];
   let sourceAvailable = false;
+  const npmPackages = getNpmPackages(product);
+  const npmAvailability = new Map();
 
   const fixture = parsePublishedVersionsJson(env.HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON);
   if (fixture) {
@@ -347,9 +394,12 @@ export async function resolveRollingPublishVersion(opts) {
     ])) {
       publishedVersions.push({ version, surface: 'github' });
     }
-    if (product.npmPackage) {
-      for (const version of collectFromFixtureSection(fixture.npm, [product.npmPackage])) {
-        publishedVersions.push({ version, surface: 'npm' });
+    for (const npmPackage of npmPackages) {
+      // A supplied fixture is an authoritative complete view for every listed
+      // target, including an explicitly empty package-version list.
+      npmAvailability.set(npmPackage, true);
+      for (const version of collectFromFixtureSection(fixture.npm, [npmPackage])) {
+        publishedVersions.push({ version, surface: 'npm', target: npmPackage });
       }
     }
   } else {
@@ -366,13 +416,14 @@ export async function resolveRollingPublishVersion(opts) {
       }
     }
 
-    if (product.npmPackage) {
-      const npm = collectNpmVersions(product.npmPackage, { cwd: opts.repoRoot, env });
+    for (const npmPackage of npmPackages) {
+      const npm = collectNpmVersions(npmPackage, { cwd: opts.repoRoot, env });
+      npmAvailability.set(npmPackage, npm.ok);
       if (npm.ok) {
         sourceAvailable = true;
         sourceLabels.push('npm');
         for (const version of npm.values) {
-          publishedVersions.push({ version, surface: 'npm' });
+          publishedVersions.push({ version, surface: 'npm', target: npmPackage });
         }
       }
     }
@@ -385,7 +436,7 @@ export async function resolveRollingPublishVersion(opts) {
         channelSuffix,
         githubTagPrefix: product.githubTagPrefix,
       });
-      return build ? { ...build, surface: entry.surface } : null;
+      return build ? { ...build, surface: entry.surface, ...(entry.target ? { target: entry.target } : {}) } : null;
     })
     .filter(Boolean);
   const previous = latestBuild(builds);
@@ -408,10 +459,7 @@ export async function resolveRollingPublishVersion(opts) {
     }
     const comparisonBuild = previousForSurface ?? previous;
     const isOlderThanOverall = previous && compareBuildOrder(explicitBuild, previous) < 0;
-    const isAlreadyPublishedForTarget =
-      comparisonBuild &&
-      explicitBuild.run === comparisonBuild.run &&
-      (explicitBuild.attempt ?? 0) <= (comparisonBuild.attempt ?? 0);
+    const isAlreadyPublishedForTarget = isBuildPublishedForSurface(product, builds, explicitBuild, publishSurface);
     const isBehindTarget = comparisonBuild && compareBuildOrder(explicitBuild, comparisonBuild) < 0;
     if (isOlderThanOverall || isAlreadyPublishedForTarget || isBehindTarget) {
       throw new Error(
@@ -434,7 +482,25 @@ export async function resolveRollingPublishVersion(opts) {
     );
   }
 
-  if (publishSurface !== 'all' && previous && (!previousForSurface || compareBuildOrder(previousForSurface, previous) < 0)) {
+  if (
+    publishSurface === 'npm'
+    && npmPackages.length > 1
+    && !npmPackages.every((npmPackage) => npmAvailability.get(npmPackage) === true)
+  ) {
+    throw new Error(
+      `[release] unable to inspect every npm package in the ${opts.productId} lockstep publication set.`,
+    );
+  }
+
+  if (
+    publishSurface !== 'all'
+    && previous
+    && (
+      !isBuildPublishedForSurface(product, builds, previous, publishSurface)
+      || !previousForSurface
+      || compareBuildOrder(previousForSurface, previous) < 0
+    )
+  ) {
     return {
       version: previous.version,
       source: `${sourceLabels.join('+') || 'published'}:${publishSurface}:catch-up`,

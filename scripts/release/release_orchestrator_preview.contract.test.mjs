@@ -33,8 +33,9 @@ test('release workflow only promotes and publishes the exact prepared candidate 
   );
   assert.doesNotMatch(raw, /^  bump_versions_dev:/m);
   assert.doesNotMatch(raw, /needs\.bump_versions_dev/);
-  assert.match(raw, /if \[ "\$env_name" = "preview" \]; then[\s\S]*?if \[ "\$confirm" != "release dev to preview" \]; then/);
-  assert.doesNotMatch(raw, /\[ "\$confirm" != "release dev to preview" \] && \[ "\$confirm" != "release dev to main" \]/);
+  assert.match(raw, /node scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
+  assert.match(raw, /CONFIRM:\s*\$\{\{ inputs\.confirm \}\}/);
+  assert.match(raw, /ENVIRONMENT:\s*\$\{\{ inputs\.environment \}\}/);
 
   assert.match(raw, /source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'preview' \}\}/);
   assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'preview' \}\}/);
@@ -115,23 +116,23 @@ test('release workflow fans a versioned Stack target through immutable publicati
   assert.match(String(finalVerifier?.with?.verify_stack_release ?? ''), /needs\.promote_hstack_binaries\.result == 'success'/);
   assert.equal(verifierInputs?.verify_stack_release?.type, 'boolean');
   assert.match(verifierRaw, /VERIFY_STACK_RELEASE:\s*\$\{\{ inputs\.verify_stack_release \}\}/);
-  assert.match(verifierRaw, /if \[ "\$VERIFY_STACK_RELEASE" = "true" \]/);
+  assert.match(verifierRaw, /--verify-stack-release "\$VERIFY_STACK_RELEASE"/);
 });
 
 test('release workflow plans preview-to-main promotions from preview instead of dev', async () => {
   const raw = await loadWorkflow('release.yml');
+  const workflow = parse(raw);
+  const ci = workflow.jobs.ci;
+  const validation = ci.steps.find((step) => step.id === 'dispatch');
+  const plan = workflow.jobs.plan;
+  const planningCheckout = plan.steps.find((step) => step.name === 'Checkout authorized release planning source');
 
-  assert.match(
-    raw,
-    /- name: Resolve release planning refs[\s\S]*?if \[ "\$ENVIRONMENT" = "production" \] && \{ \[ "\$CONFIRM" = "release preview to main" \] \|\| \[ "\$CONFIRM" = "reset main from preview" \]; \}; then[\s\S]*?source_ref="preview"/,
-    'release planning should switch its source ref to preview for preview-to-main promotions',
-  );
-  assert.match(
-    raw,
-    /- name: Checkout authorized release planning source[\s\S]*?ref:\s*\$\{\{\s*inputs\.authorized_promotion_source_sha\s*\|\|\s*steps\.plan_refs\.outputs\.source_ref\s*\}\}/,
-    'release planning should checkout the exact authorized SHA, with the resolved source branch used only for dry-run planning',
-  );
-  assert.match(raw, /COMPARE_LABEL:\s*\$\{\{\s*steps\.plan_refs\.outputs\.compare_label\s*\}\}/);
+  assert.match(validation.run, /validate-release-dispatch\.mjs/);
+  assert.equal(validation.env.CONFIRM, '${{ inputs.confirm }}');
+  assert.equal(validation.env.ENVIRONMENT, '${{ inputs.environment }}');
+  assert.equal(ci.outputs.source_ref, '${{ steps.dispatch.outputs.source_ref }}');
+  assert.equal(planningCheckout.with.ref, '${{ inputs.authorized_promotion_source_sha || needs.ci.outputs.source_ref }}');
+  assert.match(raw, /COMPARE_LABEL:\s*\$\{\{\s*needs\.ci\.outputs\.compare_label\s*\}\}/);
   assert.match(raw, /commits to release \(\$COMPARE_LABEL\)/, 'release plan summary should describe the actual compared branch range');
   assert.match(
     raw,
@@ -251,8 +252,8 @@ test('release-npm resolves channel metadata and prefers an authorized candidate 
   assert.match(raw, /workflow_dispatch:[\s\S]*?inputs:[\s\S]*?authorized_sha:/);
   assert.match(raw, /workflow_call:[\s\S]*?inputs:[\s\S]*?authorized_sha:/);
 
-  assert.match(raw, /if \[ "\$src" = "auto" \]; then[\s\S]*?if \[ "\$channel" = "preview" \]; then[\s\S]*?src="preview"[\s\S]*?src="main"/);
-  assert.match(raw, /ref:\s*\$\{\{ inputs\.authorized_sha != '' && inputs\.authorized_sha \|\| steps\.resolve_source\.outputs\.ref \}\}/);
+  assert.match(raw, /node scripts\/pipeline\/release\/resolve-npm-release-inputs\.mjs/);
+  assert.match(raw, /ref:\s*\$\{\{ inputs\.authorized_sha != '' && inputs\.authorized_sha \|\| steps\.release_inputs\.outputs\.source_ref \}\}/);
   assert.match(raw, /test "\$\(git rev-parse HEAD\)" = "\$AUTHORIZED_SHA"/);
 });
 
@@ -302,7 +303,8 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.doesNotMatch(raw, /version_bump_cli/);
   assert.doesNotMatch(raw, /version_bump_stack/);
   assert.doesNotMatch(raw, /function bumpBase\(base, bump\)/);
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-set-preview-versions/);
+  assert.match(raw, /node scripts\/pipeline\/npm\/resolve-release-metadata\.mjs/);
+  assert.doesNotMatch(raw, /node scripts\/pipeline\/run\.mjs npm-set-preview-versions/);
   assert.doesNotMatch(raw, /function setPreviewVersion\(pkgPath\)/);
   assert.doesNotMatch(raw, /\$\{base\}-preview\.\$\{run\}\.\$\{attempt\}/);
   assert.match(raw, /publish_server/, 'release-npm should expose publish_server for server runner publishing');
@@ -314,9 +316,11 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.match(raw, /SERVER_RUNNER_DIR:\s*\$\{\{ steps\.server_runner\.outputs\.dir \}\}[\s\S]*?yarn --cwd "\$\{SERVER_RUNNER_DIR\}" test/);
   assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-release[\s\S]*?--server-runner-dir "\$\{SERVER_RUNNER_DIR\}"/);
 
-  const script = await loadFile('scripts/pipeline/npm/set-preview-versions.mjs');
-  assert.match(script, /resolveRollingPublishVersion/);
-  assert.doesNotMatch(script, /GITHUB_RUN_NUMBER/);
+  const script = await loadFile('scripts/pipeline/npm/resolve-release-metadata.mjs');
+  assert.match(script, /npm-set-preview-versions/);
+  const allocator = await loadFile('scripts/pipeline/npm/set-preview-versions.mjs');
+  assert.match(allocator, /resolveRollingPublishVersion/);
+  assert.doesNotMatch(allocator, /GITHUB_RUN_NUMBER/, 'workflow metadata must delegate allocation to the canonical allocator');
 });
 
 test('final release workflow does not mutate component versions after candidate approval', async () => {

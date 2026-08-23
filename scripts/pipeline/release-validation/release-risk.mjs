@@ -1,6 +1,6 @@
 // @ts-check
 
-/** @typedef {'cliUpgrade'|'sessionContinuity'|'relayUpgrade'|'mysqlContract'|'platformServices'|'trustRoots'} ReleaseRiskId */
+/** @typedef {'cliUpgrade'|'sessionContinuity'|'relayUpgrade'|'mysqlContract'|'platformServices'|'trustRoots'|'pluginSdkPackageChanged'|'pluginRuntimeCompatibilityRisk'} ReleaseRiskId */
 
 /** @type {Readonly<Record<ReleaseRiskId, readonly RegExp[]>>} */
 const RISK_PATTERNS = Object.freeze({
@@ -40,6 +40,17 @@ const RISK_PATTERNS = Object.freeze({
     /^scripts\/pipeline\/(?:release\/lib\/(?:minisign|signed-asset)|tauri\/(?:ensure-signing|notarize|resolve-signing|sign-|validate-updater))/u,
     /(?:^|\/)(?:minisign|notariz|signing|updater-pubkey)/u,
   ]),
+  // The pair's public package surface and the source that generates its
+  // release records require the package validation/packing evidence. This is
+  // deliberately separate from the host↔plugin runtime compatibility seam.
+  pluginSdkPackageChanged: Object.freeze([
+    /^packages\/plugin-(?:sdk|ui)\//u,
+    /^scripts\/api-governance\//u,
+  ]),
+  pluginRuntimeCompatibilityRisk: Object.freeze([
+    /^apps\/cli\/src\/plugins\//u,
+    /^packages\/plugin-sdk\/src\/(?:actions|agentRuntime|agents|automations|background-services|connected-accounts|contributions|events|exec|executionRuns|fs|host|interactions|manifest|mcp|notifications|protocol|providers|registration|resources|runtime|sessions|services|settings|storage|ui|webhooks)(?:\/|$)/u,
+  ]),
 });
 
 const COMPATIBILITY_PATTERNS = Object.freeze([
@@ -74,6 +85,8 @@ export function classifyReleaseValidationRisks(rawPaths) {
     mysqlContract: false,
     platformServices: false,
     trustRoots: false,
+    pluginSdkPackageChanged: false,
+    pluginRuntimeCompatibilityRisk: false,
   };
   for (const riskId of /** @type {ReleaseRiskId[]} */ (Object.keys(RISK_PATTERNS))) {
     const matching = paths.filter((path) => RISK_PATTERNS[riskId].some((pattern) => pattern.test(path)));

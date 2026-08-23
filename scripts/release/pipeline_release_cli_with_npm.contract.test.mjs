@@ -107,3 +107,51 @@ test('pipeline CLI release dry-run rejects a pre-materialization bump before for
     stub.cleanup();
   }
 });
+
+test('pipeline CLI release dry-run carries the public package targets through the canonical bump plan', async () => {
+  const stub = createReleaseCliDryRunEnv(process.env, {
+    diffPaths: ['packages/plugin-sdk/src/runtime/runtime.ts', 'packages/sdk/src/index.ts'],
+  });
+  try {
+    const out = execFileSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+        'release',
+        '--confirm',
+        'release dev to preview',
+        '--deploy-environment',
+        'preview',
+        '--deploy-targets',
+        'plugin_sdk,sdk',
+        '--repository',
+        'happier-dev/happier',
+        '--release-notes-id',
+        'test-public-packages',
+        '--dry-run',
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...stub.env,
+          NPM_TOKEN: 'npm-token',
+          GH_TOKEN: '',
+          GH_REPO: '',
+          GITHUB_REPOSITORY: '',
+        },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS,
+      },
+    );
+
+    assert.match(out, /- plugin_sdk: true/);
+    assert.match(out, /- sdk: true/);
+    assert.match(out, /- plugin SDK pair: true \(baseline=plugin-sdk-v0\.1\.0\)/);
+    assert.match(out, /- SDK: true \(baseline=sdk-v0\.1\.0\)/);
+    assert.match(out, /publish_plugin_sdk=true/);
+    assert.match(out, /publish_sdk=true/);
+  } finally {
+    stub.cleanup();
+  }
+});

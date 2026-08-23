@@ -1295,11 +1295,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'publish-stack': { type: 'string', default: 'false' },
         'publish-server': { type: 'string', default: 'false' },
         'publish-support': { type: 'string', default: 'false' },
+        'publish-plugin-sdk': { type: 'string', default: 'false' },
+        'publish-sdk': { type: 'string', default: 'false' },
         'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
         'cli-version': { type: 'string', default: '' },
         'stack-version': { type: 'string', default: '' },
         'server-version': { type: 'string', default: '' },
         'support-version': { type: 'string', default: '' },
+        'plugin-sdk-version': { type: 'string', default: '' },
+        'sdk-version': { type: 'string', default: '' },
         write: { type: 'string', default: 'true' },
       },
       allowPositionals: false,
@@ -1310,11 +1314,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishStack = String(values['publish-stack'] ?? '').trim() || 'false';
     const publishServer = String(values['publish-server'] ?? '').trim() || 'false';
     const publishSupport = String(values['publish-support'] ?? '').trim() || 'false';
+    const publishPluginSdk = String(values['publish-plugin-sdk'] ?? '').trim() || 'false';
+    const publishSdk = String(values['publish-sdk'] ?? '').trim() || 'false';
     const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
     const cliVersion = String(values['cli-version'] ?? '').trim();
     const stackVersion = String(values['stack-version'] ?? '').trim();
     const serverVersion = String(values['server-version'] ?? '').trim();
     const supportVersion = String(values['support-version'] ?? '').trim();
+    const pluginSdkVersion = String(values['plugin-sdk-version'] ?? '').trim();
+    const sdkVersion = String(values['sdk-version'] ?? '').trim();
     const write = String(values.write ?? '').trim() || 'true';
 
     runNpmSetPreviewVersions({
@@ -1331,12 +1339,18 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         publishServer,
         '--publish-support',
         publishSupport,
+        '--publish-plugin-sdk',
+        publishPluginSdk,
+        '--publish-sdk',
+        publishSdk,
         '--server-runner-dir',
         serverRunnerDir,
         ...(cliVersion ? ['--cli-version', cliVersion] : []),
         ...(stackVersion ? ['--stack-version', stackVersion] : []),
         ...(serverVersion ? ['--server-version', serverVersion] : []),
         ...(supportVersion ? ['--support-version', supportVersion] : []),
+        ...(pluginSdkVersion ? ['--plugin-sdk-version', pluginSdkVersion] : []),
+        ...(sdkVersion ? ['--sdk-version', sdkVersion] : []),
         '--write',
         write,
       ],
@@ -1429,12 +1443,16 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'publish-cli': { type: 'string', default: 'false' },
           'publish-stack': { type: 'string', default: 'false' },
           'publish-server': { type: 'string', default: 'false' },
+          'publish-plugin-sdk': { type: 'string', default: 'false' },
+          'publish-sdk': { type: 'string', default: 'false' },
           'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
           'run-tests': { type: 'string', default: 'auto' },
           mode: { type: 'string', default: 'pack+publish' },
           'cli-version': { type: 'string', default: '' },
           'stack-version': { type: 'string', default: '' },
           'server-version': { type: 'string', default: '' },
+          'plugin-sdk-version': { type: 'string', default: '' },
+          'sdk-version': { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1478,9 +1496,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishCli = String(values['publish-cli'] ?? '').trim();
     const publishStack = String(values['publish-stack'] ?? '').trim();
     const publishServer = String(values['publish-server'] ?? '').trim();
+    const publishPluginSdk = String(values['publish-plugin-sdk'] ?? '').trim();
+    const publishSdk = String(values['publish-sdk'] ?? '').trim();
     const cliVersion = String(values['cli-version'] ?? '').trim();
     const stackVersion = String(values['stack-version'] ?? '').trim();
     const serverVersion = String(values['server-version'] ?? '').trim();
+    const pluginSdkVersion = String(values['plugin-sdk-version'] ?? '').trim();
+    const sdkVersion = String(values['sdk-version'] ?? '').trim();
     const runnerDir = String(values['server-runner-dir'] ?? '').trim();
     const runTests = String(values['run-tests'] ?? '').trim();
     const mode = String(values.mode ?? '').trim();
@@ -1500,9 +1522,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ...(publishCli ? ['--publish-cli', publishCli] : []),
         ...(publishStack ? ['--publish-stack', publishStack] : []),
         ...(publishServer ? ['--publish-server', publishServer] : []),
+        ...(publishPluginSdk ? ['--publish-plugin-sdk', publishPluginSdk] : []),
+        ...(publishSdk ? ['--publish-sdk', publishSdk] : []),
         ...(cliVersion ? ['--cli-version', cliVersion] : []),
         ...(stackVersion ? ['--stack-version', stackVersion] : []),
         ...(serverVersion ? ['--server-version', serverVersion] : []),
+        ...(pluginSdkVersion ? ['--plugin-sdk-version', pluginSdkVersion] : []),
+        ...(sdkVersion ? ['--sdk-version', sdkVersion] : []),
         ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
         ...(runTests ? ['--run-tests', runTests] : []),
         ...(mode ? ['--mode', mode] : []),
@@ -1867,6 +1893,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'bump-app-override': { type: 'string', default: 'preset' },
         'bump-cli-override': { type: 'string', default: 'preset' },
         'bump-stack-override': { type: 'string', default: 'preset' },
+        'bump-plugin-sdk-override': { type: 'string', default: 'preset' },
+        'bump-sdk-override': { type: 'string', default: 'preset' },
         'deploy-targets': { type: 'string', default: '' },
         'changed-ui': { type: 'string' },
         'changed-cli': { type: 'string' },
@@ -1875,10 +1903,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'changed-website': { type: 'string' },
         'changed-cli-stack-shared': { type: 'string' },
         'changed-shared': { type: 'string' },
+        'changed-plugin-sdk': { type: 'string', default: 'false' },
+        'changed-sdk': { type: 'string', default: 'false' },
         'versioned-app-changed': { type: 'string', default: '' },
         'versioned-cli-changed': { type: 'string', default: '' },
         'versioned-stack-changed': { type: 'string', default: '' },
         'versioned-server-changed': { type: 'string', default: '' },
+        'versioned-plugin-sdk-changed': { type: 'string', default: '' },
+        'versioned-sdk-changed': { type: 'string', default: '' },
       },
       allowPositionals: false,
     });
@@ -1903,6 +1935,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         String(values['bump-cli-override'] ?? 'preset'),
         '--bump-stack-override',
         String(values['bump-stack-override'] ?? 'preset'),
+        '--bump-plugin-sdk-override',
+        String(values['bump-plugin-sdk-override'] ?? 'preset'),
+        '--bump-sdk-override',
+        String(values['bump-sdk-override'] ?? 'preset'),
         '--deploy-targets',
         String(values['deploy-targets'] ?? ''),
         '--changed-ui',
@@ -1919,6 +1955,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         String(values['changed-cli-stack-shared'] ?? ''),
         '--changed-shared',
         String(values['changed-shared'] ?? ''),
+        '--changed-plugin-sdk',
+        String(values['changed-plugin-sdk'] ?? 'false'),
+        '--changed-sdk',
+        String(values['changed-sdk'] ?? 'false'),
         '--versioned-app-changed',
         String(values['versioned-app-changed'] ?? ''),
         '--versioned-cli-changed',
@@ -1927,6 +1967,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         String(values['versioned-stack-changed'] ?? ''),
         '--versioned-server-changed',
         String(values['versioned-server-changed'] ?? ''),
+        '--versioned-plugin-sdk-changed',
+        String(values['versioned-plugin-sdk-changed'] ?? ''),
+        '--versioned-sdk-changed',
+        String(values['versioned-sdk-changed'] ?? ''),
       ],
     });
     return;
@@ -1941,6 +1985,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'bump-website': { type: 'string', default: 'none' },
         'bump-cli': { type: 'string', default: 'none' },
         'bump-stack': { type: 'string', default: 'none' },
+        'bump-plugin-sdk': { type: 'string', default: 'none' },
+        'bump-sdk': { type: 'string', default: 'none' },
         'push-branch': { type: 'string', default: 'dev' },
         'commit-message': { type: 'string', default: '' },
         'dry-run': { type: 'boolean', default: false },
@@ -1964,6 +2010,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         String(values['bump-cli'] ?? 'none'),
         '--bump-stack',
         String(values['bump-stack'] ?? 'none'),
+        '--bump-plugin-sdk',
+        String(values['bump-plugin-sdk'] ?? 'none'),
+        '--bump-sdk',
+        String(values['bump-sdk'] ?? 'none'),
         '--push-branch',
         String(values['push-branch'] ?? 'dev'),
         '--commit-message',
@@ -4534,7 +4584,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             const remotePlanningRefs = resolveRemoteReleasePlanningRefs({
               repoRoot,
               branchNames: ['main', 'dev', 'preview'],
-              tagPrefixes: ['cli-v', 'stack-v', 'server-v', 'ui-web-v'],
+              tagPrefixes: ['cli-v', 'stack-v', 'server-v', 'ui-web-v', 'plugin-sdk-v', 'sdk-v'],
             });
 
             const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
@@ -4578,6 +4628,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             changed_cli_stack_shared: String(changedRaw?.changed_cli_stack_shared ?? '').trim() === 'true',
             changed_shared: String(changedRaw?.changed_shared ?? '').trim() === 'true',
             changed_stack: String(changedRaw?.changed_stack ?? '').trim() === 'true',
+            changed_plugin_sdk: String(changedRaw?.changed_plugin_sdk ?? '').trim() === 'true',
+            changed_sdk: String(changedRaw?.changed_sdk ?? '').trim() === 'true',
           };
 
           const versionedChangedRaw = runJsonScript({
@@ -4599,10 +4651,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             changed_cli: String(versionedChangedRaw?.changed_cli ?? '').trim() === 'true',
             changed_stack: String(versionedChangedRaw?.changed_stack ?? '').trim() === 'true',
             changed_server: String(versionedChangedRaw?.changed_server ?? '').trim() === 'true',
+            changed_plugin_sdk: String(versionedChangedRaw?.changed_plugin_sdk ?? '').trim() === 'true',
+            changed_sdk: String(versionedChangedRaw?.changed_sdk ?? '').trim() === 'true',
             app_baseline_tag: String(versionedChangedRaw?.app_baseline_tag ?? '').trim(),
             cli_baseline_tag: String(versionedChangedRaw?.cli_baseline_tag ?? '').trim(),
             stack_baseline_tag: String(versionedChangedRaw?.stack_baseline_tag ?? '').trim(),
             server_baseline_tag: String(versionedChangedRaw?.server_baseline_tag ?? '').trim(),
+            plugin_sdk_baseline_tag: String(versionedChangedRaw?.plugin_sdk_baseline_tag ?? '').trim(),
+            sdk_baseline_tag: String(versionedChangedRaw?.sdk_baseline_tag ?? '').trim(),
           };
 
           const bumpPlanRaw = runJsonScript({
@@ -4620,6 +4676,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'preset',
               '--bump-stack-override',
               'preset',
+              '--bump-plugin-sdk-override',
+              'preset',
+              '--bump-sdk-override',
+              'preset',
               '--deploy-targets',
               deployTargets.join(','),
               '--changed-ui',
@@ -4636,6 +4696,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               changed.changed_cli_stack_shared ? 'true' : 'false',
               '--changed-shared',
               changed.changed_shared ? 'true' : 'false',
+              '--changed-plugin-sdk',
+              changed.changed_plugin_sdk ? 'true' : 'false',
+              '--changed-sdk',
+              changed.changed_sdk ? 'true' : 'false',
               '--versioned-app-changed',
               versionedChanged.changed_app ? 'true' : 'false',
               '--versioned-cli-changed',
@@ -4644,6 +4708,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               versionedChanged.changed_stack ? 'true' : 'false',
               '--versioned-server-changed',
               versionedChanged.changed_server ? 'true' : 'false',
+              '--versioned-plugin-sdk-changed',
+              versionedChanged.changed_plugin_sdk ? 'true' : 'false',
+              '--versioned-sdk-changed',
+              versionedChanged.changed_sdk ? 'true' : 'false',
             ],
           });
 
@@ -4653,10 +4721,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             bump_stack: String(bumpPlanRaw?.bump_stack ?? 'none'),
             bump_server: String(bumpPlanRaw?.bump_server ?? 'none'),
             bump_website: String(bumpPlanRaw?.bump_website ?? 'none'),
+            bump_plugin_sdk: String(bumpPlanRaw?.bump_plugin_sdk ?? 'none'),
+            bump_sdk: String(bumpPlanRaw?.bump_sdk ?? 'none'),
             should_bump: String(bumpPlanRaw?.should_bump ?? '').trim() === 'true',
             publish_cli: String(bumpPlanRaw?.publish_cli ?? '').trim() === 'true',
             publish_stack: String(bumpPlanRaw?.publish_stack ?? '').trim() === 'true',
             publish_server: String(bumpPlanRaw?.publish_server ?? '').trim() === 'true',
+            publish_plugin_sdk: String(bumpPlanRaw?.publish_plugin_sdk ?? '').trim() === 'true',
+            publish_sdk: String(bumpPlanRaw?.publish_sdk ?? '').trim() === 'true',
           };
 
           console.log('[pipeline] release plan: changed components (main..dev)');
@@ -4668,12 +4740,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           console.log(`- cli: ${versionedChanged.changed_cli} (baseline=${versionedChanged.cli_baseline_tag || 'none'})`);
           console.log(`- stack: ${versionedChanged.changed_stack} (baseline=${versionedChanged.stack_baseline_tag || 'none'})`);
           console.log(`- server: ${versionedChanged.changed_server} (baseline=${versionedChanged.server_baseline_tag || 'none'})`);
+          console.log(`- plugin SDK pair: ${versionedChanged.changed_plugin_sdk} (baseline=${versionedChanged.plugin_sdk_baseline_tag || 'none'})`);
+          console.log(`- SDK: ${versionedChanged.changed_sdk} (baseline=${versionedChanged.sdk_baseline_tag || 'none'})`);
           console.log('[pipeline] release plan: bump/publish');
           console.log(
-            `- bump_app=${bumpPlan.bump_app} bump_server=${bumpPlan.bump_server} bump_website=${bumpPlan.bump_website} bump_cli=${bumpPlan.bump_cli} bump_stack=${bumpPlan.bump_stack}`,
+            `- bump_app=${bumpPlan.bump_app} bump_server=${bumpPlan.bump_server} bump_website=${bumpPlan.bump_website} bump_cli=${bumpPlan.bump_cli} bump_stack=${bumpPlan.bump_stack} bump_plugin_sdk=${bumpPlan.bump_plugin_sdk} bump_sdk=${bumpPlan.bump_sdk}`,
           );
           console.log(
-            `- publish_cli=${bumpPlan.publish_cli} publish_stack=${bumpPlan.publish_stack} publish_server=${bumpPlan.publish_server}`,
+            `- publish_cli=${bumpPlan.publish_cli} publish_stack=${bumpPlan.publish_stack} publish_server=${bumpPlan.publish_server} publish_plugin_sdk=${bumpPlan.publish_plugin_sdk} publish_sdk=${bumpPlan.publish_sdk}`,
           );
 
           /**

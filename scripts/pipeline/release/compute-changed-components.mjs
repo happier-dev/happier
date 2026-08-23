@@ -69,6 +69,8 @@ function main() {
     changed_cli_stack_shared: String(Boolean(classified.cli_stack_shared)),
     changed_shared: String(Boolean(classified.shared)),
     changed_stack: String(Boolean(classified.stack)),
+    changed_plugin_sdk: String(Boolean(versioned.plugin_sdk)),
+    changed_sdk: String(Boolean(versioned.sdk)),
     compatibility_analysis_required: String(risks.compatibilityAnalysisRequired),
     risk_cli_upgrade: String(risks.cliUpgrade),
     risk_session_continuity: String(risks.sessionContinuity),
@@ -76,6 +78,8 @@ function main() {
     risk_mysql_contract: String(risks.mysqlContract),
     risk_platform_services: String(risks.platformServices),
     risk_trust_roots: String(risks.trustRoots),
+    risk_plugin_sdk_package_changed: String(risks.pluginSdkPackageChanged),
+    risk_plugin_runtime_compatibility: String(risks.pluginRuntimeCompatibilityRisk),
     commit_count: String(commitCount),
   };
 

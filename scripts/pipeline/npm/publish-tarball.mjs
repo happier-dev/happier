@@ -254,6 +254,25 @@ function createIsolatedNpmConfigEnv(npmToken) {
   };
 }
 
+/** @param {string} value @param {string} label */
+function requireGitHubOutputValue(value, label) {
+  if (!value || /[\r\n]/u.test(value)) {
+    fail(`${label} cannot be written as a GitHub Actions output`);
+  }
+  return value;
+}
+
+/** @param {string} outputPath @param {{ name: string; version: string; integrity: string }} metadata */
+function writePublishedPackageOutput(outputPath, metadata) {
+  if (!outputPath) return;
+  fs.appendFileSync(outputPath, [
+    `package=${requireGitHubOutputValue(metadata.name, 'package name')}`,
+    `version=${requireGitHubOutputValue(metadata.version, 'package version')}`,
+    `integrity=${requireGitHubOutputValue(metadata.integrity, 'package integrity')}`,
+    '',
+  ].join('\n'), 'utf8');
+}
+
 function main() {
   const { values } = parseArgs({
     options: {
@@ -264,6 +283,7 @@ function main() {
       access: { type: 'string', default: 'public' },
       provenance: { type: 'string', default: 'auto' },
       'npm-version': { type: 'string', default: '11.5.1' },
+      'github-output': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -380,6 +400,7 @@ function main() {
     version: metadata.version,
     distTag,
   });
+  writePublishedPackageOutput(String(values['github-output'] ?? '').trim(), metadata);
 }
 
 main();

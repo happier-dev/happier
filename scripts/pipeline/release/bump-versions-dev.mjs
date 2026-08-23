@@ -72,6 +72,8 @@ function main() {
       'bump-website': { type: 'string', default: 'none' },
       'bump-cli': { type: 'string', default: 'none' },
       'bump-stack': { type: 'string', default: 'none' },
+      'bump-plugin-sdk': { type: 'string', default: 'none' },
+      'bump-sdk': { type: 'string', default: 'none' },
       'push-branch': { type: 'string', default: 'dev' },
       'commit-message': { type: 'string', default: '' },
       'git-user-name': { type: 'string', default: 'github-actions[bot]' },
@@ -87,6 +89,8 @@ function main() {
   const bumpWebsite = String(values['bump-website'] ?? '').trim() || 'none';
   const bumpCli = String(values['bump-cli'] ?? '').trim() || 'none';
   const bumpStack = String(values['bump-stack'] ?? '').trim() || 'none';
+  const bumpPluginSdk = String(values['bump-plugin-sdk'] ?? '').trim() || 'none';
+  const bumpSdk = String(values['bump-sdk'] ?? '').trim() || 'none';
   const pushBranch = String(values['push-branch'] ?? '').trim() || 'dev';
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
@@ -96,13 +100,15 @@ function main() {
   validateBump(bumpWebsite, '--bump-website');
   validateBump(bumpCli, '--bump-cli');
   validateBump(bumpStack, '--bump-stack');
+  validateBump(bumpPluginSdk, '--bump-plugin-sdk');
+  validateBump(bumpSdk, '--bump-sdk');
 
   /** @type {string[]} */
   const bumped = [];
 
   const bumpVersionScript = fileURLToPath(new URL('./bump-version.mjs', import.meta.url));
   /**
-   * @param {'app'|'server'|'website'|'cli'|'stack'} component
+   * @param {'app'|'server'|'website'|'cli'|'stack'|'plugin_sdk'|'sdk'} component
    * @param {string} bump
    */
   const maybeBump = (component, bump) => {
@@ -116,6 +122,8 @@ function main() {
   maybeBump('website', bumpWebsite);
   maybeBump('cli', bumpCli);
   maybeBump('stack', bumpStack);
+  maybeBump('plugin_sdk', bumpPluginSdk);
+  maybeBump('sdk', bumpSdk);
 
   const githubOutput = String(values['github-output'] ?? '').trim();
   if (bumped.length === 0) {
@@ -137,6 +145,9 @@ function main() {
     'apps/cli/package.json',
     'apps/stack/package.json',
     'packages/relay-server/package.json',
+    'packages/plugin-sdk/package.json',
+    'packages/plugin-ui/package.json',
+    'packages/sdk/package.json',
   ];
   run(opts, 'git', ['add', ...addPaths], { cwd: repoRoot });
   if (fs.existsSync(path.join(repoRoot, 'apps', 'ui', 'src-tauri'))) {

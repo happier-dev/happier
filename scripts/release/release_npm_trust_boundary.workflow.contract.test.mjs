@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import YAML from 'yaml';
 
@@ -94,55 +91,56 @@ test('npm pack artifacts are source-and-version-bound and shell scripts receive 
   }
 });
 
-test('npm release metadata rejects newline output forgery before emitting package versions', async () => {
+test('npm release workflow delegates release-ring validation and metadata emission to local owners', async () => {
   const workflow = await loadWorkflow();
-  const metadata = workflow.jobs?.release?.steps?.find((step) => step.name === 'Release metadata');
-  const source = String(metadata?.run ?? '');
-  assert.match(source, /rawVersion\.includes\('\\n'\)/);
-  assert.match(source, /production:\s*\/\^/);
-  assert.match(source, /preview:\s*\/\^/);
-  assert.doesNotMatch(source, /import .*scripts\//);
-  assert.match(source, /printf '%s=%s\\n' "\$output_name" "\$raw_version" >> "\$GITHUB_OUTPUT"/);
-  assert.doesNotMatch(source, /echo "(?:cli|stack|server)_version=/);
+  const inputResolution = workflow.jobs?.release?.steps?.find((step) => step.name === 'Resolve release inputs');
+  const metadata = workflow.jobs?.release?.steps?.find((step) => step.name === 'Resolve release metadata');
+  assert.match(String(inputResolution?.run ?? ''), /scripts\/pipeline\/release\/resolve-npm-release-inputs\.mjs/);
+  assert.match(String(metadata?.run ?? ''), /scripts\/pipeline\/npm\/resolve-release-metadata\.mjs/);
+  assert.doesNotMatch(String(inputResolution?.run ?? ''), /expected_tag=|source_ref=.*auto/);
+  assert.doesNotMatch(String(metadata?.run ?? ''), /write_version_output|node --input-type=module|versions_json=/);
+});
 
-  const helper = source.match(/write_version_output\(\) \{[\s\S]*?\n\}\n(?=\nsha=)/)?.[0];
-  assert.ok(helper, 'metadata output helper');
-  const tempRoot = await mkdtemp(join(tmpdir(), 'happier-npm-metadata-output-'));
-  try {
-    const githubOutput = join(tempRoot, 'github-output');
-    const maliciousVersion = '1.2.3-preview.7\nsha=attacker-controlled';
-    const result = spawnSync(
-      'bash',
-      ['-c', `set -euo pipefail\n${helper}\nwrite_version_output cli_version cli "$MALICIOUS_VERSION"`],
-      {
-        cwd: new URL('../../', import.meta.url),
-        env: {
-          ...process.env,
-          GITHUB_OUTPUT: githubOutput,
-          INPUT_CHANNEL: 'preview',
-          MALICIOUS_VERSION: maliciousVersion,
-        },
-        encoding: 'utf8',
-      },
-    );
-    assert.notEqual(result.status, 0, 'malicious version must fail before output');
-    const emitted = await readFile(githubOutput, 'utf8').catch(() => '');
-    assert.equal(emitted, '', 'malicious version must not forge any GitHub output');
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
+test('public SDK releases use one lockstep pair publisher and return per-package identities to the reusable caller', async () => {
+  const workflow = await loadWorkflow();
+  const candidate = workflow.jobs?.release;
+  const reusable = workflow.on?.workflow_call;
 
-  const { validateCandidateVersions } = await import(
-    '../pipeline/release/verify-release-candidate-identity.mjs'
+  assert.equal(reusable?.inputs?.publish_plugin_sdk?.type, 'boolean');
+  assert.equal(reusable?.inputs?.publish_sdk?.type, 'boolean');
+  assert.match(String(candidate?.outputs?.plugin_sdk_version ?? ''), /steps\.meta\.outputs\.plugin_sdk_version/);
+  assert.match(String(candidate?.outputs?.sdk_version ?? ''), /steps\.meta\.outputs\.sdk_version/);
+
+  const pairArtifact = candidate?.steps?.find((step) => step.name === 'Upload npm pack artifact (plugin SDK pair)');
+  assert.equal(
+    pairArtifact?.with?.name,
+    'npm-pack-plugin-sdk-${{ steps.meta.outputs.sha }}-${{ steps.meta.outputs.plugin_sdk_version }}',
   );
-  for (const productId of ['cli', 'stack', 'server']) {
-    assert.throws(
-      () => validateCandidateVersions({
-        channel: 'preview',
-        versions: { [productId]: '1.2.3-preview.7\nsha=attacker-controlled' },
-      }),
-      /Invalid version|must match/,
-      `${productId} metadata must reject a forged output line`,
-    );
-  }
+  assert.equal(pairArtifact?.with?.path, 'dist/release-assets/plugin-sdk');
+
+  const pair = workflow.jobs?.['publish-plugin-sdk-pair'];
+  assert.ok(pair);
+  assert.equal(pair.environment, 'release-shared');
+  assert.equal(pair.permissions?.['id-token'], 'write');
+  assertTrustedControlCheckout(pair, 'publish-plugin-sdk-pair');
+  assert.match(JSON.stringify(pair), /scripts\/pipeline\/npm\/publish-plugin-sdk-pair\.mjs/);
+  assert.doesNotMatch(pair.steps.map((step) => String(step.run ?? '')).join('\n'), /\bnpm publish\b/);
+  assert.equal(
+    pair.steps.find((step) => step.uses === 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093')?.with?.path,
+    'dist/release-assets/plugin-sdk',
+  );
+  assert.equal(workflow.jobs?.['publish-plugin-ui'], undefined, 'the UI half must not become an independent publisher');
+
+  const sdk = workflow.jobs?.['publish-sdk'];
+  assert.ok(sdk);
+  assertTrustedControlCheckout(sdk, 'publish-sdk');
+  assert.match(JSON.stringify(sdk), /scripts\/pipeline\/npm\/publish-tarball\.mjs/);
+  assert.equal(
+    sdk.steps.find((step) => step.uses === 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093')?.with?.path,
+    'dist/release-assets/sdk',
+  );
+
+  assert.match(String(reusable?.outputs?.plugin_sdk_integrity?.value ?? ''), /publish-plugin-sdk-pair\.outputs\.plugin_sdk_integrity/);
+  assert.match(String(reusable?.outputs?.plugin_ui_integrity?.value ?? ''), /publish-plugin-sdk-pair\.outputs\.plugin_ui_integrity/);
+  assert.match(String(reusable?.outputs?.sdk_integrity?.value ?? ''), /publish-sdk\.outputs\.sdk_integrity/);
 });

@@ -131,6 +131,25 @@ function resolveServerRunnerDir(repoRoot) {
   return null;
 }
 
+function resolvePluginSdkPair(repoRoot) {
+  const pluginSdkDir = path.join(repoRoot, 'packages', 'plugin-sdk');
+  const pluginUiDir = path.join(repoRoot, 'packages', 'plugin-ui');
+  const pluginSdkPath = path.join(pluginSdkDir, 'package.json');
+  const pluginUiPath = path.join(pluginUiDir, 'package.json');
+  if (!fs.existsSync(pluginSdkPath) || !fs.existsSync(pluginUiPath)) {
+    fail('Missing plugin SDK lockstep package.json files.');
+  }
+  const pluginSdkVersion = String(readJson(pluginSdkPath).version ?? '').trim();
+  const pluginUiVersion = String(readJson(pluginUiPath).version ?? '').trim();
+  if (!pluginSdkVersion || !pluginUiVersion) {
+    fail('Unable to determine plugin SDK lockstep package versions.');
+  }
+  if (pluginSdkVersion !== pluginUiVersion) {
+    fail(`plugin-sdk and plugin-ui versions must match (plugin-sdk=${pluginSdkVersion}, plugin-ui=${pluginUiVersion}).`);
+  }
+  return { pluginSdkDir, pluginUiDir, version: pluginSdkVersion };
+}
+
   function main() {
   const args = parseArgs(process.argv.slice(2));
   const component = String(args.get('--component') ?? '').trim();
@@ -143,6 +162,8 @@ function resolveServerRunnerDir(repoRoot) {
       server: path.join(repoRoot, 'apps', 'server'),
       website: path.join(repoRoot, 'apps', 'website'),
       stack: path.join(repoRoot, 'apps', 'stack'),
+      plugin_sdk: path.join(repoRoot, 'packages', 'plugin-sdk'),
+      sdk: path.join(repoRoot, 'packages', 'sdk'),
     };
 
   if (!component || !(component in componentDirByName)) {
@@ -165,7 +186,7 @@ function resolveServerRunnerDir(repoRoot) {
 		    if (component === 'app') {
 		      currentVersion = getAppCurrentVersion(dir);
 		      if (!currentVersion) fail(`Unable to determine current version for ${component}`);
-			    } else if (component === 'server') {
+		    } else if (component === 'server') {
 			      const appPkgPath = path.join(dir, 'package.json');
 			      const appPkg = readJson(appPkgPath);
 			      const appVersion = String(appPkg.version ?? '').trim();
@@ -186,7 +207,9 @@ function resolveServerRunnerDir(repoRoot) {
 					        fail(`Server app and server runner versions must match (apps/server=${appVersion}, ${runnerRel}=${runnerVersion}).`);
 					      }
 					      currentVersion = appVersion;
-				    } else {
+			    } else if (component === 'plugin_sdk') {
+            currentVersion = resolvePluginSdkPair(repoRoot).version;
+          } else {
 		      const pkg = readJson(path.join(dir, 'package.json'));
 		      currentVersion = String(pkg.version ?? '').trim() || null;
 		      if (!currentVersion) fail(`Unable to determine current version for ${component}`);
@@ -198,7 +221,7 @@ function resolveServerRunnerDir(repoRoot) {
 			      updatePackageJsonVersion(dir, nextVersion);
 			      updateExpoAppConfigVersion(dir, nextVersion);
 			      updateTauriVersions(dir, nextVersion);
-				    } else if (component === 'server') {
+			    } else if (component === 'server') {
 						      updatePackageJsonVersion(path.join(repoRoot, 'apps', 'server'), nextVersion);
 						      if (!serverRunnerDir) {
 						        serverRunnerDir = resolveServerRunnerDir(repoRoot);
@@ -207,7 +230,11 @@ function resolveServerRunnerDir(repoRoot) {
 							        fail(`Missing server runner package.json (expected packages/relay-server/package.json).`);
 							      }
 						      updatePackageJsonVersion(serverRunnerDir, nextVersion);
-				    } else {
+			    } else if (component === 'plugin_sdk') {
+              const pair = resolvePluginSdkPair(repoRoot);
+              updatePackageJsonVersion(pair.pluginSdkDir, nextVersion);
+              updatePackageJsonVersion(pair.pluginUiDir, nextVersion);
+            } else {
 				      updatePackageJsonVersion(dir, nextVersion);
 				    }
 

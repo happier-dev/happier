@@ -211,6 +211,15 @@ test('public exact-SHA release admission rejects non-none bumps before branch mu
   assert.equal(workflow.jobs.bump_versions_dev, undefined);
 });
 
+test('release dispatch accepts the canonical public SDK release targets', () => {
+  const result = runReleaseInputValidation({
+    BUMP: 'none',
+    DRY_RUN: 'true',
+    DEPLOY_TARGETS: 'plugin_sdk,sdk',
+  });
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('trusted bump orchestrator never executes a candidate-local bump script', async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), 'happier-release-bump-trust-'));
   const candidateRoot = join(tempRoot, 'candidate');

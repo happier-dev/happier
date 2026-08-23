@@ -152,11 +152,15 @@ test('resolve-bump-plan computes bump + publish flags from changed components an
     publish_cli: true,
     publish_stack: true,
     publish_server: false,
+    publish_plugin_sdk: false,
+    publish_sdk: false,
     bump_app: 'patch',
     bump_cli: 'none',
     bump_stack: 'patch',
     bump_server: 'none',
     bump_website: 'none',
+    bump_plugin_sdk: 'none',
+    bump_sdk: 'none',
     should_bump: true,
   });
 });
@@ -278,11 +282,15 @@ test('resolve-bump-plan honors per-component versioned change inputs over global
     publish_cli: true,
     publish_stack: true,
     publish_server: true,
+    publish_plugin_sdk: false,
+    publish_sdk: false,
     bump_app: 'none',
     bump_cli: 'patch',
     bump_stack: 'none',
     bump_server: 'none',
     bump_website: 'none',
+    bump_plugin_sdk: 'patch',
+    bump_sdk: 'none',
     should_bump: true,
   });
 });
@@ -327,11 +335,53 @@ test('resolve-bump-plan treats cli-common host-shared changes as cli and stack r
     publish_cli: true,
     publish_stack: true,
     publish_server: true,
+    publish_plugin_sdk: false,
+    publish_sdk: false,
     bump_app: 'none',
     bump_cli: 'patch',
     bump_stack: 'patch',
     bump_server: 'none',
     bump_website: 'none',
+    bump_plugin_sdk: 'none',
+    bump_sdk: 'none',
     should_bump: true,
   });
+});
+
+test('resolve-bump-plan selects and versions both public SDK release components from their canonical changed inputs', () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'resolve-bump-plan.mjs'),
+      '--environment',
+      'preview',
+      '--bump-preset',
+      'minor',
+      '--deploy-targets',
+      'plugin_sdk,sdk',
+      '--changed-ui',
+      'false',
+      '--changed-cli',
+      'false',
+      '--changed-stack',
+      'false',
+      '--changed-server',
+      'false',
+      '--changed-website',
+      'false',
+      '--changed-shared',
+      'false',
+      '--changed-plugin-sdk',
+      'true',
+      '--changed-sdk',
+      'true',
+    ],
+    { cwd: repoRoot, env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.publish_plugin_sdk, true);
+  assert.equal(parsed.publish_sdk, true);
+  assert.equal(parsed.bump_plugin_sdk, 'minor');
+  assert.equal(parsed.bump_sdk, 'minor');
 });

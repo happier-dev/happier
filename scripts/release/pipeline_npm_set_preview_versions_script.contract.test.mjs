@@ -110,3 +110,37 @@ test('set-preview-versions catches npm preview version up to the published CLI b
   assert.equal(parsed.cli, '1.2.3-preview.125.1');
   assert.equal(readJson(dir, 'apps/cli/package.json').version, '1.2.3');
 });
+
+test('set-preview-versions allocates the plugin SDK pair at the public 0.1.0 preview baseline and writes both package versions', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'happier-preview-plugin-sdk-'));
+  writeJson(dir, 'packages/plugin-sdk/package.json', { name: '@happier-dev/plugin-sdk', version: '0.0.0' });
+  writeJson(dir, 'packages/plugin-ui/package.json', { name: '@happier-dev/plugin-ui', version: '0.0.0' });
+
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'npm', 'set-preview-versions.mjs'),
+      '--repo-root',
+      dir,
+      '--publish-plugin-sdk',
+      'true',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
+          github: {},
+          npm: { '@happier-dev/plugin-sdk': [], '@happier-dev/plugin-ui': [] },
+        }),
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  ).trim();
+
+  assert.equal(JSON.parse(out).pluginSdk, '0.1.0-preview.1');
+  assert.equal(readJson(dir, 'packages/plugin-sdk/package.json').version, '0.1.0-preview.1');
+  assert.equal(readJson(dir, 'packages/plugin-ui/package.json').version, '0.1.0-preview.1');
+});

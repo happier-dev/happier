@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
+import { releaseTargets } from './component-registry.mjs';
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -103,6 +105,8 @@ function main() {
       'bump-app-override': { type: 'string', default: 'preset' },
       'bump-cli-override': { type: 'string', default: 'preset' },
       'bump-stack-override': { type: 'string', default: 'preset' },
+      'bump-plugin-sdk-override': { type: 'string', default: 'preset' },
+      'bump-sdk-override': { type: 'string', default: 'preset' },
       'deploy-targets': { type: 'string', default: '' },
       'changed-ui': { type: 'string' },
       'changed-cli': { type: 'string' },
@@ -111,10 +115,14 @@ function main() {
       'changed-website': { type: 'string' },
       'changed-cli-stack-shared': { type: 'string' },
       'changed-shared': { type: 'string' },
+      'changed-plugin-sdk': { type: 'string', default: 'false' },
+      'changed-sdk': { type: 'string', default: 'false' },
       'versioned-app-changed': { type: 'string' },
       'versioned-cli-changed': { type: 'string' },
       'versioned-stack-changed': { type: 'string' },
       'versioned-server-changed': { type: 'string' },
+      'versioned-plugin-sdk-changed': { type: 'string' },
+      'versioned-sdk-changed': { type: 'string' },
       'github-output': { type: 'string', default: '' },
     },
     allowPositionals: false,
@@ -135,11 +143,15 @@ function main() {
   const bumpAppOverride = String(values['bump-app-override'] ?? '').trim() || 'preset';
   const bumpCliOverride = String(values['bump-cli-override'] ?? '').trim() || 'preset';
   const bumpStackOverride = String(values['bump-stack-override'] ?? '').trim() || 'preset';
+  const bumpPluginSdkOverride = String(values['bump-plugin-sdk-override'] ?? '').trim() || 'preset';
+  const bumpSdkOverride = String(values['bump-sdk-override'] ?? '').trim() || 'preset';
 
   for (const [name, v] of [
     ['--bump-app-override', bumpAppOverride],
     ['--bump-cli-override', bumpCliOverride],
     ['--bump-stack-override', bumpStackOverride],
+    ['--bump-plugin-sdk-override', bumpPluginSdkOverride],
+    ['--bump-sdk-override', bumpSdkOverride],
   ]) {
     if (!['preset', 'none', 'patch', 'minor', 'major'].includes(v)) {
       fail(`${name} must be one of: preset, none, patch, minor, major (got: ${v})`);
@@ -148,7 +160,7 @@ function main() {
 
   const deployTargets = parseCsvList(String(values['deploy-targets'] ?? ''));
   for (const t of deployTargets) {
-    if (!['ui', 'server', 'website', 'docs', 'cli', 'stack', 'server_runner'].includes(t)) {
+    if (!releaseTargets.includes(t)) {
       fail(`--deploy-targets contains unsupported entry '${t}'`);
     }
   }
@@ -160,26 +172,36 @@ function main() {
   const changedWebsite = parseBoolString(values['changed-website'], '--changed-website');
   const changedCliStackShared = parseOptionalBoolString(values['changed-cli-stack-shared'], '--changed-cli-stack-shared') ?? false;
   const changedShared = parseBoolString(values['changed-shared'], '--changed-shared');
+  const changedPluginSdkRaw = parseBoolString(values['changed-plugin-sdk'], '--changed-plugin-sdk');
+  const changedSdkRaw = parseBoolString(values['changed-sdk'], '--changed-sdk');
   const versionedAppChanged = parseOptionalBoolString(values['versioned-app-changed'], '--versioned-app-changed');
   const versionedCliChanged = parseOptionalBoolString(values['versioned-cli-changed'], '--versioned-cli-changed');
   const versionedStackChanged = parseOptionalBoolString(values['versioned-stack-changed'], '--versioned-stack-changed');
   const versionedServerChanged = parseOptionalBoolString(values['versioned-server-changed'], '--versioned-server-changed');
+  const versionedPluginSdkChanged = parseOptionalBoolString(values['versioned-plugin-sdk-changed'], '--versioned-plugin-sdk-changed');
+  const versionedSdkChanged = parseOptionalBoolString(values['versioned-sdk-changed'], '--versioned-sdk-changed');
 
   const publishCli = deployTargets.includes('cli');
   const publishStack = deployTargets.includes('stack');
   const publishServer = deployTargets.includes('server_runner');
+  const publishPluginSdk = deployTargets.includes('plugin_sdk');
+  const publishSdk = deployTargets.includes('sdk');
   const targetsServerRelease = deployTargets.includes('server') || publishServer;
 
   const changedApp = versionedAppChanged ?? (changedUi || changedShared);
   const changedCli = versionedCliChanged ?? (changedCliRaw || changedShared || changedCliStackShared);
   const changedStack = versionedStackChanged ?? (changedStackRaw || changedShared || changedCliStackShared);
   const changedServer = targetsServerRelease ? (versionedServerChanged ?? (changedServerRaw || changedShared)) : false;
+  const changedPluginSdk = versionedPluginSdkChanged ?? (changedPluginSdkRaw || changedShared);
+  const changedSdk = versionedSdkChanged ?? changedSdkRaw;
 
   const bumpApp = shouldBumpComponent(changedApp, resolveOverride(bumpAppOverride, bumpPreset));
   const bumpCli = shouldBumpComponent(changedCli, resolveOverride(bumpCliOverride, bumpPreset));
   const bumpStack = shouldBumpComponent(changedStack, resolveOverride(bumpStackOverride, bumpPreset));
   const bumpServer = shouldBumpComponent(changedServer, bumpPreset);
   const bumpWebsite = shouldBumpComponent(changedWebsite, bumpPreset);
+  const bumpPluginSdk = shouldBumpComponent(changedPluginSdk, resolveOverride(bumpPluginSdkOverride, bumpPreset));
+  const bumpSdk = shouldBumpComponent(changedSdk, resolveOverride(bumpSdkOverride, bumpPreset));
 
   // Production safety: refuse publishing without a version change.
   if (environment === 'production') {
@@ -229,19 +251,53 @@ function main() {
         );
       }
     }
+
+    if (publishPluginSdk && bumpPluginSdk === 'none') {
+      const paths = ['packages/plugin-sdk/package.json', 'packages/plugin-ui/package.json'];
+      const devVersions = paths.map(readJsonVersionFromDisk);
+      const mainVersions = paths.map((filePath) => readJsonVersionFromGit(filePath));
+      if (!devVersions.every(Boolean) || !mainVersions.every(Boolean)) {
+        fail('Unable to resolve plugin SDK pair versions for production validation.');
+      }
+      if (devVersions[0] !== devVersions[1] || mainVersions[0] !== mainVersions[1]) {
+        fail('plugin-sdk and plugin-ui versions must match for production validation.');
+      }
+      if (devVersions[0] === mainVersions[0]) {
+        fail(
+          `Refusing production deploy_targets includes plugin_sdk without a version change (dev and main both at ${devVersions[0]}). Materialize and commit CHANGELOG and version changes in the approved candidate, then rerun final exact-SHA promotion with bump=none.`,
+        );
+      }
+    }
+
+    if (publishSdk && bumpSdk === 'none') {
+      const sdkPath = 'packages/sdk/package.json';
+      if (!fs.existsSync(sdkPath)) fail(`Unable to resolve SDK package.json (expected ${sdkPath}).`);
+      const devVersion = readJsonVersionFromDisk(sdkPath);
+      const mainVersion = readJsonVersionFromGit(sdkPath);
+      if (!devVersion || !mainVersion) fail('Unable to resolve SDK versions for production validation.');
+      if (devVersion === mainVersion) {
+        fail(
+          `Refusing production deploy_targets includes sdk without a version change (dev and main both at ${devVersion}). Materialize and commit CHANGELOG and version changes in the approved candidate, then rerun final exact-SHA promotion with bump=none.`,
+        );
+      }
+    }
   }
 
-  const shouldBump = [bumpApp, bumpCli, bumpStack, bumpServer, bumpWebsite].some((v) => v !== 'none');
+  const shouldBump = [bumpApp, bumpCli, bumpStack, bumpServer, bumpWebsite, bumpPluginSdk, bumpSdk].some((v) => v !== 'none');
 
   const result = {
     publish_cli: publishCli,
     publish_stack: publishStack,
     publish_server: publishServer,
+    publish_plugin_sdk: publishPluginSdk,
+    publish_sdk: publishSdk,
     bump_app: bumpApp,
     bump_cli: bumpCli,
     bump_stack: bumpStack,
     bump_server: bumpServer,
     bump_website: bumpWebsite,
+    bump_plugin_sdk: bumpPluginSdk,
+    bump_sdk: bumpSdk,
     should_bump: shouldBump,
   };
 
@@ -249,11 +305,15 @@ function main() {
     publish_cli: publishCli ? 'true' : 'false',
     publish_stack: publishStack ? 'true' : 'false',
     publish_server: publishServer ? 'true' : 'false',
+    publish_plugin_sdk: publishPluginSdk ? 'true' : 'false',
+    publish_sdk: publishSdk ? 'true' : 'false',
     bump_app: bumpApp,
     bump_cli: bumpCli,
     bump_stack: bumpStack,
     bump_server: bumpServer,
     bump_website: bumpWebsite,
+    bump_plugin_sdk: bumpPluginSdk,
+    bump_sdk: bumpSdk,
     should_bump: shouldBump ? 'true' : 'false',
   });
 

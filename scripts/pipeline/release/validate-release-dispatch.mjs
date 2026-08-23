@@ -4,12 +4,14 @@
 import { appendFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
+import { releaseTargets } from './component-registry.mjs';
+
 const SHA = /^[0-9a-f]{40}$/u;
 const OPERATION = /^rel_[A-Za-z0-9_-]{8,80}$/u;
 const ATTEMPT = /^attempt_[1-9][0-9]*$/u;
 const RELEASE_NOTES = /^[a-z0-9][a-z0-9._-]*$/u;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z]+)*$/u;
-const TARGETS = new Set(['ui', 'server', 'website', 'docs', 'cli', 'stack', 'server_runner']);
+const TARGETS = new Set(releaseTargets);
 
 /** @param {unknown} value */
 const text = (value) => String(value ?? '').trim();

@@ -54,6 +54,14 @@ export const components = Object.freeze({
       'packages/voice-modelpacks/',
     ],
   },
+  plugin_sdk: {
+    id: 'plugin_sdk',
+    changedPrefixes: ['packages/plugin-sdk/', 'packages/plugin-ui/'],
+  },
+  sdk: {
+    id: 'sdk',
+    changedPrefixes: ['packages/sdk/'],
+  },
   website: {
     id: 'website',
     changedPrefixes: ['apps/website/', 'scripts/release/installers/'],
@@ -91,6 +99,20 @@ export const versionedComponents = Object.freeze({
     baselineTagPrefix: 'server-v',
     changedWhen: ['server', 'shared', 'cli_stack_shared'],
   },
+  plugin_sdk: {
+    id: 'plugin_sdk',
+    baselineTagPrefix: 'plugin-sdk-v',
+    // Plugin actions are protocol-backed, so a protocol change changes the
+    // package candidate even when the package source itself did not move.
+    changedWhen: ['plugin_sdk', 'shared'],
+  },
+  sdk: {
+    id: 'sdk',
+    baselineTagPrefix: 'sdk-v',
+    // The package bundles protocol and agent runtime dependencies, so source
+    // changes there alter the emitted SDK tarball even without an SDK edit.
+    changedWhen: ['sdk', 'shared'],
+  },
 });
 
 // Release dispatch targets are broader than versioned components: website,
@@ -104,6 +126,8 @@ export const releaseTargets = Object.freeze([
   'cli',
   'stack',
   'server_runner',
+  'plugin_sdk',
+  'sdk',
 ]);
 
 export function classifyChangedPaths(paths) {

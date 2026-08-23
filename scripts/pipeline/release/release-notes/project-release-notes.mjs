@@ -2,6 +2,7 @@
 // @ts-check
 
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -317,11 +318,30 @@ export function parseProjectionArgs(argv) {
 }
 
 async function readRepositoryComponentVersions(repoRoot) {
-  const ids = ['ui', 'cli', 'stack', 'server'];
-  return Object.fromEntries(await Promise.all(ids.map(async (id) => {
-    const parsed = JSON.parse(await readFile(resolve(repoRoot, 'apps', id, 'package.json'), 'utf8'));
-    return [id, normalizeRequiredValue(parsed.version, `${id} package version`)];
-  })));
+  const components = [
+    { id: 'ui', manifests: ['apps/ui/package.json'] },
+    { id: 'cli', manifests: ['apps/cli/package.json'] },
+    { id: 'stack', manifests: ['apps/stack/package.json'] },
+    { id: 'server', manifests: ['apps/server/package.json'] },
+    // The pair has a single release-note component and remains lockstep.
+    // The project release changelog remains the one canonical combined owner.
+    { id: 'plugin_sdk', manifests: ['packages/plugin-sdk/package.json', 'packages/plugin-ui/package.json'], lockstep: true },
+    // U4.1 creates this package. Keep current release preparation runnable
+    // until that source package is present, then project it automatically.
+    { id: 'sdk', manifests: ['packages/sdk/package.json'], optional: true },
+  ];
+  return Object.fromEntries(await Promise.all(components
+    .filter((component) => !component.optional || existsSync(resolve(repoRoot, component.manifests[0])))
+    .map(async (component) => {
+      const versions = await Promise.all(component.manifests.map(async (manifestPath) => {
+        const parsed = JSON.parse(await readFile(resolve(repoRoot, manifestPath), 'utf8'));
+        return normalizeRequiredValue(parsed.version, `${component.id} package version`);
+      }));
+      if (component.lockstep && new Set(versions).size !== 1) {
+        throw new Error('plugin-sdk and plugin-ui must be version-equal for release notes');
+      }
+      return [component.id, versions[0]];
+    })));
 }
 
 function githubMultiline(name, value) {

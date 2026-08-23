@@ -22,6 +22,10 @@ test('bump-versions-dev script delegates to bump-version and prints git steps in
       'none',
       '--bump-website',
       'none',
+      '--bump-plugin-sdk',
+      'minor',
+      '--bump-sdk',
+      'none',
       '--dry-run',
     ],
     { cwd: repoRoot, env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
@@ -29,6 +33,7 @@ test('bump-versions-dev script delegates to bump-version and prints git steps in
 
   assert.match(out, /scripts\/pipeline\/release\/bump-version\.mjs --component app --bump patch/);
   assert.match(out, /scripts\/pipeline\/release\/bump-version\.mjs --component stack --bump minor/);
+  assert.match(out, /scripts\/pipeline\/release\/bump-version\.mjs --component plugin_sdk --bump minor/);
   assert.match(out, /\bgit config user\.name\b/);
   assert.match(out, /\bgit add\b/);
   assert.match(out, /\bgit commit -m\b/);

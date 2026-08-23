@@ -48,6 +48,21 @@ export function projectReleaseStatus(mode, env) {
     identity: { sourceSha, verified: false },
     recoveryHint,
   });
+  const npmPackage = (id, packageName, requestedValue, resultName, versionName, integrityName, recoveryHint) => {
+    const version = env[versionName] || '';
+    const integrity = env[integrityName] || '';
+    const verified = requestedValue && exact(resultName) && version !== '' && integrity !== '';
+    return {
+      id,
+      result: requestedValue ? (verified ? 'success' : result(env, resultName)) : 'skipped',
+      identity: {
+        sourceSha,
+        verified,
+        ...(verified ? { package: packageName, version, integrity } : {}),
+      },
+      recoveryHint,
+    };
+  };
 
   if (mode === 'nightly') {
     const item = (id, required, evidence, name, verified, recoveryHint) => ({
@@ -94,7 +109,7 @@ export function projectReleaseStatus(mode, env) {
   const request = {
     cli: value(env, 'REQUEST_CLI'), stack: value(env, 'REQUEST_STACK'), server: value(env, 'REQUEST_SERVER'), uiWeb: value(env, 'REQUEST_UI_WEB'),
     deployUi: value(env, 'REQUEST_DEPLOY_UI'), deployServer: value(env, 'REQUEST_DEPLOY_SERVER'), deployWebsite: value(env, 'REQUEST_DEPLOY_WEBSITE'), deployDocs: value(env, 'REQUEST_DEPLOY_DOCS'),
-    docker: value(env, 'REQUEST_DOCKER'), npm: value(env, 'REQUEST_NPM'),
+    docker: value(env, 'REQUEST_DOCKER'), npm: value(env, 'REQUEST_NPM'), pluginSdk: value(env, 'REQUEST_PLUGIN_SDK'), sdk: value(env, 'REQUEST_SDK'),
   };
   const releaseVerified = (name) => exact(name) && exact('RELEASE_VERIFY_RESULT');
   return summarizeReleaseStatus({
@@ -108,6 +123,7 @@ export function projectReleaseStatus(mode, env) {
       requested('cli_rolling_release', request.cli, false, 'verified'), requested('hstack_rolling_release', request.stack, false, 'verified'), requested('server_rolling_release', request.server, false, 'verified'), requested('ui_web_rolling_release', request.uiWeb, false, 'verified'),
       requested('deploy_ui', request.deployUi, false, 'accepted'), requested('deploy_server', request.deployServer, false, 'accepted'), requested('deploy_website', request.deployWebsite, false, 'accepted'), requested('deploy_docs', request.deployDocs, false, 'accepted'),
       requested('docker', request.docker, false, 'accepted'), requested('npm', request.npm, false, 'accepted'), requested('post_promotion_identity', true, false, 'verified'),
+      requested('npm_plugin_sdk', request.pluginSdk, false, 'verified'), requested('npm_plugin_ui', request.pluginSdk, false, 'verified'), requested('npm_sdk', request.sdk, false, 'verified'),
     ],
     surfaces: [
       observed('candidate', 'CANDIDATE_RESULT', exact('CANDIDATE_RESULT'), { job: 'prepare_release_candidate' }),
@@ -122,6 +138,9 @@ export function projectReleaseStatus(mode, env) {
       observed('ui_web_rolling_release', 'UI_WEB_RESULT', releaseVerified('UI_WEB_RESULT'), { job: 'promote_ui_web' }),
       accepted('deploy_ui', 'DEPLOY_UI_RESULT', { job: 'deploy_ui' }), accepted('deploy_server', 'DEPLOY_SERVER_RESULT', { job: 'deploy_server' }), accepted('deploy_website', 'DEPLOY_WEBSITE_RESULT', { job: 'deploy_website' }), accepted('deploy_docs', 'DEPLOY_DOCS_RESULT', { job: 'deploy_docs' }), accepted('docker', 'DOCKER_RESULT', { job: 'publish_docker' }), accepted('npm', 'NPM_RESULT', { job: 'publish_npm' }),
       observed('post_promotion_identity', 'RELEASE_VERIFY_RESULT', exact('RELEASE_VERIFY_RESULT'), { job: 'release_verify' }),
+      npmPackage('npm_plugin_sdk', '@happier-dev/plugin-sdk', request.pluginSdk, 'NPM_PLUGIN_SDK_RESULT', 'NPM_PLUGIN_SDK_VERSION', 'NPM_PLUGIN_SDK_INTEGRITY', { job: 'publish_plugin_sdk_pair' }),
+      npmPackage('npm_plugin_ui', '@happier-dev/plugin-ui', request.pluginSdk, 'NPM_PLUGIN_UI_RESULT', 'NPM_PLUGIN_UI_VERSION', 'NPM_PLUGIN_UI_INTEGRITY', { job: 'publish_plugin_sdk_pair' }),
+      npmPackage('npm_sdk', '@happier-dev/sdk', request.sdk, 'NPM_SDK_RESULT', 'NPM_SDK_VERSION', 'NPM_SDK_INTEGRITY', { job: 'publish_sdk' }),
     ],
   });
 }

@@ -15,6 +15,8 @@ test('release risk classification selects only the heavy evidence required by ch
     mysqlContract: false,
     platformServices: false,
     trustRoots: false,
+    pluginSdkPackageChanged: false,
+    pluginRuntimeCompatibilityRisk: false,
     reasons: {},
   });
 
@@ -72,4 +74,24 @@ test('release risk classification requests semantic compatibility review without
   assert.equal(risks.sessionContinuity, true, 'session wire changes require the existing continuity evidence');
   assert.equal(risks.relayUpgrade, false, 'a compatible API route change does not imply a Docker upgrade');
   assert.ok(risks.reasons.compatibilityAnalysis.includes('apps/server/sources/app/api/routes/version/versionRoutes.ts'));
+});
+
+test('release risk classification separates public plugin package changes from host-plugin runtime compatibility', () => {
+  const packageOnly = classifyReleaseValidationRisks([
+    'packages/plugin-ui/api-declarations.md',
+    'scripts/api-governance/apiGovernance.mjs',
+  ]);
+  assert.equal(packageOnly.pluginSdkPackageChanged, true);
+  assert.equal(packageOnly.pluginRuntimeCompatibilityRisk, false);
+
+  const runtimeSeam = classifyReleaseValidationRisks([
+    'apps/cli/src/plugins/runtime/loadPluginRuntime.ts',
+    'packages/plugin-sdk/src/registration/registration.ts',
+  ]);
+  assert.equal(runtimeSeam.pluginSdkPackageChanged, true);
+  assert.equal(runtimeSeam.pluginRuntimeCompatibilityRisk, true);
+  assert.deepEqual(runtimeSeam.reasons.pluginRuntimeCompatibilityRisk, [
+    'apps/cli/src/plugins/runtime/loadPluginRuntime.ts',
+    'packages/plugin-sdk/src/registration/registration.ts',
+  ]);
 });

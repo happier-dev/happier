@@ -48,6 +48,8 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--bump-app-override <preset>      (default: preset).',
       '--bump-cli-override <preset>      (default: preset).',
       '--bump-stack-override <preset>    (default: preset).',
+      '--bump-plugin-sdk-override <preset> (default: preset; applies to the lockstep pair).',
+      '--bump-sdk-override <preset>      (default: preset).',
       '--deploy-targets <csv>            Optional.',
       '--changed-ui <bool>',
       '--changed-cli <bool>',
@@ -55,10 +57,14 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--changed-server <bool>',
       '--changed-website <bool>',
       '--changed-shared <bool>',
+      '--changed-plugin-sdk <bool>',
+      '--changed-sdk <bool>',
       '--versioned-app-changed <bool>   Optional per-component override.',
       '--versioned-cli-changed <bool>   Optional per-component override.',
       '--versioned-stack-changed <bool> Optional per-component override.',
       '--versioned-server-changed <bool> Optional per-component override.',
+      '--versioned-plugin-sdk-changed <bool> Optional per-component override.',
+      '--versioned-sdk-changed <bool>   Optional per-component override.',
     ],
     bullets: ['Most operators should use `release`, not this subcommand.'],
     examples: [
@@ -76,6 +82,8 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--bump-website <none|patch|minor|major> (default: none).',
       '--bump-cli <none|patch|minor|major> (default: none).',
       '--bump-stack <none|patch|minor|major> (default: none).',
+      '--bump-plugin-sdk <none|patch|minor|major> (default: none; lockstep plugin-sdk/plugin-ui).',
+      '--bump-sdk <none|patch|minor|major> (default: none).',
       '--push-branch <branch>            (default: dev).',
       '--commit-message <text>           Optional.',
       '--dry-run',
@@ -107,7 +115,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-bump-version': {
     summary: 'Bump a single component version in-place (advanced helper).',
     usage:
-      'node scripts/pipeline/run.mjs release-bump-version --component <app|cli|server|website|stack> --bump <none|patch|minor|major>',
+      'node scripts/pipeline/run.mjs release-bump-version --component <app|cli|server|website|stack|plugin_sdk|sdk> --bump <none|patch|minor|major>',
     options: [
       '--deploy-environment <env>        Wrapper flag (default: production).',
       '--secrets-source <auto|env|keychain>  Wrapper flag.',

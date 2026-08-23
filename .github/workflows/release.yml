@@ -360,15 +360,21 @@ jobs:
       changed_cli_stack_shared: ${{ steps.plan.outputs.changed_cli_stack_shared }}
       changed_shared: ${{ steps.plan.outputs.changed_shared }}
       changed_stack: ${{ steps.plan.outputs.changed_stack }}
+      changed_plugin_sdk: ${{ steps.plan.outputs.changed_plugin_sdk }}
+      changed_sdk: ${{ steps.plan.outputs.changed_sdk }}
       bump_app: ${{ steps.bump_plan.outputs.bump_app }}
       bump_cli: ${{ steps.bump_plan.outputs.bump_cli }}
       bump_stack: ${{ steps.bump_plan.outputs.bump_stack }}
       bump_server: ${{ steps.bump_plan.outputs.bump_server }}
       bump_website: ${{ steps.bump_plan.outputs.bump_website }}
+      bump_plugin_sdk: ${{ steps.bump_plan.outputs.bump_plugin_sdk }}
+      bump_sdk: ${{ steps.bump_plan.outputs.bump_sdk }}
       should_bump: ${{ steps.bump_plan.outputs.should_bump }}
       publish_cli: ${{ steps.bump_plan.outputs.publish_cli }}
       publish_stack: ${{ needs.resolve_resume.outputs.stack_requested == 'true' || steps.bump_plan.outputs.publish_stack == 'true' }}
       publish_server: ${{ steps.bump_plan.outputs.publish_server }}
+      publish_plugin_sdk: ${{ steps.bump_plan.outputs.publish_plugin_sdk }}
+      publish_sdk: ${{ steps.bump_plan.outputs.publish_sdk }}
       source_sha: ${{ steps.planning_source.outputs.source_sha }}
       publish_server_runtime_needed: ${{ needs.resolve_resume.outputs.server_requested == 'true' || inputs.force_deploy == true || steps.bump_plan.outputs.publish_server == 'true' || steps.plan.outputs.changed_ui == 'true' || steps.plan.outputs.changed_server == 'true' || steps.plan.outputs.changed_shared == 'true' }}
       publish_cli_binaries_needed: ${{ needs.resolve_resume.outputs.cli_requested == 'true' || inputs.candidate_run_id != '' || inputs.force_deploy == true || steps.bump_plan.outputs.publish_cli == 'true' || steps.plan.outputs.changed_cli == 'true' || steps.plan.outputs.changed_cli_stack_shared == 'true' || steps.plan.outputs.changed_shared == 'true' }}
@@ -381,6 +387,8 @@ jobs:
       risk_mysql_contract: ${{ steps.plan.outputs.risk_mysql_contract }}
       risk_platform_services: ${{ steps.plan.outputs.risk_platform_services }}
       risk_trust_roots: ${{ steps.plan.outputs.risk_trust_roots }}
+      risk_plugin_sdk_package_changed: ${{ steps.plan.outputs.risk_plugin_sdk_package_changed }}
+      risk_plugin_runtime_compatibility: ${{ steps.plan.outputs.risk_plugin_runtime_compatibility }}
     steps:
       - name: Checkout authorized release planning source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -485,6 +493,8 @@ jobs:
           CHANGED_SERVER: ${{ steps.plan.outputs.changed_server }}
           CHANGED_SHARED: ${{ steps.plan.outputs.changed_shared }}
           CHANGED_STACK: ${{ steps.plan.outputs.changed_stack }}
+          CHANGED_PLUGIN_SDK: ${{ steps.plan.outputs.changed_plugin_sdk }}
+          CHANGED_SDK: ${{ steps.plan.outputs.changed_sdk }}
           CHANGED_UI: ${{ steps.plan.outputs.changed_ui }}
           CHANGED_WEBSITE: ${{ steps.plan.outputs.changed_website }}
           CHECKS_PROFILE: ${{ needs.resolve_validation_profile.outputs.checks_profile }}
@@ -505,6 +515,8 @@ jobs:
           VERSIONED_CLI_CHANGED: ${{ steps.versioned_plan.outputs.changed_cli }}
           VERSIONED_SERVER_CHANGED: ${{ steps.versioned_plan.outputs.changed_server }}
           VERSIONED_STACK_CHANGED: ${{ steps.versioned_plan.outputs.changed_stack }}
+          VERSIONED_PLUGIN_SDK_CHANGED: ${{ steps.versioned_plan.outputs.changed_plugin_sdk }}
+          VERSIONED_SDK_CHANGED: ${{ steps.versioned_plan.outputs.changed_sdk }}
           SERVER_BASELINE_TAG: ${{ steps.versioned_plan.outputs.server_baseline_tag || 'none' }}
         run: |
           set -euo pipefail
@@ -534,12 +546,16 @@ jobs:
             echo "- docs: \`$CHANGED_DOCS\`"
             echo "- cli/stack shared (cli-common): \`$CHANGED_CLI_STACK_SHARED\`"
             echo "- shared (agents/protocol): \`$CHANGED_SHARED\`"
+            echo "- plugin SDK pair: \`$CHANGED_PLUGIN_SDK\`"
+            echo "- SDK: \`$CHANGED_SDK\`"
             echo ""
             echo "### Versioned components since latest release tags"
             echo "- app: \`$VERSIONED_APP_CHANGED\` (baseline=\`$APP_BASELINE_TAG\`)"
             echo "- cli: \`$VERSIONED_CLI_CHANGED\` (baseline=\`$CLI_BASELINE_TAG\`)"
             echo "- stack: \`$VERSIONED_STACK_CHANGED\` (baseline=\`$STACK_BASELINE_TAG\`)"
             echo "- server: \`$VERSIONED_SERVER_CHANGED\` (baseline=\`$SERVER_BASELINE_TAG\`)"
+            echo "- plugin SDK pair: \`$VERSIONED_PLUGIN_SDK_CHANGED\`"
+            echo "- SDK: \`$VERSIONED_SDK_CHANGED\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve publish + bump plan
@@ -550,6 +566,8 @@ jobs:
           BUMP_APP_OVERRIDE: preset
           BUMP_CLI_OVERRIDE: preset
           BUMP_STACK_OVERRIDE: preset
+          BUMP_PLUGIN_SDK_OVERRIDE: preset
+          BUMP_SDK_OVERRIDE: preset
           DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
           CHANGED_UI: ${{ steps.plan.outputs.changed_ui }}
           CHANGED_CLI: ${{ steps.plan.outputs.changed_cli }}
@@ -558,10 +576,14 @@ jobs:
           CHANGED_STACK: ${{ steps.plan.outputs.changed_stack }}
           CHANGED_CLI_STACK_SHARED: ${{ steps.plan.outputs.changed_cli_stack_shared }}
           CHANGED_SHARED: ${{ steps.plan.outputs.changed_shared }}
+          CHANGED_PLUGIN_SDK: ${{ steps.plan.outputs.changed_plugin_sdk }}
+          CHANGED_SDK: ${{ steps.plan.outputs.changed_sdk }}
           VERSIONED_APP_CHANGED: ${{ steps.versioned_plan.outputs.changed_app }}
           VERSIONED_CLI_CHANGED: ${{ steps.versioned_plan.outputs.changed_cli }}
           VERSIONED_STACK_CHANGED: ${{ steps.versioned_plan.outputs.changed_stack }}
           VERSIONED_SERVER_CHANGED: ${{ steps.versioned_plan.outputs.changed_server }}
+          VERSIONED_PLUGIN_SDK_CHANGED: ${{ steps.versioned_plan.outputs.changed_plugin_sdk }}
+          VERSIONED_SDK_CHANGED: ${{ steps.versioned_plan.outputs.changed_sdk }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs release-resolve-bump-plan \
@@ -570,6 +592,8 @@ jobs:
             --bump-app-override "${BUMP_APP_OVERRIDE}" \
             --bump-cli-override "${BUMP_CLI_OVERRIDE}" \
             --bump-stack-override "${BUMP_STACK_OVERRIDE}" \
+            --bump-plugin-sdk-override "${BUMP_PLUGIN_SDK_OVERRIDE}" \
+            --bump-sdk-override "${BUMP_SDK_OVERRIDE}" \
             --deploy-targets "${DEPLOY_TARGETS}" \
             --changed-ui "${CHANGED_UI}" \
             --changed-cli "${CHANGED_CLI}" \
@@ -578,10 +602,14 @@ jobs:
             --changed-website "${CHANGED_WEBSITE}" \
             --changed-cli-stack-shared "${CHANGED_CLI_STACK_SHARED}" \
             --changed-shared "${CHANGED_SHARED}" \
+            --changed-plugin-sdk "${CHANGED_PLUGIN_SDK}" \
+            --changed-sdk "${CHANGED_SDK}" \
             --versioned-app-changed "${VERSIONED_APP_CHANGED}" \
             --versioned-cli-changed "${VERSIONED_CLI_CHANGED}" \
             --versioned-stack-changed "${VERSIONED_STACK_CHANGED}" \
             --versioned-server-changed "${VERSIONED_SERVER_CHANGED}" \
+            --versioned-plugin-sdk-changed "${VERSIONED_PLUGIN_SDK_CHANGED}" \
+            --versioned-sdk-changed "${VERSIONED_SDK_CHANGED}" \
             --github-output "$GITHUB_OUTPUT"
 
   mysql_db_contract:
@@ -1163,7 +1191,7 @@ jobs:
       run_build: true
 
   publish_npm:
-    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true')
+    if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_plugin_sdk == 'true' || needs.plan.outputs.publish_sdk == 'true')
     needs: [plan, release_admission, prepare_release_candidate, verify_release_candidates]
     permissions:
       contents: write
@@ -1174,6 +1202,8 @@ jobs:
       publish_cli: ${{ needs.plan.outputs.publish_cli == 'true' }}
       publish_stack: ${{ needs.plan.outputs.publish_stack == 'true' }}
       publish_server: ${{ needs.plan.outputs.publish_server == 'true' }}
+      publish_plugin_sdk: ${{ needs.plan.outputs.publish_plugin_sdk == 'true' }}
+      publish_sdk: ${{ needs.plan.outputs.publish_sdk == 'true' }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -1325,7 +1355,9 @@ jobs:
           REQUEST_DEPLOY_WEBSITE: ${{ contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) }}
           REQUEST_DEPLOY_DOCS: ${{ contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) }}
           REQUEST_DOCKER: ${{ inputs.force_deploy == true || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true' }}
-          REQUEST_NPM: ${{ needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true' }}
+          REQUEST_NPM: ${{ needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true' || needs.plan.outputs.publish_plugin_sdk == 'true' || needs.plan.outputs.publish_sdk == 'true' }}
+          REQUEST_PLUGIN_SDK: ${{ needs.plan.outputs.publish_plugin_sdk == 'true' }}
+          REQUEST_SDK: ${{ needs.plan.outputs.publish_sdk == 'true' }}
           CANDIDATE_RESULT: ${{ needs.prepare_release_candidate.result }}
           IMMUTABLE_VERIFICATION_RESULT: ${{ needs.verify_release_candidates.result }}
           CLI_RESULT: ${{ needs.promote_cli_binaries.result }}
@@ -1338,6 +1370,15 @@ jobs:
           DEPLOY_DOCS_RESULT: ${{ needs.deploy_docs.result }}
           DOCKER_RESULT: ${{ needs.publish_docker.result }}
           NPM_RESULT: ${{ needs.publish_npm.result }}
+          NPM_PLUGIN_SDK_RESULT: ${{ needs.publish_npm.outputs.plugin_sdk_result }}
+          NPM_PLUGIN_SDK_VERSION: ${{ needs.publish_npm.outputs.plugin_sdk_version }}
+          NPM_PLUGIN_SDK_INTEGRITY: ${{ needs.publish_npm.outputs.plugin_sdk_integrity }}
+          NPM_PLUGIN_UI_RESULT: ${{ needs.publish_npm.outputs.plugin_ui_result }}
+          NPM_PLUGIN_UI_VERSION: ${{ needs.publish_npm.outputs.plugin_ui_version }}
+          NPM_PLUGIN_UI_INTEGRITY: ${{ needs.publish_npm.outputs.plugin_ui_integrity }}
+          NPM_SDK_RESULT: ${{ needs.publish_npm.outputs.sdk_result }}
+          NPM_SDK_VERSION: ${{ needs.publish_npm.outputs.sdk_version }}
+          NPM_SDK_INTEGRITY: ${{ needs.publish_npm.outputs.sdk_integrity }}
           RELEASE_VERIFY_RESULT: ${{ needs.release_verify.result }}
         run: |
           set -euo pipefail

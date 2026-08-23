@@ -99,10 +99,11 @@ process.exit(2);
   return binDir;
 }
 
-function runNpmPublication(tmpDir, mode, initialState) {
+function runNpmPublication(tmpDir, mode, initialState, { githubOutput = false } = {}) {
   const { tarballPath, integrity } = createTarball(tmpDir);
   const statePath = path.join(tmpDir, 'state.json');
   const callsPath = path.join(tmpDir, 'npm-calls.jsonl');
+  const githubOutputPath = path.join(tmpDir, 'github-output');
   fs.writeFileSync(statePath, JSON.stringify(initialState), 'utf8');
   const binDir = writeNpmStub(tmpDir);
   const env = {
@@ -126,6 +127,7 @@ function runNpmPublication(tmpDir, mode, initialState) {
         tarballPath,
         '--npm-version',
         '',
+        ...(githubOutput ? ['--github-output', githubOutputPath] : []),
       ],
       { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
     );
@@ -135,12 +137,14 @@ function runNpmPublication(tmpDir, mode, initialState) {
   return {
     error,
     state: JSON.parse(fs.readFileSync(statePath, 'utf8')),
-    calls: fs
-      .readFileSync(callsPath, 'utf8')
+    calls: (fs.existsSync(callsPath) ? fs.readFileSync(callsPath, 'utf8') : '')
       .trim()
       .split('\n')
       .filter(Boolean)
       .map((line) => JSON.parse(line)),
+    githubOutput: githubOutput && fs.existsSync(githubOutputPath)
+      ? fs.readFileSync(githubOutputPath, 'utf8')
+      : '',
   };
 }
 
@@ -266,4 +270,17 @@ test('pipeline npm publish recovers an ambiguous publish by re-querying exact in
   assert.equal(result.state.integrityQueries, 2, 'ambiguous publish must trigger an integrity re-query');
   assert.equal(result.state.distTagAdds, 1, 'recovered publication must repair its dist-tag');
   assert.ok(result.calls.some((args) => args[0] === 'publish'));
+});
+
+test('pipeline npm publish emits the verified immutable package identity only after publish and tag verification', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-output-'));
+  const result = runNpmPublication(tmpDir, 'exact', {
+    remoteIntegrity: undefined,
+    distTags: { next: '1.2.3' },
+    integrityQueries: 0,
+  }, { githubOutput: true });
+  assert.equal(result.error, undefined);
+  assert.match(result.githubOutput, /^package=@happier\/npm-contract-fixture$/m);
+  assert.match(result.githubOutput, /^version=1\.2\.3$/m);
+  assert.match(result.githubOutput, /^integrity=sha512-/m);
 });

@@ -1,4 +1,4 @@
-name: RELEASE — npm publish (cli/stack/server)
+name: RELEASE — npm publish (cli/stack/server/plugin-sdk/sdk)
 
 on:
   workflow_dispatch:
@@ -48,12 +48,50 @@ on:
         required: true
         default: false
         type: boolean
+      publish_plugin_sdk:
+        description: "Publish (Plugin SDK) — Publish the lockstep plugin-sdk/plugin-ui pair to npm"
+        required: true
+        default: false
+        type: boolean
+      publish_sdk:
+        description: "Publish (SDK) — Publish @happier-dev/sdk to npm"
+        required: true
+        default: false
+        type: boolean
       release_message:
         description: "Release message — Optional note to include at the top of GitHub rolling release notes"
         required: false
         default: ""
         type: string
   workflow_call:
+    outputs:
+      plugin_sdk_result:
+        description: "Verified publish result for @happier-dev/plugin-sdk"
+        value: ${{ jobs.publish-plugin-sdk-pair.outputs.plugin_sdk_result }}
+      plugin_sdk_version:
+        description: "Published @happier-dev/plugin-sdk version"
+        value: ${{ jobs.publish-plugin-sdk-pair.outputs.plugin_sdk_version }}
+      plugin_sdk_integrity:
+        description: "Published @happier-dev/plugin-sdk integrity"
+        value: ${{ jobs.publish-plugin-sdk-pair.outputs.plugin_sdk_integrity }}
+      plugin_ui_result:
+        description: "Verified publish result for @happier-dev/plugin-ui"
+        value: ${{ jobs.publish-plugin-sdk-pair.outputs.plugin_ui_result }}
+      plugin_ui_version:
+        description: "Published @happier-dev/plugin-ui version"
+        value: ${{ jobs.publish-plugin-sdk-pair.outputs.plugin_ui_version }}
+      plugin_ui_integrity:
+        description: "Published @happier-dev/plugin-ui integrity"
+        value: ${{ jobs.publish-plugin-sdk-pair.outputs.plugin_ui_integrity }}
+      sdk_result:
+        description: "Verified publish result for @happier-dev/sdk"
+        value: ${{ jobs.publish-sdk.outputs.sdk_result }}
+      sdk_version:
+        description: "Published @happier-dev/sdk version"
+        value: ${{ jobs.publish-sdk.outputs.sdk_version }}
+      sdk_integrity:
+        description: "Published @happier-dev/sdk integrity"
+        value: ${{ jobs.publish-sdk.outputs.sdk_integrity }}
     inputs:
       channel:
         description: "Target — Release channel"
@@ -90,6 +128,16 @@ on:
         type: boolean
       publish_server:
         description: "Publish (Server) — Publish server runner (@happier-dev/relay-server) to npm"
+        required: false
+        default: false
+        type: boolean
+      publish_plugin_sdk:
+        description: "Publish (Plugin SDK) — Publish the lockstep plugin-sdk/plugin-ui pair to npm"
+        required: false
+        default: false
+        type: boolean
+      publish_sdk:
+        description: "Publish (SDK) — Publish @happier-dev/sdk to npm"
         required: false
         default: false
         type: boolean
@@ -166,75 +214,41 @@ jobs:
       cli_version: ${{ steps.meta.outputs.cli_version }}
       stack_version: ${{ steps.meta.outputs.stack_version }}
       server_version: ${{ steps.meta.outputs.server_version }}
+      plugin_sdk_version: ${{ steps.meta.outputs.plugin_sdk_version }}
+      sdk_version: ${{ steps.meta.outputs.sdk_version }}
     steps:
-      - name: Validate inputs
+      - name: Resolve release inputs
+        id: release_inputs
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_NPM_TAG: ${{ inputs.npm_tag }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
+          INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if [ "${INPUT_PUBLISH_CLI}" != "true" ] && [ "${INPUT_PUBLISH_STACK}" != "true" ] && [ "${INPUT_PUBLISH_SERVER}" != "true" ]; then
-            echo "At least one of publish_cli, publish_stack, or publish_server must be true." >&2
-            exit 1
-          fi
-          expected_tag="latest"
-          if [ "${INPUT_CHANNEL}" = "preview" ]; then
-            expected_tag="next"
-          fi
-          if [ "${INPUT_NPM_TAG}" != "${expected_tag}" ]; then
-            echo "npm_tag must be '${expected_tag}' for channel='${INPUT_CHANNEL}' (got '${INPUT_NPM_TAG}')." >&2
-            exit 1
-          fi
-
-      - name: Resolve source ref
-        id: resolve_source
-        env:
-          INPUT_CHANNEL: ${{ inputs.channel }}
-          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
-        run: |
-          set -euo pipefail
-          channel="${INPUT_CHANNEL}"
-          src="${INPUT_SOURCE_REF}"
-          if [ "$src" = "auto" ]; then
-            if [ "$channel" = "preview" ]; then
-              src="preview"
-            else
-              src="main"
-            fi
-          fi
-
-          if [ "$channel" = "preview" ] && [ "$src" != "preview" ]; then
-            echo "Preview releases must run from preview (got source_ref='${src}')." >&2
-            exit 1
-          fi
-          if [ "$channel" = "production" ] && [ "$src" != "main" ]; then
-            echo "Production releases must run from main (got source_ref='${src}')." >&2
-            exit 1
-          fi
-
-          echo "ref=$src" >> "$GITHUB_OUTPUT"
-
-      - name: Enforce trusted refs for manual dispatch
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
-            exit 0
-          fi
-          case "${GITHUB_REF_NAME}" in
-            dev|preview|main) ;;
-            *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
-              exit 1
-              ;;
-          esac
+          node scripts/pipeline/release/resolve-npm-release-inputs.mjs \
+            --channel "$INPUT_CHANNEL" \
+            --npm-tag "$INPUT_NPM_TAG" \
+            --source-ref "$INPUT_SOURCE_REF" \
+            --publish-cli "$INPUT_PUBLISH_CLI" \
+            --publish-stack "$INPUT_PUBLISH_STACK" \
+            --publish-server "$INPUT_PUBLISH_SERVER" \
+            --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
+            --publish-sdk "$INPUT_PUBLISH_SDK" \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --ref-name "$GITHUB_REF_NAME" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Checkout source ref
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || steps.resolve_source.outputs.ref }}
+          ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || steps.release_inputs.outputs.source_ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -342,94 +356,60 @@ jobs:
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: yarn --cwd "${SERVER_RUNNER_DIR}" test
 
-      - name: Release metadata
+      - name: Prepare public plugin package declarations
+        if: inputs.publish_plugin_sdk
+        run: yarn --cwd packages/plugin-sdk -s prepare:declarations
+
+      - name: Run public plugin package tests
+        if: inputs.publish_plugin_sdk && inputs.run_tests
+        run: |
+          yarn --cwd packages/plugin-sdk test
+          yarn --cwd packages/plugin-ui test
+
+      - name: Run public SDK package tests
+        if: inputs.publish_sdk && inputs.run_tests
+        run: yarn --cwd packages/sdk test
+
+      - name: Resolve release metadata
         id: meta
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_NPM_TAG: ${{ steps.release_inputs.outputs.npm_tag }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
-          RESOLVED_SOURCE_REF: ${{ steps.resolve_source.outputs.ref }}
+          INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
+          INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
+          RESOLVED_SOURCE_REF: ${{ steps.release_inputs.outputs.source_ref }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
-          write_version_output() {
-            local output_name="$1"
-            local product_id="$2"
-            local raw_version="$3"
-            RELEASE_CHANNEL="${INPUT_CHANNEL}" PRODUCT_ID="${product_id}" RAW_VERSION="${raw_version}" \
-              node --input-type=module <<'NODE'
-          const productId = process.env.PRODUCT_ID;
-          const rawVersion = process.env.RAW_VERSION ?? '';
-          const canonicalVersionPatterns = {
-            production: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/,
-            preview: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-preview\.(?:[1-9]\d*)(?:\.(?:[1-9]\d*))?$/,
-          };
-          const versionPattern = canonicalVersionPatterns[process.env.RELEASE_CHANNEL ?? ''];
-          if (rawVersion.includes('\n') || rawVersion.includes('\r') || !versionPattern?.test(rawVersion)) {
-            throw new Error(`npm release metadata rejected non-canonical ${productId} version`);
-          }
-          NODE
-            printf '%s=%s\n' "$output_name" "$raw_version" >> "$GITHUB_OUTPUT"
-          }
-
-          sha="$(git rev-parse HEAD)"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "source_ref=${RESOLVED_SOURCE_REF}" >> "$GITHUB_OUTPUT"
-          echo "channel=${INPUT_CHANNEL}" >> "$GITHUB_OUTPUT"
-          if [ "${INPUT_CHANNEL}" = "preview" ]; then
-            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
-          else
-            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
-          fi
-
-          versions_json="{}"
-          if [ "${INPUT_CHANNEL}" = "preview" ]; then
-            versions_json="$(node scripts/pipeline/run.mjs npm-set-preview-versions \
-              --publish-cli "${INPUT_PUBLISH_CLI}" \
-              --publish-stack "${INPUT_PUBLISH_STACK}" \
-              --publish-server "${INPUT_PUBLISH_SERVER}" \
-              --server-runner-dir "${SERVER_RUNNER_DIR}" \
-              --write false)"
-          fi
-
-          if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
-            if [ "${INPUT_CHANNEL}" = "preview" ]; then
-              cli_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.cli||\"\"));' "${versions_json}")"
-            else
-              cli_version="$(node -e 'process.stdout.write(String(require("./apps/cli/package.json").version ?? ""));')"
-            fi
-            write_version_output cli_version cli "$cli_version"
-          fi
-
-          if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
-            if [ "${INPUT_CHANNEL}" = "preview" ]; then
-              stack_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.stack||\"\"));' "${versions_json}")"
-            else
-              stack_version="$(node -e 'process.stdout.write(String(require("./apps/stack/package.json").version ?? ""));')"
-            fi
-            write_version_output stack_version stack "$stack_version"
-          fi
-
-          if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
-            if [ "${INPUT_CHANNEL}" = "preview" ]; then
-              server_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.server||\"\"));' "${versions_json}")"
-            else
-              server_version="$(node -e 'process.stdout.write(String(require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version ?? ""));')"
-            fi
-            write_version_output server_version server "$server_version"
-          fi
+          node scripts/pipeline/npm/resolve-release-metadata.mjs \
+            --channel "$INPUT_CHANNEL" \
+            --npm-tag "$INPUT_NPM_TAG" \
+            --source-ref "$RESOLVED_SOURCE_REF" \
+            --publish-cli "$INPUT_PUBLISH_CLI" \
+            --publish-stack "$INPUT_PUBLISH_STACK" \
+            --publish-server "$INPUT_PUBLISH_SERVER" \
+            --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
+            --publish-sdk "$INPUT_PUBLISH_SDK" \
+            --server-runner-dir "$SERVER_RUNNER_DIR" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: npm pack (pipeline)
-        if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server
+        if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server || inputs.publish_plugin_sdk || inputs.publish_sdk
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           PUBLISH_CLI: ${{ inputs.publish_cli }}
           PUBLISH_STACK: ${{ inputs.publish_stack }}
           PUBLISH_SERVER: ${{ inputs.publish_server }}
+          PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
+          PUBLISH_SDK: ${{ inputs.publish_sdk }}
           CLI_VERSION: ${{ steps.meta.outputs.cli_version }}
           STACK_VERSION: ${{ steps.meta.outputs.stack_version }}
           SERVER_VERSION: ${{ steps.meta.outputs.server_version }}
+          PLUGIN_SDK_VERSION: ${{ steps.meta.outputs.plugin_sdk_version }}
+          SDK_VERSION: ${{ steps.meta.outputs.sdk_version }}
           RUN_TESTS: ${{ inputs.run_tests }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
@@ -439,10 +419,14 @@ jobs:
             --publish-cli "${PUBLISH_CLI}" \
             --publish-stack "${PUBLISH_STACK}" \
             --publish-server "${PUBLISH_SERVER}" \
+            --publish-plugin-sdk "${PUBLISH_PLUGIN_SDK}" \
+            --publish-sdk "${PUBLISH_SDK}" \
             --server-runner-dir "${SERVER_RUNNER_DIR}" \
             --cli-version "${CLI_VERSION}" \
             --stack-version "${STACK_VERSION}" \
             --server-version "${SERVER_VERSION}" \
+            --plugin-sdk-version "${PLUGIN_SDK_VERSION}" \
+            --sdk-version "${SDK_VERSION}" \
             --run-tests "${RUN_TESTS}" \
             --mode pack
 
@@ -470,6 +454,22 @@ jobs:
           path: dist/release-assets/server
           if-no-files-found: error
 
+      - name: Upload npm pack artifact (plugin SDK pair)
+        if: inputs.publish_plugin_sdk
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: npm-pack-plugin-sdk-${{ steps.meta.outputs.sha }}-${{ steps.meta.outputs.plugin_sdk_version }}
+          path: dist/release-assets/plugin-sdk
+          if-no-files-found: error
+
+      - name: Upload npm pack artifact (SDK)
+        if: inputs.publish_sdk
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: npm-pack-sdk-${{ steps.meta.outputs.sha }}-${{ steps.meta.outputs.sdk_version }}
+          path: dist/release-assets/sdk
+          if-no-files-found: error
+
       - name: Step summary
         if: always()
         env:
@@ -477,20 +477,28 @@ jobs:
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
+          INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
           NPM_TAG: ${{ steps.meta.outputs.npm_tag }}
           CLI_VERSION: ${{ steps.meta.outputs.cli_version }}
           STACK_VERSION: ${{ steps.meta.outputs.stack_version }}
           SERVER_VERSION: ${{ steps.meta.outputs.server_version }}
+          PLUGIN_SDK_VERSION: ${{ steps.meta.outputs.plugin_sdk_version }}
+          SDK_VERSION: ${{ steps.meta.outputs.sdk_version }}
           SOURCE_REF: ${{ steps.meta.outputs.source_ref }}
         run: |
           npm_tag="${NPM_TAG}"
           cli_version="${CLI_VERSION}"
           stack_version="${STACK_VERSION}"
           server_version="${SERVER_VERSION}"
+          plugin_sdk_version="${PLUGIN_SDK_VERSION}"
+          sdk_version="${SDK_VERSION}"
           [ -n "${npm_tag}" ] || npm_tag="(unavailable)"
           [ -n "${cli_version}" ] || cli_version="(unavailable)"
           [ -n "${stack_version}" ] || stack_version="(unavailable)"
           [ -n "${server_version}" ] || server_version="(unavailable)"
+          [ -n "${plugin_sdk_version}" ] || plugin_sdk_version="(unavailable)"
+          [ -n "${sdk_version}" ] || sdk_version="(unavailable)"
 
           {
             echo "### npm publish"
@@ -506,6 +514,12 @@ jobs:
             fi
             if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
               echo "- server runner: \`${server_version}\`"
+            fi
+            if [ "${INPUT_PUBLISH_PLUGIN_SDK}" = "true" ]; then
+              echo "- plugin SDK pair: \`${plugin_sdk_version}\`"
+            fi
+            if [ "${INPUT_PUBLISH_SDK}" = "true" ]; then
+              echo "- SDK: \`${sdk_version}\`"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -658,3 +672,98 @@ jobs:
           node scripts/pipeline/npm/publish-tarball.mjs \
             --channel "${RELEASE_CHANNEL}" \
             --tarball-dir "dist/release-assets/server"
+
+  publish-plugin-sdk-pair:
+    name: npm publish (plugin SDK pair)
+    if: ${{ inputs.publish_plugin_sdk == true && needs.release.result == 'success' }}
+    needs: [release_actor_guard, release]
+    runs-on: ubuntu-22.04
+    environment: release-shared
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      plugin_sdk_result: ${{ steps.publish.outcome == 'success' && 'success' || 'failed' }}
+      plugin_sdk_version: ${{ steps.publish.outputs.plugin_sdk_version }}
+      plugin_sdk_integrity: ${{ steps.publish.outputs.plugin_sdk_integrity }}
+      plugin_ui_result: ${{ steps.publish.outcome == 'success' && 'success' || 'failed' }}
+      plugin_ui_version: ${{ steps.publish.outputs.plugin_ui_version }}
+      plugin_ui_integrity: ${{ steps.publish.outputs.plugin_ui_integrity }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download npm pack artifact (plugin SDK pair)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: npm-pack-plugin-sdk-${{ needs.release.outputs.sha }}-${{ needs.release.outputs.plugin_sdk_version }}
+          path: dist/release-assets/plugin-sdk
+
+      - name: Setup Node (npm publish)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+
+      - name: npm publish (plugin SDK lockstep pair) (pipeline)
+        id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/npm/publish-plugin-sdk-pair.mjs \
+            --channel "${RELEASE_CHANNEL}" \
+            --tarball-dir "dist/release-assets/plugin-sdk" \
+            --github-output "$GITHUB_OUTPUT"
+
+  publish-sdk:
+    name: npm publish (SDK)
+    if: ${{ inputs.publish_sdk == true && needs.release.result == 'success' }}
+    needs: [release_actor_guard, release]
+    runs-on: ubuntu-22.04
+    environment: release-shared
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      sdk_result: ${{ steps.publish.outcome == 'success' && 'success' || 'failed' }}
+      sdk_version: ${{ steps.publish.outputs.version }}
+      sdk_integrity: ${{ steps.publish.outputs.integrity }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download npm pack artifact (SDK)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: npm-pack-sdk-${{ needs.release.outputs.sha }}-${{ needs.release.outputs.sdk_version }}
+          path: dist/release-assets/sdk
+
+      - name: Setup Node (npm publish)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+
+      - name: npm publish (SDK tarball) (pipeline)
+        id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/npm/publish-tarball.mjs \
+            --channel "${RELEASE_CHANNEL}" \
+            --tarball-dir "dist/release-assets/sdk" \
+            --github-output "$GITHUB_OUTPUT"

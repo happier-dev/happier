@@ -52,6 +52,42 @@ test('pipeline CLI supports help for npm-release', async () => {
   assert.match(out, /\bnpm-release\b/);
   assert.match(out, /--channel/);
   assert.match(out, /--publish-cli/);
+  assert.match(out, /--publish-plugin-sdk/);
+  assert.match(out, /--publish-sdk/);
+  assert.match(out, /lockstep/i);
+});
+
+test('pipeline CLI help exposes public SDK release planning and version controls', async () => {
+  const bumpPlan = execFileSync(process.execPath, [pipelineCli, 'help', 'release-bump-plan'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(bumpPlan, /--bump-plugin-sdk-override/);
+  assert.match(bumpPlan, /--changed-plugin-sdk/);
+  assert.match(bumpPlan, /--versioned-sdk-changed/);
+
+  const bumpVersion = execFileSync(process.execPath, [pipelineCli, 'help', 'release-bump-version'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(bumpVersion, /plugin_sdk/);
+  assert.match(bumpVersion, /sdk/);
+
+  const preview = execFileSync(process.execPath, [pipelineCli, 'help', 'npm-set-preview-versions'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(preview, /--publish-plugin-sdk/);
+  assert.match(preview, /--publish-sdk/);
 });
 
 test('pipeline CLI supports help for checks', async () => {

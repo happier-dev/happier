@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
@@ -212,7 +212,7 @@ test('privileged CLI binary action policy rejects mutable and unapproved action 
   );
 });
 
-test('managed wrapper source, diagnostics, notices, and workflows agree on exact Go 1.26.5', async () => {
+test('managed wrapper source, diagnostics, notices, and workflows agree on exact Go 1.26.6', async () => {
   const [
     goMod,
     buildSource,
@@ -227,7 +227,7 @@ test('managed wrapper source, diagnostics, notices, and workflows agree on exact
     readFile(testsWorkflowPath, 'utf8'),
   ]);
 
-  assert.match(goMod, /^go 1\.26\.5$/m);
+  assert.match(goMod, /^go 1\.26\.6$/m);
   assert.match(
     goMod,
     /^tool golang\.org\/x\/vuln\/cmd\/govulncheck$/m,
@@ -239,10 +239,10 @@ test('managed wrapper source, diagnostics, notices, and workflows agree on exact
     'the managed module must pin the reviewed govulncheck tool dependency in tidy form',
   );
   assert.match(goMod, /^\s*github\.com\/router-for-me\/CLIProxyAPI\/v7 v7\.2\.95$/m);
-  assert.match(buildSource, /Go 1\.26\.5 toolchain is required/);
-  assert.match(notices, /^Go toolchain go1\.26\.5$/m);
-  assert.match(notices, /^source identity: go1\.26\.5$/m);
-  assert.match(notices, /^source: https:\/\/go\.dev\/dl\/go1\.26\.5\.src\.tar\.gz$/m);
+  assert.match(buildSource, /Go 1\.26\.6 toolchain is required/);
+  assert.match(notices, /^Go toolchain go1\.26\.6$/m);
+  assert.match(notices, /^source identity: go1\.26\.6$/m);
+  assert.match(notices, /^source: https:\/\/go\.dev\/dl\/go1\.26\.6\.src\.tar\.gz$/m);
 
   for (const [name, workflowRaw, jobName] of [
     ['publishing', publishWorkflowRaw, 'build_native'],
@@ -855,13 +855,47 @@ test('ordinary CI runs the pinned Go source on macOS, Linux, and Windows and com
   assert.equal(wrapperBuildStep?.env?.HAPPIER_VERSION, '0.0.0-ci');
 });
 
-test('the plugin package exposes one Go build command while CLI payload remains the sole binary distributor', async () => {
-  const manifest = JSON.parse(await readFile(
-    new URL('../../packages/plugins/cliproxyapi/package.json', import.meta.url),
-    'utf8',
-  ));
+test('the plugin package ships its managed runtime while the CLI payload remains the sole binary distributor', async () => {
+  const packageRoot = fileURLToPath(new URL('../../packages/plugins/cliproxyapi/', import.meta.url));
+  const manifest = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'));
   assert.equal(manifest.scripts?.['managed-runtime:build'], 'go -C ./managed-runtime run ./tools/build');
-  assert.deepEqual(manifest.files, ['dist', '.happier-plugin/plugin.json', 'package.json']);
+
+  // `.happier-plugin/` is the projected plugin package: the manifest the daemon reads to
+  // build catalogs without executing plugin code, plus the bundled daemon runtime that the
+  // manifest itself points at. The daemon bundle lives here rather than in `dist/` so the
+  // TypeScript compiler and the plugin bundler do not both own one output directory.
+  assert.deepEqual(manifest.files, ['dist', '.happier-plugin', 'package.json']);
+
+  const projected = JSON.parse(await readFile(resolve(packageRoot, '.happier-plugin/plugin.json'), 'utf8'));
+  const daemonEntrypoint = String(projected.entrypoints?.daemon ?? '');
+  assert.equal(daemonEntrypoint, './.happier-plugin/daemon.js');
+
+  const shipped = (await readdir(resolve(packageRoot, '.happier-plugin'), { recursive: true, withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(
+      resolve(packageRoot, '.happier-plugin'),
+      resolve(entry.parentPath ?? entry.path, entry.name),
+    ).split(sep).join('/'))
+    .sort();
+  // Only `plugin.json` is tracked here: `.gitignore` keeps the bundled runtime and its
+  // chunks out of Git because the bundled-plugin publisher writes them at build time. This
+  // job runs on a bare checkout, so requiring `daemon.js` on disk would assert the build
+  // ran rather than the package shape. What the shape actually forbids is a Go binary,
+  // archive, or build input becoming a second binary distribution surface, so every file
+  // present must be a declared member: the projected manifest, the exact daemon entry that
+  // manifest points at, or one of that bundle's code-split chunks.
+  const declaredDaemonEntry = daemonEntrypoint.replace('./.happier-plugin/', '');
+  assert.ok(shipped.includes('plugin.json'), 'the projected plugin manifest must be published');
+  assert.deepEqual(
+    shipped.filter((entry) => (
+      entry !== 'plugin.json'
+      && entry !== declaredDaemonEntry
+      && !entry.startsWith('.happier-chunks/')
+    )),
+    [],
+    'only the projected manifest, its declared daemon entry, and that bundle\'s chunks may ship here',
+  );
+
   assert.equal(
     manifest.files.some((entry) => String(entry).includes('managed-runtime')),
     false,

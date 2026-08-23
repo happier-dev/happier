@@ -918,6 +918,7 @@ async function assertInventoryValueRealmClosures({
   const workspaceContext = await findWorkspaceContext(packageRoot);
   const currentPackageName = typeof packageJson.name === 'string' ? packageJson.name : null;
   const checkedRoots = new Set();
+  const checkedPhysicalSourcesByRealm = new Map();
 
   for (const symbol of inventory.symbols) {
     if (symbol.kind !== 'value') continue;
@@ -936,13 +937,21 @@ async function assertInventoryValueRealmClosures({
       if (checkedRoots.has(rootKey)) continue;
       checkedRoots.add(rootKey);
       const pending = [{ source: root, chain: [rootLabel] }];
-      const visitedPhysicalPaths = new Set();
+      let checkedPhysicalSources = checkedPhysicalSourcesByRealm.get(closureRealm);
+      if (!checkedPhysicalSources) {
+        checkedPhysicalSources = new Set();
+        checkedPhysicalSourcesByRealm.set(closureRealm, checkedPhysicalSources);
+      }
 
       while (pending.length > 0) {
         const current = pending.pop();
         const physicalKey = current.source.physicalPath.toLowerCase();
-        if (visitedPhysicalPaths.has(physicalKey)) continue;
-        visitedPhysicalPaths.add(physicalKey);
+        // Reachability and realm admissibility are properties of the physical
+        // module graph, not of the public value that first reached it. Once a
+        // module's outgoing edges have been admitted for one realm, traversing
+        // that same subgraph again for every exported root adds no evidence.
+        if (checkedPhysicalSources.has(physicalKey)) continue;
+        checkedPhysicalSources.add(physicalKey);
         for (const { moduleSpecifier, resolutionCondition } of collectRuntimeModuleEdges(current.source)) {
           if (NODE_BUILTIN_MODULES.has(moduleSpecifier) || moduleSpecifier.startsWith('node:')) {
             if (closureRealm === 'browser' || closureRealm === 'react-native') {

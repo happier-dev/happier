@@ -74,7 +74,7 @@ test('compute-changed-components exposes cli-common changes as cli/stack shared 
   assert.equal(parsed.changed_stack, 'false');
 });
 
-test('compute-changed-components treats plugin SDK changes as UI release inputs', async () => {
+test('compute-changed-components treats plugin SDK changes as UI and plugin-pair release inputs', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happier-compute-ui-dependency-'));
 
   git(dir, ['init']);
@@ -93,5 +93,10 @@ test('compute-changed-components treats plugin SDK changes as UI release inputs'
   const script = resolve(process.cwd(), 'scripts', 'pipeline', 'release', 'compute-changed-components.mjs');
   const res = run(dir, process.execPath, [script, '--base', base, '--head', head]);
   assert.equal(res.status, 0, res.stderr || res.stdout);
-  assert.equal(JSON.parse(String(res.stdout).trim()).changed_ui, 'true');
+  const output = JSON.parse(String(res.stdout).trim());
+  assert.equal(output.changed_ui, 'true');
+  assert.equal(output.changed_plugin_sdk, 'true');
+  assert.equal(output.changed_sdk, 'false');
+  assert.equal(output.risk_plugin_sdk_package_changed, 'true');
+  assert.equal(output.risk_plugin_runtime_compatibility, 'false');
 });

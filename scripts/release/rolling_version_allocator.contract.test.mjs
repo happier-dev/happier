@@ -344,3 +344,52 @@ test('support preview version allocation uses published npm support versions', a
 
   assert.equal(result.version, '0.1.5-preview.9');
 });
+
+test('plugin SDK pair allocation reuses the SDK version after a UI publication fault instead of allocating a new missing version', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+
+  const result = await resolveRollingPublishVersion({
+    repoRoot,
+    productId: 'plugin_sdk',
+    channel: 'preview',
+    baseVersion: '0.1.0',
+    publishSurface: 'npm',
+    env: {
+      ...process.env,
+      HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
+        github: {},
+        npm: {
+          '@happier-dev/plugin-sdk': ['0.1.0-preview.7'],
+          '@happier-dev/plugin-ui': [],
+        },
+      }),
+    },
+  });
+
+  assert.equal(result.version, '0.1.0-preview.7');
+  assert.match(result.source, /npm:catch-up/);
+});
+
+test('plugin SDK pair allocation advances only after both pair packages have the last version', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+
+  const result = await resolveRollingPublishVersion({
+    repoRoot,
+    productId: 'plugin_sdk',
+    channel: 'preview',
+    baseVersion: '0.1.0',
+    publishSurface: 'npm',
+    env: {
+      ...process.env,
+      HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
+        github: {},
+        npm: {
+          '@happier-dev/plugin-sdk': ['0.1.0-preview.7'],
+          '@happier-dev/plugin-ui': ['0.1.0-preview.7'],
+        },
+      }),
+    },
+  });
+
+  assert.equal(result.version, '0.1.0-preview.8');
+});

@@ -34,6 +34,17 @@ function normalizeBase(version) {
 }
 
 /**
+ * The source packages remain held at 0.0.0 until a release candidate bumps
+ * them. Preview packing nevertheless begins the public Developer Preview on
+ * the approved 0.1.0 line.
+ * @param {string} version
+ */
+function normalizePublicSdkPreviewBase(version) {
+  const base = normalizeBase(version);
+  return base === '0.0.0' ? '0.1.0' : base;
+}
+
+/**
  * @param {string} repoRoot
  * @param {string} pkgPath
  * @param {string} nextVersion
@@ -61,7 +72,9 @@ function readPackageVersion(repoRoot, pkgPath) {
  * @param {'cli' | 'stack' | 'server' | 'support'} packageKey
  */
 function rollingProductIdForPackage(packageKey) {
-  return packageKey === 'stack' ? 'hstack' : packageKey;
+  if (packageKey === 'stack') return 'hstack';
+  if (packageKey === 'pluginSdk') return 'plugin_sdk';
+  return packageKey;
 }
 
 async function main() {
@@ -72,11 +85,15 @@ async function main() {
       'publish-stack': { type: 'string', default: 'false' },
       'publish-server': { type: 'string', default: 'false' },
       'publish-support': { type: 'string', default: 'false' },
+      'publish-plugin-sdk': { type: 'string', default: 'false' },
+      'publish-sdk': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       'cli-version': { type: 'string', default: '' },
       'stack-version': { type: 'string', default: '' },
       'server-version': { type: 'string', default: '' },
       'support-version': { type: 'string', default: '' },
+      'plugin-sdk-version': { type: 'string', default: '' },
+      'sdk-version': { type: 'string', default: '' },
       write: { type: 'string', default: 'true' },
     },
     allowPositionals: false,
@@ -87,6 +104,8 @@ async function main() {
   const publishStack = parseBoolString(values['publish-stack'], '--publish-stack');
   const publishServer = parseBoolString(values['publish-server'], '--publish-server');
   const publishSupport = parseBoolString(values['publish-support'], '--publish-support');
+  const publishPluginSdk = parseBoolString(values['publish-plugin-sdk'], '--publish-plugin-sdk');
+  const publishSdk = parseBoolString(values['publish-sdk'], '--publish-sdk');
   const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
   const shouldWrite = parseBoolString(values.write, '--write');
   const explicitVersions = {
@@ -94,6 +113,8 @@ async function main() {
     stack: String(values['stack-version'] ?? '').trim(),
     server: String(values['server-version'] ?? '').trim(),
     support: String(values['support-version'] ?? '').trim(),
+    pluginSdk: String(values['plugin-sdk-version'] ?? '').trim(),
+    sdk: String(values['sdk-version'] ?? '').trim(),
   };
 
   /** @type {Record<string, string>} */
@@ -169,6 +190,51 @@ async function main() {
     ).version;
     if (shouldWrite) {
       writePackageVersion(repoRoot, path.join('packages', 'support', 'package.json'), versions.support);
+    }
+  }
+
+  if (publishPluginSdk) {
+    const pluginSdkPath = path.join('packages', 'plugin-sdk', 'package.json');
+    const pluginUiPath = path.join('packages', 'plugin-ui', 'package.json');
+    const pluginSdkVersion = readPackageVersion(repoRoot, pluginSdkPath);
+    const pluginUiVersion = readPackageVersion(repoRoot, pluginUiPath);
+    if (pluginSdkVersion !== pluginUiVersion) {
+      fail(`plugin-sdk and plugin-ui must be version-equal (got ${pluginSdkVersion} and ${pluginUiVersion})`);
+    }
+    const base = normalizePublicSdkPreviewBase(pluginSdkVersion);
+    versions.pluginSdk = (
+      await resolveRollingPublishVersion({
+        repoRoot,
+        productId: rollingProductIdForPackage('pluginSdk'),
+        channel: 'preview',
+        baseVersion: base,
+        explicitVersion: explicitVersions.pluginSdk,
+        publishSurface: 'npm',
+        env: process.env,
+      })
+    ).version;
+    if (shouldWrite) {
+      writePackageVersion(repoRoot, pluginSdkPath, versions.pluginSdk);
+      writePackageVersion(repoRoot, pluginUiPath, versions.pluginSdk);
+    }
+  }
+
+  if (publishSdk) {
+    const packagePath = path.join('packages', 'sdk', 'package.json');
+    const base = normalizePublicSdkPreviewBase(readPackageVersion(repoRoot, packagePath));
+    versions.sdk = (
+      await resolveRollingPublishVersion({
+        repoRoot,
+        productId: rollingProductIdForPackage('sdk'),
+        channel: 'preview',
+        baseVersion: base,
+        explicitVersion: explicitVersions.sdk,
+        publishSurface: 'npm',
+        env: process.env,
+      })
+    ).version;
+    if (shouldWrite) {
+      writePackageVersion(repoRoot, packagePath, versions.sdk);
     }
   }
 
