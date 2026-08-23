@@ -340,11 +340,13 @@ describe('daemon browser runtime action executor', () => {
       payload: {},
       timeoutMs: 5000,
     };
+    const context = { authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
     await expect(execute(runtimeArgs({
       actionId: 'browser.automation.snapshot',
       input,
+      context,
     }))).resolves.toEqual({ v: 1, status: 'succeeded' });
-    expect(dispatch).toHaveBeenCalledWith('browser.automation.snapshot', input);
+    expect(dispatch).toHaveBeenCalledWith('browser.automation.snapshot', input, context);
   });
 
   it('returns rich snapshot selectors through the real browser automation action path', async () => {

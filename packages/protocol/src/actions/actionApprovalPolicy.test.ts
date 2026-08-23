@@ -426,7 +426,6 @@ describe('agent approval floor is derived from the danger SSOT (CON-1..3/6)', ()
     'browser.automation.queryElements',
     'browser.automation.waitFor',
     'browser.automation.timeline.get',
-    'browser.automation.cancelActive',
     'browser.view.focus',
     'browser.target.set',
   ] as const;
@@ -450,6 +449,14 @@ describe('agent approval floor is derived from the danger SSOT (CON-1..3/6)', ()
       ).toBe(false);
       expect(getActionSpec(actionId as any).safety).toBe('safe');
     }
+  });
+
+  it('keeps cancellation out of the danger floor while reserving takeover for a present user', () => {
+    const cancel = getActionSpec('browser.automation.cancelActive');
+
+    expect(cancel.safety).toBe('safe');
+    expect(isAgentInitiatedApprovalRequiredByDefault(cancel.id)).toBe(false);
+    expect(cancel.requiredAuthority).toBe('present_user');
   });
 
   it('floors launcher.start, which is danger + agent (CON-3)', () => {

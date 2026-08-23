@@ -11,6 +11,14 @@ import { createBrowserAutomationDaemonService } from './service';
 import type { BrowserAutomationAdapter } from './adapters/types';
 
 const agentRef = { kind: 'agent', id: 'agent_1' } as const;
+const presentUserContext = {
+  authority: 'present_user',
+  actionCaller: { kind: 'host' },
+} as const;
+const accountAutomationContext = {
+  authority: 'account_automation',
+  actionCaller: { kind: 'host' },
+} as const;
 
 function adapter(): BrowserAutomationAdapter {
   return {
@@ -165,12 +173,89 @@ describe('browser automation routes', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
   });
 
+  it('lets a present user take over an active automation action and advances its control epoch', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = createBrowserAutomationDaemonService({
+      adapter: {
+        adapterKind: 'chromiumSidecar',
+        execute: vi.fn(async () => {
+          await gate;
+          return { status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: true };
+        }),
+      },
+    });
+    const { routes: r } = routes(service);
+    const pending = r.dispatch('browser.automation.click', clickRequest({ automationRequestId: 'req_takeover' }));
+
+    try {
+      const canceled = await r.dispatch('browser.automation.cancelActive', {
+        browserSessionId: 'browser_session_1',
+        viewId: 'view_1',
+      }, presentUserContext);
+
+      expect(canceled).toEqual({ v: 1, outcome: 'canceled', canceledCount: 1 });
+      await expect(pending).resolves.toMatchObject({
+        status: 'canceled',
+        errorCode: 'user_canceled',
+        controlEpochBefore: 0,
+        controlEpochAfter: 1,
+      });
+      expect(await r.dispatch('browser.automation.status', {
+        browserSessionId: 'browser_session_1',
+        viewId: 'view_1',
+      })).toMatchObject({
+        resultSummary: { controller: 'none', controlEpoch: 1 },
+      });
+    } finally {
+      release();
+    }
+  });
+
+  it('rejects public requester provenance rather than letting an automation caller spoof cancellation', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = createBrowserAutomationDaemonService({
+      adapter: {
+        adapterKind: 'chromiumSidecar',
+        execute: vi.fn(async () => {
+          await gate;
+          return { status: 'succeeded' as const, fidelity: 'cdp' as const, trustedInput: true };
+        }),
+      },
+    });
+    const { routes: r } = routes(service);
+    const pending = r.dispatch('browser.automation.click', clickRequest({ automationRequestId: 'req_spoof' }));
+
+    try {
+      const canceled = await r.dispatch('browser.automation.cancelActive', {
+        browserSessionId: 'browser_session_1',
+        viewId: 'view_1',
+        requesterRef: agentRef,
+      }, accountAutomationContext);
+
+      expect(canceled).toEqual({
+        ok: false,
+        errorCode: 'invalid_parameters',
+        error: 'invalid_parameters',
+      });
+      release();
+      await expect(pending).resolves.toMatchObject({ status: 'succeeded' });
+    } finally {
+      release();
+    }
+  });
+
   it('projects no active automation as the cancel command outcome', async () => {
     const { routes: r } = routes();
     const result = await r.dispatch('browser.automation.cancelActive', {
       browserSessionId: 'browser_session_1',
       viewId: 'view_1',
-    });
+    }, presentUserContext);
 
     expect(BrowserAutomationCancelActiveResultV1Schema.safeParse(result).success).toBe(true);
     expect(result).toEqual({ v: 1, outcome: 'no_active', canceledCount: 0 });

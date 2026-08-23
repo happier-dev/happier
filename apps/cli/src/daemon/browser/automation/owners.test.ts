@@ -66,4 +66,14 @@ describe('browser automation owner registry', () => {
     expect(registry.getControlEpoch(view)).toBe(0);
     expect(registry.getControllerState(view).controlEpoch).toBe(registry.getControlEpoch(view));
   });
+
+  it('advances the per-view control epoch when a present user takes over', () => {
+    const registry = createBrowserAutomationOwnerRegistry() as ReturnType<typeof createBrowserAutomationOwnerRegistry> & Readonly<{
+      takeOver(view: typeof view): number;
+    }>;
+
+    expect(registry.takeOver(view)).toBe(1);
+    expect(registry.getControlEpoch(view)).toBe(1);
+    expect(registry.getControlEpoch(otherView)).toBe(0);
+  });
 });

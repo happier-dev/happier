@@ -80,6 +80,16 @@ function viteInventoryEntry(): NormalizedLocalServiceInventoryEntry {
     processOwnershipConfidence: 'high',
     workspaceAssociationConfidence: 'high',
     diagnostics: [],
+    // The endpoint fact is what makes a detected listener previewable: `preview/routes.ts`
+    // `buildInventoryPreviewInput` refuses to mint a private preview without an http(s) endpoint.
+    // A fixture without it silently exercises the refusal path instead of the lifecycle.
+    endpoint: {
+      scheme: 'http',
+      host: '127.0.0.1',
+      port: 5173,
+      probeState: 'ready',
+      probedAt: 2_000,
+    },
     presentation: { addressLabel: 'localhost:5173', displayName: 'Vite' },
   };
 }

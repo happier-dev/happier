@@ -142,7 +142,7 @@ const CORRIDOR_PAIRINGS: readonly CorridorPairing[] = [
     { foreground: 'button.primary.tint', background: 'button.primary.background', minRatio: 4.5, renderedBy: 'components/ui/buttons/RoundButton.tsx' },
 
     // Non-text UI and meaningful graphics (1.4.11 — 3:1).
-    { foreground: 'accent.blue', background: 'surface.base', minRatio: 5, renderedBy: 'browser/BrowserLoadProgressBar.tsx' },
+    { foreground: 'accent.blue', background: 'surface.base', minRatio: 3, renderedBy: 'browser/BrowserLoadProgressBar.tsx' },
     { foreground: 'status.error', background: 'surface.inset', minRatio: 3, renderedBy: 'browser/launchpad/BrowserLaunchpadUrlEntry.tsx invalid field border' },
     { foreground: 'state.neutral.foreground', background: 'surface.base', minRatio: 3, renderedBy: 'sessions/localServices/ServiceStatusDot.tsx idle dot' },
 ];
