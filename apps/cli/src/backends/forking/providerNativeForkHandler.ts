@@ -12,6 +12,19 @@ export function isProviderNativeForkIndeterminateError(error: unknown): error is
   return error instanceof ProviderNativeForkIndeterminateError;
 }
 
+export class ProviderNativeForkFailedBeforeDispatchError extends Error {
+  constructor(cause: Error) {
+    super(cause.message, { cause });
+    this.name = 'ProviderNativeForkFailedBeforeDispatchError';
+  }
+}
+
+export function isProviderNativeForkFailedBeforeDispatchError(
+  error: unknown,
+): error is ProviderNativeForkFailedBeforeDispatchError {
+  return error instanceof ProviderNativeForkFailedBeforeDispatchError;
+}
+
 export type ProviderNativeForkPoint = { type: 'latest' } | { type: 'seq'; upToSeqInclusive: number };
 
 export type ProviderNativeForkDispatchResult = Readonly<{
@@ -34,4 +47,5 @@ export type ProviderNativeForkHandler = (params: Readonly<{
   directory: string;
   forkPoint: ProviderNativeForkPoint;
   targetSeqInclusive: number;
+  signal?: AbortSignal;
 }>) => Promise<ProviderNativeForkDispatchResult | null>;

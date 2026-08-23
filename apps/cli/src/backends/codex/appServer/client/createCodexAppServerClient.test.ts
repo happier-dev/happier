@@ -325,6 +325,42 @@ describe('createCodexAppServerClient', () => {
         });
     });
 
+    it('rejects an in-flight request when its operation signal is aborted', async () => {
+        await withTempDir('happier-codex-app-server-client-request-abort-', async (root) => {
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                bodyLines: [
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "initialized") continue;',
+                    '}',
+                ],
+            });
+
+            const client = await createCodexAppServerClient({
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer),
+            });
+            const controller = new AbortController();
+
+            try {
+                const pending = client.request('slow/request', undefined, {
+                    timeoutMs: null,
+                    signal: controller.signal,
+                });
+                controller.abort();
+
+                await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+            } finally {
+                await client.dispose();
+            }
+        });
+    });
+
     it('reads RPC timeout from the passed processEnv instead of global process.env', async () => {
         await withTempDir('happier-codex-app-server-client-timeout-env-', async (root) => {
             const fakeAppServer = await writeFakeCodexAppServerScript({

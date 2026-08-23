@@ -159,6 +159,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     emitResumeHistoryBoundaryNotifications?: boolean;
     emitHistoricalNotificationOnResume?: boolean;
     resumeResponseDelayMs?: number;
+    resumeResponseThreadId?: string;
     threadReadResponseDelayMs?: number;
     emitIdleMcpRequestAfterThreadStart?: boolean;
     rejectPermissionsProfileAsStringShape?: boolean;
@@ -241,7 +242,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            continue;',
         '        }',
         '        const adoptsOverrideThread = Object.prototype.hasOwnProperty.call(msg.params ?? {}, "model") || Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier");',
-        '        const resumedThreadId = adoptsOverrideThread ? "thread-overrides" : (msg.params?.threadId ?? null);',
+        `        const resumedThreadId = ${JSON.stringify(params.resumeResponseThreadId ?? null)} ?? (adoptsOverrideThread ? "thread-overrides" : (msg.params?.threadId ?? null));`,
         '        if (resumedThreadId) resumedThreadIds.add(resumedThreadId);',
         `        if (${JSON.stringify(params.emitResumeTurnStartedBeforeResponse === true)}) {`,
         '            const resumeTurnId = "turn-resume-start-before-response";',
@@ -1590,6 +1591,7 @@ describe('createCodexAppServerRuntime', () => {
             emitResumeHistoryBoundaryNotifications?: boolean;
             emitHistoricalNotificationOnResume?: boolean;
             resumeResponseDelayMs?: number;
+            resumeResponseThreadId?: string;
             threadReadResponseDelayMs?: number;
             emitIdleMcpRequestAfterThreadStart?: boolean;
             rejectPermissionsProfileAsStringShape?: boolean;
@@ -1646,6 +1648,7 @@ describe('createCodexAppServerRuntime', () => {
             emitResumeHistoryBoundaryNotifications: options.emitResumeHistoryBoundaryNotifications,
             emitHistoricalNotificationOnResume: options.emitHistoricalNotificationOnResume,
             resumeResponseDelayMs: options.resumeResponseDelayMs,
+            resumeResponseThreadId: options.resumeResponseThreadId,
             threadReadResponseDelayMs: options.threadReadResponseDelayMs,
             emitIdleMcpRequestAfterThreadStart: options.emitIdleMcpRequestAfterThreadStart,
             rejectPermissionsProfileAsStringShape: options.rejectPermissionsProfileAsStringShape,
@@ -1950,6 +1953,35 @@ describe('createCodexAppServerRuntime', () => {
                     }),
                 }),
             ]),
+        );
+    });
+
+    it('rejects an explicitly different resumed thread before publishing either identity', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-resume-mismatch-', {
+            resumeResponseThreadId: 'thread-other',
+        });
+        const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
+            updater({ codexSessionId: 'resume-requested' }),
+        );
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata } as any,
+            permissionMode: 'read-only',
+        });
+
+        await expect(runtime.startOrLoad({
+            resumeId: 'resume-requested',
+            strictNativeResumeIdentity: true,
+            importHistory: false,
+        }))
+            .rejects.toMatchObject({
+                name: 'CodexAppServerResumeIdentityMismatchError',
+                happierNativeResumeIdentityMismatch: true,
+            });
+        expect(runtime.getSessionId()).toBeNull();
+        expect(updateMetadata.mock.results.map((result) => result.value)).not.toContainEqual(
+            expect.objectContaining({ codexSessionId: 'resume-requested' }),
         );
     });
 

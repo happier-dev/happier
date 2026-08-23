@@ -103,6 +103,7 @@ export async function forkCodexAppServerConversationNative(
     directory: string;
     parentCodexSessionId: string;
     processEnv?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
   }>,
   deps: CodexAppServerNativeForkDeps = {},
 ): Promise<CodexAppServerNativeForkOutcome> {
@@ -126,9 +127,15 @@ export async function forkCodexAppServerConversationNative(
       client = await createClient({
         cwd: params.directory,
         processEnv: params.processEnv,
-        initializeRequestOptions: { timeoutMs: null },
+        initializeRequestOptions: {
+          timeoutMs: null,
+          ...(params.signal ? { signal: params.signal } : {}),
+        },
       });
     } catch (error) {
+      if (params.signal?.aborted && error instanceof Error && error.name === 'AbortError') {
+        throw error;
+      }
       logNativeForkDiagnostic(diagnosticsLogger, '[CodexAppServerNativeFork] failed to create app-server client', {
         ...baseDiagnostic,
         ...readErrorDiagnostic(error, [parentCodexSessionId]),
@@ -150,8 +157,14 @@ export async function forkCodexAppServerConversationNative(
         response = await client.request(method, {
           threadId: parentCodexSessionId,
           persistExtendedHistory: true,
-        }, { timeoutMs: null });
+        }, {
+          timeoutMs: null,
+          ...(params.signal ? { signal: params.signal } : {}),
+        });
       } catch (error) {
+        if (params.signal?.aborted && error instanceof Error && error.name === 'AbortError') {
+          throw error;
+        }
         const methodUnavailable = isCodexAppServerDefinitiveMethodNotFoundError(error, method);
         const canTryAlias = method === 'thread/fork' && methodUnavailable;
         logNativeForkDiagnostic(diagnosticsLogger, '[CodexAppServerNativeFork] method failed', {

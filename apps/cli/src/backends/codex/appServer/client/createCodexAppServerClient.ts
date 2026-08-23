@@ -36,6 +36,7 @@ type JsonRpcNotificationHandler = (params: unknown) => Promise<void> | void;
 export type CodexAppServerRequestOptions = Readonly<{
     /** `null` preserves an in-flight provider request until it settles or the process exits. */
     timeoutMs?: number | null;
+    signal?: AbortSignal;
 }>;
 
 export type CodexAppServerClient = Readonly<{
@@ -636,6 +637,12 @@ export async function createCodexAppServerClient(params: Readonly<{
         requestParams?: unknown,
         requestOptions?: CodexAppServerRequestOptions,
     ): Promise<unknown> => {
+        const signal = requestOptions?.signal;
+        if (signal?.aborted) {
+            const error = new Error('Codex app-server request aborted');
+            error.name = 'AbortError';
+            throw error;
+        }
         const timeoutMs = resolveRequestTimeoutMs(
             readCodexAppServerRequestTimeoutMs(method, processEnv),
             requestOptions,
@@ -645,32 +652,51 @@ export async function createCodexAppServerClient(params: Readonly<{
         if (!requestKey) {
             throw new Error(`Failed to create Codex app-server request id for ${method}`);
         }
+        let onAbort: (() => void) | null = null;
         const responsePromise = new Promise<unknown>((resolve, reject) => {
+            const cleanup = () => {
+                if (onAbort) signal?.removeEventListener('abort', onAbort);
+            };
             const timer = timeoutMs === null
                 ? null
                 : setTimeout(() => {
                     pendingRequests.delete(requestKey);
+                    cleanup();
                     reject(new Error(`Codex app-server request ${method} timed out after ${timeoutMs}ms`));
                 }, timeoutMs);
             pendingRequests.set(requestKey, {
                 method,
                 resolve: (value) => {
                     if (timer !== null) clearTimeout(timer);
+                    cleanup();
                     resolve(value);
                 },
                 reject: (error) => {
                     if (timer !== null) clearTimeout(timer);
+                    cleanup();
                     reject(error);
                 },
             });
+            onAbort = () => {
+                const pending = pendingRequests.get(requestKey);
+                if (!pending) return;
+                pendingRequests.delete(requestKey);
+                const error = new Error(`Codex app-server request ${method} aborted`);
+                error.name = 'AbortError';
+                pending.reject(error);
+            };
+            signal?.addEventListener('abort', onAbort, { once: true });
+            if (signal?.aborted) onAbort();
         });
         try {
-            await sendMessage({
-                id,
-                method,
-                // Codex app-server rejects requests that omit the `params` field entirely.
-                params: requestParams === undefined ? {} : requestParams,
-            });
+            if (!signal?.aborted) {
+                await sendMessage({
+                    id,
+                    method,
+                    // Codex app-server rejects requests that omit the `params` field entirely.
+                    params: requestParams === undefined ? {} : requestParams,
+                });
+            }
         } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
             const pending = pendingRequests.get(requestKey);

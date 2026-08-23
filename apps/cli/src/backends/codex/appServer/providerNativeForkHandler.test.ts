@@ -140,7 +140,6 @@ describe('codexAppServerProviderNativeForkHandler', () => {
       codexBackendMode: 'appServer',
       codexSessionId: 'parent-thread',
     };
-
     await expect(codexAppServerProviderNativeForkHandler({
       credentials: {} as never,
       agentId: 'codex',
@@ -150,7 +149,10 @@ describe('codexAppServerProviderNativeForkHandler', () => {
       directory: '/repo',
       forkPoint: { type: 'latest' },
       targetSeqInclusive: 10,
-    })).rejects.toBe(failure);
+    })).rejects.toMatchObject({
+      name: 'ProviderNativeForkFailedBeforeDispatchError',
+      cause: failure,
+    });
     expect(logger.debug).toHaveBeenCalledWith(
       '[CodexAppServerFork] native latest fork failed',
       expect.objectContaining({
@@ -191,6 +193,33 @@ describe('codexAppServerProviderNativeForkHandler', () => {
         fallbackResult: 'do_not_replay_outcome_unknown',
       }),
     );
+  });
+
+  it('preserves an operation-owned abort for the tracked operation terminalizer', async () => {
+    const controller = new AbortController();
+    const abortError = Object.assign(new Error('Action operation cancelled'), { name: 'AbortError' });
+    vi.mocked(forkCodexAppServerConversationNative).mockRejectedValueOnce(abortError);
+    controller.abort();
+    const parentMetadata = {
+      codexBackendMode: 'appServer',
+      codexSessionId: 'parent-thread',
+    };
+
+    await expect(codexAppServerProviderNativeForkHandler({
+      credentials: {} as never,
+      agentId: 'codex',
+      parentSessionId: 'session-parent',
+      parentRawSession: { metadata: parentMetadata },
+      parentMetadata,
+      directory: '/repo',
+      forkPoint: { type: 'latest' },
+      targetSeqInclusive: 10,
+      signal: controller.signal,
+    })).rejects.toBe(abortError);
+
+    expect(forkCodexAppServerConversationNative).toHaveBeenCalledWith(expect.objectContaining({
+      signal: controller.signal,
+    }));
   });
 
   it('redacts sensitive values from provider-level native fork failure diagnostics', async () => {

@@ -237,6 +237,35 @@ describe('forkCodexAppServerConversationNative', () => {
         expect(client.dispose).toHaveBeenCalledTimes(1);
     });
 
+    it('propagates an operation-owned abort instead of classifying it as an indeterminate provider outcome', async () => {
+        const controller = new AbortController();
+        const abortError = Object.assign(new Error('Action operation cancelled'), { name: 'AbortError' });
+        const request = vi.fn<DisposableCodexAppServerClient['request']>()
+            .mockImplementationOnce(async (_method, _params, options) => await new Promise<unknown>((_resolve, reject) => {
+                options?.signal?.addEventListener('abort', () => reject(abortError), { once: true });
+            }));
+        const client = createClientDouble(request);
+
+        const nativeFork = forkCodexAppServerConversationNative({
+            directory: '/repo',
+            parentCodexSessionId: 'parent-thread',
+            signal: controller.signal,
+        }, {
+            createClient: async () => client,
+        });
+        await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+        controller.abort();
+
+        await expect(nativeFork).rejects.toBe(abortError);
+
+        expect(request).toHaveBeenCalledWith(
+            'thread/fork',
+            { threadId: 'parent-thread', persistExtendedHistory: true },
+            { timeoutMs: null, signal: controller.signal },
+        );
+        expect(client.dispose).toHaveBeenCalledTimes(1);
+    });
+
     it('emits structured diagnostics for the only alias-compatible failure and a malformed reply', async () => {
         const request = vi.fn<DisposableCodexAppServerClient['request']>()
             .mockRejectedValueOnce(createCodexAppServerRpcError({

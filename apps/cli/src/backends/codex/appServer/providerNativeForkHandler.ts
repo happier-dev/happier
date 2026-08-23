@@ -1,5 +1,6 @@
 import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity, resolveVendorResumeIdFromSessionMetadata, readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
 import {
+  ProviderNativeForkFailedBeforeDispatchError,
   ProviderNativeForkIndeterminateError,
   type ProviderNativeForkHandler,
 } from '@/backends/forking/providerNativeForkHandler';
@@ -87,8 +88,12 @@ export const codexAppServerProviderNativeForkHandler: ProviderNativeForkHandler 
       directory: params.directory,
       parentCodexSessionId: vendorSessionIdRaw,
       processEnv,
+      ...(params.signal ? { signal: params.signal } : {}),
     });
   } catch (error) {
+    if (params.signal?.aborted && error instanceof Error && error.name === 'AbortError') {
+      throw error;
+    }
     logCodexNativeForkDiagnostic('[CodexAppServerFork] native latest fork outcome is indeterminate', {
       ...baseDiagnostic,
       ...readErrorDiagnostic(error, [vendorSessionIdRaw]),
@@ -111,7 +116,7 @@ export const codexAppServerProviderNativeForkHandler: ProviderNativeForkHandler 
       ...readErrorDiagnostic(outcome.error, [vendorSessionIdRaw]),
       fallbackResult: 'failed_before_dispatch',
     });
-    throw outcome.error;
+    throw new ProviderNativeForkFailedBeforeDispatchError(outcome.error);
   }
 
   if (outcome.type === 'indeterminate_after_dispatch') {

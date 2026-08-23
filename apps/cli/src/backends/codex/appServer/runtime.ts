@@ -175,9 +175,25 @@ import { isCommittedRuntimeAuthRecoveryDisposition } from '@/daemon/connectedSer
 type CodexAppServerStartOrLoadOptions = Readonly<{
     resumeId?: string | null;
     existingSessionId?: string | null;
+    /** A matching machine-local native-return record requires exact identity acceptance. */
+    strictNativeResumeIdentity?: boolean;
     importHistory?: boolean;
     initialGoal?: SessionInitialGoalRequestV1 | null;
 }>;
+
+/** The app server explicitly named a different thread for the requested resume. */
+export class CodexAppServerResumeIdentityMismatchError extends Error {
+    readonly code = 'codex_app_server_resume_identity_mismatch';
+    readonly happierNativeResumeIdentityMismatch = true;
+
+    constructor(
+        readonly requestedThreadId: string,
+        readonly observedThreadId: string,
+    ) {
+        super('Codex resumed a different provider thread than requested.');
+        this.name = 'CodexAppServerResumeIdentityMismatchError';
+    }
+}
 
 type CodexAppServerThreadResponse = Readonly<{
     threadId?: unknown;
@@ -1956,6 +1972,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }).catch(() => undefined);
     };
 
+    // Ordinary resume/recovery retains its established optimistic publication.
+    // A tracked cross-agent native return bypasses this and publishes only after
+    // the strict provider response has accepted the requested thread.
     const publishRequestedResumeThreadId = (requestedThreadId: string): void => {
         const nextThreadId = trimSessionId(requestedThreadId);
         if (!nextThreadId) return;
@@ -3881,7 +3900,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const resumeThread = async (
         client: DisposableCodexAppServerClient,
         requestedThreadId: string,
-        options: Readonly<{ preserveRequestedThreadId: boolean; allowOversizedResponseRecovery?: boolean }>,
+        options: Readonly<{
+            preserveRequestedThreadId: boolean;
+            strictNativeResumeIdentity?: boolean;
+            allowOversizedResponseRecovery?: boolean;
+        }>,
     ): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
         historyBoundary.beginHydration();
         const requestOptions = options.allowOversizedResponseRecovery
@@ -3966,9 +3989,27 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 }
             }
         }
+        const observedThreadId = readThreadId(response);
+        if (
+            options.strictNativeResumeIdentity === true
+            && observedThreadId
+            && observedThreadId !== requestedThreadId
+        ) {
+            throw new CodexAppServerResumeIdentityMismatchError(
+                requestedThreadId,
+                observedThreadId,
+            );
+        }
         await historyBoundary.hydrateFromThreadSnapshot(response);
         return {
-            nextThreadId: options.preserveRequestedThreadId ? requestedThreadId : readThreadId(response) ?? requestedThreadId,
+            // An exact local native return accepts an omitted id semantically;
+            // ordinary resume and recovery retain their established response-id
+            // behavior.
+            nextThreadId: options.strictNativeResumeIdentity === true
+                ? requestedThreadId
+                : options.preserveRequestedThreadId
+                    ? requestedThreadId
+                    : observedThreadId ?? requestedThreadId,
             response,
         };
     };
@@ -4012,7 +4053,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         historyBoundary.beginHydration();
         const resumeId = trimSessionId(options.resumeId);
         const existingSessionId = trimSessionId(options.existingSessionId);
-        if (resumeId) {
+        if (resumeId && options.strictNativeResumeIdentity !== true) {
             publishRequestedResumeThreadId(resumeId);
         } else if (existingSessionId) {
             publishRequestedResumeThreadId(existingSessionId);
@@ -4022,7 +4063,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
             const importHistory = options.importHistory === true;
             if (resumeId) {
                 return await resumeThread(client, resumeId, {
-                    preserveRequestedThreadId: false,
+                    preserveRequestedThreadId: options.strictNativeResumeIdentity === true,
+                    strictNativeResumeIdentity: options.strictNativeResumeIdentity === true,
                     allowOversizedResponseRecovery: !importHistory,
                 });
             }

@@ -158,6 +158,11 @@ import {
 } from '@/agent/runtime/startup/startupOverridesCache';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
+import {
+    createLocalAgentNativeResumeRecordStore,
+    isAgentNativeResumeIdentityMismatchError,
+    prepareAgentNativeReturnStrictResume,
+} from '@/session/agentTransition/agentNativeReturn';
 import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
 import type { BackendStartupSpec, StartupContext } from '@/agent/runtime/startup/startupSpec';
 import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
@@ -291,6 +296,7 @@ export async function runCodex(opts: {
         startOrLoad: (options: {
             resumeId?: string | null;
             existingSessionId?: string | null;
+            strictNativeResumeIdentity?: boolean;
             importHistory?: boolean;
             initialGoal?: import('@happier-dev/protocol').SessionInitialGoalRequestV1;
         }) => Promise<unknown>;
@@ -1334,6 +1340,40 @@ export async function runCodex(opts: {
         storedSessionIdFromLocalControl = false;
         logger.debug('[Codex] Resume requested via --resume:', storedSessionIdForResume);
     }
+    // This is inert for ordinary --resume runs. Only a matching same-machine
+    // handoff record clears the Codex projection until `thread/resume` has
+    // accepted the requested id, and only the provider's typed mismatch can
+    // invalidate that record.
+    const trackedNativeReturn = resumeIdFromArgs
+        ? await prepareAgentNativeReturnStrictResume({
+            store: createLocalAgentNativeResumeRecordStore(),
+            sessionId: session.sessionId,
+            targetAgentId: 'codex',
+            vendorResumeId: resumeIdFromArgs,
+            updateMetadata: async (updater) => await session.updateMetadata((metadata) =>
+                updater(metadata as Record<string, unknown>) as typeof metadata,
+            ),
+        })
+        : null;
+    const isTrackedNativeReturnResume = (resumeId: string): boolean =>
+        trackedNativeReturn?.isTracked === true && resumeId === resumeIdFromArgs;
+    const clearTrackedNativeReturnBeforeProviderOpen = async (resumeId: string): Promise<void> => {
+        if (isTrackedNativeReturnResume(resumeId)) {
+            await trackedNativeReturn?.clearBeforeProviderOpen();
+        }
+    };
+    const invalidateTrackedNativeReturnOnMismatch = async (error: unknown): Promise<boolean> => {
+        if (!isAgentNativeResumeIdentityMismatchError(error)) return false;
+        await trackedNativeReturn?.invalidateOnMismatch();
+        return true;
+    };
+    const createCodexResumeError = (message: string, cause: unknown): Error => {
+        const error = new Error(message);
+        error.name = 'CodexAcpResumeError';
+        return isAgentNativeResumeIdentityMismatchError(cause)
+            ? Object.assign(error, { happierNativeResumeIdentityMismatch: true })
+            : error;
+    };
 
 	    if (codexAcpFallbackToMcpMessage && codexAcpFallbackToMcpMessage !== initialCodexAcpFallbackToMcpMessage) {
 	        session.sendSessionEvent({ type: 'message', message: codexAcpFallbackToMcpMessage });
@@ -2152,9 +2192,11 @@ export async function runCodex(opts: {
                 if (resumeId && (useCodexAppServer || isStrictExplicit || isStrictLocalControl)) {
                     messageBuffer.addMessage('Resuming previous context…', 'status');
                     const resumeSignal = startOrLoadAbortController.signal;
+                    await clearTrackedNativeReturnBeforeProviderOpen(resumeId);
                     await seedCodexAppServerOverridesBeforeStartOrLoad();
                     const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({
                         resumeId,
+                        strictNativeResumeIdentity: isTrackedNativeReturnResume(resumeId),
                         // Avoid importing ACP replay history into Happier on resume; Happier transcript is the source of truth.
                         importHistory: false,
                         ...consumeInitialGoalForStartOrLoad(),
@@ -2175,6 +2217,7 @@ export async function runCodex(opts: {
                             // Ensure any late rejection from the in-flight resume attempt is handled.
                             void startOrLoadPromise.catch(() => undefined);
                         } else {
+                            await invalidateTrackedNativeReturnOnMismatch(e);
                             const reason = formatErrorForUi(e);
                             const message = isStrictLocalControl
                                 ? `Failed to switch this Codex session from local → remote.\n` +
@@ -2188,9 +2231,7 @@ export async function runCodex(opts: {
                                   `Note: Happier refuses to start a new Codex session when --resume was requested.`;
                             messageBuffer.addMessage(message, 'status');
                             session.sendSessionEvent({ type: 'message', message });
-                            const err = new Error(message);
-                            err.name = 'CodexAcpResumeError';
-                            throw err;
+                            throw createCodexResumeError(message, e);
                         }
                     }
 
@@ -2463,10 +2504,12 @@ export async function runCodex(opts: {
                         if (resumeId) {
                             messageBuffer.addMessage('Resuming previous context…', 'status');
                             const resumeSignal = startOrLoadAbortController.signal;
+                            await clearTrackedNativeReturnBeforeProviderOpen(resumeId);
                             await seedCodexAppServerOverridesBeforeStartOrLoad();
                             const initialGoal = consumeInitialGoalForStartOrLoad();
                             const startOrLoadPromise = Promise.resolve(codexRuntime.startOrLoad({
                                 resumeId,
+                                strictNativeResumeIdentity: isTrackedNativeReturnResume(resumeId),
                                 // Avoid importing ACP replay history into Happier on resume; Happier transcript is the source of truth.
                                 importHistory: false,
                                 ...initialGoal,
@@ -2494,9 +2537,10 @@ export async function runCodex(opts: {
                                     void startOrLoadPromise.catch(() => undefined);
                                     throw e;
                                 }
+                                const nativeIdentityMismatch = await invalidateTrackedNativeReturnOnMismatch(e);
                                 const isStrictExplicit = Boolean(strictResumeIdForRun && resumeId === strictResumeIdForRun);
                                 const isStrictLocalControl = storedSessionIdFromLocalControl === true;
-                                const isStrict = isStrictExplicit || isStrictLocalControl;
+                                const isStrict = isStrictExplicit || isStrictLocalControl || nativeIdentityMismatch;
                                 if (isStrict) {
                                     const reason = formatErrorForUi(e);
                                     const message = isStrictLocalControl
@@ -2511,9 +2555,7 @@ export async function runCodex(opts: {
                                           `Note: Happier refuses to start a new Codex session when --resume was requested.`;
                                     messageBuffer.addMessage(message, 'status');
                                     session.sendSessionEvent({ type: 'message', message });
-                                    const err = new Error(message);
-                                    err.name = 'CodexAcpResumeError';
-                                    throw err;
+                                    throw createCodexResumeError(message, e);
                                 }
 
                                 logger.debug('[Codex ACP] Resume failed; starting a new session instead', e);
