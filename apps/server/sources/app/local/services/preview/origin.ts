@@ -11,7 +11,16 @@ export type ResolveLocalServicePreviewUrlInput = Readonly<{
 
 export type ResolveLocalServicePreviewUrlResult =
     | Readonly<{ ok: true; url: string; origin: string }>
-    | Readonly<{ ok: false; reasonCode: "host_origin_unavailable" | "https_required" | "invalid_public_base_url" }>;
+    | Readonly<{ ok: false; reasonCode: LocalServiceHostOriginFailureReason }>;
+
+export type LocalServiceHostOriginFailureReason =
+    | "host_origin_unavailable"
+    | "https_required"
+    | "invalid_public_base_url";
+
+export type ResolveLocalServiceHostOriginResult =
+    | Readonly<{ ok: true; origin: string }>
+    | Readonly<{ ok: false; reasonCode: LocalServiceHostOriginFailureReason }>;
 
 function parseUrl(rawUrl: string): URL | null {
     try {
@@ -60,6 +69,32 @@ function appendPreviewToken(url: URL, token: string): URL {
     return url;
 }
 
+/**
+ * Canonical owner of the per-resource isolated origin used by BOTH the private preview
+ * `originMode:'host'` branch and public exposures (S-3). An exposed local service serves
+ * untrusted content, so it must never share the API origin — or another resource's origin —
+ * where same-origin credentialed `fetch` and cross-preview scripting become possible. Callers
+ * that cannot obtain an origin must refuse rather than fall back to the API origin.
+ */
+export function resolveLocalServiceHostOrigin(input: Readonly<{
+    publicBaseUrl: string;
+    hostOriginBaseDomain: string | null | undefined;
+    resourceId: string;
+}>): ResolveLocalServiceHostOriginResult {
+    const publicBase = parseUrl(input.publicBaseUrl);
+    if (!publicBase || (publicBase.protocol !== "http:" && publicBase.protocol !== "https:")) {
+        return { ok: false, reasonCode: "invalid_public_base_url" };
+    }
+    const baseDomain = input.hostOriginBaseDomain ? normalizeHostOriginBaseDomain(input.hostOriginBaseDomain) : null;
+    if (!baseDomain) {
+        return { ok: false, reasonCode: "host_origin_unavailable" };
+    }
+    if (publicBase.protocol !== "https:") {
+        return { ok: false, reasonCode: "https_required" };
+    }
+    return { ok: true, origin: `https://${resolveLocalServicePreviewHostLabel(input.resourceId)}.${baseDomain}` };
+}
+
 export function resolveLocalServicePreviewUrl(input: ResolveLocalServicePreviewUrlInput): ResolveLocalServicePreviewUrlResult {
     const publicBase = parseUrl(input.publicBaseUrl);
     if (!publicBase) {
@@ -70,15 +105,16 @@ export function resolveLocalServicePreviewUrl(input: ResolveLocalServicePreviewU
     }
 
     if (input.originMode === "host") {
-        const baseDomain = input.hostOriginBaseDomain ? normalizeHostOriginBaseDomain(input.hostOriginBaseDomain) : null;
-        if (!baseDomain) {
-            return { ok: false, reasonCode: "host_origin_unavailable" };
-        }
-        if (publicBase.protocol !== "https:") {
-            return { ok: false, reasonCode: "https_required" };
+        const hostOrigin = resolveLocalServiceHostOrigin({
+            publicBaseUrl: input.publicBaseUrl,
+            hostOriginBaseDomain: input.hostOriginBaseDomain,
+            resourceId: input.previewId,
+        });
+        if (!hostOrigin.ok) {
+            return hostOrigin;
         }
 
-        const origin = `https://${resolveLocalServicePreviewHostLabel(input.previewId)}.${baseDomain}`;
+        const origin = hostOrigin.origin;
         const url = appendPreviewToken(appendInitialPath(new URL(origin), input.initialPath), input.token);
         return { ok: true, url: url.toString(), origin };
     }

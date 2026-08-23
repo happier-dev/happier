@@ -1410,6 +1410,51 @@ describe('startDaemonSessionControlRuntime', () => {
                 kind: 'machine',
                 machineId: 'machine-external-action-ingress',
             });
+
+            const accountApiTokensPost = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    tokens: [{
+                        tokenId: 'token-listed-through-daemon',
+                        label: 'Daemon external Action',
+                        displayPrefix: 'hap_v1_token…',
+                        createdAt: '2026-08-23T10:00:00.000Z',
+                        lastUsedAt: null,
+                        expiresAt: null,
+                    }],
+                },
+            });
+            onTestFinished(() => accountApiTokensPost.mockRestore());
+            await expect(externalActionApi?.executor.execute(
+                'account.apiTokens.list',
+                {},
+                {
+                    surface: 'api',
+                    authority: 'account_automation',
+                    actionCaller: { kind: 'host' },
+                },
+            )).resolves.toEqual({
+                ok: true,
+                result: {
+                    tokens: [{
+                        tokenId: 'token-listed-through-daemon',
+                        label: 'Daemon external Action',
+                        displayPrefix: 'hap_v1_token…',
+                        createdAt: '2026-08-23T10:00:00.000Z',
+                        lastUsedAt: null,
+                        expiresAt: null,
+                    }],
+                },
+            });
+            expect(accountApiTokensPost).toHaveBeenCalledWith(
+                expect.stringMatching(/\/v1\/account\/api-tokens\/list$/),
+                {},
+                expect.objectContaining({
+                    headers: expect.objectContaining({
+                        Authorization: 'Bearer token-daemon',
+                    }),
+                }),
+            );
         } finally {
             await runtime.stopControlServer();
         }

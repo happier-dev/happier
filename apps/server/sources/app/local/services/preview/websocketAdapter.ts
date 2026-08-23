@@ -9,6 +9,10 @@ import type {
 import { DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES } from "@/app/local/services/preview/limits";
 import { isPreviewControlledForwardingHeader } from "@/app/local/services/preview/headers";
 import {
+    isSafeLocalServiceHeaderField,
+    isSafeLocalServiceRequestTarget,
+} from "@/app/local/services/preview/requestTarget";
+import {
     createPeerMediationWebSocketEvent,
     type PeerMediationObservabilityEmitter,
 } from "@/app/api/socket/peer/mediation/observability/events";
@@ -43,6 +47,7 @@ export type ProxyLocalServicePreviewWebSocketUpgradeResult =
     | Readonly<{
           ok: false;
           reasonCode:
+              | "invalid_request_target"
               | "preview_loop_detected"
               | "request_body_too_large"
               | "response_header_too_large"
@@ -103,6 +108,7 @@ function requestTargetPath(request: LocalServicePreviewWebSocketUpgradeRequest):
 
 function shouldForwardRawHeader(name: string): boolean {
     const normalized = headerName(name);
+    if (!isSafeLocalServiceHeaderField(normalized)) return false;
     if (normalized === PREVIEW_HOP_HEADER) return false;
     if (isPreviewControlledForwardingHeader(normalized)) return false;
     return ![
@@ -149,7 +155,7 @@ function serializeUpgradeRequest(
     ];
 
     const forwardedHost = readHeader(request.headers, "host");
-    if (forwardedHost) {
+    if (forwardedHost && isSafeLocalServiceHeaderField(forwardedHost)) {
         lines.push(`X-Forwarded-Host: ${forwardedHost}`);
     }
     lines.push(`X-Forwarded-Proto: ${preview.target.scheme}`);
@@ -159,6 +165,9 @@ function serializeUpgradeRequest(
         const value = request.rawHeaders[index + 1];
         if (typeof name !== "string" || typeof value !== "string") continue;
         if (!shouldForwardRawHeader(name)) continue;
+        // A header value carrying a bare CR/LF cannot be emitted onto the wire without splitting
+        // the upgrade request; drop the field rather than corrupt the framing.
+        if (!isSafeLocalServiceHeaderField(value)) continue;
         lines.push(`${name}: ${value}`);
     }
 
@@ -353,6 +362,14 @@ function nextSocketId(previewId: string): string {
 export async function proxyLocalServicePreviewWebSocketUpgrade(
     input: ProxyLocalServicePreviewWebSocketUpgradeInput,
 ): Promise<ProxyLocalServicePreviewWebSocketUpgradeResult> {
+    // S-1 fail-closed backstop for the raw upgrade request line. The upgrade routes derive the
+    // path from `URL.pathname`, which is canonical by construction, so this can only fire for a
+    // caller that supplied a router-decoded path directly.
+    if (!isSafeLocalServiceRequestTarget(requestTargetPath(input.request))) {
+        await writeClientError(input.request.client, 400, "Bad Request");
+        return { ok: false, reasonCode: "invalid_request_target" };
+    }
+
     if (!isWebSocketUpgrade(input.request)) {
         await writeClientError(input.request.client, 400, "Bad Request");
         return { ok: false, reasonCode: "invalid_upgrade_request" };

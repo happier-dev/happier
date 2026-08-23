@@ -4,6 +4,10 @@ import { DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES } from "@/app/local/services/
 import { isPreviewControlledForwardingHeader } from "@/app/local/services/preview/headers";
 import { rewritePreviewResponseHeaders } from "@/app/local/services/preview/rewrites";
 import {
+    isSafeLocalServiceHeaderField,
+    isSafeLocalServiceRequestTarget,
+} from "@/app/local/services/preview/requestTarget";
+import {
     createPeerMediationFlowEvent,
     createPeerMediationHttpRequestAbortedEvent,
     createPeerMediationHttpRequestFinishedEvent,
@@ -56,6 +60,7 @@ export type ProxyLocalServicePreviewHttpRequestResult =
     | Readonly<{
           ok: false;
           reasonCode:
+              | "invalid_request_target"
               | "method_not_allowed"
               | "preview_loop_detected"
               | "request_body_too_large"
@@ -141,6 +146,7 @@ function requestTargetPath(request: LocalServicePreviewHttpRequest): string {
 
 function shouldForwardRequestHeader(name: string): boolean {
     const normalized = headerName(name);
+    if (!isSafeLocalServiceHeaderField(normalized)) return false;
     if (normalized === PREVIEW_HOP_HEADER) return false;
     if (isPreviewControlledForwardingHeader(normalized)) return false;
     return ![
@@ -177,7 +183,7 @@ function serializeRequestHeaders(preview: LocalServicePreviewResourceV1, request
     ];
 
     const forwardedHost = readHeader(request.headers, "host");
-    if (forwardedHost) {
+    if (forwardedHost && isSafeLocalServiceHeaderField(forwardedHost)) {
         lines.push(`X-Forwarded-Host: ${forwardedHost}`);
     }
     lines.push(`X-Forwarded-Proto: ${preview.target.scheme}`);
@@ -185,6 +191,9 @@ function serializeRequestHeaders(preview: LocalServicePreviewResourceV1, request
     for (const [name, value] of Object.entries(request.headers)) {
         if (!shouldForwardRequestHeader(name)) continue;
         for (const item of headerValues(value)) {
+            // A header value carrying a bare CR/LF cannot be emitted onto the wire without
+            // splitting the request; drop the field rather than corrupt the framing.
+            if (!isSafeLocalServiceHeaderField(item)) continue;
             lines.push(`${formatForwardedHeaderName(name)}: ${item}`);
         }
     }
@@ -396,6 +405,15 @@ export async function proxyLocalServicePreviewHttpRequest(
     const startedAtMs = nowMs();
     const requestId = nextRequestId(input.preview.previewId);
     const observabilityAccountId = input.observabilityAccountId ?? "unknown";
+
+    // S-1 fail-closed backstop for the raw request line. Every route entry point re-encodes the
+    // router-decoded path (`requestTarget.ts`) and `URL.pathname` is canonical by construction, so
+    // this can only fire for a caller that bypassed both.
+    if (!isSafeLocalServiceRequestTarget(requestTargetPath(input.request))) {
+        input.response.writeHead(400, "Bad Request", {});
+        await input.response.end();
+        return { ok: false, reasonCode: "invalid_request_target" };
+    }
 
     if (!isMethodAllowed(input.preview, input.request.method)) {
         input.response.writeHead(405, "Method Not Allowed", {});

@@ -41,3 +41,20 @@ export {
   type PeerMediationObservabilityHeaders,
   type PeerMediationObservabilityRedactionOptions,
 } from './metadataRedaction.js';
+export {
+  peerMediationObservabilityScopeKey,
+  peerMediationObservabilityScopesEqual,
+} from './scopeIdentity.js';
+export {
+  applyPeerMediationObservabilityEventToFlowSnapshot,
+  buildPeerMediationObservabilityFlowSnapshots,
+  isPeerMediationObservabilityTerminalLifecycle,
+  peerMediationObservabilityLifecycleForEventKind,
+} from './flowSnapshotFold.js';
+export {
+  PEER_MEDIATION_OBSERVABILITY_STORE_DEFAULTS,
+  createPeerMediationObservabilityFlowStore,
+  type PeerMediationObservabilityFlowStore,
+  type PeerMediationObservabilityFlowStoreDeltaListener,
+  type PeerMediationObservabilityFlowStoreOptions,
+} from './flowStore.js';

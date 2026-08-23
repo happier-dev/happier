@@ -20,6 +20,7 @@ import {
     resolveLocalServicePublicExposureDecision,
     type LocalServicePublicExposureRejectionReason,
 } from "@/app/local/services/public/policy";
+import { resolveLocalServiceHostOrigin } from "@/app/local/services/preview/origin";
 
 type PublicAccessFailureReason =
     | "exposure_not_found"
@@ -29,6 +30,7 @@ type PublicAccessFailureReason =
     | "revoked"
     | "rate_limited"
     | "authentication_required"
+    | "session_not_authorized"
     | "public_token_missing"
     | "public_token_exchange_required"
     | "public_token_mismatch"
@@ -45,6 +47,7 @@ export type LocalServicePublicRuntimeCreateResult =
           reasonCode:
               | LocalServicePublicExposureRejectionReason
               | "invalid_public_base_url"
+              | "public_origin_unavailable"
               | "public_token_secret_missing"
               | "audit_sink_unavailable"
               | "rate_limit_checker_unavailable";
@@ -53,6 +56,23 @@ export type LocalServicePublicRuntimeCreateResult =
 export type LocalServicePublicRuntimeAccessResult =
     | Readonly<{ ok: true; preview: LocalServicePreviewResourceV1 }>
     | Readonly<{ ok: false; reasonCode: PublicAccessFailureReason }>;
+
+/**
+ * S-2: `authenticated` alone only proves the caller holds SOME account on this server. An
+ * `authenticated` exposure is bound to one session, so the caller must additionally hold access
+ * to that session — `sessionAuthorized` carries that fact. It is required (never optional) so a
+ * caller cannot omit it and silently reopen the co-tenant hole.
+ *
+ * S-5: `clientKey` identifies the requesting client for rate-limit bucketing, so one visitor
+ * cannot exhaust the window for every other visitor of the same exposure.
+ */
+export type LocalServicePublicRuntimeAccessInput = Readonly<{
+    exposureId: string;
+    rawToken: string | null;
+    authenticated: boolean;
+    sessionAuthorized: boolean;
+    clientKey: string;
+}>;
 
 type PublicExchangeFailureReason =
     | "exposure_not_found"
@@ -87,11 +107,7 @@ export type LocalServicePublicRuntime = Readonly<{
         rateLimitProfileId: string;
     }>): LocalServicePublicRuntimeCreateResult;
     resolveExposure(exposureId: string): LocalServicePublicExposureV1 | null;
-    validateAccess(input: Readonly<{
-        exposureId: string;
-        rawToken: string | null;
-        authenticated: boolean;
-    }>): LocalServicePublicRuntimeAccessResult;
+    validateAccess(input: LocalServicePublicRuntimeAccessInput): LocalServicePublicRuntimeAccessResult;
     exchangeAccessToken(input: Readonly<{
         exposureId: string;
         rawToken: string | null;
@@ -116,7 +132,12 @@ export type CreateLocalServicePublicRuntimeInput = Readonly<{
     auditSinkDurable?: boolean;
     allowTestDevAuditSink?: boolean;
     recordAuditEvent?: (event: LocalServicePublicAuditEventV1) => void;
-    checkRateLimit?: (input: Readonly<{ exposure: LocalServicePublicExposureV1; nowMs: number }>) => boolean;
+    hostOriginBaseDomain?: string | null;
+    checkRateLimit?: (input: Readonly<{
+        exposure: LocalServicePublicExposureV1;
+        clientKey: string;
+        nowMs: number;
+    }>) => boolean;
     resolvePreview?: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     maxExposureAuditEventIds?: number;
 }>;
@@ -152,11 +173,11 @@ function parsePublicBaseUrl(value: string | null | undefined): URL | null {
 }
 
 function publicExposureUrl(input: Readonly<{
-    publicBaseUrl: URL;
+    exposureOrigin: string;
     exposureId: string;
     secretToken: string | null;
 }>): string {
-    const url = new URL(`/v1/local-services/public/${encodeURIComponent(input.exposureId)}`, input.publicBaseUrl.origin);
+    const url = new URL(`/v1/local-services/public/${encodeURIComponent(input.exposureId)}`, input.exposureOrigin);
     if (input.secretToken) {
         url.searchParams.set("publicToken", input.secretToken);
     }
@@ -304,7 +325,9 @@ export function createLocalServicePublicRuntime(
         if (!hasRequiredAuditSink()) {
             return { ok: false, reasonCode: "audit_sink_unavailable" };
         }
-        if (parsedRuntimePolicy.data.rateLimitProfileIds.length > 0 && !input.checkRateLimit) {
+        // S-5 / INV-1: abuse control is a hard prerequisite, not a conditional one. Without a
+        // checker there is no rate limiting at all, so the exposure must not be minted.
+        if (!input.checkRateLimit) {
             return { ok: false, reasonCode: "rate_limit_checker_unavailable" };
         }
 
@@ -315,6 +338,17 @@ export function createLocalServicePublicRuntime(
         }
 
         const exposureId = generateExposureId();
+        // S-3: an exposed local service serves untrusted content. Minting it on the API origin
+        // would put that content same-origin with the API and with every other exposure and
+        // preview on the host. Refuse rather than fall back.
+        const exposureOrigin = resolveLocalServiceHostOrigin({
+            publicBaseUrl: publicBaseUrl.toString(),
+            hostOriginBaseDomain: input.hostOriginBaseDomain,
+            resourceId: exposureId,
+        });
+        if (!exposureOrigin.ok) {
+            return { ok: false, reasonCode: "public_origin_unavailable" };
+        }
         const issuedAt = nowMs();
         let exposure: LocalServicePublicExposureV1 = {
             exposureId,
@@ -324,7 +358,7 @@ export function createLocalServicePublicRuntime(
             mode: decision.mode,
             state: "active",
             publicUrl: publicExposureUrl({
-                publicBaseUrl,
+                exposureOrigin: exposureOrigin.origin,
                 exposureId,
                 secretToken,
             }),
@@ -423,11 +457,7 @@ export function createLocalServicePublicRuntime(
         return { ok: true, preview: currentPreview };
     }
 
-    function validateAccess(validateInput: Readonly<{
-        exposureId: string;
-        rawToken: string | null;
-        authenticated: boolean;
-    }>): LocalServicePublicRuntimeAccessResult {
+    function validateAccess(validateInput: LocalServicePublicRuntimeAccessInput): LocalServicePublicRuntimeAccessResult {
         let entry = entries.get(validateInput.exposureId);
         if (!entry) {
             return { ok: false, reasonCode: "exposure_not_found" };
@@ -442,8 +472,15 @@ export function createLocalServicePublicRuntime(
             return denyAccess(entry, unavailableReason);
         }
 
-        if (entry.exposure.mode === "authenticated" && !validateInput.authenticated) {
-            return denyAccess(entry, "authentication_required");
+        if (entry.exposure.mode === "authenticated") {
+            if (!validateInput.authenticated) {
+                return denyAccess(entry, "authentication_required");
+            }
+            // S-2: holding an account on this server is not authorization for someone else's
+            // exposed service. The exposure is bound to a session; require access to it.
+            if (!validateInput.sessionAuthorized) {
+                return denyAccess(entry, "session_not_authorized");
+            }
         }
 
         if (entry.exposure.mode === "secret_link") {
@@ -464,29 +501,33 @@ export function createLocalServicePublicRuntime(
             return denyAccess(entry, currentPreview.reasonCode);
         }
 
-        if (parsedRuntimePolicy.success && parsedRuntimePolicy.data.rateLimitProfileIds.length > 0 && !input.checkRateLimit) {
+        // S-5 / INV-1: no checker means no abuse control, so access fails closed rather than open.
+        if (!input.checkRateLimit) {
             return denyAccess(entry, "rate_limit_checker_unavailable");
         }
 
-        let rateLimitAllowed = true;
-        if (input.checkRateLimit) {
-            try {
-                rateLimitAllowed = input.checkRateLimit({ exposure: entry.exposure, nowMs: accessNowMs });
-            } catch {
-                return denyAccess(entry, "rate_limit_checker_unavailable");
-            }
+        let rateLimitAllowed = false;
+        try {
+            rateLimitAllowed = input.checkRateLimit({
+                exposure: entry.exposure,
+                clientKey: validateInput.clientKey,
+                nowMs: accessNowMs,
+            });
+        } catch {
+            return denyAccess(entry, "rate_limit_checker_unavailable");
         }
 
         if (!rateLimitAllowed) {
-            const rateLimitAuditResult = appendAuditEvent({
-                ...entry.exposure,
-                state: "rate_limited" as const,
-            }, {
+            // S-5: rate limiting is a property of THIS request, not of the exposure. Persisting
+            // `state:'rate_limited'` made `isLocalServicePublicExposureAccessible` treat the link
+            // as permanently dead, so one visitor bricked it for everyone. Audit and deny; the
+            // next request in the next window succeeds.
+            const rateLimitAuditResult = appendAuditEventToEntry(entry, {
                 exposureId: entry.exposure.exposureId,
                 action: "rate_limit",
             });
             if (!rateLimitAuditResult.ok) return rateLimitAuditResult;
-            return denyAccess(updateExposureEntry(entry, rateLimitAuditResult.exposure), "rate_limited");
+            return denyAccess(rateLimitAuditResult.entry, "rate_limited");
         }
 
         const auditResult = appendAuditEventToEntry(entry, {

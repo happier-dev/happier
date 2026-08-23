@@ -13,6 +13,7 @@ import { resolveAttachmentsUploadsFeature } from '../attachmentsUploadsFeature';
 import { resolvePetsFeature } from '../petsFeature';
 import { resolveMachineTransferFeature } from '../machineTransferFeature';
 import { resolveMachineTunnelFeature } from '../machineTunnelFeature';
+import { resolvePeerMediationFeature } from '../peerMediationFeature';
 import { resolveMachineLiveStreamFeature } from '../machineLiveStreamFeature';
 import { resolveMachineRpcFeature } from '../machineRpcFeature';
 import { resolveLocalServicesFeature } from '../localServicesFeature';
@@ -53,6 +54,7 @@ export const serverFeatureRegistry = Object.freeze([
     (env) => resolvePetsFeature(env),
     (env) => resolveMachineTransferFeature(env),
     (env) => resolveMachineTunnelFeature(env),
+    (env) => resolvePeerMediationFeature(env),
     (env) => resolveLocalServicesFeature(env),
     (env) => resolveProvidersFeature(env),
     (env) => resolveBrowserFeature(env),

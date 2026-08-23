@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { PeerFlowKindV1Schema } from '../flowKind.js';
 import { PeerRouteKindV1Schema } from '../routeKind.js';
 import { rejectUnsafePeerMediationObservabilityDataKeys } from './redaction.js';
+import { peerMediationObservabilityScopesEqual } from './scopeIdentity.js';
 
 export const PEER_MEDIATION_OBSERVABILITY_SNAPSHOT_SOCKET_EVENT = 'peer:observability:snapshot:v1' as const;
 export const PEER_MEDIATION_OBSERVABILITY_DELTA_SOCKET_EVENT = 'peer:observability:delta:v1' as const;
@@ -150,32 +151,6 @@ const ObservabilityDataSchema = z
   .record(z.string(), z.unknown())
   .superRefine(rejectUnsafePeerMediationObservabilityDataKeys);
 
-function observabilityScopesMatch(
-  left: PeerMediationObservabilityScopeV1,
-  right: PeerMediationObservabilityScopeV1,
-): boolean {
-  if (left.kind === 'account' && right.kind === 'account') {
-    return left.accountId === right.accountId;
-  }
-  if (left.kind === 'machine' && right.kind === 'machine') {
-    return left.accountId === right.accountId && left.machineId === right.machineId;
-  }
-  if (left.kind === 'session' && right.kind === 'session') {
-    return left.accountId === right.accountId && left.sessionId === right.sessionId;
-  }
-  if (left.kind === 'publicPreview' && right.kind === 'publicPreview') {
-    return left.publicExposureId === right.publicExposureId;
-  }
-  if (left.kind === 'pluginSurface' && right.kind === 'pluginSurface') {
-    return (
-      left.accountId === right.accountId
-      && left.pluginId === right.pluginId
-      && left.surfaceId === right.surfaceId
-    );
-  }
-  return false;
-}
-
 function refinePublicAndPluginFlowReferences(
   event: {
     scope: PeerMediationObservabilityScopeV1;
@@ -298,7 +273,7 @@ export const PeerMediationObservabilityDeltaV1Schema = z
   .strict()
   .superRefine((delta, context) => {
     delta.events.forEach((event, index) => {
-      if (observabilityScopesMatch(delta.scope, event.scope)) return;
+      if (peerMediationObservabilityScopesEqual(delta.scope, event.scope)) return;
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['events', index, 'scope'],

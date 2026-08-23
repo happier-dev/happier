@@ -247,8 +247,6 @@ export type ConnectedServicesProjectionNotification = Readonly<{
     signal: AbortSignal;
     connectedServicesV2: unknown;
     connectedServiceCredentialRevisionsV1: unknown;
-    connectedAccountsV4?: unknown;
-    connectedAccountGroupsV4?: unknown;
 }>;
 
 export type ApiMachineClientLifecycleDependencies = Readonly<{
@@ -1058,8 +1056,6 @@ export class ApiMachineClient {
             | 'signal'
             | 'connectedServicesV2'
             | 'connectedServiceCredentialRevisionsV1'
-            | 'connectedAccountsV4'
-            | 'connectedAccountGroupsV4'
         >,
         signal: AbortSignal,
     ): Promise<void> {
@@ -1075,8 +1071,6 @@ export class ApiMachineClient {
                 signal,
                 connectedServicesV2: profile.connectedServicesV2,
                 connectedServiceCredentialRevisionsV1: profile.connectedServiceCredentialRevisionsV1,
-                connectedAccountsV4: profile.connectedAccountsV4,
-                connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
             });
         } catch (error) {
             if (!isConnectedServiceGenerationReconciliationNotAcknowledgeableError(error)) throw error;

@@ -26,6 +26,7 @@ import {
     type ProxyLocalServicePreviewHttpRequestResult,
 } from "@/app/local/services/preview/httpAdapter";
 import { writeLocalServicePreviewDownstream } from "@/app/local/services/preview/downstream";
+import { encodeLocalServiceRequestPath } from "@/app/local/services/preview/requestTarget";
 import {
     createPublicExposureObservabilityEmitter,
     handleLocalServicePublicWebSocketUpgrade,
@@ -170,8 +171,10 @@ function exposureMatchesRevokeRequest(
 }
 
 function readWildcardPath(request: RouteRequest): string {
-    const raw = readString(request.params?.["*"]) ?? "";
-    return `/${raw.replace(/^\/+/u, "")}`;
+    // S-1: Fastify percent-decodes the wildcard, so this value can carry a real CRLF. Re-encode
+    // it once here, at the entry boundary, so both downstream sinks (the raw upstream request
+    // line and the `Location` redirect header) receive a canonical request path.
+    return encodeLocalServiceRequestPath(readString(request.params?.["*"]) ?? "");
 }
 
 function serializeQuery(query: Record<string, unknown> | undefined): string {

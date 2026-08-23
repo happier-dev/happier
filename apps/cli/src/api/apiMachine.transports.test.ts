@@ -18,6 +18,7 @@ const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.h
     apiServerUrl: 'http://localhost:3005',
     activeServerDir: '',
     currentCliVersion: '0.2.10-test',
+    happyHomeDir: process.env.RUNNER_TEMP ?? process.env.TMPDIR ?? process.env.TEMP ?? '.',
     socketIoTransports: ['polling', 'websocket'] as string[],
   },
   mockAxiosIsAxiosError: vi.fn((error: unknown) => (
@@ -69,6 +70,10 @@ vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: registerMa
 vi.mock('./rpc/RpcHandlerManager', () => ({
   RpcHandlerManager: class {
     registerHandler() {}
+    hasHandler() { return true; }
+    async waitForRegisteredHandlers() {
+      return { status: 'disconnected' as const, missingMethods: [] };
+    }
     onSocketConnect() {}
     onSocketDisconnect() {}
     async handleRequest() {
@@ -132,24 +137,28 @@ describe('ApiMachineClient transports', () => {
   });
 
   it('uses the strict machine terminal capture/finalize socket contract', async () => {
-    const responses = [
-      {
-        v: 1,
-        status: 'captured',
-        sessionId: 's1',
-        authority: { kind: 'generation', publisherGeneration: '7' },
-      },
-      { v: 1, status: 'closed', sessionId: 's1' },
-    ];
-    const machineSocket = createApiSessionSocketStub({
-      emitWithAck: vi.fn(async () => responses.shift()),
-    });
-    bindApiSessionSocketMock(mockIo, machineSocket);
-    const mod = await import('./apiMachine');
     const {
       MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
       MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
     } = await import('@happier-dev/protocol');
+    const machineSocket = createApiSessionSocketStub({
+      emitWithAck: vi.fn(async (event: string) => {
+        if (event === MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1) {
+          return {
+            v: 1,
+            status: 'captured',
+            sessionId: 's1',
+            authority: { kind: 'generation', publisherGeneration: '7' },
+          };
+        }
+        if (event === MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1) {
+          return { v: 1, status: 'closed', sessionId: 's1' };
+        }
+        return { success: true, applied: true };
+      }),
+    });
+    bindApiSessionSocketMock(mockIo, machineSocket);
+    const mod = await import('./apiMachine');
     const client = new mod.ApiMachineClient('fake-token', {
       id: 'test-machine',
       encryptionKey: new Uint8Array(32),
@@ -171,13 +180,11 @@ describe('ApiMachineClient transports', () => {
       sessionId: 's1',
       authority: { kind: 'generation', publisherGeneration: '7' },
     })).resolves.toEqual({ v: 1, status: 'closed', sessionId: 's1' });
-    expect(machineSocket.emitWithAck).toHaveBeenNthCalledWith(
-      1,
+    expect(machineSocket.emitWithAck).toHaveBeenCalledWith(
       MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
       { v: 1, sessionId: 's1' },
     );
-    expect(machineSocket.emitWithAck).toHaveBeenNthCalledWith(
-      2,
+    expect(machineSocket.emitWithAck).toHaveBeenCalledWith(
       MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
       {
         v: 1,

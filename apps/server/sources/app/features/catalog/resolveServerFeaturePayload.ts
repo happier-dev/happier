@@ -10,7 +10,6 @@ import {
 
 import type { ServerFeatureResolver } from './serverFeatureRegistry';
 import { resolveServerFeatureBuildPolicy } from './serverFeatureBuildPolicy';
-import { readPeerMediationFeatureEnv } from './readFeatureEnv';
 import { applyBrowserCapabilityFeatureGateClosure } from '../browserFeature';
 import { isSessionSystemRecordsProtocolV1Active } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
 
@@ -72,18 +71,6 @@ export function resolveServerFeaturePayload(
         }
     }
 
-    const peerMediationEnv = readPeerMediationFeatureEnv(env);
-    if (peerMediationEnv.grantSigningKeys.length > 0) {
-        Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, {
-            machines: {
-                peerMediation: {
-                    grantSigningKeys: peerMediationEnv.grantSigningKeys,
-                    directRouteGrantProofMintVersions: [2],
-                    tcpTunnelRelayAuthorizationMintVersions: [2],
-                },
-            },
-        }));
-    }
     // `turns` is advertised only while the transcript anchor projection is active: before that,
     // `SessionTurn` rows may still be v0 and their anchors cannot be trusted to describe turn
     // boundaries, so the route would have nothing sound to serve.

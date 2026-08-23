@@ -35,6 +35,8 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   sessionsUsageLimitRecoveryEnabled: 'HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED',
   machinesTransferDirectPeerEnabled: 'HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED',
   machinesRpcDirectPeerEnabled: 'HAPPIER_FEATURE_MACHINES_RPC_DIRECT_PEER__ENABLED',
+  machinesPeerMediationObservabilityEnabled:
+    'HAPPIER_FEATURE_MACHINES_PEER_MEDIATION_OBSERVABILITY__ENABLED',
   machinesTransferServerRoutedEnabled: 'HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED',
   machinesTransferServerRoutedMaxBytes: 'HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES',
   machinesTransferServerRoutedMaxActiveTransfersPerSocket:

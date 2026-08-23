@@ -259,6 +259,13 @@ export type PeerMediationGrantSigningKeyCapabilityEnv = Readonly<{
 
 export type PeerMediationFeatureEnv = Readonly<{
   grantSigningKeys: readonly PeerMediationGrantSigningKeyCapabilityEnv[];
+  /**
+   * Grant signing is the substrate's real master switch: without a signing key the grant-mint route
+   * 404s and the preview tunnel throws `grant_signing_unavailable`, so `machines.peerMediation` is
+   * derived from it rather than from a second, independently-settable variable.
+   */
+  substrateEnabled: boolean;
+  observabilityEnabled: boolean;
 }>;
 
 export type TerminalFeatureEnv = Readonly<{
@@ -548,11 +555,20 @@ export function readPetsFeatureEnv(env: NodeJS.ProcessEnv): PetsFeatureEnv {
 }
 
 export function readPeerMediationFeatureEnv(env: NodeJS.ProcessEnv): PeerMediationFeatureEnv {
+  // Fail closed: an absent or malformed observability variable resolves to disabled.
+  const observabilityEnabled = parseBooleanEnv(
+    env[FEATURE_ENV_KEYS.machinesPeerMediationObservabilityEnabled],
+    false,
+  );
   const signing = resolvePeerMediationGrantSigningConfig(env);
-  if (!signing.ok) return { grantSigningKeys: [] };
+  if (!signing.ok) {
+    return { grantSigningKeys: [], substrateEnabled: false, observabilityEnabled };
+  }
 
   return {
     grantSigningKeys: [signing.capability],
+    substrateEnabled: true,
+    observabilityEnabled,
   };
 }
 

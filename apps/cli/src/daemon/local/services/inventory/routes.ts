@@ -39,6 +39,12 @@ export type LocalServiceInventoryRoutes = Readonly<{
 export function createLocalServiceInventoryRoutes(input: Readonly<{
     registry: LocalServiceInventoryRegistry;
     refreshSnapshot?: () => Promise<NormalizedLocalServiceInventorySnapshot>;
+    /**
+     * Bring the snapshot up to date when a reader arrives without a parked watch. The scan loop
+     * follows watchers, so a plain snapshot read is the one path that can otherwise observe an
+     * inventory nobody has scanned. Coalesced by the same single flight as `refreshSnapshot`.
+     */
+    ensureFreshSnapshot?: () => Promise<void>;
     /** Daemon-owned park budget; callers derive their RPC timeout from the protocol constant. */
     watchWindowMs?: number;
     /** Fired whenever the parked-watcher count changes, so the runtime can follow demand. */
@@ -54,6 +60,7 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
 
     return {
         async getSnapshot() {
+            await input.ensureFreshSnapshot?.();
             return input.registry.getSnapshot();
         },
         async refreshSnapshot() {

@@ -15,19 +15,31 @@ import type { LocalServiceActionExecutionOutcome } from './executor';
  *    `(address, port)` listener and refuse (`identity_changed`) if it is not the same pid
  *    (and, when scan-time identity had one, the same process start time). We never signal
  *    a pid we did not just re-confirm owns the port.
+ *  - **A degraded scan is never read as "already gone".** The re-resolution is three-valued:
+ *    a listener scan that failed resolves to `indeterminate`, and we refuse
+ *    (`listener_state_unverifiable`) rather than claiming an idempotent success we cannot
+ *    prove. The pre-signal probe additionally requires a snapshot generated at or after the
+ *    request, so coalescing onto an in-flight scan cannot revalidate against stale identity.
  *  - **Never pid 0/1.** Signalling pid 0 hits the caller's whole process group; pid 1 is
  *    init. Both are refused (`unsafe_pid`).
- *  - **Graceful-then-force.** POSIX sends SIGTERM (to the process group for run-wrapper
- *    children, direct pid otherwise), waits a grace window, then SIGKILL if still alive.
- *    Windows runs `taskkill /T` (subtree) then `/F` (force).
- *  - **Post-release verification.** After signalling we poll the listener until the port is
- *    released (or a *different* pid has rebound it); if our pid still holds it we report
- *    `port_not_released` rather than claiming a success we cannot prove.
+ *  - **Graceful-then-force over the real process tree.** POSIX signals the listener pid and
+ *    its resolved descendants individually (SIGTERM, grace window, then SIGKILL); Windows runs
+ *    `taskkill /T` (subtree) then `/F` (force). We never address a process *group*: the
+ *    listener pid of a run-wrapped dev server (`npm run dev` -> node) is not a group leader, so
+ *    `kill(-pid)` raises ESRCH and signals nothing, and `kill(-pgid)` would reach unrelated
+ *    members of the launching shell's group. The descendant set is resolved once, before
+ *    SIGTERM: children orphaned by the SIGTERM keep the pids we already collected.
+ *  - **Post-release verification, with the failure named.** After signalling we poll liveness
+ *    and confirm the port was released (or rebound by a *different* pid). If our pid still
+ *    holds it we distinguish `port_not_released` (we did signal it and it survived) from
+ *    `terminate_no_process_signaled` (every pid we addressed was already gone, so our targeting
+ *    was wrong) — the second is what an ESRCH swallowed as success used to hide behind the
+ *    first for six seconds.
  *
- * The OS-facing operations (signal, liveness, listener probe, wait) are injected through
- * {@link TerminateProcessControl} — a system boundary (process signals, `/proc`/`lsof`,
- * `taskkill`) — so this orchestration is deterministically testable and the runtime supplies
- * the real adapter.
+ * The OS-facing operations (signal, descendant resolution, liveness, listener probe, wait) are
+ * injected through {@link TerminateProcessControl} — a system boundary (process signals,
+ * `/proc`/`ps`/`lsof`, `taskkill`) — so this orchestration is deterministically testable and the
+ * runtime supplies the real adapter.
  */
 
 export type TerminateProcessIdentity = Readonly<{
@@ -40,23 +52,59 @@ export type TerminateProcessIdentity = Readonly<{
     cwd?: string;
 }>;
 
-export type TerminateListenerProbeInput = Readonly<{ host: string; port: number }>;
+export type TerminateListenerProbeInput = Readonly<{
+    host: string;
+    port: number;
+    /**
+     * Reject a listener observation generated before this timestamp. The probe shares the
+     * inventory's single-flight refresh, so without this a caller can be handed a snapshot
+     * that pre-dates its own request and revalidate identity against stale facts.
+     */
+    notBefore?: number;
+}>;
+
+/**
+ * Three-valued listener re-resolution. `free` means the scan was authoritative and nothing
+ * holds the port; `indeterminate` means the scan could not establish that — the two must never
+ * collapse, because the destructive action treats `free` as an idempotent success.
+ */
+export type TerminateListenerProbeResult =
+    | Readonly<{ status: 'held'; identity: TerminateProcessIdentity }>
+    | Readonly<{ status: 'free' }>
+    | Readonly<{ status: 'indeterminate' }>;
 
 export type TerminateProcessSignalInput = Readonly<{
     pid: number;
     signal: 'SIGTERM' | 'SIGKILL';
-    /** When true, signal the whole process group (POSIX run-wrapper children). */
-    group: boolean;
+    /** The listener pid's real descendants, signalled individually alongside it. */
+    descendantPids: readonly number[];
 }>;
+
+/**
+ * Outcome of one signal round. ESRCH is classified rather than swallowed: on an individual pid
+ * it means that process already exited (benign), but when *every* addressed pid raises it we
+ * signalled nothing at all and must say so.
+ */
+export type TerminateProcessSignalOutcome =
+    | Readonly<{ status: 'delivered'; deliveredPids: readonly number[] }>
+    | Readonly<{ status: 'no_process_signaled' }>
+    | Readonly<{ status: 'permission_denied' }>
+    | Readonly<{ status: 'failed' }>;
 
 export type TerminateWindowsTreeInput = Readonly<{ pid: number; force: boolean }>;
 
 export type TerminateProcessControl = Readonly<{
     platform: 'posix' | 'windows';
-    /** Re-resolve which pid currently holds the `(host, port)` listener, or null if free. */
-    probeListener(input: TerminateListenerProbeInput): Promise<TerminateProcessIdentity | null>;
+    /** Re-resolve which pid currently holds the `(host, port)` listener. */
+    probeListener(input: TerminateListenerProbeInput): Promise<TerminateListenerProbeResult>;
+    /**
+     * Transitive descendants of `pid`. Empty on Windows (`taskkill /T` owns the subtree) and
+     * empty when the process table could not be read — the caller then signals the pid alone
+     * and the port-release verification reports the real outcome.
+     */
+    resolveDescendantPids(pid: number): Promise<readonly number[]>;
     isProcessAlive(pid: number): Promise<boolean>;
-    signal(input: TerminateProcessSignalInput): Promise<void>;
+    signal(input: TerminateProcessSignalInput): Promise<TerminateProcessSignalOutcome>;
     terminateWindowsTree(input: TerminateWindowsTreeInput): Promise<void>;
     wait(ms: number): Promise<void>;
 }>;
@@ -66,7 +114,7 @@ export type TerminateDetectedServiceConfig = Readonly<{
     graceMs?: number;
     /** Per-attempt delay while verifying the port was released. */
     verifyPollMs?: number;
-    /** Number of post-kill port-release verification attempts. */
+    /** Number of post-kill liveness attempts before the final authoritative listener probe. */
     verifyAttempts?: number;
 }>;
 
@@ -88,17 +136,6 @@ function isUnsafePid(pid: number): boolean {
     return !Number.isInteger(pid) || pid <= 1;
 }
 
-/**
- * A run-wrapper (e.g. `npm run dev` → child server) appears in the inventory with a process
- * lineage of more than one pid, so SIGTERM must reach the whole group to stop the actual
- * server rather than only the wrapper. A bare process (single-pid lineage) is signalled
- * directly.
- */
-function isRunWrapped(entry: NormalizedLocalServiceInventoryEntry): boolean {
-    const lineage = entry.provenance?.process?.lineagePids ?? [];
-    return lineage.length > 1;
-}
-
 function identityMatches(
     expected: TerminateProcessIdentity,
     actual: TerminateProcessIdentity,
@@ -116,6 +153,20 @@ function identityMatches(
     return true;
 }
 
+/** The port is released once nothing holds it, or a *different* pid rebound it. */
+function isPortReleased(probe: TerminateListenerProbeResult, pid: number): boolean {
+    if (probe.status === 'free') return true;
+    return probe.status === 'held' && probe.identity.pid !== pid;
+}
+
+function signalFailureReasonCode(
+    outcome: TerminateProcessSignalOutcome,
+): string | null {
+    if (outcome.status === 'permission_denied') return 'terminate_permission_denied';
+    if (outcome.status === 'failed') return 'terminate_signal_failed';
+    return null;
+}
+
 export function createTerminateDetectedService(
     control: TerminateProcessControl,
     config: TerminateDetectedServiceConfig = {},
@@ -124,7 +175,7 @@ export function createTerminateDetectedService(
     const verifyPollMs = config.verifyPollMs ?? DEFAULT_VERIFY_POLL_MS;
     const verifyAttempts = config.verifyAttempts ?? DEFAULT_VERIFY_ATTEMPTS;
 
-    return async ({ entry }) => {
+    return async ({ entry, now }) => {
         const pid = entry.provenance?.process?.pid;
         if (typeof pid !== 'number') {
             return { status: 'denied', reasonCode: 'process_identity_unavailable' };
@@ -144,46 +195,76 @@ export function createTerminateDetectedService(
         };
 
         // TOCTOU revalidation: the port may have been rebound since the scan. Refuse to signal
-        // anything that is not still the same pid we were asked to terminate.
-        const current = await control.probeListener(probeInput);
-        if (!current) {
+        // anything that is not still the same pid we were asked to terminate, and refuse just as
+        // hard when the scan could not tell us.
+        const current = await control.probeListener({ ...probeInput, notBefore: now });
+        if (current.status === 'indeterminate') {
+            return { status: 'failed', reasonCode: 'listener_state_unverifiable' };
+        }
+        if (current.status === 'free') {
             // The listener is already gone — nothing to signal, idempotently succeeded.
             return { status: 'succeeded' };
         }
-        if (!identityMatches(expected, current)) {
+        if (!identityMatches(expected, current.identity)) {
             return { status: 'denied', reasonCode: 'identity_changed' };
         }
 
-        const group = control.platform === 'posix' && isRunWrapped(entry);
+        const descendantPids = control.platform === 'posix'
+            ? await control.resolveDescendantPids(pid)
+            : [];
 
+        let deliveredAnySignal = false;
         try {
             if (control.platform === 'windows') {
                 await control.terminateWindowsTree({ pid, force: false });
+                deliveredAnySignal = true;
                 await control.wait(graceMs);
                 if (await control.isProcessAlive(pid)) {
                     await control.terminateWindowsTree({ pid, force: true });
                 }
             } else {
-                await control.signal({ pid, signal: 'SIGTERM', group });
+                const terminated = await control.signal({ pid, signal: 'SIGTERM', descendantPids });
+                const terminateFailure = signalFailureReasonCode(terminated);
+                if (terminateFailure) {
+                    return { status: 'failed', reasonCode: terminateFailure };
+                }
+                deliveredAnySignal = terminated.status === 'delivered';
                 await control.wait(graceMs);
                 if (await control.isProcessAlive(pid)) {
-                    await control.signal({ pid, signal: 'SIGKILL', group });
+                    const killed = await control.signal({ pid, signal: 'SIGKILL', descendantPids });
+                    const killFailure = signalFailureReasonCode(killed);
+                    if (killFailure) {
+                        return { status: 'failed', reasonCode: killFailure };
+                    }
+                    deliveredAnySignal = deliveredAnySignal || killed.status === 'delivered';
                 }
             }
         } catch {
             return { status: 'failed', reasonCode: 'terminate_signal_failed' };
         }
 
-        // Post-release verification: confirm OUR pid no longer holds the listener. A different
-        // pid rebinding the port (or the port going free) both count as released.
+        // Post-release verification. Liveness is free, so poll that and spend a listener probe
+        // only once the process is gone; the machine-wide scan behind a probe is the expensive
+        // part and a single terminate used to issue up to eleven of them.
         for (let attempt = 0; attempt < verifyAttempts; attempt += 1) {
-            const after = await control.probeListener(probeInput);
-            if (!after || after.pid !== pid) {
-                return { status: 'succeeded' };
+            if (!(await control.isProcessAlive(pid))) {
+                const after = await control.probeListener(probeInput);
+                if (isPortReleased(after, pid)) {
+                    return { status: 'succeeded' };
+                }
             }
             await control.wait(verifyPollMs);
         }
 
-        return { status: 'failed', reasonCode: 'port_not_released' };
+        const final = await control.probeListener(probeInput);
+        if (isPortReleased(final, pid)) {
+            return { status: 'succeeded' };
+        }
+        if (final.status === 'indeterminate') {
+            return { status: 'failed', reasonCode: 'port_release_unverified' };
+        }
+        return deliveredAnySignal
+            ? { status: 'failed', reasonCode: 'port_not_released' }
+            : { status: 'failed', reasonCode: 'terminate_no_process_signaled' };
     };
 }

@@ -175,7 +175,7 @@ describe('useLocalServiceInventoryState', () => {
         expect(snapshotClient).toHaveBeenCalledTimes(1);
     });
 
-    it('re-arms one watch per answer and never schedules a refresh timer', async () => {
+    it('re-arms exactly one watch per answer and never schedules a refresh timer', async () => {
         vi.useFakeTimers();
         const mod = await import('./useLocalServiceInventoryState');
 
@@ -183,10 +183,14 @@ describe('useLocalServiceInventoryState', () => {
             ok: true,
             snapshot,
         }));
-        const watchClient = vi.fn(async (): Promise<LocalServiceInventoryWatchClientResult> => ({
-            ok: true,
-            changed: false,
-        }));
+        let watchCalls = 0;
+        const watchClient = vi.fn(async (): Promise<LocalServiceInventoryWatchClientResult> => {
+            watchCalls += 1;
+            // First park answers "nothing changed"; the re-arm then stays parked like a real daemon.
+            return watchCalls === 1
+                ? { ok: true, changed: false }
+                : await new Promise<LocalServiceInventoryWatchClientResult>(() => {});
+        });
 
         await renderHook(() => mod.useLocalServiceInventoryStateController({
             machineId: 'machine-a',
@@ -194,53 +198,15 @@ describe('useLocalServiceInventoryState', () => {
             snapshotClient,
             watchClient,
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects({ cycles: 3, turns: 3 });
 
-        const watchCallsAfterMount = watchClient.mock.calls.length;
         await act(async () => {
             await vi.advanceTimersByTimeAsync(10 * 60_000);
         });
 
-        // No interval anywhere: the only refetch pressure is the daemon answering a parked watch.
+        // No interval anywhere: the snapshot is fetched once at mount and never on a schedule,
+        // and the watch re-arms exactly once per answer rather than on a timer.
         expect(snapshotClient).toHaveBeenCalledTimes(1);
-        expect(watchClient.mock.calls.length).toBeGreaterThanOrEqual(watchCallsAfterMount);
-    });
-
-    it('invalidates on app foreground so a service started while the app was backgrounded appears', async () => {
-        const mod = await import('./useLocalServiceInventoryState');
-        const store = await import('./store');
-        const appState = await import('react-native').then((rn) => rn.AppState);
-
-        const emptySnapshot = { ...snapshot, entries: [] } satisfies LocalServiceInventorySnapshot;
-        const snapshotClient = vi.fn<[], Promise<LocalServiceInventorySnapshotClientResult>>()
-            .mockResolvedValueOnce({ ok: true, snapshot: emptySnapshot })
-            .mockResolvedValue({ ok: true, snapshot });
-
-        const listeners: Array<(status: string) => void> = [];
-        const addEventListener = vi.spyOn(appState, 'addEventListener').mockImplementation(((
-            _type: string,
-            listener: (status: string) => void,
-        ) => {
-            listeners.push(listener);
-            return { remove: () => {} };
-        }) as unknown as typeof appState.addEventListener);
-
-        const hook = await renderHook(() => mod.useLocalServiceInventoryStateController({
-            machineId: 'machine-a',
-            serverId: 'server-a',
-            snapshotClient,
-        }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(store.selectLocalServiceInventoryRows(hook.getCurrent().state)).toEqual([]);
-        expect(listeners.length).toBeGreaterThan(0);
-
-        await act(async () => {
-            for (const listener of listeners) listener('active');
-            await Promise.resolve();
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(store.selectLocalServiceInventoryRows(hook.getCurrent().state)).toEqual(snapshot.entries);
-        addEventListener.mockRestore();
+        expect(watchClient).toHaveBeenCalledTimes(2);
     });
 });

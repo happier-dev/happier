@@ -200,3 +200,42 @@ export const LocalServiceInventoryUpdateEventV1Schema = z.discriminatedUnion('ki
   }).strict(),
 ]);
 export type LocalServiceInventoryUpdateEventV1 = z.infer<typeof LocalServiceInventoryUpdateEventV1Schema>;
+
+/**
+ * How long the daemon holds an inventory watch open before answering "nothing changed".
+ *
+ * The watch is the push half of local-service freshness: the client keeps exactly one watch
+ * outstanding while a surface is mounted and re-arms on each answer, so there is no client-side
+ * poll timer anywhere. The window is the daemon's, not the caller's — a client derives its RPC
+ * timeout from this constant rather than restating a number, and the server forwards any
+ * caller-requested timeout up to its own maximum, so no server change is needed to hold it open.
+ */
+export const LOCAL_SERVICE_INVENTORY_WATCH_WINDOW_MS = 25_000;
+
+export const DaemonLocalServiceInventoryWatchRequestV1Schema = z.object({
+  machineId: z.string().trim().min(1).max(256),
+  /**
+   * The `generatedAt` of the snapshot the caller already holds. The daemon answers immediately
+   * when it has produced a newer snapshot, which closes the gap between a caller's snapshot read
+   * and its first watch without needing a second identity on the wire.
+   */
+  sinceGeneratedAt: z.number().int().nonnegative().optional(),
+}).strict();
+export type DaemonLocalServiceInventoryWatchRequestV1 = z.infer<
+  typeof DaemonLocalServiceInventoryWatchRequestV1Schema
+>;
+
+export const DaemonLocalServiceInventoryWatchResponseV1Schema = z.discriminatedUnion('changed', [
+  z.object({
+    protocolVersion: z.literal(1),
+    changed: z.literal(true),
+    snapshot: LocalServiceInventorySnapshotV1Schema,
+  }).strict(),
+  z.object({
+    protocolVersion: z.literal(1),
+    changed: z.literal(false),
+  }).strict(),
+]);
+export type DaemonLocalServiceInventoryWatchResponseV1 = z.infer<
+  typeof DaemonLocalServiceInventoryWatchResponseV1Schema
+>;

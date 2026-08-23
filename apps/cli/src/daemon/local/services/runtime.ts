@@ -366,11 +366,31 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         return currentRefresh;
     };
 
+    const scanIntervalMs = params.refreshIntervalMs ?? DEFAULT_LOCAL_SERVICE_CAPABILITIES.inventory.refreshIntervalMs;
+
+    // The machine-wide listener scan plus its TLS+HTTP-HEAD endpoint probes are the only
+    // unconditional cost in this corridor, and before the inventory watch existed they ran for a
+    // consumer that never subscribed (tunnels audit §4.6). The scan now follows the watch: a
+    // parked watcher is a live reader, and with none the tick is a no-op. Request paths that read
+    // the snapshot without watching stay correct through `ensureFreshInventory`, which reuses the
+    // same coalescing single flight rather than adding a second refresh owner.
+    let activeInventoryWatchers = 0;
+    const ensureFreshInventory = async (): Promise<void> => {
+        const snapshot = inventoryRegistry.getSnapshot();
+        if (snapshot.generatedAt > 0 && now() - snapshot.generatedAt < scanIntervalMs) {
+            return;
+        }
+        await refreshInventoryNow();
+    };
+
     const loop: SingleFlightIntervalLoopHandle | null = params.startLoop === false
         ? null
         : startSingleFlightIntervalLoop({
-            intervalMs: params.refreshIntervalMs ?? DEFAULT_LOCAL_SERVICE_CAPABILITIES.inventory.refreshIntervalMs,
+            intervalMs: scanIntervalMs,
             task: async () => {
+                if (activeInventoryWatchers === 0) {
+                    return;
+                }
                 await refreshInventoryNow();
             },
             onError: params.onError ?? ((error) => logger.debug('[DAEMON RUN] Local-service inventory refresh failed', error)),
@@ -380,6 +400,10 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     const inventoryRoutes = createLocalServiceInventoryRoutes({
         registry: inventoryRegistry,
         refreshSnapshot: refreshInventoryNow,
+        ensureFreshSnapshot: ensureFreshInventory,
+        onWatcherCountChanged: (count) => {
+            activeInventoryWatchers = count;
+        },
     });
     const previewRoutes = createLocalServicePreviewRoutes({
         machineId: params.machineId,
@@ -434,7 +458,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         ...(cachedServerFeaturesSnapshot ? { serverSnapshot: cachedServerFeaturesSnapshot } : {}),
     }).state === 'enabled';
 
-    const launcherFeed = createLocalServiceLauncherFeed({
+    const scannedLauncherFeed = createLocalServiceLauncherFeed({
         machineId: params.machineId,
         inventoryRegistry,
         managedRegistry,
@@ -445,6 +469,16 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         resolveSessionWorkspacePaths,
         now,
     });
+    // The launcher folds inventory entries into its targets but never watches, so it is the one
+    // reader that could observe an unscanned inventory once the loop follows watchers. It demands
+    // freshness through the same coalescing single flight instead of owning a second cadence.
+    const launcherFeed: typeof scannedLauncherFeed = {
+        ...scannedLauncherFeed,
+        async getSnapshot(request) {
+            await ensureFreshInventory();
+            return await scannedLauncherFeed.getSnapshot(request);
+        },
+    };
     // Launcher leaf actions (LSV-1): openPreview/registerPreview reuse the canonical launcher
     // feed + private-preview owner; history.clear empties the daemon-owned launcher history.
     const launcherHistory = createLocalServiceLauncherHistoryStore();
@@ -460,8 +494,11 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     });
     // The executor itself layers identity-tuple TOCTOU revalidation, graceful-then-force
     // signalling, and post-release verification over the real OS process-control adapter.
+    // It re-resolves the listener through the coalescing `refreshInventoryNow` above, not the
+    // raw platform `scan`: a terminate would otherwise stack its own machine-wide scans on top
+    // of the inventory loop's instead of awaiting the in-flight one.
     const terminateDetectedService = createTerminateDetectedService(
-        createOsProcessControl({ scan }),
+        createOsProcessControl({ refreshInventory: refreshInventoryNow }),
     );
     const actionRoutes = createLocalServiceActionRoutes({
         machineId: params.machineId,
