@@ -863,15 +863,14 @@ describe('startUiWeb baseUrl resolution', () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     const startedPromise = startUiWeb({ testDir, env: { HAPPIER_E2E_UI_WEB_MODE: 'metro' } });
+    let startupSettled = false;
+    void startedPromise.then(
+      () => { startupSettled = true; },
+      () => { startupSettled = true; },
+    );
     try {
-      const started = await Promise.race([
-        startedPromise.then(() => 'resolved'),
-        new Promise<'waiting'>((resolve) => {
-          setTimeout(() => resolve('waiting'), 150);
-        }),
-      ]);
-
-      expect(started).toBe('waiting');
+      await expect.poll(() => bundleFetchCount, { timeout: 5_000, interval: 25 }).toBeGreaterThan(0);
+      expect(startupSettled).toBe(false);
       expect(bundleFetchCount).toBeGreaterThan(0);
       expect(htmlFetchCount).toBeGreaterThan(0);
     } finally {
