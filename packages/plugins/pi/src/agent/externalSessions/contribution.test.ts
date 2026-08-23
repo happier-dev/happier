@@ -2222,4 +2222,59 @@ describe('Pi pure External Sessions contribution leaf', () => {
       code: 'invalid_request',
     });
   });
+
+  it('replaces inline tool-result image bytes with a visible transcript marker', async () => {
+    const { agentDir, sessionRoot } = await createAgentDir();
+    const sessionId = 'pi-tool-result-image';
+    const sessionFile = join(sessionRoot, `2026-08-23T10-00-00.000Z_${sessionId}.jsonl`);
+    await writeFile(sessionFile, [
+      line({
+        type: 'session', version: 3, id: sessionId,
+        timestamp: '2026-08-23T10:00:00.000Z', cwd: '/workspace',
+      }),
+      line({
+        type: 'message', id: 'result-1', parentId: null,
+        timestamp: '2026-08-23T10:00:01.000Z',
+        message: {
+          role: 'toolResult', toolCallId: 'call-1', toolName: 'image-tool', isError: false,
+          content: [
+            { type: 'text', text: 'before' },
+            { type: 'image', data: 'private-tool-image-bytes', mimeType: 'image/png' },
+            { type: 'text', text: 'after' },
+          ],
+        },
+      }),
+    ].join(''), 'utf8');
+
+    const result = await createPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    }).pageTranscript({
+      ...invocation(),
+      source: { kind: 'piAgentDir', agentDir, sessionFile },
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxItems: 10,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('private-tool-image-bytes');
+    expect(result).toMatchObject({
+      value: {
+        items: [{
+          raw: {
+            content: {
+              data: {
+                type: 'tool-result',
+                output: [
+                  { type: 'text', text: 'before' },
+                  { type: 'text', text: '[Pi tool result image (image/png)]' },
+                  { type: 'text', text: 'after' },
+                ],
+              },
+            },
+          },
+        }],
+      },
+    });
+  });
 });

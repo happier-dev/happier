@@ -757,6 +757,18 @@ function readPiTextContent(content: unknown): string | null {
   return text.join('');
 }
 
+/** Keep durable tool output bounded to visible content; media bytes are not transcript JSON. */
+function sanitizePiToolResultContent(
+  content: AgentExternalSessionLinkDataValue,
+): AgentExternalSessionLinkDataValue {
+  if (!Array.isArray(content)) return content;
+  return content.map((block) => {
+    if (!isRecord(block) || block.type !== 'image') return block;
+    const mimeType = readPiBlockText(block, 'mimeType') ?? 'unknown';
+    return { type: 'text', text: `[Pi tool result image (${mimeType})]` };
+  });
+}
+
 /**
  * Projects one Pi message record into the canonical rows it actually carries.
  * A Pi assistant message routinely mixes thinking, text, and several tool calls
@@ -787,7 +799,7 @@ function projectPiMessageRows(
       type: 'tool-result',
       callId,
       id,
-      output: message.content,
+      output: sanitizePiToolResultContent(message.content),
       ...(typeof message.isError === 'boolean' ? { isError: message.isError } : {}),
     });
     return raw ? [{ id, raw }] : null;
