@@ -29,7 +29,7 @@ type ForkInheritedMetadataOverrides = Pick<
   | 'acpConfigOptionOverridesV1'
   | 'connectedServices'
   | 'connectedServicesUpdatedAt'
->;
+> & { name?: string };
 
 export function resolveForkInheritedOverridesFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
@@ -43,9 +43,13 @@ export function resolveForkInheritedOverridesFromMetadata(
     providerId,
     fields: CHILD_SESSION_INHERITANCE_FIELD_SETS.fork,
   });
+  const name = typeof metadata?.name === 'string' ? metadata.name.trim() : '';
 
   return {
     spawn: inherited.spawn,
-    metadata: inherited.metadata as Pick<Metadata, keyof ForkInheritedMetadataOverrides>,
+    metadata: {
+      ...inherited.metadata,
+      ...(name ? { name } : {}),
+    } as ForkInheritedMetadataOverrides,
   };
 }
