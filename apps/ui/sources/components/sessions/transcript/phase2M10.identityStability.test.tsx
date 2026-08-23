@@ -267,6 +267,7 @@ describe('phase2 M10 hook identity stability', () => {
             setExpandedToolCallsAnchorMessageIds: vi.fn(),
             setListContentHeight: vi.fn(),
             viewportCommandController: { resetForSession: vi.fn() },
+            userScrollIntent: { clear: vi.fn() },
             wantsPinnedRef: createRef(true),
             webDomObservation: { reset: vi.fn() },
         } as unknown as Parameters<typeof useTranscriptSessionEntryLifecycle>[0];

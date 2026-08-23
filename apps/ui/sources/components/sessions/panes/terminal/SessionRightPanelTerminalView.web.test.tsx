@@ -27,6 +27,7 @@ let projectState: any = null;
 
 installSessionDetailsPanelCommonModuleMocks({
     storage: async () => ({
+        getStorage: () => (selector: (state: unknown) => unknown) => selector(storageGetStateSpy()),
         useLocalSetting: (key: string) => {
             if (key === 'uiFontScale') return 1;
             if (key === 'embeddedTerminalDockLocation') return 'sidebar';
@@ -76,7 +77,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: { default: () => ({}), timestamp: () => ({}) },
 }));
 
 vi.mock('@/components/ui/code/editor/codeEditorFontMetrics', () => ({

@@ -293,6 +293,7 @@ describe('NewSessionEngineOptionDetail', () => {
     it('does not render session mode selection in the engine popover (mode is controlled by the dedicated chip) and preserves the incoming sessionModeId on model changes', async () => {
         type SelectionChange = {
             modelId: string;
+            modelLabel: string | null;
             sessionModeId: string;
             configOverrides: Readonly<Record<string, string>>;
         };
@@ -316,6 +317,7 @@ describe('NewSessionEngineOptionDetail', () => {
         await screen.pressByTestIdAsync('model-picker-overlay-option:preset-fast');
         expect(latestSelection).toEqual({
             modelId: 'preset-fast',
+            modelLabel: 'Preset Fast',
             sessionModeId: 'review',
             configOverrides: {},
         });
@@ -515,7 +517,7 @@ describe('NewSessionEngineOptionDetail', () => {
             availableModels: [],
             supportsFreeform: true,
         };
-        let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
+        let latestSelection: { modelId: string; modelLabel: string | null; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
 
         const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
         await renderScreen(<NewSessionEngineOptionDetail
@@ -539,6 +541,7 @@ describe('NewSessionEngineOptionDetail', () => {
 
         expect(latestSelection).toEqual({
             modelId: 'custom-model',
+            modelLabel: null,
             sessionModeId: 'default',
             configOverrides: {},
         });
@@ -568,6 +571,7 @@ describe('NewSessionEngineOptionDetail', () => {
         };
         let latestSelection: {
             modelId: string;
+            modelLabel: string | null;
             sessionModeId: string;
             configOverrides: Readonly<Record<string, string>>;
         } | null = null;
@@ -602,6 +606,7 @@ describe('NewSessionEngineOptionDetail', () => {
 
         expect(latestSelection).toEqual({
             modelId: 'openai-codex/gpt-5.6-luna',
+            modelLabel: 'GPT-5.6 Luna',
             sessionModeId: 'default',
             configOverrides: { reasoning_effort: 'low' },
         });
@@ -639,7 +644,7 @@ describe('NewSessionEngineOptionDetail', () => {
             },
         ];
 
-        let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
+        let latestSelection: { modelId: string; modelLabel: string | null; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
         const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
         const screen = await renderScreen(<NewSessionEngineOptionDetail
             backendTarget={backendTarget}
@@ -664,6 +669,7 @@ describe('NewSessionEngineOptionDetail', () => {
 
         expect(latestSelection).toEqual({
             modelId: 'default',
+            modelLabel: 'Preset default',
             sessionModeId: 'default',
             configOverrides: {
                 thinking: 'high',
@@ -905,7 +911,7 @@ describe('NewSessionEngineOptionDetail', () => {
             ],
         }];
 
-        let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
+        let latestSelection: { modelId: string; modelLabel: string | null; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
         const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
         await renderScreen(<NewSessionEngineOptionDetail
             backendTarget={backendTarget}
@@ -929,6 +935,7 @@ describe('NewSessionEngineOptionDetail', () => {
 
         expect(latestSelection).toEqual({
             modelId: 'anthropic/claude-sonnet-4-6',
+            modelLabel: 'Claude Sonnet 4.6',
             sessionModeId: 'default',
             configOverrides: {
                 service_tier: 'fast',
@@ -981,7 +988,7 @@ describe('NewSessionEngineOptionDetail', () => {
             ],
         }];
 
-        let latestSelection: { modelId: string; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
+        let latestSelection: { modelId: string; modelLabel: string | null; sessionModeId: string; configOverrides: Readonly<Record<string, string>> } | null = null;
         const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
         await renderScreen(<NewSessionEngineOptionDetail
             backendTarget={backendTarget}
@@ -1009,6 +1016,7 @@ describe('NewSessionEngineOptionDetail', () => {
 
         expect(latestSelection).toEqual({
             modelId: 'anthropic/claude-sonnet-4-6',
+            modelLabel: 'Claude Sonnet 4.6',
             sessionModeId: 'default',
             configOverrides: {
                 reasoning_effort: 'high',

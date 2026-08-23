@@ -30,6 +30,10 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 }));
 
 const ensureSessionRuntimeForPendingInputSpy = vi.hoisted(() => vi.fn(async (_options: unknown) => ({ type: 'success' as const })));
+const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
+    getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
+}));
 vi.mock('@/sync/ops', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/ops')>();
     return {
@@ -126,6 +130,7 @@ describe('sync.sendMessage wake-after-send', () => {
         });
         appStateAddListener.mockClear();
         ensureSessionRuntimeForPendingInputSpy.mockClear();
+        getServerFeaturesSnapshotMock.mockReset();
     });
 
     afterEach(() => {
@@ -319,6 +324,21 @@ describe('sync.sendMessage wake-after-send', () => {
     });
 
     it('uses the canonical pending wake after action acknowledgement without direct execution authorization', async () => {
+        getServerFeaturesSnapshotMock.mockResolvedValue({
+            status: 'ready',
+            features: {
+                capabilities: {
+                    compatibility: { pendingInput: { currentPendingInputProtocolVersion: 1 } },
+                    session: { pendingInput: { protocolVersion: 1 } },
+                },
+                features: {
+                    sharing: {
+                        pendingQueueV2: { enabled: true },
+                        pendingDeliveryState: { enabled: true },
+                    },
+                },
+            },
+        });
         const sessionId = 's_pending_submit_wake';
         storage.getState().applyMachines([createMachine({ id: 'm1', active: true })], true);
         storage.getState().applySessions([{

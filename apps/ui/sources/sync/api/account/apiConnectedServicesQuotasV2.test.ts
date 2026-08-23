@@ -35,7 +35,7 @@ describe('apiConnectedServicesQuotasV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return {
@@ -63,7 +63,7 @@ describe('apiConnectedServicesQuotasV2', () => {
     let requestSignal: AbortSignal | undefined;
     const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
       }
       if (url === 'https://api.example.test/v2/connect/openai-codex/profiles/work/quotas') {
@@ -99,7 +99,7 @@ describe('apiConnectedServicesQuotasV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return { ok: false, status: 404, json: async () => ({ error: 'connect_quotas_not_found' }) };
@@ -118,7 +118,7 @@ describe('apiConnectedServicesQuotasV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
@@ -138,7 +138,7 @@ describe('apiConnectedServicesQuotasV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return { ok: false, status: 404, json: async () => ({ error: 'connect_quotas_not_found' }) };

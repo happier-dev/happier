@@ -752,7 +752,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         const currentDirOption = requireOption(quickActions, 'current_path');
         const iconProps = getIconProps(currentDirOption);
         expect(iconProps).not.toBeNull();
-        expect(iconProps!.name).toBe('folder-outline');
+        expect(iconProps!.name).toBe('folder');
         expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
     });
 
@@ -775,7 +775,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         const createOption = requireOption(quickActions, 'create_git_worktree');
         const iconProps = getIconProps(createOption);
         expect(iconProps).not.toBeNull();
-        expect(iconProps!.name).toBe('add-circle-outline');
+        expect(iconProps!.name).toBe('plus-circle');
         expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
     });
 
@@ -804,7 +804,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         for (const option of existing.options) {
             const iconProps = getIconProps(option);
             expect(iconProps).not.toBeNull();
-            expect(iconProps!.name).toBe('git-network-outline');
+            expect(iconProps!.name).toBe('graph');
             expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
         }
     });
@@ -822,7 +822,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         });
         const iconProps = getIconProps(option);
         expect(iconProps).not.toBeNull();
-        expect(iconProps!.name).toBe('git-branch-outline');
+        expect(iconProps!.name).toBe('git-branch');
         expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
     });
 
@@ -839,7 +839,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         });
         const iconProps = getIconProps(option);
         expect(iconProps).not.toBeNull();
-        expect(iconProps!.name).toBe('git-branch-outline');
+        expect(iconProps!.name).toBe('git-branch');
         expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
     });
 

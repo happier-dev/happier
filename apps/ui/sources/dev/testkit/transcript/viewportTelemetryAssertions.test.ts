@@ -571,4 +571,35 @@ describe('assertWebWregDiagnostics', () => {
 
         expect(() => assertWebWregDiagnostics(events)).not.toThrow();
     });
+
+    it('does not require a DOM anchor id on owner decisions that did not observe the DOM', () => {
+        const events: TranscriptViewportTelemetryEvent[] = [
+            decision({
+                platform: 'web',
+                listImplementation: 'flash_v2',
+                mode: 'restore-distance',
+                reason: 'restored',
+                trigger: 'prepend-restore',
+                offsetY: 180,
+                layoutHeight: 600,
+                contentHeight: 1600,
+                distanceFromBottom: 820,
+                domScrollTop: 180,
+                domScrollHeight: 1600,
+                domClientHeight: 600,
+                flashListContentHeight: 1580,
+                flashListLayoutHeight: 580,
+                scrollable: true,
+                paginationPhase: 'idle',
+                paginationSuspendedReasons: [],
+                coldCount: 48,
+                hotCount: 3,
+                pendingWebPrependAnchorKind: 'none',
+                programmaticWebWrite: true,
+                timestampMs: 40,
+            }),
+        ];
+
+        expect(() => assertWebWregDiagnostics(events)).not.toThrow();
+    });
 });

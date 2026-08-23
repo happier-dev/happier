@@ -55,6 +55,7 @@ function createGroupResponse() {
             },
             activeProfileId: 'work',
             generation: 2,
+            runtimeStateRevision: 0,
             state: {},
             createdAt: 1,
             updatedAt: 2,
@@ -80,7 +81,7 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: unknown) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
+            if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
                 return { ok: true, status: 200, json: async () => ({ ok: true }) };
             }
             return { ok: true, status: 200, json: async () => ({ groups: [createGroupResponse().group] }) };
@@ -107,7 +108,7 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: unknown) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
+            if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
                 return { ok: true, status: 200, json: async () => ({ ok: true }) };
             }
             return { ok: true, status: 200, json: async () => createGroupResponse() };
@@ -145,7 +146,7 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: unknown) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
+            if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
                 return { ok: true, status: 200, json: async () => ({ ok: true }) };
             }
             return { ok: true, status: 200, json: async () => createGroupResponse() };
