@@ -1,6 +1,10 @@
 import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin-sdk/ui';
 import type { ComposerHandle, ComposerRequestOptions } from '@happier-dev/plugin-ui';
-import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
+import type {
+    TriageEntryLocatorV1,
+    TriageEntryRefV1,
+    TriageSourceInstanceRefV1,
+} from '@happier-dev/triage-protocol/v1';
 
 import { isHostCancellation } from '../hostCancellation.js';
 import { planTriageEntryAttachmentMutation } from './mutationPlan.js';
@@ -46,6 +50,8 @@ export type TriageEntryMutationRequestV1 = Readonly<{
         intent: 'attach';
         sourceInstance: TriageSourceInstanceRefV1;
         presentation: ComposerAttachmentAuthorPresentationV1;
+        /** The observed routing hint, carried through to the planned value. */
+        lastKnownLocator?: TriageEntryLocatorV1;
     }>
     | Readonly<{ intent: 'remove' }>
 );
@@ -82,6 +88,9 @@ async function attempt(
             entryRef: request.entryRef,
             sourceInstance: request.sourceInstance,
             presentation: request.presentation,
+            ...(request.lastKnownLocator === undefined
+                ? {}
+                : { lastKnownLocator: request.lastKnownLocator }),
         });
     if (plan.status === 'alreadySettled') return { kind: 'settled' };
     if (plan.status === 'refused') return refused(plan.reason);

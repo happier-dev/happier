@@ -1,5 +1,6 @@
 import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin-sdk/ui';
 import type {
+    TriageEntryLocatorV1,
     TriageEntryRefV1,
     TriageSourceInstanceRefV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -48,6 +49,16 @@ export type TriagePickerCorpusRowV1 = Readonly<{
      * query came to mean two things over one projection.
      */
     search: TriageEntrySearchTextV1;
+    /**
+     * The locator the fold's winning observation carried, or `null` when no
+     * connection reports the entry at all.
+     *
+     * The picker is the last surface that still holds it: once an entry is
+     * attached, the draft is all the dispatch resolver has. Dropping it here
+     * leaves an account-wide connection with no provider scope to knock at, and
+     * the attachment can then never resolve.
+     */
+    locator: TriageEntryLocatorV1 | null;
     /**
      * Which configured connection currently observes this entry, decided by the
      * corpus's one instance selector — never re-derived here.
@@ -98,6 +109,8 @@ export type TriagePickerRowMutationV1 =
         kind: 'attach';
         sourceInstance: TriageSourceInstanceRefV1;
         presentation: ComposerAttachmentAuthorPresentationV1;
+        /** The observed routing hint, absent when the row carries no locator. */
+        lastKnownLocator?: TriageEntryLocatorV1;
     }>
     | Readonly<{ kind: 'remove'; instanceId: string }>
     | Readonly<{ kind: 'unavailable'; reason: 'noObservingInstance' }>;
@@ -269,6 +282,7 @@ export function buildTriagePickerView(input: Readonly<{
                             kind: 'attach',
                             sourceInstance,
                             presentation: buildTriageEntryAttachmentPresentation(row),
+                            ...(row.locator === null ? {} : { lastKnownLocator: row.locator }),
                         },
                 viewDetails: sourceInstance === null
                     ? { kind: 'unavailable', reason: 'noObservingInstance' }

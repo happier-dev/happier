@@ -95,7 +95,21 @@ export type TriageReviewStartEligibilityV1 =
  * caller meant; a mode says it. The three approved pairings are unchanged —
  * they are simply declared by the action instead of derived from its name.
  */
-export type TriageWorkspaceModeV1 = 'reference_only' | 'repository' | 'pull_request';
+export const TRIAGE_WORKSPACE_MODES_V1 = [
+    'reference_only',
+    'repository',
+    'pull_request',
+] as const;
+/**
+ * The closed vocabulary and the type are one declaration.
+ *
+ * The configured action record validates a stored mode against this exact
+ * array. Spelling the three members again beside a parser would be a second
+ * vocabulary that no compiler binds to the pairing table below, and a mode
+ * admitted by one and unknown to the other is a start that is offered and then
+ * refused.
+ */
+export type TriageWorkspaceModeV1 = (typeof TRIAGE_WORKSPACE_MODES_V1)[number];
 
 /**
  * The ONE mode-to-materialization pairing.

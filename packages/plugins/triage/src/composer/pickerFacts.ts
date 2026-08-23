@@ -43,6 +43,11 @@ export function projectTriagePickerCorpusFacts(input: Readonly<{
             // Projected by the one search owner, so the picker answers a query
             // exactly as the list does over these same rows.
             search: projectTriageEntrySearchText(row.observations),
+            // The locator of the SAME observation the title and scope come from,
+            // never a newer one from another connection: a row that routes by one
+            // observation while showing another is the split this row's `content`
+            // member exists to prevent.
+            locator: row.content?.outcome.locator ?? null,
             // The instance decision is the window's, never re-derived here: the
             // picker must attach an entry under the same connection the list
             // would open it with.
