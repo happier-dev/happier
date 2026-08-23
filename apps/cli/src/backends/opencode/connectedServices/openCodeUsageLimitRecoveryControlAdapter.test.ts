@@ -115,7 +115,7 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
     });
   });
 
-  it('marks recovery ready and persists a schema-correct cancelled intent after the check time', async () => {
+  it('marks recovery ready and pauses the consumed intent after the check time', async () => {
     const adapter = createOpenCodeUsageLimitRecoveryControlAdapter({
       nowMs: () => 1_700_000_060_000,
     });
@@ -131,9 +131,9 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
       status: 'ready',
       metadata: {
         sessionUsageLimitRecoveryV1: {
-          status: 'cancelled',
+          status: 'paused',
           resetAtMs: null,
-          nextCheckAtMs: 1_700_000_060_000,
+          nextCheckAtMs: null,
           attemptCount: 1,
         },
       },
@@ -168,8 +168,8 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
       status: 'ready',
       metadata: {
         sessionUsageLimitRecoveryV1: {
-          status: 'cancelled',
-          nextCheckAtMs: 4_000,
+          status: 'paused',
+          nextCheckAtMs: null,
         },
       },
     });
