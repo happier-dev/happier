@@ -44,6 +44,15 @@ export function selectActionOperationObservation(
     return state.observationByScope.get(actionOperationScopeKey(scope)) ?? 'available';
 }
 
+export function selectActionOperationObservationForOperation(
+    state: ActionOperationStoreState,
+    operation: ActionOperationSnapshotV1,
+): ActionOperationObservation {
+    const scopeObservation = selectActionOperationObservation(state, operation.scope);
+    if (scopeObservation !== 'available') return scopeObservation;
+    return state.unavailableOperationIds.has(operation.operationId) ? 'status_unavailable' : 'available';
+}
+
 export function selectActionOperationsNeedAttention(
     state: ActionOperationStoreState,
     accountId: string,

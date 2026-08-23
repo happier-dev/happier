@@ -10,6 +10,7 @@ export type ActionOperationObservation = 'available' | 'reconnecting' | 'status_
 export type ActionOperationStoreState = Readonly<{
     operationsById: ReadonlyMap<string, ActionOperationSnapshotV1>;
     observationByScope: ReadonlyMap<string, ActionOperationObservation>;
+    unavailableOperationIds: ReadonlySet<string>;
     terminalSeenAtById: ReadonlyMap<string, number>;
     dismissedOperationIds: ReadonlySet<string>;
 }>;
@@ -30,6 +31,7 @@ export type ActionOperationStore = Readonly<{
         options?: Readonly<{ preserveOperationIds?: ReadonlySet<string> }>,
     ) => boolean;
     dismissUnavailable: (operationId: string) => boolean;
+    markUnavailable: (operationId: string) => boolean;
     setObservation: (scope: ActionOperationScope, observation: ActionOperationObservation) => void;
 }>;
 
@@ -50,6 +52,7 @@ export function createActionOperationStore(): ActionOperationStore {
     let state: ActionOperationStoreState = {
         operationsById: new Map(),
         observationByScope: new Map(),
+        unavailableOperationIds: new Set(),
         terminalSeenAtById: new Map(),
         dismissedOperationIds: new Set(),
     };
@@ -70,11 +73,17 @@ export function createActionOperationStore(): ActionOperationStore {
 
         const operationsById = new Map(state.operationsById);
         operationsById.set(incoming.operationId, incoming);
+        const unavailableOperationIds = state.unavailableOperationIds.has(incoming.operationId)
+            ? new Set([...state.unavailableOperationIds].filter((operationId) => operationId !== incoming.operationId))
+            : state.unavailableOperationIds;
+        const dismissedOperationIds = existing && !terminalStates.has(existing.state) && state.dismissedOperationIds.has(incoming.operationId)
+            ? new Set([...state.dismissedOperationIds].filter((operationId) => operationId !== incoming.operationId))
+            : state.dismissedOperationIds;
         const scopeKey = actionOperationScopeKey(incoming.scope);
         const observationByScope = state.observationByScope.get(scopeKey) === 'available'
             ? state.observationByScope
             : new Map([...state.observationByScope, [scopeKey, 'available' as const]]);
-        publish({ ...state, operationsById, observationByScope });
+        publish({ ...state, operationsById, observationByScope, unavailableOperationIds, dismissedOperationIds });
         return true;
     };
 
@@ -88,37 +97,63 @@ export function createActionOperationStore(): ActionOperationStore {
         mergeFullSnapshot: (incoming) => {
             const existing = state.operationsById.get(incoming.operationId);
             if (!existing || incoming.revision > existing.revision) return merge(incoming);
-            if (
-                incoming === existing
-                || incoming.revision !== existing.revision
-                || incoming.state !== existing.state
-            ) {
+            if (incoming.revision !== existing.revision || incoming.state !== existing.state) {
                 return false;
             }
 
-            const operationsById = new Map(state.operationsById);
-            operationsById.set(incoming.operationId, incoming);
-            publish({ ...state, operationsById });
+            const replaceSnapshot = incoming !== existing;
+            const clearUnavailable = state.unavailableOperationIds.has(incoming.operationId);
+            if (!replaceSnapshot && !clearUnavailable) return false;
+            let operationsById = state.operationsById;
+            if (replaceSnapshot) {
+                const nextOperationsById = new Map(state.operationsById);
+                nextOperationsById.set(incoming.operationId, incoming);
+                operationsById = nextOperationsById;
+            }
+            const unavailableOperationIds = clearUnavailable
+                ? new Set([...state.unavailableOperationIds].filter((operationId) => operationId !== incoming.operationId))
+                : state.unavailableOperationIds;
+            publish({ ...state, operationsById, unavailableOperationIds });
             return true;
         },
         reconcileMachineList: (scope, listedOperationIds) => {
             let operationsById: Map<string, ActionOperationSnapshotV1> | null = null;
             let terminalSeenAtById: Map<string, number> | null = null;
             let dismissedOperationIds: Set<string> | null = null;
+            let unavailableOperationIds: Set<string> | null = null;
             let missingActive = false;
 
             for (const operation of state.operationsById.values()) {
                 if (
                     operation.scope.accountId !== scope.accountId
                     || operation.scope.machineId !== scope.machineId
-                    || listedOperationIds.has(operation.operationId)
                 ) {
                     continue;
                 }
                 if (!terminalStates.has(operation.state)) {
-                    missingActive = true;
+                    if (listedOperationIds.has(operation.operationId)) {
+                        if (state.unavailableOperationIds.has(operation.operationId)) {
+                            unavailableOperationIds ??= new Set(state.unavailableOperationIds);
+                            unavailableOperationIds.delete(operation.operationId);
+                        }
+                        if (state.dismissedOperationIds.has(operation.operationId)) {
+                            dismissedOperationIds ??= new Set(state.dismissedOperationIds);
+                            dismissedOperationIds.delete(operation.operationId);
+                        }
+                    } else {
+                        missingActive = true;
+                        if (!state.unavailableOperationIds.has(operation.operationId)) {
+                            unavailableOperationIds ??= new Set(state.unavailableOperationIds);
+                            unavailableOperationIds.add(operation.operationId);
+                        }
+                    }
                     continue;
                 }
+                if (state.unavailableOperationIds.has(operation.operationId)) {
+                    unavailableOperationIds ??= new Set(state.unavailableOperationIds);
+                    unavailableOperationIds.delete(operation.operationId);
+                }
+                if (listedOperationIds.has(operation.operationId)) continue;
                 operationsById ??= new Map(state.operationsById);
                 operationsById.delete(operation.operationId);
                 if (state.terminalSeenAtById.has(operation.operationId)) {
@@ -132,7 +167,7 @@ export function createActionOperationStore(): ActionOperationStore {
             }
 
             const scopeKey = actionOperationScopeKey(scope);
-            const nextObservation: ActionOperationObservation = missingActive ? 'status_unavailable' : 'available';
+            const nextObservation: ActionOperationObservation = 'available';
             let observationByScope = state.observationByScope;
             if (observationByScope.get(scopeKey) !== nextObservation) {
                 const nextObservationByScope = new Map(observationByScope);
@@ -143,11 +178,13 @@ export function createActionOperationStore(): ActionOperationStore {
                 operationsById
                 || terminalSeenAtById
                 || dismissedOperationIds
+                || unavailableOperationIds
                 || observationByScope !== state.observationByScope
             ) {
                 publish({
                     operationsById: operationsById ?? state.operationsById,
                     observationByScope,
+                    unavailableOperationIds: unavailableOperationIds ?? state.unavailableOperationIds,
                     terminalSeenAtById: terminalSeenAtById ?? state.terminalSeenAtById,
                     dismissedOperationIds: dismissedOperationIds ?? state.dismissedOperationIds,
                 });
@@ -197,12 +234,22 @@ export function createActionOperationStore(): ActionOperationStore {
             if (!operation || terminalStates.has(operation.state) || state.dismissedOperationIds.has(operationId)) {
                 return false;
             }
-            if (state.observationByScope.get(actionOperationScopeKey(operation.scope)) !== 'status_unavailable') {
+            if (!state.unavailableOperationIds.has(operationId)) {
                 return false;
             }
             const dismissedOperationIds = new Set(state.dismissedOperationIds);
             dismissedOperationIds.add(operationId);
             publish({ ...state, dismissedOperationIds });
+            return true;
+        },
+        markUnavailable: (operationId) => {
+            const operation = state.operationsById.get(operationId);
+            if (!operation || state.unavailableOperationIds.has(operationId)) {
+                return false;
+            }
+            const unavailableOperationIds = new Set(state.unavailableOperationIds);
+            unavailableOperationIds.add(operationId);
+            publish({ ...state, unavailableOperationIds });
             return true;
         },
         setObservation: (scope, observation) => {

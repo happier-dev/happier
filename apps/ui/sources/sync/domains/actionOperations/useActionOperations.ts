@@ -5,6 +5,7 @@ import type { ActionOperationSnapshotV1, ActionOperationStateV1 } from '@happier
 import {
     createActionOperationSelector,
     selectActionOperationObservation,
+    selectActionOperationObservationForOperation,
     selectActionOperationsNeedAttention,
 } from './actionOperationSelectors';
 import {
@@ -54,6 +55,22 @@ export function createActionOperationObservationsSelector(accountId: string) {
             previous.size === next.size
             && Array.from(next).every(([machineId, observation]) => previous.get(machineId) === observation)
         ) {
+            return previous;
+        }
+        previous = next;
+        return previous;
+    };
+}
+
+export function createUnavailableActionOperationIdsSelector(accountId: string) {
+    let previous: ReadonlySet<string> = new Set();
+    return (state: ActionOperationStoreState): ReadonlySet<string> => {
+        const next = new Set<string>();
+        for (const operationId of state.unavailableOperationIds) {
+            const operation = state.operationsById.get(operationId);
+            if (operation?.scope.accountId === accountId) next.add(operationId);
+        }
+        if (previous.size === next.size && Array.from(next).every((operationId) => previous.has(operationId))) {
             return previous;
         }
         previous = next;
@@ -112,6 +129,25 @@ export function useActionOperationObservations(
         actionOperationStore.subscribe,
         () => selector(actionOperationStore.getState()),
         () => selector(actionOperationStore.getState()),
+    );
+}
+
+export function useUnavailableActionOperationIds(accountId: string): ReadonlySet<string> {
+    const selector = React.useMemo(() => createUnavailableActionOperationIdsSelector(accountId), [accountId]);
+    return React.useSyncExternalStore(
+        actionOperationStore.subscribe,
+        () => selector(actionOperationStore.getState()),
+        () => selector(actionOperationStore.getState()),
+    );
+}
+
+export function useActionOperationObservationForOperation(
+    operation: ActionOperationSnapshotV1,
+): ActionOperationObservation {
+    return React.useSyncExternalStore(
+        actionOperationStore.subscribe,
+        () => selectActionOperationObservationForOperation(actionOperationStore.getState(), operation),
+        () => selectActionOperationObservationForOperation(actionOperationStore.getState(), operation),
     );
 }
 
