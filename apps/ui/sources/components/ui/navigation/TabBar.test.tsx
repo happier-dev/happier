@@ -181,4 +181,5 @@ describe('TabBar', () => {
         expect(hasIndicatorDot(inboxTab!)).toBe(true);
         expect(hasTextChild(inboxTab!, '2')).toBe(false);
     });
+
 });

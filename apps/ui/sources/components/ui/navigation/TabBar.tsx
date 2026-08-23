@@ -124,9 +124,9 @@ export const TabBar = React.memo(({ activeTab, onTabPress, trailingAccessory }: 
                                 {tab.key === 'friends' && friendsBadgeEnabled && friendRequests.length > 0 && (
                                     <TabBadge variant="count" value={friendRequests.length} />
                                 )}
-                                {tab.key === 'inbox' && inboxBadgeEnabled && inboxHasContent && (
+                                {tab.key === 'inbox' && inboxBadgeEnabled && inboxHasContent ? (
                                     <TabBadge variant="dot" />
-                                )}
+                                ) : null}
                             </View>
                             {metrics.showLabels ? (
                                 <Text
