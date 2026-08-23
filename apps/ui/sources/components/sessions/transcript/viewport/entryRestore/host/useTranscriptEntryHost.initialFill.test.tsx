@@ -26,6 +26,8 @@ import { resolveTranscriptRenderWindowProjection } from '@/components/sessions/t
 import { createTranscriptWindowGapItem } from '@/components/sessions/transcript/viewport/window/transcriptWindowGapItem';
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import type { SessionEntryViewportRefValue } from './useTranscriptEntryHost';
+import { resolveTranscriptInitialFillTuning } from '@/components/sessions/transcript/scroll/resolveTranscriptInitialFillTuning';
+import { sync } from '@/sync/sync';
 import { useTranscriptEntryHost } from './useTranscriptEntryHost';
 import { createTranscriptUserScrollIntentOwner } from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
 
@@ -219,7 +221,74 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
         };
     });
 
-    it('settles web session open before historical fill so the pager can backfill after first paint', async () => {
+    /**
+     * The web open contract has TWO halves, and asserting only the first one is what let an
+     * unreachable-backfill state look correct:
+     *   1. settlement must not wait for history (the latency win), and
+     *   2. the transcript must still reach scrollability (the reachability guarantee),
+     *      because `olderPaginationMachine` cannot arm while `scrollable === false` — under
+     *      `scroll`, `edge-reached` AND `layout-committed` alike. Proved by execution in
+     *      `pagination/olderPaginationMachine.underfilledWeb.test.ts`.
+     * Settling first and filling after satisfies both: the fill costs zero open latency.
+     */
+    it('settles web session open WITHOUT waiting for history: zero loads, zero elapsed ms', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 200,
+            contentGrowthPerLoadPx: [250, 250],
+            loadDurationMs: 700,
+        });
+        const openedAtMs = Date.now();
+
+        // Instrument the TRANSITION, not a later poll: `renderHook` drains microtasks, so by
+        // the time an external loop runs the post-settle fill has already advanced the clock.
+        const latch = harness.deps.sessionOpenLatch;
+        const settleOriginal = latch.onInitialFillSettled.bind(latch);
+        const settleObservation: { value: Readonly<{ atMs: number; loads: number }> | null } = { value: null };
+        (latch as { onInitialFillSettled: typeof latch.onInitialFillSettled }).onInitialFillSettled = (args) => {
+            settleObservation.value ??= { atMs: Date.now(), loads: harness.loadOlder.mock.calls.length };
+            return settleOriginal(args);
+        };
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.sessionOpenLatch.initialFillStatus()).toBe('done');
+        });
+
+        // Zero history loads and zero elapsed simulated ms at the moment the open settled:
+        // the post-settle fill costs the open nothing.
+        expect(settleObservation.value?.loads).toBe(0);
+        expect(settleObservation.value!.atMs - openedAtMs).toBe(0);
+    });
+
+    it('web still reaches a scrollable transcript, so the older pager can arm at all', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        // The realistic tool-heavy tail: the newest page is collapsed tool calls and
+        // sidechain-routed raw events that add NO main-lane height, so the first paint is
+        // shorter than the viewport. Growth only arrives on later pages.
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 200,
+            contentGrowthPerLoadPx: [0, 250, 250],
+            loadDurationMs: 700,
+        });
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.isScrollable()).toBe(true);
+        }, { timeout: 5000 });
+
+        expect(harness.listContentHeightRef.current).toBe(700);
+    });
+
+    it('web post-settle fill preserves the prepend viewport (older rows must not move the reader)', async () => {
         Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
         const harness = createFillHarness({
             layoutHeightPx: 600,
@@ -233,11 +302,80 @@ describe('useTranscriptEntryHost initial fill sufficiency (S-L/S-M)', () => {
             { initialProps: harness.deps },
         );
         await vi.waitFor(() => {
-            expect(harness.sessionOpenLatch.initialFillStatus()).toBe('done');
+            expect(harness.loadOlder).toHaveBeenCalled();
+        }, { timeout: 5000 });
+
+        // The open-phase loop uses `preservePrependViewport: false` because it is pinned to
+        // bottom. After settlement the reader owns the viewport, so every load must preserve it.
+        // The harness mock declares no parameters, so vitest types its recorded calls as `[]`.
+        // Read them through the real argument shape to assert what the host actually passed.
+        const recordedCalls = harness.loadOlder.mock.calls as unknown as ReadonlyArray<
+            readonly [Readonly<{ preservePrependViewport?: boolean }>]
+        >;
+        expect(recordedCalls.length).toBeGreaterThan(0);
+        for (const call of recordedCalls) {
+            expect(call[0]).toMatchObject({ preservePrependViewport: true });
+        }
+    });
+
+    it('web post-settle fill stops at the absolute ceiling when every page adds only a sliver', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        // The case the no-progress counter CANNOT catch: each page adds a couple of px, so
+        // progress resets the counter every iteration. Without an absolute ceiling this pages
+        // the entire session to cross one viewport — a request + decrypt + render each time.
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 200,
+            contentGrowthPerLoadPx: Array.from({ length: 400 }, () => 2),
+            loadDurationMs: 700,
         });
 
-        expect(harness.loadOlder).not.toHaveBeenCalled();
-        expect(harness.listContentHeightRef.current).toBe(200);
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.loadOlder.mock.calls.length).toBeGreaterThanOrEqual(2);
+        }, { timeout: 5000 });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Derived from the SAME owner the implementation reads, so the bound cannot drift
+        // apart from it: the absolute ceiling is budgetMs * 5 of simulated time, and the
+        // harness advances that clock by loadDurationMs per load.
+        const { budgetMs } = resolveTranscriptInitialFillTuning({
+            transcriptInitialFillBudgetMs: sync.getSyncTuning().transcriptInitialFillBudgetMs,
+            transcriptInitialFillMaxNoProgressLoads: sync.getSyncTuning().transcriptInitialFillMaxNoProgressLoads,
+        });
+        const maxLoadsUnderCeiling = Math.ceil((budgetMs * 5) / 700) + 1;
+        expect(harness.loadOlder.mock.calls.length).toBeLessThanOrEqual(maxLoadsUnderCeiling);
+        // The point of the ceiling: nowhere near the 400 pages the session could supply.
+        expect(harness.loadOlder.mock.calls.length).toBeLessThan(50);
+        expect(harness.isScrollable()).toBe(false);
+    });
+
+    it('web post-settle fill gives up on a run of zero-growth pages instead of fetching forever', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+        const harness = createFillHarness({
+            layoutHeightPx: 600,
+            initialContentHeightPx: 200,
+            contentGrowthPerLoadPx: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            loadDurationMs: 100,
+            hasMoreAfterPlan: true,
+        });
+
+        await renderHook(
+            (deps: EntryHostDeps) => useTranscriptEntryHost(deps),
+            { initialProps: harness.deps },
+        );
+        await vi.waitFor(() => {
+            expect(harness.loadOlder.mock.calls.length).toBeGreaterThanOrEqual(3);
+        }, { timeout: 5000 });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        // Bounded: 3 consecutive no-progress loads stop it. Never scrollable, but also
+        // never an unbounded fetch loop.
+        expect(harness.loadOlder.mock.calls.length).toBeLessThanOrEqual(4);
+        expect(harness.isScrollable()).toBe(false);
     });
 
     it('keeps filling through raw-only (sidechain) pages until displayable content is sufficient', async () => {

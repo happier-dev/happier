@@ -1222,14 +1222,63 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         if (deps.listLayoutHeight <= 0 || deps.listContentHeight <= 0) return;
         if (!deps.sessionOpenLatch.markInitialFillInProgress(deps.sessionId)) return;
         if (Platform.OS === 'web') {
-            // Web can paint the newest transcript immediately and let the existing
-            // threshold pager backfill an underfilled viewport after readiness opens.
-            // Keeping historical loads inside the session-open latch serialized network,
-            // decrypt, and render work before the session became interactive.
+            // Web can paint the newest transcript immediately: keeping historical loads
+            // inside the session-open latch serialized network, decrypt, and render work
+            // before the session became interactive. So settle FIRST — nothing below this
+            // line is on the open critical path.
             applySessionOpenLatchEffects(deps.sessionOpenLatch.onInitialFillSettled({
                 nowMs: Date.now(),
                 sessionId: deps.sessionId,
             }).effects);
+
+            // Settling is not sufficient on its own. The older pager cannot arm on a
+            // NON-SCROLLABLE viewport — every threshold-validity path in
+            // `olderPaginationMachine` requires `scrollable === true`, so `inside` stays
+            // false and the arming branch is unreachable under `scroll`, `edge-reached`
+            // AND `layout-committed` alike (proved by execution in
+            // `olderPaginationMachine.underfilledWeb.test.ts`). A transcript whose newest
+            // page is short — a tail of collapsed tool calls, or a page of sidechain-routed
+            // raw events that add zero main-lane height — would therefore paint underfilled
+            // and never backfill, because there is nothing to scroll.
+            //
+            // So keep filling to scrollability, but do it AFTER settlement and with the
+            // prepend viewport preserved: the reader already has an interactive session and
+            // older rows land above their view instead of moving it.
+            const webFillController = new AbortController();
+            deps.initialFillAbortRef.current?.abort();
+            deps.initialFillAbortRef.current = webFillController;
+            const webFillSignal = webFillController.signal;
+            fireAndForget((async () => {
+                // Same bounds as the open-phase loop, from the same owner — this is the same
+                // question ("how long may a fill chase sufficiency?"), so it must not grow a
+                // second answer. Being off the critical path buys latency, not licence: every
+                // page is still a request, a decrypt and a render.
+                const { budgetMs, maxNoProgressLoads } = resolveTranscriptInitialFillTuning({
+                    transcriptInitialFillBudgetMs: sync.getSyncTuning().transcriptInitialFillBudgetMs,
+                    transcriptInitialFillMaxNoProgressLoads: sync.getSyncTuning().transcriptInitialFillMaxNoProgressLoads,
+                });
+                const startedAtMs = Date.now();
+                // The no-progress counter alone does NOT bound this: a transcript whose pages
+                // each add a couple of px of displayable height resets it every iteration and
+                // would page the whole session to cross one viewport. The open-phase loop
+                // guards that with an absolute ceiling; so must this one.
+                const absoluteFillDeadlineMs = startedAtMs + budgetMs * 5;
+                let loadsWithoutProgress = 0;
+                let contentHeightBaselinePx = deps.listContentHeightRef.current;
+                while (!webFillSignal.aborted) {
+                    if (deps.isScrollable() && deps.committedMessagesCount > 0) break;
+                    if (loadsWithoutProgress >= maxNoProgressLoads) break;
+                    if (Date.now() >= absoluteFillDeadlineMs) break;
+                    const result = await deps.loadOlder({ preservePrependViewport: true, showLoadingIndicator: false });
+                    if (!result || result.status === 'no_more') break;
+                    await Promise.resolve();
+                    await Promise.resolve();
+                    const contentHeightPx = deps.listContentHeightRef.current;
+                    const madeProgress = contentHeightPx > contentHeightBaselinePx + 1;
+                    contentHeightBaselinePx = madeProgress ? contentHeightPx : contentHeightBaselinePx;
+                    loadsWithoutProgress = madeProgress ? 0 : loadsWithoutProgress + 1;
+                }
+            })(), { tag: 'ChatList.webPostSettleFillToScrollable' });
             return;
         }
         deps.initialFillAbortRef.current?.abort();
