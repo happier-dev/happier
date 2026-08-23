@@ -193,7 +193,7 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
@@ -430,7 +430,7 @@ jobs:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
     name: UI Tests (unit + integration)
     runs-on: ubuntu-22.04
-    timeout-minutes: 75
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -530,7 +530,7 @@ jobs:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_server }}
     name: Server Tests (unit + integration)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -720,7 +720,7 @@ jobs:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
     name: Stack Tests (unit + integration)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

@@ -15,20 +15,27 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
   const uiE2eJob = extractJobBlock(raw, 'ui-e2e');
   const uiJob = extractJobBlock(raw, 'ui');
+  const serverJob = extractJobBlock(raw, 'server');
   const cliJob = extractJobBlock(raw, 'cli');
   const stackJob = extractJobBlock(raw, 'stack');
   const installerSmokeWindowsJob = extractJobBlock(raw, 'installers-smoke-windows');
 
   assert.match(
     uiE2eJob,
-    /name:\s*UI E2E \(Playwright\)[\s\S]*?timeout-minutes:\s*45\b/,
+    /name:\s*UI E2E \(Playwright\)[\s\S]*?timeout-minutes:\s*75\b/,
     'UI E2E job should reserve enough time to finish the slow multi-session Playwright scenarios on GitHub-hosted runners',
   );
 
   assert.match(
     uiJob,
-    /name:\s*UI Tests \(unit \+ integration\)[\s\S]*?timeout-minutes:\s*75\b/,
-    'UI Tests job should reserve enough time to finish on GitHub-hosted runners',
+    /name:\s*UI Tests \(unit \+ integration\)[\s\S]*?timeout-minutes:\s*240\b/,
+    'UI Tests should reserve enough time for all 24 sequential heap-bounded shards',
+  );
+
+  assert.match(
+    serverJob,
+    /name:\s*Server Tests \(unit \+ integration\)[\s\S]*?timeout-minutes:\s*45\b/,
+    'Server Tests should reserve enough time for dependency installation plus unit and integration suites',
   );
 
   assert.match(
@@ -39,8 +46,8 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
 
   assert.match(
     stackJob,
-    /name:\s*Stack Tests \(unit \+ integration\)[\s\S]*?timeout-minutes:\s*20\b/,
-    'Stack Tests job should reserve enough time to finish on GitHub-hosted runners',
+    /name:\s*Stack Tests \(unit \+ integration\)[\s\S]*?timeout-minutes:\s*45\b/,
+    'Stack Tests should reserve enough time for dependency installation plus unit and integration suites',
   );
 
   assert.match(
