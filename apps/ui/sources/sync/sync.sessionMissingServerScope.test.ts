@@ -1121,6 +1121,66 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(orderedTexts).toEqual(['older', 'latest']);
     });
 
+    it('replaces a direct transcript when older paging reports a discontinuity', async () => {
+        const sessionId = 'direct_session_discontinuity';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+        machineDirectSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'stale-direct-msg',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'stale branch' } },
+                }],
+                nextCursor: 'stale-older-cursor',
+                tailCursor: 'stale-tail-cursor',
+                hasMore: true,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [],
+                nextCursor: null,
+                tailCursor: 'current-tail-cursor',
+                hasMore: false,
+                truncated: true,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'current-direct-msg',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'current branch' } },
+                }],
+                nextCursor: null,
+                tailCursor: 'current-tail-cursor',
+                hasMore: false,
+            });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        const result = await (sync as any).loadOlderMessages(sessionId);
+
+        expect(result).toEqual({ loaded: 0, hasMore: false, status: 'not_ready' });
+        expect(machineDirectSessionTranscriptPageMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            remoteSessionId: 'vendor-session-1',
+            direction: 'older',
+        }), expect.anything());
+        expect(machineDirectSessionTranscriptPageMock.mock.calls[2]?.[0]).not.toHaveProperty('cursor');
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
+            .map((id) => sessionMessages?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(orderedTexts).toEqual(['current branch']);
+    });
+
     it('refreshes loaded direct session transcripts through the shared messages invalidation path', async () => {
         const sessionId = 'direct_session_refresh';
         storage.getState().applySessions([createDirectSession(sessionId)]);

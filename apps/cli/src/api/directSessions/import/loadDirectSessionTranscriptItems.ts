@@ -1,0 +1,39 @@
+import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+
+export type DirectTranscriptImportPage = Readonly<{
+  items: DirectTranscriptRawMessageV1[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  truncated?: boolean;
+}>;
+
+export async function loadDirectSessionTranscriptItems(params: Readonly<{
+  readPage: (cursor: string | undefined) => Promise<DirectTranscriptImportPage>;
+  maxPages?: number;
+}>): Promise<DirectTranscriptRawMessageV1[]> {
+  const pages: DirectTranscriptRawMessageV1[][] = [];
+  const maxPages = params.maxPages ?? 10_000;
+  let cursor: string | undefined;
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const page = await params.readPage(cursor);
+
+    if (page.truncated === true) {
+      pages.length = 0;
+      cursor = undefined;
+      continue;
+    }
+
+    if (page.items.length > 0) {
+      pages.push(page.items.slice());
+    }
+    if (!page.hasMore || !page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+
+  const ordered: DirectTranscriptRawMessageV1[] = [];
+  for (let index = pages.length - 1; index >= 0; index -= 1) {
+    ordered.push(...pages[index]!);
+  }
+  return ordered;
+}
