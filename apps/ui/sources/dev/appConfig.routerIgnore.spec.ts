@@ -102,6 +102,7 @@ describe('expo-router route hygiene', () => {
         };
 
         const unexpected = walk(appRoot).filter((filePath) => {
+            if (filePath.split('/').at(-1)?.startsWith('+')) return false;
             if (filePath.endsWith('.ts')) return true;
             if (!filePath.endsWith('.tsx')) return false;
 

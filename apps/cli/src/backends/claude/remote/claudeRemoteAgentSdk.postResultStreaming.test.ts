@@ -221,6 +221,11 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
             releaseClosed = resolve;
         });
 
+        let finishInput!: () => void;
+        const inputFinished = new Promise<void>((resolve) => {
+            finishInput = resolve;
+        });
+
         const createQuery = vi.fn((_params: any) => {
             let closed = false;
             const iterator = {
@@ -285,6 +290,7 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
                 releaseSecondTurnPrompt();
                 return { message: 'second', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
             }
+            await inputFinished;
             return null;
         });
 
@@ -313,6 +319,7 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
                 expect(nextMessage).toHaveBeenCalledTimes(3);
             });
         } finally {
+            finishInput();
             releaseClosed();
             await runnerPromise.catch(() => {});
         }
@@ -327,6 +334,11 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
         let releaseClosed!: () => void;
         const responseClosed = new Promise<void>((resolve) => {
             releaseClosed = resolve;
+        });
+
+        let finishInput!: () => void;
+        const inputFinished = new Promise<void>((resolve) => {
+            finishInput = resolve;
         });
 
         const createQuery = vi.fn((_params: any) => {
@@ -381,6 +393,7 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
                 releaseSecondTurnPrompt();
                 return { message: 'second', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
             }
+            await inputFinished;
             return null;
         });
 
@@ -409,6 +422,7 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
                 expect(nextMessage).toHaveBeenCalledTimes(3);
             });
         } finally {
+            finishInput();
             releaseClosed();
             await runnerPromise.catch(() => {});
         }
@@ -423,6 +437,11 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
         let releaseClosed!: () => void;
         const responseClosed = new Promise<void>((resolve) => {
             releaseClosed = resolve;
+        });
+
+        let finishInput!: () => void;
+        const inputFinished = new Promise<void>((resolve) => {
+            finishInput = resolve;
         });
 
         const createQuery = vi.fn((_params: any) => {
@@ -492,6 +511,7 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
                 releaseSecondTurnPrompt();
                 return { message: 'second', mode: makeMode({ claudeRemoteAgentSdkEnabled: true }) };
             }
+            await inputFinished;
             return null;
         });
 
@@ -520,6 +540,7 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
                 expect(nextMessage).toHaveBeenCalledTimes(3);
             });
         } finally {
+            finishInput();
             releaseClosed();
             await runnerPromise.catch(() => {});
         }

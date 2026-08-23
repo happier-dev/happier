@@ -34,7 +34,7 @@ const defaultApprovalArtifactBody = {
     actionArgs: {
         sessionId: 'session-1',
         requestId: 'ask-1',
-        answers: [{ question: 'Continue?', answer: 'Yes' }],
+        answers: [{ question: 'Continue?', values: ['Yes'] }],
     },
     summary: 'Approve answering the user',
     preview: {
@@ -319,7 +319,7 @@ describe('ApprovalDetailScreen', () => {
             await screen.pressByTestIdAsync('approvals.open-session');
         });
 
-        expect(navigateSpy).toHaveBeenCalledWith('/session/session-1', expect.any(Object));
+        expect(navigateSpy).toHaveBeenCalledWith('/session/session-1?serverId=server-cache', expect.any(Object));
         expect(navigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 

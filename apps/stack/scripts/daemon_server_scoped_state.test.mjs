@@ -71,7 +71,12 @@ test('checkDaemonStatePingAware requires a live authenticated control ping', asy
     pingOk = true;
     assert.deepEqual(
       await checkDaemonStatePingAware(dir, { serverUrl }),
-      { status: 'running', pid: process.pid, distClosureFingerprint: 'abcdef1234567890' },
+      {
+        status: 'running',
+        pid: process.pid,
+        distClosureFingerprint: 'abcdef1234567890',
+        processInstanceFingerprint: null,
+      },
     );
   } finally {
     await new Promise((resolve) => server.close(resolve));

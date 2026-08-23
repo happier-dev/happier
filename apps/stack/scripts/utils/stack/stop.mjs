@@ -711,6 +711,11 @@ async function stopStackWithEnvInternal({
   const shouldAutoSweep = autoSweepResolved && envPath && !runtimeStateUsable;
   if ((sweepOwned || shouldAutoSweep) && envPath) {
     const envNeedle = `HAPPIER_STACK_ENV_FILE=${envPath}`;
+    const repoDir = String(env.HAPPIER_STACK_REPO_DIR ?? '').trim();
+    const isRepoLocalStack = stackName && stackName !== 'main' && String(stackName).startsWith('repo-');
+    const repoLocalNeedles = isRepoLocalStack && repoDir
+      ? [`HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_REPO_DIR=${repoDir}`]
+      : null;
     const configuredInventoryTimeoutMs = Number.parseInt(
       String(env.HAPPIER_STACK_PROCESS_INVENTORY_TIMEOUT_MS ?? ''),
       10,
@@ -720,7 +725,12 @@ async function stopStackWithEnvInternal({
       : (Number.isFinite(configuredInventoryTimeoutMs) && configuredInventoryTimeoutMs > 0
           ? configuredInventoryTimeoutMs
           : 60_000);
-    const [infraTagged, legacyServer] = await listPsPidsForEnvQueries([
+    const [
+      infraTagged,
+      legacyServer,
+      repoLocalInfraTagged = [],
+      repoLocalLegacyServer = [],
+    ] = await listPsPidsForEnvQueries([
       { needles: [envNeedle, 'HAPPIER_STACK_PROCESS_KIND=infra'] },
       // Compatibility sweep for older stacks: some long-running infra (notably server dev loops)
       // may not have been started with HAPPIER_STACK_PROCESS_KIND=infra yet. We restrict this
@@ -729,6 +739,15 @@ async function stopStackWithEnvInternal({
         needles: [envNeedle, 'npm_package_name=@happier-dev/server'],
         bindingNames: ['npm_lifecycle_event'],
       },
+      ...(repoLocalNeedles
+        ? [
+            { needles: [...repoLocalNeedles, 'HAPPIER_STACK_PROCESS_KIND=infra'] },
+            {
+              needles: [...repoLocalNeedles, 'npm_package_name=@happier-dev/server'],
+              bindingNames: ['npm_lifecycle_event'],
+            },
+          ]
+        : []),
     ], Number.isFinite(inventoryTimeoutMs) && inventoryTimeoutMs > 0
       ? { timeoutMs: inventoryTimeoutMs }
       : {});
@@ -794,18 +813,7 @@ async function stopStackWithEnvInternal({
     // Repo-local fallback: older stackless infra runs may have omitted HAPPIER_STACK_ENV_FILE.
     // Do not sweep by only (stackName + repoDir): daemon-spawned session runners inherit
     // those repo-local markers and must survive stack/TUI restarts.
-    const repoDir = String(env.HAPPIER_STACK_REPO_DIR ?? '').trim();
-    const isRepoLocalStack = stackName && stackName !== 'main' && String(stackName).startsWith('repo-');
     if (autoSweepResolved && shouldAutoSweep && swept.length === 0 && isRepoLocalStack && repoDir) {
-      const repoLocalNeedles = [`HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_REPO_DIR=${repoDir}`];
-      const repoLocalInfraTagged = await listPidsWithEnvNeedles([
-        ...repoLocalNeedles,
-        'HAPPIER_STACK_PROCESS_KIND=infra',
-      ]);
-      const repoLocalLegacyServer = await listPidsWithEnvNeedlesAndEnvBindingNames([
-        ...repoLocalNeedles,
-        'npm_package_name=@happier-dev/server',
-      ], ['npm_lifecycle_event']);
       const repoLocalInfraPidSet = new Set(repoLocalInfraTagged);
       const repoLocalLegacyPidSet = new Set(repoLocalLegacyServer);
       const repoLocalPids = [...new Set([...repoLocalInfraTagged, ...repoLocalLegacyServer])]

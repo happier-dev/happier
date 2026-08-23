@@ -628,6 +628,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(completeSessionForkNavigationMock).toHaveBeenCalledWith({
       childSessionId: 'sess_child',
       parentSessionId: 'sess_1',
+      serverId: 'server_a',
       navigate: expect.any(Function),
     });
 

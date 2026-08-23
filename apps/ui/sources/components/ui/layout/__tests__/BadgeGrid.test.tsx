@@ -70,9 +70,9 @@ describe('BadgeGrid', () => {
             { id: 'neu', label: 'Neu', status: 'neutral' },
             { id: 'warn', label: 'Warn', status: 'warning' },
         ]);
-        expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(1);
-        expect(screen.findAllByProps({ name: 'x-circle' })).toHaveLength(1);
-        expect(screen.findAllByProps({ name: 'circle' })).toHaveLength(1);
+        expect(screen.findAllByProps({ name: 'checkmark-circle' })).toHaveLength(1);
+        expect(screen.findAllByProps({ name: 'close-circle' })).toHaveLength(1);
+        expect(screen.findAllByProps({ name: 'ellipse' })).toHaveLength(1);
         expect(screen.findAllByProps({ name: 'warning' })).toHaveLength(1);
     });
 

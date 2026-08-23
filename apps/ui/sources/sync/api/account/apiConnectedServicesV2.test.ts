@@ -44,7 +44,7 @@ describe('apiConnectedServicesV2', () => {
 	    mockServerConfig();
 	    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
         const url = String(input);
-        if (url === 'https://api.example.test/health') {
+        if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
           return { ok: true, status: 200, json: async () => ({ ok: true }) };
         }
         return { ok: true, status: 200, json: async () => ({ success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' }) };
@@ -81,7 +81,7 @@ describe('apiConnectedServicesV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return {
@@ -178,7 +178,7 @@ describe('apiConnectedServicesV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return { ok: false, status: 404, json: async () => ({ error: 'connect_credential_not_found' }) };
@@ -204,7 +204,7 @@ describe('apiConnectedServicesV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
@@ -229,7 +229,7 @@ describe('apiConnectedServicesV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return { ok: true, status: 200, json: async () => ({ bundle: 'bundle-1' }) };
@@ -271,7 +271,7 @@ describe('apiConnectedServicesV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return {
@@ -302,7 +302,7 @@ describe('apiConnectedServicesV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       return { ok: true, status: 200, json: async () => ({ status: 'pending', retryAfterMs: 8000 }) };
@@ -334,7 +334,7 @@ describe('apiConnectedServicesV2', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
+      if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
       }
       if (url.endsWith('/oauth/device/start')) {

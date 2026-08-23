@@ -1929,12 +1929,11 @@ test('buildSelfHostDoctorChecks does not require external minisign and includes 
     },
     {
       state: { uiWeb: { installed: true } },
-      commandExists: (name) => new Set(['tar', 'systemctl']).has(name),
+      commandExists: (name) => name === 'systemctl',
       pathExists: (p) => p.endsWith('happier-server') || p.endsWith('server.env') || p.endsWith('index.html'),
     },
   );
 
-  assert.ok(checks.find((c) => c.name === 'tar')?.ok);
   assert.ok(checks.find((c) => c.name === 'systemctl')?.ok);
   assert.equal(checks.some((c) => c.name === 'minisign'), false);
   assert.ok(checks.find((c) => c.name === 'ui-web')?.ok);

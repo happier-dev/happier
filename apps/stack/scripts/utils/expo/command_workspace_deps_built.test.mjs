@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
 import { withPatchedProcessEnv } from '../../testkit/core/env_scope.mjs';
+import { writeWorkspacePackageBuildOwnerProxy } from '../../testkit/core/workspace_package_build_owner.mjs';
 import { expoExec } from './command.mjs';
 
 async function writeJson(path, value) {
@@ -160,6 +161,7 @@ test('expoExec builds workspace dist deps for the projectDir (not the runnerDir)
   await mkdir(join(root, 'apps', 'server'), { recursive: true });
   await writeJson(join(root, 'package.json'), { name: 'repo', private: true });
   await writeFile(join(root, 'yarn.lock'), '# lock\n', 'utf-8');
+  await writeWorkspacePackageBuildOwnerProxy(root);
 
   // Root does NOT depend on protocol; only apps/ui does.
   await writeJson(join(root, 'apps', 'ui', 'package.json'), {
@@ -234,6 +236,7 @@ test('expoExec falls back to the monorepo root expo bin when runnerDir lacks nod
   await mkdir(join(root, 'apps', 'server'), { recursive: true });
   await writeJson(join(root, 'package.json'), { name: 'repo', private: true });
   await writeFile(join(root, 'yarn.lock'), '# lock\n', 'utf-8');
+  await writeWorkspacePackageBuildOwnerProxy(root);
 
   await writeJson(join(root, 'apps', 'ui', 'package.json'), {
     name: '@happier-dev/app',

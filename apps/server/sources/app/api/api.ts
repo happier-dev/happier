@@ -1,4 +1,4 @@
-import fastify from "fastify";
+import fastify, { errorCodes, type FastifyBodyParser, type FastifyInstance } from "fastify";
 import type { FastifyCorsOptions } from "@fastify/cors";
 import { log, logger } from "@/utils/logging/log";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
@@ -68,6 +68,16 @@ export function resolveApiCorsMaxAgeSeconds(env: Record<string, string | undefin
     return parsed;
 }
 
+export function enableContentTypeParsers(app: Pick<FastifyInstance, 'addContentTypeParser'>) {
+    const parseUnsupportedBody: FastifyBodyParser<string> = (_request, body, done) => {
+        if (body.length === 0) {
+            return done(null, undefined);
+        }
+        return done(new errorCodes.FST_ERR_CTP_INVALID_MEDIA_TYPE(), undefined);
+    };
+    app.addContentTypeParser('*', { parseAs: 'string' }, parseUnsupportedBody);
+}
+
 export async function startApi() {
 
     // Configure
@@ -81,6 +91,7 @@ export async function startApi() {
         forceCloseConnections: 'idle',
         ...(typeof trustProxy !== "undefined" ? { trustProxy } : null),
     });
+    enableContentTypeParsers(app);
     app.register(import('@fastify/cors'), createApiCorsOptions(process.env));
     app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
 

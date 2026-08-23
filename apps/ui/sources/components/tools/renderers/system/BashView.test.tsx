@@ -87,6 +87,34 @@ describe('BashView', () => {
         );
     });
 
+    it('renders Pi-style content-array results at default detail level', async () => {
+        commandViewSpy.mockClear();
+        codeViewSpy.mockClear();
+        const { BashView } = await import('./BashView');
+
+        // Pi delivers bash output as an ACP-style tool result: text blocks in `content`,
+        // metadata in `details`. No stream keys exist on this shape.
+        const tool = makeToolCall({
+            name: 'Bash',
+            state: 'completed',
+            input: { command: 'vitest run sources/components/tools' },
+            result: {
+                content: [{ type: 'text', text: 'Test Files  1 passed (1)' }],
+                details: { exit_code: 0, duration_ms: 6820, truncated: false },
+                isError: false,
+            },
+        });
+
+        const screen = await renderScreen(React.createElement(BashView, makeToolViewProps(tool)));
+
+        expect(commandViewSpy).toHaveBeenCalledTimes(1);
+        expect(commandViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                stdout: 'Test Files  1 passed (1)',
+            }),
+        );
+    });
+
     it('does not dump structured JSON when stdout/stderr are empty', async () => {
         commandViewSpy.mockClear();
         codeViewSpy.mockClear();

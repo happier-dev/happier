@@ -16,6 +16,19 @@ describe('console capture helpers', () => {
     }
   });
 
+  it('keeps legacy log consumers aligned with canonical stdout writes', async () => {
+    const logger = await import('@/testkit/logger/captureOutput').catch(() => null);
+
+    expect(logger).not.toBeNull();
+    const output = logger!.captureConsoleLogAndMuteStdout();
+    try {
+      process.stdout.write('{"ok":true}\n');
+      expect(output.logs.join('')).toBe('{"ok":true}\n');
+    } finally {
+      output.restore();
+    }
+  });
+
   it('captures stdout and stderr writes until restored', async () => {
     const logger = await import('@/testkit/logger/captureOutput').catch(() => null);
 

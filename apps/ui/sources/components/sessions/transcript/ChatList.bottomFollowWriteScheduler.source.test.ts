@@ -45,7 +45,7 @@ describe('ChatList bottom-follow write scheduler boundary', () => {
         const source = fs.readFileSync(chatListInternalPath, 'utf8');
         const body = extractCallbackBody(source, 'handleComposerInsetHeightChange');
 
-        expect(body).toContain('if (appOwnsContinuousFollow)');
+        expect(body).toContain("mainTranscriptRendererOwnerPolicy.continuousFollow === 'app'");
         expect(body).toContain("requestAutomaticLiveTailPin(null, 'viewport-resized')");
         expect(body).toContain('listRef.current?.notifyViewportGeometryChanged?.()');
     });

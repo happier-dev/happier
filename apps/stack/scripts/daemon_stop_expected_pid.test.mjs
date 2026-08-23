@@ -74,6 +74,19 @@ async function waitForFile(path, timeoutMs = 5_000) {
   throw new Error(`timed out waiting for ${path}`);
 }
 
+async function waitForPidExit(pid, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await delay(20);
+  }
+  return false;
+}
+
 async function stopPidIfAlive(pid) {
   if (!Number.isFinite(pid) || pid <= 1) return;
   try {
@@ -97,7 +110,7 @@ test('stopLocalDaemon bounds a hung CLI stop child, terminates its group, and co
     const cliDir = join(tmp, 'apps', 'cli');
     const cliHomeDir = join(tmp, 'cli-home');
     const monoRoot = join(cliDir, '..', '..');
-    const { cliBinDir } = await writeStubHappierCliFiles(monoRoot, {
+    const { cliBinDir, cliDistDir } = await writeStubHappierCliFiles(monoRoot, {
       packageJsonContent: '{}\n',
       distIndexScript: `
 import { spawn } from 'node:child_process';
@@ -129,7 +142,21 @@ setInterval(() => {}, 1000);
     let timeoutError = null;
     const stopStartedAt = Date.now();
     try {
-      await stopLocalDaemon({ cliBin, cliHomeDir, internalServerUrl, env });
+      await stopLocalDaemon(
+        {
+          cliBin,
+          cliNodeEntrypoint: join(cliDistDir, 'index.mjs'),
+          cliHomeDir,
+          internalServerUrl,
+          env,
+        },
+        {
+          killPidOwnedByStackImpl: async (pid) => {
+            process.kill(pid, 'SIGTERM');
+            return { killed: true, reason: 'test-owned-daemon' };
+          },
+        },
+      );
     } catch (error) {
       timeoutError = error;
     }
@@ -142,10 +169,21 @@ setInterval(() => {}, 1000);
     await waitForFile(env.STOP_DESCENDANT_PID_PATH);
     stopDescendantPid = Number(await readFile(env.STOP_DESCENDANT_PID_PATH, 'utf8'));
     assert.ok(Number.isFinite(stopDescendantPid) && stopDescendantPid > 1, 'expected spawned stop-command descendant');
-    await delay(100);
-    assert.throws(() => process.kill(stopChildPid, 0), 'hung CLI stop process group should be terminated');
-    assert.throws(() => process.kill(stopDescendantPid, 0), 'hung CLI stop descendant must be terminated with its group');
-    assert.throws(() => process.kill(daemonPid, 0), 'daemon state cleanup must continue after CLI stop timeout');
+    assert.equal(
+      await waitForPidExit(stopChildPid),
+      true,
+      'hung CLI stop process group should be terminated',
+    );
+    assert.equal(
+      await waitForPidExit(stopDescendantPid),
+      true,
+      'hung CLI stop descendant must be terminated with its group',
+    );
+    assert.equal(
+      await waitForPidExit(daemonPid),
+      true,
+      'daemon state cleanup must continue after CLI stop timeout',
+    );
   } finally {
     await stopPidIfAlive(stopDescendantPid);
     await stopPidIfAlive(daemonPid);

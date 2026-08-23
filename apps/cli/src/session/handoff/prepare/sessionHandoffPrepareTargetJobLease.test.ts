@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   startSessionHandoffPrepareTargetJobLeaseHeartbeat,
@@ -122,9 +122,9 @@ describe('sessionHandoffPrepareTargetJobLease', () => {
       await writeFile(join(leaseDirectory, 'lease.json'), `${JSON.stringify(successor)}\n`, 'utf8');
       await writeFile(join(leaseDirectory, 'runner.json'), `${JSON.stringify(successor)}\n`, 'utf8');
 
-      await new Promise((resolve) => setTimeout(resolve, 400));
-
-      expect(heartbeat.getState()).toMatchObject({ status: 'lost' });
+      await vi.waitFor(() => {
+        expect(heartbeat.getState()).toMatchObject({ status: 'lost' });
+      }, { timeout: 5_000 });
       await expect(heartbeat.proof.validate()).resolves.toBe(false);
       await expect(heartbeat.stop()).resolves.toMatchObject({ status: 'lost' });
     } finally {

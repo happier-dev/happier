@@ -1,11 +1,7 @@
 import * as React from 'react';
-import {
-    parse,
-    SvgAst,
-    type JsxAST,
-    type SvgProps,
-    type XmlAST,
-} from 'react-native-svg';
+import { SvgAst, type SvgProps } from 'react-native-svg';
+import { parse } from 'react-native-svg/lib/commonjs/xml';
+import type { JsxAST, XmlAST } from 'react-native-svg/lib/typescript/xml';
 
 const LOCAL_FRAGMENT_PATTERN = /^#[A-Za-z0-9_.:-]+$/;
 const SAFE_RASTER_DATA_URI_PATTERN = /^data:image\/(?:png|jpeg|gif|webp);base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/i;

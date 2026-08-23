@@ -106,7 +106,7 @@ test('uninstallService removes definitions only after backend-confirmed teardown
   for (const { platform, command, mode, uid } of [
     { platform: 'linux', command: 'systemctl', mode: 'user', uid: 501 },
     { platform: 'darwin', command: 'launchctl', mode: 'user', uid: 501 },
-    { platform: 'win32', command: 'schtasks', mode: 'user', uid: null },
+    { platform: 'win32', command: 'powershell.exe', mode: 'user', uid: null },
   ]) {
     for (const outcome of ['absent', 'denied']) {
       // eslint-disable-next-line no-await-in-loop
@@ -125,7 +125,7 @@ test('uninstallService removes definitions only after backend-confirmed teardown
               ? '#!/bin/sh\ncase "$*" in *daemon-reload*) exit 0;; esac\necho "Unit dev.happier.stack.test.service does not exist." >&2\nexit 1\n'
               : command === 'launchctl'
                 ? '#!/bin/sh\necho "Could not find specified service" >&2\nexit 1\n'
-                : '#!/bin/sh\ncase "$1" in /End) echo "ERROR: The task is not currently running." >&2;; *) echo "ERROR: The system cannot find the file specified." >&2;; esac\nexit 1\n';
+                : '#!/bin/sh\necho \'{"exists":false,"state":null,"lastTaskResult":null}\'\nexit 0\n';
           const script = behavior.replace('#!/bin/sh\n', '#!/bin/sh\necho "$*" >> "$HAPPIER_TEST_SERVICE_LOG"\n');
           await writeFile(commandPath, script, 'utf8');
           await chmod(commandPath, 0o755);
@@ -153,8 +153,8 @@ test('uninstallService removes definitions only after backend-confirmed teardown
               assert.match(invocations, /print gui\/501\/dev\.happier\.stack\.test/);
               assert.doesNotMatch(invocations, /bootout|disable|\.plist/);
             } else {
-              assert.match(invocations, /\/Query \/TN Happier\\dev\.happier\.stack\.test/);
-              assert.doesNotMatch(invocations, /\/End|\/Delete/);
+              assert.match(invocations, /Get-ScheduledTask/);
+              assert.doesNotMatch(invocations, /Stop-ScheduledTask|Unregister-ScheduledTask/);
             }
           }
         } finally {

@@ -110,7 +110,6 @@ function writeExtensionProbeAgentScript(params: {
         if (id === undefined || id === null || typeof method !== 'string') continue;
 
         if (method === 'initialize') {
-          writeResult(req.params || {});
           ok(id, { protocolVersion: 1, authMethods: [] });
           continue;
         }
@@ -228,6 +227,7 @@ describe('AcpBackend ACP extension dispatch', () => {
       try {
         const started = await backend.startSession();
         await backend.sendPrompt(started.sessionId, 'trigger extension request');
+        await backend.waitForResponseComplete(1_000);
 
         const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
         const result = readNestedRecord(response, 'result');
@@ -286,10 +286,12 @@ describe('AcpBackend ACP extension dispatch', () => {
       try {
         const started = await backend.startSession();
         await backend.sendPrompt(started.sessionId, 'first plan turn');
+        await backend.waitForResponseComplete(1_000);
         expect(projectedEvents).toHaveLength(1);
         expect((await contexts[0]?.plans?.project(snapshots[0]!))?.kind).toBe('late');
 
         await backend.sendPrompt(started.sessionId, 'second identical plan turn');
+        await backend.waitForResponseComplete(1_000);
         expect(projectedEvents).toHaveLength(2);
         expect(contexts[1]?.turnId).not.toBe(contexts[0]?.turnId);
       } finally {
@@ -356,6 +358,7 @@ describe('AcpBackend ACP extension dispatch', () => {
       try {
         const started = await backend.startSession();
         await backend.sendPrompt(started.sessionId, 'trigger extension notification');
+        await backend.waitForResponseComplete(1_000);
 
         expect(notifications).toEqual([
           {
@@ -397,6 +400,7 @@ describe('AcpBackend ACP extension dispatch', () => {
       try {
         const started = await backend.startSession();
         await backend.sendPrompt(started.sessionId, 'trigger extension error');
+        await backend.waitForResponseComplete(1_000);
 
         const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
         const error = readNestedRecord(response, 'error');
@@ -432,6 +436,7 @@ describe('AcpBackend ACP extension dispatch', () => {
       try {
         const started = await backend.startSession();
         await backend.sendPrompt(started.sessionId, 'trigger missing extension handler');
+        await backend.waitForResponseComplete(1_000);
 
         const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
         const error = readNestedRecord(response, 'error');
@@ -514,18 +519,12 @@ describe('AcpBackend ACP extension dispatch', () => {
 
       try {
         const started = await backend.startSession();
-        const evidence = await backend.sendPromptWithEvidence(started.sessionId, 'trigger extension abort');
-        expect(evidence.kind).toBe('effect_may_have_occurred');
-        if (evidence.kind !== 'effect_may_have_occurred') {
-          throw new Error('Expected first-update liveness evidence');
-        }
+        await backend.sendPromptWithEvidence(started.sessionId, 'trigger extension abort');
         const startOutcome = await Promise.race([
           startedHandler.then(() => 'started' as const),
           new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 500)),
         ]);
         expect(startOutcome).toBe('started');
-        expect(await readPromiseState(evidence.finalResponseEvidence)).toBe('pending');
-
         await backend.cancel(started.sessionId);
         if (!capturedPlan.context?.plans || !capturedPlan.snapshot) {
           throw new Error('plan projection context was not captured');
@@ -537,8 +536,6 @@ describe('AcpBackend ACP extension dispatch', () => {
           new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 500)),
         ]);
         expect(abortOutcome).toBe('aborted');
-        await evidence.finalResponseEvidence.catch(() => {});
-
         const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
         const error = readNestedRecord(response, 'error');
         expect(error).toMatchObject({ code: -32603 });

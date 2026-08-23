@@ -7,7 +7,8 @@ vi.mock('@/sync/domains/server/serverConfig', () => ({
     getServerUrl: () => 'https://api.example.test',
 }));
 
-vi.mock('@/utils/timing/time', () => ({
+vi.mock('@/utils/timing/time', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/utils/timing/time')>()),
     backoff: async <T>(fn: () => Promise<T>) => await fn(),
 }));
 

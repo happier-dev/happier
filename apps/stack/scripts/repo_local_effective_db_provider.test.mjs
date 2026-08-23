@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -23,7 +24,16 @@ async function createFixture(t, lines) {
   const root = await mkdtemp(join(tmpdir(), 'hstack-repo-local-provider-'));
   t.after(async () => rm(root, { recursive: true, force: true }));
   const storageDir = join(root, 'storage');
-  const id = (await readFile(join(repoRoot, '.git', 'happier-stack-stackless-id'), 'utf8')).trim();
+  const legacyId = createHash('sha256').update(String(repoRoot)).digest('hex').slice(0, 10);
+  const gitPath = join(repoRoot, '.git');
+  const gitStat = await stat(gitPath);
+  let gitDir = gitPath;
+  if (gitStat.isFile()) {
+    const match = (await readFile(gitPath, 'utf8')).trim().match(/^gitdir:\s*(.+)\s*$/i);
+    assert.ok(match, `expected ${gitPath} to contain a gitdir pointer`);
+    gitDir = match[1].startsWith('/') ? match[1] : join(repoRoot, match[1]);
+  }
+  const id = (await readFile(join(gitDir, 'happier-stack-stackless-id'), 'utf8').catch(() => legacyId)).trim();
   const stackName = `repo-${sanitizeStackNameToken(basename(repoRoot))}-${id.slice(0, 10)}`;
   const stackDir = join(storageDir, stackName);
   const envPath = join(stackDir, 'env');

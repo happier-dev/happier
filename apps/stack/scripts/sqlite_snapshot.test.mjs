@@ -86,41 +86,44 @@ async function assertMissing(path) {
 }
 
 async function waitForPartial(...directories) {
-  for (let attempt = 0; attempt < 2_000; attempt += 1) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
     for (const directory of directories) {
       const name = (await readdir(directory)).find((entry) => entry.includes('.partial-'));
       if (name) return join(directory, name);
     }
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`timed out waiting for a partial file in ${directories.join(', ')}`);
 }
 
 async function waitForManifestPartial(...directories) {
-  for (let attempt = 0; attempt < 2_000; attempt += 1) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
     for (const directory of directories) {
       const name = (await readdir(directory)).find((entry) => entry.includes('.manifest.partial-'));
       if (name) return join(directory, name);
     }
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`timed out waiting for a manifest partial file in ${directories.join(', ')}`);
 }
 
 async function waitForWrittenPartial(directory) {
-  for (let attempt = 0; attempt < 2_000; attempt += 1) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
     const name = (await readdir(directory)).find((entry) => entry.includes('.partial-'));
     if (name) {
       const path = join(directory, name);
       if ((await lstat(path)).size > 0) return path;
     }
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`timed out waiting for a written partial file in ${directory}`);
 }
 
 async function waitForExisting(path) {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
       await lstat(path);
@@ -848,14 +851,18 @@ test('late output-parent replacement rejects success and leaves only private una
     await mkdir(outputParent, { recursive: true });
     createDatabase(sourcePath, { large: true });
 
-    const pending = createSqliteSnapshot({ sourcePath, outputPath, disposableRoot });
+    const pending = createSqliteSnapshot({ sourcePath, outputPath, disposableRoot }).then(
+      () => null,
+      (error) => error,
+    );
     await waitForManifestPartial(outputParent);
     await rename(outputParent, movedParent);
     await mkdir(outputParent, { mode: 0o700 });
 
-    await assert.rejects(
-      pending,
-      /output parent.*replaced|output parent.*changed|manifest partial.*replaced|manifest partial.*removed/i,
+    const failure = await pending;
+    assert.match(
+      String(failure),
+      /output parent.*replaced|output parent.*changed|manifest partial.*replaced|manifest partial.*removed|snapshot manifest.*replaced|snapshot manifest.*removed/i,
     );
     await assertMissing(outputPath);
     await assertMissing(`${outputPath}.manifest.json`);

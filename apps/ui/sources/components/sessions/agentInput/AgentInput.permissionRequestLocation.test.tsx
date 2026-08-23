@@ -67,6 +67,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 vi.mock('@/constants/Typography', () => ({
     Typography: new Proxy({}, { get: () => () => ({}) }),
+    FontWeights: { regular: '400' },
 }));
 
 installAgentInputCommonModuleMocks({

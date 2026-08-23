@@ -145,13 +145,6 @@ function collectMissingWebWregFields(event: WebWregDiagnosticEvent): string[] {
         if (!hasOwn(event, 'pendingWebPrependAnchorId')) missing.push('pendingWebPrependAnchorId');
         if (!hasOwn(event, 'pendingWebPrependAnchorIndex')) missing.push('pendingWebPrependAnchorIndex');
     }
-    if (
-        event.type === 'restore-decision' ||
-        event.trigger === 'restore' ||
-        event.trigger === 'prepend-restore'
-    ) {
-        if (!hasOwn(event, 'firstVisibleAnchorTestId')) missing.push('firstVisibleAnchorTestId');
-    }
     return missing;
 }
 

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { expoExec } from './command.mjs';
+import { writeWorkspacePackageBuildOwnerStub } from '../../testkit/core/workspace_package_build_owner.mjs';
 
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
@@ -74,6 +75,7 @@ async function writeMinimalRepo({ root }) {
   await writeJson(join(root, 'apps', 'ui', 'package.json'), { name: '@happier-dev/app', private: true });
   await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
   await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+  await writeWorkspacePackageBuildOwnerStub(root);
 }
 
 async function runExportAndReadArgs({ t, maxWorkersEnv, extraArgs = [] }) {

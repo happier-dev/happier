@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { waitForOwnerDeathWatchdogQuiescence } from './testkit/core/owner_death_watchdog_fixture.mjs';
+import { writeWorkspacePackageBuildOwnerStub } from './testkit/core/workspace_package_build_owner.mjs';
 import { waitForTcpPortFree } from './utils/net/ports.mjs';
 
 function stackPaths() {
@@ -131,6 +132,7 @@ async function createFakeMonorepo(rootDir) {
     'utf-8',
   );
   await writeFile(join(rootDir, 'apps', 'cli', 'dist', 'index.mjs'), 'process.exit(0);\n', 'utf-8');
+  await writeWorkspacePackageBuildOwnerStub(rootDir);
 }
 
 async function spawnStackOwnedHealthServer({ stackName, envPath, healthStatus = 200 }) {
@@ -584,6 +586,7 @@ exit 1
         HAPPIER_STACK_CLI_BUILD: '0',
         HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
+        HAPPIER_DB_PROVIDER: 'postgres',
         HAPPIER_STACK_RUNTIME_DIR: join(tempRoot, 'runtime'),
         HAPPIER_STACK_LOG_TEE_DIR: join(tempRoot, 'logs'),
         HAPPIER_STACK_SERVER_PORT: String(port),
@@ -664,6 +667,7 @@ exit 1
         HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
         HAPPIER_STACK_MANAGED_INFRA: '0',
+        HAPPIER_DB_PROVIDER: 'postgres',
         HAPPIER_STACK_RUNTIME_DIR: join(tempRoot, 'runtime'),
         HAPPIER_STACK_LOG_TEE_DIR: join(tempRoot, 'logs'),
         HAPPIER_STACK_SERVER_PORT: String(port),

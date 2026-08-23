@@ -100,6 +100,7 @@ describe('claudeLocal abort escalation timers', () => {
 
       await spawned;
       controller.abort();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(kill).toHaveBeenCalledWith('SIGINT');
 
