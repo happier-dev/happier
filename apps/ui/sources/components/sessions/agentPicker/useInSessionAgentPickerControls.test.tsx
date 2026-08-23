@@ -5,13 +5,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { resetSessionDraftValuesCachesForTests } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import {
+    readSessionDraftValue,
+    resetSessionDraftValuesCachesForTests,
+} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { clearPersistedSessionDraftValues } from '@/sync/domains/state/sessionDraftValuesPersistence';
 import { t } from '@/text';
 
 import { APPLIED_RUNTIME_MARKER_ICON } from '@/components/sessions/agentInput/appliedRuntimeMarker';
 
-import { useInSessionAgentPickerControls } from './useInSessionAgentPickerControls';
+import {
+    useInSessionAgentPickerControls,
+    type SessionAgentContinuationFeatureDecision,
+} from './useInSessionAgentPickerControls';
 import type {
     SessionAgentContinuationMachineTarget,
     SessionAgentContinuationSourceState,
@@ -118,22 +125,23 @@ const AVAILABLE = {
 
 type HookProps = Readonly<{
     sessionId?: string;
+    accountScope?: ServerAccountScope | null;
     entries?: readonly ResolvedBackendCatalogEntry[];
     source?: SessionAgentContinuationSourceState;
     machine?: SessionAgentContinuationMachineTarget;
-    featureEnabled?: boolean;
+    featureDecision?: SessionAgentContinuationFeatureDecision;
     sessionActive?: boolean | null;
 }>;
 
 async function renderControls(props: HookProps = {}) {
     return renderHook((hookProps: HookProps) => useInSessionAgentPickerControls({
         sessionId: hookProps.sessionId ?? 'session-1',
-        accountScope: null,
+        accountScope: hookProps.accountScope ?? null,
         currentAgentId: 'claude',
         currentAgentLabel: 'Claude Code',
         currentAgentSessionActive: hookProps.sessionActive ?? true,
         entries: hookProps.entries ?? [entry('claude'), entry('codex')],
-        featureEnabled: hookProps.featureEnabled ?? true,
+        featureDecision: hookProps.featureDecision === undefined ? { state: 'enabled' } : hookProps.featureDecision,
         source: hookProps.source ?? supportedSource,
         machine: hookProps.machine ?? onlineMachine,
         detail: detailContext,
@@ -285,7 +293,7 @@ describe('useInSessionAgentPickerControls', () => {
         // cannot matter: a closed gate, a Session that cannot be written to or whose
         // transcript is its Agent's own, and a Session with no other Agent.
         for (const props of [
-            { featureEnabled: false },
+            { featureDecision: { state: 'disabled' as const } },
             { source: { ...supportedSource, canEditSession: false } },
             { source: { ...supportedSource, storageKind: 'direct' as const } },
             { entries: [entry('claude')] },
@@ -528,7 +536,7 @@ describe('useInSessionAgentPickerControls', () => {
         // `sessions.agentSwitching` is server-represented and fails closed. A rail
         // rendered against a missing or disabled bit would offer — and announce —
         // a switch this deployment will refuse.
-        const hook = await renderControls({ featureEnabled: false });
+        const hook = await renderControls({ featureDecision: { state: 'disabled' } });
         await openPicker(hook);
 
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
@@ -545,11 +553,61 @@ describe('useInSessionAgentPickerControls', () => {
         });
         expect(hook.getCurrent().armedContinuation).not.toBeNull();
 
-        await hook.rerender({ featureEnabled: false });
+        await hook.rerender({ featureDecision: { state: 'disabled' } });
 
         // The submit path reads exactly this value, so a stale arm surviving a
         // closing gate is the whole gate bypassed.
         expect(hook.getCurrent().armedContinuation).toBeNull();
+    });
+
+    it('fails closed while an enabled feature decision becomes unresolved without spending its arm', async () => {
+        const hook = await renderControls();
+        await openPicker(hook);
+
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+        const localId = hook.getCurrent().armedContinuationLocalId;
+        expect(localId).toEqual(expect.any(String));
+
+        await hook.rerender({ featureDecision: null });
+
+        // A missing server decision is fail-closed for presentation and dispatch,
+        // but it is not proof that an already-persisted choice became stale.
+        expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(readSessionDraftValue(null, 'session-1', 'routing.agentContinuation')).toBeDefined();
+
+        await hook.rerender({ featureDecision: { state: 'enabled' } });
+
+        expect(hook.getCurrent().armedContinuation).toMatchObject({ selection: { agentId: 'codex' } });
+        expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);
+    });
+
+    it('clears the previous Account arm so returning to it cannot resurrect the switch', async () => {
+        const accountA = { serverId: 'server-1', accountId: 'account-a' } as const;
+        const accountB = { serverId: 'server-1', accountId: 'account-b' } as const;
+        clearPersistedSessionDraftValues(accountA);
+        clearPersistedSessionDraftValues(accountB);
+        const hook = await renderControls({ accountScope: accountA });
+        await openPicker(hook);
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+        expect(hook.getCurrent().armedContinuation).not.toBeNull();
+
+        await hook.rerender({ accountScope: accountB });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(readSessionDraftValue(accountA, 'session-1', 'routing.agentContinuation')).toBeUndefined();
+        expect(readSessionDraftValue(accountB, 'session-1', 'routing.agentContinuation')).toBeUndefined();
+
+        await hook.rerender({ accountScope: accountA });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(hook.getCurrent().armedContinuationLocalId).toBeNull();
     });
 
     it('drops an armed choice that no longer belongs to the Session it was made in', async () => {
@@ -753,6 +811,39 @@ describe('useInSessionAgentPickerControls', () => {
 
         // …and the answers cannot change what this open popover already is.
         expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual(whileWaiting);
+    });
+
+    it('does not add a rail after an open popover has semantically started without one', async () => {
+        // The rail and arm validity must consume the same first-open snapshot.
+        // A late positive answer belongs to the next open; adding it to this one
+        // changes the popover geometry after the reader has started using it.
+        let resolveAnswer: ((value: typeof AVAILABLE) => void) | null = null;
+        machineRpcWithServerScope.mockImplementation(() => new Promise<typeof AVAILABLE>((resolve) => {
+            resolveAnswer = resolve;
+        }));
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex')] });
+
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(true);
+        });
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual(['engine:claude']);
+
+        await act(async () => {
+            resolveAnswer?.(AVAILABLE);
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual(['engine:claude']);
+
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(false);
+            hook.getCurrent().onAgentPickerVisibilityChange(true);
+        });
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual([
+            'engine:claude',
+            'builtInAgent:codex',
+        ]);
     });
 
     it('holds a rail it has already shown for the rest of that open popover', async () => {

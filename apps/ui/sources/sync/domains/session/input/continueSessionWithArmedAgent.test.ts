@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { t } from '@/text';
 
 import {
+    buildArmedAgentContinuationTransitionInput,
     continueSessionWithArmedAgent,
     reconcileArmedAgentContinuationDisposition,
     resolveArmedAgentContinuationDisposition,
@@ -49,6 +50,20 @@ function rpcError(rpcErrorCode: string): Error {
 describe('continueSessionWithArmedAgent', () => {
     beforeEach(() => {
         machineRpcWithServerScope.mockReset();
+    });
+
+    it('seals the same canonical input that the arm persists before dispatch', () => {
+        expect(buildArmedAgentContinuationTransitionInput(submission({
+            input: {
+                text: 'review comment 1\n\nship it',
+                displayText: 'ship it',
+                meta: { source: 'ui' },
+            },
+        }))).toEqual({
+            text: 'review comment 1\n\nship it',
+            localId: 'local-1',
+            meta: { displayText: 'ship it', source: 'ui' },
+        });
     });
 
     it('dispatches the submitted message to the ARMED TARGET Agent, not the current one', async () => {
@@ -167,8 +182,7 @@ describe('resolveArmedAgentContinuationDisposition', () => {
             { type: 'rejected', code: 'target_unavailable', sourceEffect: 'none' },
             { type: 'partially_applied', localId: 'local-1', applied: 'source_stopped', code: 'cutover_conflict' },
             { type: 'partially_applied', localId: 'local-1', applied: 'source_stopped', code: 'context_unavailable' },
-            { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'divider_missing' },
-            { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'divider_conflict' },
+            { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'divider_unavailable' },
             { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'input_rejected' },
             { type: 'outcome_unknown', localId: 'local-1' },
         ];
@@ -235,7 +249,7 @@ describe('resolveArmedAgentContinuationDisposition', () => {
         // has already been spent, and section 7.5 forbids retrying it. The
         // message did NOT go through, so the draft stays.
         expect(resolveArmedAgentContinuationDisposition(
-            { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'divider_missing' },
+            { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'divider_unavailable' },
             LABELS,
         )).toEqual({
             draft: 'preserve',
@@ -280,7 +294,7 @@ describe('resolveArmedAgentContinuationDisposition', () => {
         // fact away on dismiss. Every code reachable at this depth must therefore
         // produce a WARNING that names the target, a draft that survives, and an
         // armed row that does not — the switch is spent.
-        for (const code of ['divider_missing', 'divider_unknown', 'input_rejected'] as const) {
+        for (const code of ['divider_unavailable', 'input_rejected'] as const) {
             const disposition = resolveArmedAgentContinuationDisposition(
                 { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code },
                 LABELS,
@@ -367,7 +381,7 @@ describe('reconcileArmedAgentContinuationDisposition', () => {
     it('offers resume for a committed-but-inactive target reported by the daemon itself', () => {
         expect(reconcile(
             { currentAgentId: 'codex', sessionActive: false, input: 'absent' as const },
-            { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'divider_missing' },
+            { type: 'partially_applied', localId: 'local-1', applied: 'current_view_committed', code: 'divider_unavailable' },
         ).notice?.recovery).toBe('resumeSession');
     });
 

@@ -64,10 +64,9 @@ export function resolveSessionComposerSendDestination(params: Readonly<{
      * departure divider's localId from it and correlates a repeated invocation
      * against that divider, so a retry of the same armed switch must carry the
      * same value even when the reader edited the text first. Content-addressing
-     * it would break that correlation — see the owner test for what it costs —
-     * and it would buy nothing, because the canonical admission owner already
-     * refuses a reused identity whose content differs, at both the pending row
-     * and the committed transcript row.
+     * it would break that correlation. The dispatch owner pairs this stable id
+     * with the arm's nested first exact input, so newer draft edits remain local
+     * until the original transition's custody is resolved.
      */
     armedContinuationLocalId: string | null;
     /** The machine hosting the Session. The transition only runs there. */

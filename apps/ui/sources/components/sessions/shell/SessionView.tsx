@@ -42,6 +42,7 @@ import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHe
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { SessionHeaderIconWithCount } from '@/components/sessions/actions/SessionHeaderIconWithCount';
 import { SessionHeaderInfoButton } from '@/components/sessions/actions/SessionHeaderInfoButton';
+import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { SessionHeaderRightSidebarButton } from '@/components/sessions/actions/SessionHeaderRightSidebarButton';
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
@@ -70,6 +71,7 @@ import {
     clearComposerAfterOutboundHandoff,
     restoreComposerAfterFailedOutboundHandoff,
 } from '@/hooks/session/sessionComposerSendCoordinator';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -114,6 +116,10 @@ import {
     filterReviewCommentDraftsIncludedInPrompt,
 } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
 import { buildReviewCommentsOutboundMessage } from '@/sync/domains/input/reviewComments/buildReviewCommentsOutboundMessage';
+import {
+    buildReviewCommentsV1MetaPayload,
+    parseReviewCommentsV1,
+} from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
@@ -124,6 +130,8 @@ import {
     readSessionDraftValue,
     writeSessionDraftValue,
 } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import type { SessionArmedAgentContinuationSubmission } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { AgentInputLocalUiStateV1 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import {
@@ -182,8 +190,8 @@ import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionR
 import { confirmNonSteerableSend } from '@/components/sessions/agentInput/confirmNonSteerableSend';
 import { canApplySteerConfigInFlight, decideSessionMessageDelivery, type MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import {
+    buildArmedAgentContinuationTransitionInput,
     continueSessionWithArmedAgent,
-    isArmedAgentContinuationOutcomeUnsettled,
     reconcileArmedAgentContinuationDisposition,
     type ArmedAgentContinuationCanonicalFacts,
     type ArmedAgentContinuationInputCustody,
@@ -378,8 +386,6 @@ function selectCanonicalOutboundHandoffForLocalId(
  * safe). A subscriber must use the selector above instead: this answer is stale
  * the moment the pending row or the transcript row lands.
  */
-const ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID = 'routing.agentContinuationSubmission' as const;
-
 function readCanonicalOutboundHandoffForLocalId(
     sessionId: string,
     localId: string | null,
@@ -1032,6 +1038,12 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
 
     return (
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <ActionOperationActivityButton
+                preferredSessionId={props.sessionId}
+                testID="session-header-action-operations"
+                buttonSize={44}
+                iconSize={SESSION_HEADER_ICON_SIZE_PX}
+            />
             <SessionHeaderActionMenu
                 sessionId={props.sessionId}
                 session={props.session}
@@ -2517,6 +2529,10 @@ function SessionViewLoaded({
     const authRecoveryBanner = useComposerBannerCollapse('authRecovery');
     const pendingQueueResumeFailedBanner = useComposerBannerCollapse('pendingQueueResumeFailed');
     const agentTransitionOutcomeBanner = useComposerBannerCollapse('agentTransitionOutcome');
+    const activeServerAccountScope = useActiveServerAccountScope();
+    const activeServerAccountScopeKey = activeServerAccountScope
+        ? serverAccountScopeKeySuffix(activeServerAccountScope)
+        : 'local';
     // The last armed-switch outcome that still has something to say.
     //
     // This screen holds the FACT; `continueSessionWithArmedAgent` owns what it
@@ -2525,7 +2541,7 @@ function SessionViewLoaded({
     // reaches the daemon at all, so it carries its own already-resolved sentence
     // rather than pretending to be a transition result.
     const [armedContinuationOutcome, setArmedContinuationOutcome] = React.useState<
-        | Readonly<{ kind: 'refusal'; message: string }>
+        | Readonly<{ kind: 'refusal'; message: string; scopeKey: string }>
         | Readonly<{
             kind: 'outcome';
             /**
@@ -2534,6 +2550,8 @@ function SessionViewLoaded({
              * Session's unsettled switch onto another's composer.
              */
             sessionId: string;
+            /** The account/server scope that owned this arm at dispatch time. */
+            scopeKey: string;
             result: SessionAgentTransitionResultV1;
             /**
              * The switch that was submitted: the target the banner names, and
@@ -2544,30 +2562,14 @@ function SessionViewLoaded({
              * Resolved from that intent against the same catalog the rail
              * offered it from — at send time or at restore, through one helper.
              * Nothing presentational is persisted.
-             */
+            */
             labels: ArmedAgentContinuationLabels;
             localId: string;
-            /** The exact composer text this submission carried. */
-            submittedText: string;
-            /**
-             * Whether the semantic-draft values were still the submitted ones at
-             * the moment of the send. Present only on the mount that submitted;
-             * a restored outcome compare-clears the draft text alone.
-             */
-            semanticSnapshot: ComposerSemanticDraftSnapshot | null;
             /** Canonical Session/message facts have been read since the call returned. */
             reconciled: boolean;
         }>
         | null
     >(null);
-    /**
-     * The Session whose persisted unsettled switch has been read and judged.
-     *
-     * The record below is a mirror of the live outcome, and a mirror written
-     * before the restore has run would delete the very record it exists to
-     * carry across the remount.
-     */
-    const [armedContinuationRestoredFor, setArmedContinuationRestoredFor] = React.useState<string | null>(null);
     const [
         resolvedStaleSessionRunnerFingerprint,
         setResolvedStaleSessionRunnerFingerprint,
@@ -3345,13 +3347,21 @@ function SessionViewLoaded({
     // to the reader — then feeds those facts back through the SAME disposition
     // owner that decided the daemon's answer.
     //
-    // A stored outcome belongs to one Session. If this screen is ever reused
-    // across a route change, carrying it over would attach one Session's failure
-    // to another's composer — which is why the restore below, and not a bare
-    // reset here, is what a Session change goes through.
-    const armedContinuationAwaitingReconcile = armedContinuationOutcome?.kind === 'outcome'
-        && armedContinuationOutcome.result.type === 'outcome_unknown'
-        && !armedContinuationOutcome.reconciled;
+    // Outcomes are mount-local presentation, but still belong to the same
+    // account/server scope as the arm that produced them. Do not project a
+    // stale scope's notice or custody key while a scope switch settles.
+    const activeArmedContinuationOutcome = armedContinuationOutcome?.scopeKey === activeServerAccountScopeKey
+        ? armedContinuationOutcome
+        : null;
+    React.useEffect(() => {
+        setArmedContinuationOutcome((current) => {
+            if (current === null || current.scopeKey !== activeServerAccountScopeKey) return null;
+            return current.kind === 'outcome' && current.sessionId !== sessionId ? null : current;
+        });
+    }, [activeServerAccountScopeKey, sessionId]);
+    const armedContinuationAwaitingReconcile = activeArmedContinuationOutcome?.kind === 'outcome'
+        && activeArmedContinuationOutcome.result.type === 'outcome_unknown'
+        && !activeArmedContinuationOutcome.reconciled;
     React.useEffect(() => {
         if (!armedContinuationAwaitingReconcile) return;
         let cancelled = false;
@@ -3367,13 +3377,16 @@ function SessionViewLoaded({
         ]).then(() => {
             if (cancelled) return;
             setArmedContinuationOutcome((current) => (
-                current?.kind === 'outcome' && !current.reconciled
+                current?.kind === 'outcome'
+                    && current.scopeKey === activeServerAccountScopeKey
+                    && current.sessionId === sessionId
+                    && !current.reconciled
                     ? { ...current, reconciled: true }
                     : current
             ));
         });
         return () => { cancelled = true; };
-    }, [armedContinuationAwaitingReconcile, sessionId, sessionRouteServerId]);
+    }, [activeServerAccountScopeKey, armedContinuationAwaitingReconcile, sessionId, sessionRouteServerId]);
 
     // `sessionRuntimeStatusSource` is the same live runtime-status owner
     // `isSessionActive` reads further down; this is not a second interpretation
@@ -3391,8 +3404,8 @@ function SessionViewLoaded({
     // per-row transcript update off this render path, and short-circuited to
     // `absent` while no armed outcome exists so a Session with no switch in
     // flight pays nothing for it.
-    const armedContinuationInputLocalId = armedContinuationOutcome?.kind === 'outcome'
-        ? armedContinuationOutcome.localId
+    const armedContinuationInputLocalId = activeArmedContinuationOutcome?.kind === 'outcome'
+        ? activeArmedContinuationOutcome.localId
         : null;
     const armedContinuationInputCustody = storage(
         React.useCallback(
@@ -3405,15 +3418,15 @@ function SessionViewLoaded({
         ),
     );
     const armedContinuationDisposition = React.useMemo(() => {
-        if (armedContinuationOutcome === null) return null;
-        if (armedContinuationOutcome.kind === 'refusal') return null;
+        if (activeArmedContinuationOutcome === null) return null;
+        if (activeArmedContinuationOutcome.kind === 'refusal') return null;
         // A definite arm is the daemon's own account of what it just did, so the
         // Session view beside it is trustworthy. An indeterminate one usually
         // means the transport failed, which is exactly when the local view is
         // suspect — so those facts are withheld until reconciliation refreshed
         // them.
-        const factsAreReadable = armedContinuationOutcome.result.type !== 'outcome_unknown'
-            || armedContinuationOutcome.reconciled;
+        const factsAreReadable = activeArmedContinuationOutcome.result.type !== 'outcome_unknown'
+            || activeArmedContinuationOutcome.reconciled;
         const facts: ArmedAgentContinuationCanonicalFacts | null = factsAreReadable
             ? {
                 currentAgentId: liveComposerState.agentId,
@@ -3422,14 +3435,14 @@ function SessionViewLoaded({
             }
             : null;
         return reconcileArmedAgentContinuationDisposition({
-            result: armedContinuationOutcome.result,
-            labels: armedContinuationOutcome.labels,
-            targetAgentId: armedContinuationOutcome.intent.selection.agentId,
+            result: activeArmedContinuationOutcome.result,
+            labels: activeArmedContinuationOutcome.labels,
+            targetAgentId: activeArmedContinuationOutcome.intent.selection.agentId,
             facts,
         });
     }, [
         armedContinuationInputCustody,
-        armedContinuationOutcome,
+        activeArmedContinuationOutcome,
         liveComposerState.agentId,
         sessionRuntimeStatusSource.active,
     ]);
@@ -3437,10 +3450,10 @@ function SessionViewLoaded({
     // render would invalidate that memo on every turn commit for a banner that
     // changes about twice in a Session's life.
     const armedContinuationNotice = React.useMemo<ArmedAgentContinuationNotice | null>(() => (
-        armedContinuationOutcome?.kind === 'refusal'
-            ? { tone: 'warning', message: armedContinuationOutcome.message, recovery: 'none' }
+        activeArmedContinuationOutcome?.kind === 'refusal'
+            ? { tone: 'warning', message: activeArmedContinuationOutcome.message, recovery: 'none' }
             : armedContinuationDisposition?.notice ?? null
-    ), [armedContinuationDisposition, armedContinuationOutcome]);
+    ), [activeArmedContinuationOutcome, armedContinuationDisposition]);
     // The composer's own gate, owned by the send-destination resolver.
     const pendingTransitionOutcome = armedContinuationDisposition?.send === 'block'
         ? 'unreconciled'
@@ -3692,14 +3705,13 @@ function SessionViewLoaded({
     // daemon nor the server re-gates the transition, so this decision's scope is
     // the whole gate: an aggregate over other selected servers would let an
     // unrelated server's setting decide whether this Session may switch Agent.
-    const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
+    const agentSwitchingDecision = useFeatureDecision('sessions.agentSwitching', {
         scopeKind: 'spawn',
         serverId: capabilityServerId,
     });
     // Read here rather than beside the composer's other draft work because the
     // armed Agent is a Session draft value like the rest, and the picker below is
     // the one owner that writes it.
-    const activeServerAccountScope = useActiveServerAccountScope();
     const inSessionAgentPicker = useInSessionAgentPickerControls({
         sessionId,
         accountScope: activeServerAccountScope,
@@ -3708,7 +3720,7 @@ function SessionViewLoaded({
         currentAgentSessionActive: session.active,
         entries: sessionAgentCatalogEntries,
         favoriteBackendTargetKeys: settings.favoriteBackendTargetKeysV1,
-        featureEnabled: agentSwitchingEnabled,
+        featureDecision: agentSwitchingDecision,
         source: agentContinuationSource,
         machine: agentContinuationMachine,
         detail: agentContinuationTargetDetail,
@@ -3747,124 +3759,49 @@ function SessionViewLoaded({
             catalogEntry.providerAgentId === targetAgentId
         ))?.title ?? targetAgentId,
     }), [currentAgentLabel, sessionAgentCatalogEntries]);
-
-    // A stored outcome belongs to one Session, and to one submission whose
-    // effect is still open. Restoring it is not rehydrating it: the same
-    // disposition owner re-decides the persisted answer against canonical facts
-    // first, and an outcome that has nothing left to say is DELETED rather than
-    // put back on screen. A banner pointing at a transition that has since
-    // resolved — or a send block held for one — is worse than none.
-    const restoredArmedContinuationSessionIdRef = React.useRef<string | null>(null);
-    React.useEffect(() => {
-        if (restoredArmedContinuationSessionIdRef.current === sessionId) return;
-        restoredArmedContinuationSessionIdRef.current = sessionId;
-        const submission = readSessionDraftValue(
-            activeServerAccountScope,
-            sessionId,
-            ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
-        );
-        setArmedContinuationRestoredFor(sessionId);
-        if (typeof submission === 'undefined') {
-            setArmedContinuationOutcome(null);
+    const restoredArmedContinuationOutcomeKeyRef = React.useRef<string | null>(null);
+    React.useLayoutEffect(() => {
+        const intent = inSessionAgentPicker.armedContinuation
+            ?? inSessionAgentPicker.armedContinuationSubmissionIntent;
+        const submission = inSessionAgentPicker.armedContinuationSubmission;
+        const localId = inSessionAgentPicker.armedContinuationLocalId ?? submission?.localId ?? null;
+        if (intent === null || !submission || localId !== submission.localId) {
+            restoredArmedContinuationOutcomeKeyRef.current = null;
             return;
         }
-        // Same rule as the live path: an indeterminate answer usually means the
-        // transport failed, which is exactly when the local view is suspect, so
-        // its facts stay withheld until a reconciliation has refreshed them.
-        const factsAreReadable = submission.result.type !== 'outcome_unknown' || submission.reconciled;
-        const labels = buildArmedContinuationLabels(submission.intent.selection.agentId);
-        const disposition = reconcileArmedAgentContinuationDisposition({
-            result: submission.result,
-            labels,
-            targetAgentId: submission.intent.selection.agentId,
-            facts: factsAreReadable
-                ? {
-                    currentAgentId: liveComposerState.agentId,
-                    sessionActive: sessionRuntimeStatusSource.active === true,
-                    input: readCanonicalOutboundHandoffForLocalId(sessionId, submission.localId),
-                }
-                : null,
-        });
-        if (!isArmedAgentContinuationOutcomeUnsettled(disposition)) {
-            setArmedContinuationOutcome(null);
-            clearSessionDraftValue(
-                activeServerAccountScope,
-                sessionId,
-                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
-            );
-            return;
-        }
+        // A nested submission proves a transition left this mount, but carries no
+        // daemon result to replay. Establish the same mount-local unknown outcome
+        // the RPC path records before this composer can accept input, so the
+        // existing disposition/reconciliation owner holds sends until canonical
+        // custody has been read.
+        const key = `${activeServerAccountScopeKey}\u0000${sessionId}\u0000${submission.localId}`;
+        const outcome = armedContinuationOutcome;
+        const outcomeIsCurrent = outcome !== null
+            && outcome.scopeKey === activeServerAccountScopeKey
+            && (outcome.kind === 'refusal' || outcome.sessionId === sessionId);
+        if (outcomeIsCurrent || restoredArmedContinuationOutcomeKeyRef.current === key) return;
+        restoredArmedContinuationOutcomeKeyRef.current = key;
         setArmedContinuationOutcome({
             kind: 'outcome',
             sessionId,
-            result: submission.result,
-            intent: submission.intent,
-            labels,
+            scopeKey: activeServerAccountScopeKey,
+            result: { type: 'outcome_unknown', localId: submission.localId },
+            intent,
+            labels: buildArmedContinuationLabels(intent.selection.agentId),
             localId: submission.localId,
-            submittedText: submission.submittedText,
-            semanticSnapshot: null,
-            reconciled: submission.reconciled,
+            reconciled: false,
         });
     }, [
-        activeServerAccountScope,
-        buildArmedContinuationLabels,
-        liveComposerState.agentId,
-        sessionId,
-        sessionRuntimeStatusSource.active,
-    ]);
-    // The persisted half of the same fact, mirrored from the live one.
-    //
-    // The record exists for one reason: `localId` is the daemon's dedupe and
-    // divider correlation key, and a remount that loses it re-mints a fresh one
-    // for the same armed choice — so the still-visible draft becomes a SECOND
-    // logical message for a switch that may already have committed. The banner
-    // that said so and the send block that stood in the way were in the same
-    // lost state, which is why all three travel together or none of them do.
-    //
-    // It is a mirror, not a second decision-maker: the same disposition owner
-    // says whether the outcome still has anything to say, and the record exists
-    // exactly while it does.
-    React.useEffect(() => {
-        if (armedContinuationRestoredFor !== sessionId) return;
-        const outcome = armedContinuationOutcome;
-        const unsettled = outcome !== null
-            && outcome.kind === 'outcome'
-            && outcome.sessionId === sessionId
-            && armedContinuationDisposition !== null
-            && isArmedAgentContinuationOutcomeUnsettled(armedContinuationDisposition);
-        if (!unsettled) {
-            const stored = readSessionDraftValue(
-                activeServerAccountScope,
-                sessionId,
-                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
-            );
-            if (typeof stored === 'undefined') return;
-            clearSessionDraftValue(
-                activeServerAccountScope,
-                sessionId,
-                ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
-            );
-            return;
-        }
-        writeSessionDraftValue(
-            activeServerAccountScope,
-            sessionId,
-            ARMED_AGENT_CONTINUATION_SUBMISSION_FIELD_ID,
-            {
-                localId: outcome.localId,
-                intent: outcome.intent,
-                result: outcome.result,
-                submittedText: outcome.submittedText,
-                reconciled: outcome.reconciled,
-            },
-        );
-    }, [
-        activeServerAccountScope,
-        armedContinuationDisposition,
+        activeServerAccountScopeKey,
         armedContinuationOutcome,
-        armedContinuationRestoredFor,
+        buildArmedContinuationLabels,
+        inSessionAgentPicker.armedContinuation,
+        inSessionAgentPicker.armedContinuationLocalId,
+        inSessionAgentPicker.armedContinuationSubmission,
+        inSessionAgentPicker.armedContinuationSubmissionIntent,
         sessionId,
     ]);
+
     const connectedServiceQuotaProfileCredentialUsable = React.useMemo(() => {
         if (connectedServiceQuotaProfileRef?.credentialHealthStatus === undefined) return true;
         return isConnectedServiceCredentialHealthStatusUsable(
@@ -4187,47 +4124,97 @@ function SessionViewLoaded({
             lifecycle: 'outboundHandoff',
         });
     }, [activeServerAccountScope, sessionId]);
-    // Consuming the same disposition once canonical facts move it.
-    //
-    // `draft: 'clear'` is only ever reached from the one depth where this exact
-    // input received canonical admission — and custody of it routinely lands
-    // AFTER the call returned, which is the whole reason reconciliation exists.
-    // Before this, that late answer took the warning down and left the message
-    // sitting in the composer, one tap from being sent twice. The clear runs
-    // through the same outbound-handoff owner as the send path's, compares
-    // against the exact submitted text, and takes the armed row with it because
-    // this depth spends the switch.
-    // Read narrowly: the picker's controls object is rebuilt every render, so
-    // depending on it would re-run this effect on every turn commit for a
-    // decision that moves about twice.
     const {
         armedContinuation: liveArmedContinuation,
         armedContinuationLocalId: liveArmedContinuationLocalId,
+        armedContinuationSubmission: liveArmedContinuationSubmission,
         clearArmedContinuation,
+        clearArmedContinuationSubmissionIfCurrent: clearPersistedArmedContinuationSubmissionIfCurrent,
     } = inSessionAgentPicker;
-    const appliedArmedContinuationDraftClearRef = React.useRef<string | null>(null);
-    React.useEffect(() => {
-        const outcome = armedContinuationOutcome;
-        if (outcome === null || outcome.kind !== 'outcome' || outcome.sessionId !== sessionId) return;
-        if (armedContinuationDisposition?.draft !== 'clear') return;
-        if (appliedArmedContinuationDraftClearRef.current === outcome.localId) return;
-        appliedArmedContinuationDraftClearRef.current = outcome.localId;
-        const semanticSnapshot = outcome.semanticSnapshot;
-        clearComposerAfterOutboundHandoff({
-            snapshot: { sessionId, text: outcome.submittedText },
+    // One compare-clear owner consumes both a live transition and the nested
+    // pre-RPC snapshot restored after remount. It clears only values that still
+    // match the exact submitted input, preserving every newer composer edit.
+    const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
+        submission: SessionArmedAgentContinuationSubmission,
+    ): boolean => {
+        const currentness = submission.currentness;
+        let didClearSemantic = false;
+        const didClearComposer = clearComposerAfterOutboundHandoff({
+            snapshot: {
+                sessionId,
+                text: currentness?.text ?? submission.input.text,
+            },
             clearDraftForSessionIfCurrentValueMatches,
             clearTransientInputState: inputComposerClearTransientStateRef.current,
-            // Only the mount that submitted knows what the semantic values were
-            // then; a restored outcome clears the text alone rather than
-            // discarding structured input it cannot prove is still the submitted
-            // one.
-            ...(semanticSnapshot
+            ...(currentness
                 ? {
-                    isSemanticSnapshotCurrent: () => isComposerSemanticDraftSnapshotCurrent(semanticSnapshot),
-                    clearSemanticDraftValues: clearSemanticDraftValuesAfterOutboundHandoff,
+                    clearSemanticDraftValues: () => {
+                        for (const [fieldId, expected] of [
+                            ['structuredInput.mentions', currentness.mentions],
+                        ] as const) {
+                            const actual = readSessionDraftValue(activeServerAccountScope, sessionId, fieldId);
+                            if (typeof actual === 'undefined' || JSON.stringify(actual) !== JSON.stringify(expected)) {
+                                continue;
+                            }
+                            clearSessionDraftValue(activeServerAccountScope, sessionId, fieldId, { flush: false });
+                            didClearSemantic = true;
+                        }
+                        if (didClearSemantic) flushSessionDraftValues(activeServerAccountScope);
+                    },
                 }
                 : {}),
         });
+
+        let didClearAttachmentDrafts = false;
+        if (currentness && currentness.attachmentDraftIds.length > 0) {
+            const submittedAttachmentDraftIds = new Set(currentness.attachmentDraftIds);
+            const currentAttachmentDrafts = attachmentDraftsSnapshotRef.current;
+            const nextAttachmentDrafts = currentAttachmentDrafts.filter((draft) => (
+                !submittedAttachmentDraftIds.has(draft.id)
+            ));
+            if (nextAttachmentDrafts.length !== currentAttachmentDrafts.length) {
+                replaceSessionAttachmentDrafts(nextAttachmentDrafts);
+                didClearAttachmentDrafts = true;
+            }
+        }
+
+        let didClearReviewComments = false;
+        const happierEnvelope = readObjectRecord(submission.input.meta.happier);
+        const submittedReviewComments = happierEnvelope?.kind === 'review_comments.v1'
+            ? parseReviewCommentsV1(happierEnvelope.payload)
+            : null;
+        if (submittedReviewComments !== null) {
+            const currentReviewComments = buildReviewCommentsV1MetaPayload({
+                sessionId,
+                drafts: includedReviewCommentDrafts,
+            });
+            if (JSON.stringify(currentReviewComments) === JSON.stringify(submittedReviewComments)) {
+                clearSentReviewCommentDrafts();
+                didClearReviewComments = true;
+            }
+        }
+
+        return didClearComposer || didClearSemantic || didClearAttachmentDrafts || didClearReviewComments;
+    }, [
+        activeServerAccountScope,
+        clearDraftForSessionIfCurrentValueMatches,
+        clearSentReviewCommentDrafts,
+        includedReviewCommentDrafts,
+        replaceSessionAttachmentDrafts,
+        sessionId,
+    ]);
+    const appliedArmedContinuationDraftClearRef = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        const outcome = activeArmedContinuationOutcome;
+        if (outcome === null || outcome.kind !== 'outcome' || outcome.sessionId !== sessionId) return;
+        if (armedContinuationDisposition?.draft !== 'clear') return;
+        const clearKey = `${activeServerAccountScopeKey}\u0000${outcome.localId}`;
+        if (appliedArmedContinuationDraftClearRef.current === clearKey) return;
+        const submission = liveArmedContinuationSubmission;
+        if (submission?.localId !== outcome.localId) return;
+        appliedArmedContinuationDraftClearRef.current = clearKey;
+        clearArmedContinuationSubmissionIfCurrent(submission);
+        clearPersistedArmedContinuationSubmissionIfCurrent(submission);
         // Draft currentness controls only whether this exact text can be removed.
         // Canonical custody still spends the submitted transition: otherwise a
         // rewritten draft would retain its prior localId and could collide with
@@ -4242,15 +4229,54 @@ function SessionViewLoaded({
             clearArmedContinuation();
         }
     }, [
+        activeArmedContinuationOutcome,
+        activeServerAccountScopeKey,
         armedContinuationDisposition,
-        armedContinuationOutcome,
         clearArmedContinuation,
-        clearDraftForSessionIfCurrentValueMatches,
-        clearSemanticDraftValuesAfterOutboundHandoff,
-        isComposerSemanticDraftSnapshotCurrent,
+        clearPersistedArmedContinuationSubmissionIfCurrent,
+        clearArmedContinuationSubmissionIfCurrent,
         liveArmedContinuationLocalId,
         liveArmedContinuation,
+        liveArmedContinuationSubmission,
         sessionId,
+    ]);
+    const armedContinuationSubmissionCustody = storage(
+        React.useCallback(
+            (state: StorageState) => selectCanonicalOutboundHandoffForLocalId(
+                state,
+                sessionId,
+                liveArmedContinuationSubmission?.localId ?? null,
+            ),
+            [liveArmedContinuationSubmission?.localId, sessionId],
+        ),
+    );
+    React.useEffect(() => {
+        // A remount does not revive a transient outcome. The nested snapshot is
+        // sufficient: canonical custody of its localId spends the exact arm.
+        if (activeArmedContinuationOutcome?.kind === 'outcome') return;
+        const submission = liveArmedContinuationSubmission;
+        if (!submission || armedContinuationSubmissionCustody === 'absent') return;
+        const clearKey = `${activeServerAccountScopeKey}\u0000${submission.localId}`;
+        if (appliedArmedContinuationDraftClearRef.current === clearKey) return;
+        appliedArmedContinuationDraftClearRef.current = clearKey;
+        clearArmedContinuationSubmissionIfCurrent(submission);
+        clearPersistedArmedContinuationSubmissionIfCurrent(submission);
+        if (
+            liveArmedContinuation !== null
+            && liveArmedContinuationLocalId === submission.localId
+        ) {
+            clearArmedContinuation();
+        }
+    }, [
+        activeArmedContinuationOutcome,
+        activeServerAccountScopeKey,
+        armedContinuationSubmissionCustody,
+        clearArmedContinuation,
+        clearPersistedArmedContinuationSubmissionIfCurrent,
+        clearArmedContinuationSubmissionIfCurrent,
+        liveArmedContinuation,
+        liveArmedContinuationLocalId,
+        liveArmedContinuationSubmission,
     ]);
     const restoreSemanticDraftValuesFromSnapshot = React.useCallback((snapshot: ComposerSemanticDraftSnapshot) => {
         if (typeof snapshot.recipient === 'undefined') {
@@ -4286,10 +4312,20 @@ function SessionViewLoaded({
         flushSessionDraftValues(activeServerAccountScope);
     }, [activeServerAccountScope, sessionId]);
     const clearSemanticDraftValuesAfterAcceptedComposerClear = React.useCallback(() => {
+        // `composerClear` consumes the whole composer decision. The catalog
+        // clears the persisted draft; the picker owns the mounted counterpart.
+        if (inSessionAgentPicker.armedContinuation !== null) {
+            inSessionAgentPicker.clearArmedContinuation();
+        }
         clearSessionDraftValues(activeServerAccountScope, sessionId, {
             lifecycle: 'composerCleared',
         });
-    }, [activeServerAccountScope, sessionId]);
+    }, [
+        activeServerAccountScope,
+        inSessionAgentPicker.armedContinuation,
+        inSessionAgentPicker.clearArmedContinuation,
+        sessionId,
+    ]);
     const restorePendingEditAttachmentDraftsIfSafe = React.useCallback((edit: PendingMessageComposerEditState) => {
         if (attachmentDraftsSnapshotRef.current.length !== 0) return;
         replaceSessionAttachmentDrafts(edit.previousAttachmentDrafts);
@@ -4604,8 +4640,15 @@ function SessionViewLoaded({
     // the notice untrue, so it goes.
     const handleArmedContinuationResume = React.useCallback(async () => {
         const resumed = await handleResumeSession({ silent: false });
-        if (resumed) setArmedContinuationOutcome(null);
-    }, [handleResumeSession]);
+        if (resumed) {
+            setArmedContinuationOutcome((current) => (
+                current?.scopeKey === activeServerAccountScopeKey && current.kind === 'outcome' && current.sessionId === sessionId
+                    ? null
+                    : current
+            ));
+        }
+        return resumed;
+    }, [activeServerAccountScopeKey, handleResumeSession, sessionId]);
 
     useSessionResumeRequestListener(
         sessionId,
@@ -4686,6 +4729,9 @@ function SessionViewLoaded({
     // running to take it". The disposition owner decides it; the two effects
     // below only route it, and neither re-decides it.
     const armedContinuationAwaitingRuntime = armedContinuationDisposition?.awaitingRuntime === true;
+    const pendingQueueResumeActionLabel = armedContinuationAwaitingRuntime
+        ? t('session.agentContinuation.transition.resumeAction')
+        : t('common.retry');
 
     React.useEffect(() => {
         if (!pendingQueueResumeFailed) return;
@@ -5294,6 +5340,7 @@ function SessionViewLoaded({
                 if (refused.reason !== 'unreconciledTransitionOutcome') {
                     setArmedContinuationOutcome({
                         kind: 'refusal',
+                        scopeKey: activeServerAccountScopeKey,
                         message: refused.reason === 'conflictingDestination'
                             ? t('session.agentContinuation.transition.conflictingDestination', {
                                 agent: armedContinuationTargetLabel,
@@ -5320,7 +5367,7 @@ function SessionViewLoaded({
                 }>,
                 onAdmitted: () => void,
             ): Promise<void> => {
-                const { disposition, result } = await continueSessionWithArmedAgent({
+                const transitionSubmission = {
                     machineId: destination.machineId,
                     serverId: sessionRouteServerId,
                     sessionId,
@@ -5337,10 +5384,45 @@ function SessionViewLoaded({
                     },
                     sourceAgentLabel: currentAgentLabel,
                     targetAgentLabel: armedContinuationTargetLabel,
-                });
+                };
+                // Persist the stable localId and exact wire input before the RPC
+                // leaves this process. The nested arm is the only durable owner;
+                // a remount can then compare-clear this exact request if custody
+                // appears after the call returned.
+                const existingSubmission = inSessionAgentPicker.armedContinuationSubmission;
+                const transitionInput = existingSubmission?.localId === destination.localId
+                    ? existingSubmission.input
+                    : buildArmedAgentContinuationTransitionInput(transitionSubmission);
+                if (!inSessionAgentPicker.recordArmedContinuationSubmission({
+                    localId: destination.localId,
+                    input: transitionInput,
+                    currentness: {
+                        text: previousMessage,
+                        mentions: semanticDraftSnapshot.structuredInputMentions ?? [],
+                        attachmentDraftIds: attachmentDrafts.map((draft) => draft.id),
+                    },
+                })) {
+                    return;
+                }
+                // The server's reconciliation path is allowed to update a
+                // matching localId, so retrying an edited composer must reuse
+                // the arm's first exact wire input rather than trusting localId
+                // alone to protect its content.
+                const submissionForDispatch = existingSubmission?.localId === destination.localId
+                    ? {
+                        ...transitionSubmission,
+                        input: {
+                            text: existingSubmission.input.text,
+                            meta: existingSubmission.input.meta,
+                        },
+                    }
+                    : transitionSubmission;
+                const { disposition, result } = await continueSessionWithArmedAgent(submissionForDispatch);
                 // The armed row is dropped only once it stops being a truthful
                 // promise about the next message.
-                if (disposition.arm === 'clear') {
+                // A draft clear is consumed by the one compare-clear owner below,
+                // which needs the nested snapshot to remain available first.
+                if (disposition.arm === 'clear' && disposition.draft !== 'clear') {
                     inSessionAgentPicker.clearArmedContinuation();
                 }
                 // The outcome itself is recorded, not its rendering: the banner
@@ -5349,16 +5431,11 @@ function SessionViewLoaded({
                 setArmedContinuationOutcome({
                     kind: 'outcome',
                     sessionId,
+                    scopeKey: activeServerAccountScopeKey,
                     result,
                     intent: destination.intent,
                     labels: buildArmedContinuationLabels(destination.intent.selection.agentId),
                     localId: destination.localId,
-                    // The exact text this submission carried, so a custody
-                    // answer that only arrives later can compare-clear an
-                    // UNCHANGED draft instead of leaving the reader a message
-                    // already sent.
-                    submittedText: previousMessage,
-                    semanticSnapshot: semanticDraftSnapshot,
                     reconciled: false,
                 });
                 // Only canonical admission of this exact localId clears the draft.
@@ -5904,11 +5981,13 @@ function SessionViewLoaded({
                         actionTestID="session-pendingQueue-resumeFailed-retry"
                         title={t('session.pendingQueuedResumeFailedTitle')}
                         body={t('session.pendingQueuedResumeFailedBody')}
-                        actionLabel={t('common.retry')}
-                        actionAccessibilityLabel={t('common.retry')}
+                        actionLabel={pendingQueueResumeActionLabel}
+                        actionAccessibilityLabel={pendingQueueResumeActionLabel}
                         disabled={isResuming}
                         onActionPress={async () => {
-                            const ok = await handleResumeSession({ silent: false });
+                            const ok = armedContinuationAwaitingRuntime
+                                ? await handleArmedContinuationResume()
+                                : await handleResumeSession({ silent: false });
                             if (ok) {
                                 setPendingQueueResumeFailed(false);
                             }
@@ -5931,7 +6010,9 @@ function SessionViewLoaded({
                                 disabled: isResuming || !hasWriteAccess,
                                 // Delegated, never re-implemented: this is the same
                                 // resume owner every other inactive-session path uses.
-                                onActionPress: handleArmedContinuationResume,
+                                onActionPress: async () => {
+                                    await handleArmedContinuationResume();
+                                },
                             }
                             : {})}
                     />

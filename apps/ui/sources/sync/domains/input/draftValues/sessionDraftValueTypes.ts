@@ -2,7 +2,7 @@ import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 import {
     ComposerAgentContinuationIntentV1Schema,
     ParticipantRecipientV1Schema,
-    SessionAgentTransitionResultV1Schema,
+    SessionAgentTransitionInputV1Schema,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
@@ -156,8 +156,8 @@ export const ComposerStructuredInputMentionsSchema = z.preprocess(
 );
 
 /**
- * The Agent the reader armed for their next message, exactly as the picker holds
- * it — the wire intent, the catalog row it was chosen from (so a Session with
+ * The nested Agent-continuation draft holds the reader's next-message choice —
+ * the wire intent, the catalog row it was chosen from (so a Session with
  * several rows resolving to the same Agent restores the row that was tapped), and
  * the picker's own words for the chosen model, which the composer's engine chip
  * names.
@@ -167,72 +167,63 @@ export const ComposerStructuredInputMentionsSchema = z.preprocess(
  * Keeping the two at different lifetimes is what let a reader navigate away and
  * come back to their message with the Agent choice silently gone.
  *
- * The submission identity is not here either, because it belongs to a
- * SUBMITTED switch rather than to a choice about the next message. It lives in
- * the sibling field below, whose lifetime is the transition's rather than the
- * arm's.
+ * A submitted localId and its exact canonical user-message request stay inside
+ * this one draft value. The draft envelope already owns its timestamps,
+ * revisions, cleanup and Account/server scope, so splitting the snapshot into
+ * a second field would give one composer decision two lifetimes.
+ *
+ * The composer values whose exact currentness lets a later mount remove only
+ * the input that actually reached canonical custody. The transition request
+ * carries the wire-ready projection; this preserves the composer-facing values
+ * that cannot be reconstructed from a post-dispatch screen (notably raw text
+ * and attachment draft identities) without introducing another draft record.
  */
+export const SessionArmedAgentContinuationSubmissionCurrentnessSchema = z.object({
+    text: z.string(),
+    mentions: ComposerStructuredInputMentionsSchema,
+    attachmentDraftIds: z.array(z.string().trim().min(1)).max(64),
+}).strict();
+export type SessionArmedAgentContinuationSubmissionCurrentness = Readonly<
+    z.infer<typeof SessionArmedAgentContinuationSubmissionCurrentnessSchema>
+>;
+
+export const SessionArmedAgentContinuationSubmissionSchema = z.object({
+    localId: z.string().trim().min(1),
+    input: SessionAgentTransitionInputV1Schema,
+    currentness: SessionArmedAgentContinuationSubmissionCurrentnessSchema.optional(),
+}).strict().superRefine((submission, context) => {
+    if (submission.input.localId === submission.localId) return;
+    context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['input', 'localId'],
+        message: 'The submitted input must carry the armed continuation localId.',
+    });
+});
+export type SessionArmedAgentContinuationSubmission = Readonly<
+    z.infer<typeof SessionArmedAgentContinuationSubmissionSchema>
+>;
+
 export const SessionArmedAgentContinuationSchema = z.object({
     backendTargetKey: z.string().trim().min(1),
     intent: ComposerAgentContinuationIntentV1Schema,
     // Null when the target is on its own defaults, which is the absence of a model
     // choice rather than a model called default. An unreadable arm is dropped
     // whole: a restored arm that named the wrong model would be worse than none.
-    modelLabel: z.string().min(1).nullable(),
+    modelLabel: z.string().min(1).nullable().optional(),
+    /**
+     * Written before dispatch so a remount retries the same logical message.
+     * This is the exact user-message snapshot, not a transition receipt,
+     * acknowledgement or persisted result state.
+     */
+    submission: SessionArmedAgentContinuationSubmissionSchema.optional(),
 }).strict();
 
-export type SessionArmedAgentContinuation = z.infer<typeof SessionArmedAgentContinuationSchema>;
-
-/**
- * The armed switch this Session has already submitted, whose effect on the
- * Session is not yet established.
- *
- * It is the other half of the same composer decision as the arm above, and it
- * outlives the mount for a sharper reason than the draft text does: `localId`
- * is the daemon's dedupe key and the divider correlation key. Held only in a
- * mounted ref, a remount minted a NEW identity for the same armed choice while
- * the still-visible draft stayed sendable, so the retry committed a SECOND
- * message and divider for a switch that may already have happened. The banner
- * that said so and the send block that stood in the way lived in that same lost
- * state.
- *
- * This is not a recovery record and carries no recovery of its own. It holds
- * exactly what the disposition owner needs to re-decide the outcome against
- * canonical facts, and it is deleted the moment that owner says the transition
- * has nothing left to say.
- */
-export const SessionArmedAgentContinuationSubmissionSchema = z.object({
-    /**
-     * The submitted identity: the transition's dedupe key, the divider
-     * correlation key, and the only key the composer may compare-clear against.
-     */
-    localId: z.string().trim().min(1),
-    /**
-     * The switch that was submitted. A restored arm keeps this submission's
-     * identity only while it still describes the SAME switch; a reader who
-     * re-armed elsewhere gets a fresh one.
-     */
-    intent: ComposerAgentContinuationIntentV1Schema,
-    /** The daemon's own closed answer, re-decided rather than re-interpreted. */
-    result: SessionAgentTransitionResultV1Schema,
-    /**
-     * The exact composer text this submission carried, so custody observed
-     * later can compare-clear an UNCHANGED draft instead of leaving the reader
-     * holding a message they have already sent.
-     */
-    submittedText: z.string(),
-    /** Whether canonical Session/message facts have been read since the call. */
-    reconciled: z.boolean(),
-}).strict();
-export type SessionArmedAgentContinuationSubmission =
-    z.infer<typeof SessionArmedAgentContinuationSubmissionSchema>;
+export type SessionArmedAgentContinuation = Readonly<z.infer<typeof SessionArmedAgentContinuationSchema>>;
 
 export type SessionDraftValueByFieldId = Readonly<{
     'routing.recipient': ParticipantRecipientV1 | null;
     /** The armed target Agent for the next message; see the schema above. */
     'routing.agentContinuation': SessionArmedAgentContinuation;
-    /** The submitted switch whose effect is not established; see above. */
-    'routing.agentContinuationSubmission': SessionArmedAgentContinuationSubmission;
     'routing.executionRunDelivery': SessionComposerExecutionRunDeliveryMode;
     'structuredInput.mentions': readonly ComposerStructuredInputMention[];
 }>;
@@ -242,7 +233,6 @@ export type SessionDraftValueFieldId = keyof SessionDraftValueByFieldId;
 export const SessionDraftValueFieldSchemas = {
     'routing.recipient': ParticipantRecipientV1Schema.nullable(),
     'routing.agentContinuation': SessionArmedAgentContinuationSchema,
-    'routing.agentContinuationSubmission': SessionArmedAgentContinuationSubmissionSchema,
     'routing.executionRunDelivery': SessionComposerExecutionRunDeliveryModeSchema,
     'structuredInput.mentions': ComposerStructuredInputMentionsSchema,
 } satisfies {

@@ -142,10 +142,9 @@ describe('resolveSessionComposerSendDestination', () => {
         // where the cutover committed but the input never landed — turning a
         // send that works today into "the Session is now X, send it again".
         //
-        // Nothing is lost by reusing it: the canonical admission owner compares
-        // content against both the pending row and the committed transcript row
-        // and refuses a reused identity whose content differs. It never
-        // overwrites what the reader already sent.
+        // This resolver chooses only the stable transition id. SessionView's
+        // dispatch owner pairs it with the persisted nested first input, so a
+        // newer composer edit is neither submitted nor compare-cleared here.
         const armed = { route: 'sessionAgent', armedContinuation: ARMED, ...REACHABLE } as const;
         expect(resolveSessionComposerSendDestination(armed))
             .toEqual(resolveSessionComposerSendDestination(armed));

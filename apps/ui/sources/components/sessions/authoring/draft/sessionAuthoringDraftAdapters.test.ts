@@ -290,7 +290,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 agentId: 'claude',
                 backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
                 transcriptStorage: 'persisted',
-                profileId: null,
+                profileId: '',
                 environmentVariables: null,
                 resumeSessionId: null,
                 permissionMode: null,
@@ -317,6 +317,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         } as any);
 
         expect(spawnOptions).not.toHaveProperty('token');
+        expect(spawnOptions).not.toHaveProperty('profileId');
     });
 
     it('round-trips an existing-session authoring draft through the shared automation template adapter', () => {

@@ -1,6 +1,9 @@
 import * as React from 'react';
 
-import type { SessionContinuationMachinePresenceV1 } from '@happier-dev/protocol';
+import type {
+    SessionAgentTransitionSelectionV1,
+    SessionContinuationMachinePresenceV1,
+} from '@happier-dev/protocol';
 
 import { inspectSessionContinuationOnMachine } from '@/sync/ops/sessionContinuationInspection';
 
@@ -21,7 +24,7 @@ type UseSessionContinuationInspectionsParams = Readonly<{
     machine: SessionAgentContinuationMachineTarget;
     machinePresence: SessionContinuationMachinePresenceV1;
     /** The exact targets the picker can offer, so nothing else is ever asked about. */
-    targetAgentIds: readonly string[];
+    targetSelections: readonly SessionAgentTransitionSelectionV1[];
     /**
      * Whether this Session wants live answers at all. The caller decides; a
      * Session whose picker could never offer a switch passes `false` and its
@@ -31,9 +34,13 @@ type UseSessionContinuationInspectionsParams = Readonly<{
 }>;
 
 export type SessionContinuationInspections = Readonly<{
-    /** This target's state; `checking` until this connection has an answer for it. */
-    read: (agentId: string) => SessionAgentContinuationInspectionState;
+    /** This exact target's state; `checking` until this connection has an answer for it. */
+    read: (selection: SessionAgentTransitionSelectionV1) => SessionAgentContinuationInspectionState;
 }>;
+
+function selectionKey(selection: SessionAgentTransitionSelectionV1): string {
+    return JSON.stringify(selection);
+}
 
 /**
  * Live `session.continuation.inspect` answers for the targets one picker can offer.
@@ -59,7 +66,7 @@ export type SessionContinuationInspections = Readonly<{
 export function useSessionContinuationInspections(
     params: UseSessionContinuationInspectionsParams,
 ): SessionContinuationInspections {
-    const { demanded, machine, machinePresence, sessionId, targetAgentIds } = params;
+    const { demanded, machine, machinePresence, sessionId, targetSelections } = params;
     const [answers, setAnswers] = React.useState<
         ReadonlyMap<string, SessionAgentContinuationInspectionState>
     >(() => new Map());
@@ -81,7 +88,7 @@ export function useSessionContinuationInspections(
         machine.connectionGeneration ?? '',
         machine.daemonGeneration ?? '',
         machinePresence,
-    ].join(' ');
+    ].join('\u0000');
     const scopeRef = React.useRef<Readonly<{ key: string; asked: Set<string> }>>(
         { key: scopeKey, asked: new Set() },
     );
@@ -90,17 +97,17 @@ export function useSessionContinuationInspections(
         if (answers.size > 0) setAnswers(new Map());
     }
 
-    const targetAgentIdsRef = React.useRef(targetAgentIds);
-    targetAgentIdsRef.current = targetAgentIds;
-    const targetsKey = targetAgentIds.join(' ');
+    const targetSelectionsRef = React.useRef(targetSelections);
+    targetSelectionsRef.current = targetSelections;
+    const targetsKey = targetSelections.map(selectionKey).join('\u0000');
 
     React.useEffect(() => {
         if (!demanded || offline || !machineId) return;
         const scope = scopeRef.current;
-        const pending = targetAgentIdsRef.current.filter((agentId) => !scope.asked.has(agentId));
+        const pending = targetSelectionsRef.current.filter((selection) => !scope.asked.has(selectionKey(selection)));
         if (pending.length === 0) return;
         // Claim before awaiting so a re-render mid-flight cannot ask twice.
-        for (const agentId of pending) scope.asked.add(agentId);
+        for (const selection of pending) scope.asked.add(selectionKey(selection));
 
         // Each answer is recorded on arrival rather than gathered into one batch.
         // A batch is only as fast as its slowest target, and the rail decision now
@@ -111,12 +118,13 @@ export function useSessionContinuationInspections(
         // No cancellation on cleanup: closing the picker mid-flight must still
         // record the answer, or the claim above would strand the row on
         // "checking" for the rest of the connection.
-        for (const agentId of pending) {
+        for (const selection of pending) {
+            const key = selectionKey(selection);
             void inspectSessionContinuationOnMachine({
                 machineId,
                 serverId,
                 sessionId,
-                selection: { v: 1, agentId },
+                selection,
             })
                 .catch((): SessionAgentContinuationInspectionState => INDETERMINATE)
                 .then((result) => {
@@ -125,19 +133,19 @@ export function useSessionContinuationInspections(
                     if (scopeRef.current !== scope) return;
                     setAnswers((current) => {
                         const next = new Map(current);
-                        next.set(agentId, result);
+                        next.set(key, result);
                         return next;
                     });
                 });
         }
     }, [demanded, machineId, offline, scopeKey, serverId, sessionId, targetsKey]);
 
-    const read = React.useCallback((agentId: string): SessionAgentContinuationInspectionState => {
+    const read = React.useCallback((selection: SessionAgentTransitionSelectionV1): SessionAgentContinuationInspectionState => {
         if (offline) return MACHINE_UNREACHABLE;
         // No machine to address is not proof the daemon is old, and the Session's
         // machine may still be resolving.
         if (!machineId) return CHECKING;
-        return answers.get(agentId) ?? CHECKING;
+        return answers.get(selectionKey(selection)) ?? CHECKING;
     }, [answers, machineId, offline]);
 
     return { read };
