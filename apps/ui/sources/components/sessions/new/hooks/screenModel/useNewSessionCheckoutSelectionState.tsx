@@ -118,10 +118,15 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
 
         if (!shouldPreserveCheckoutCreationDraft && checkoutCreationDraft !== null) {
             shouldReconcileInitialHydratedCheckoutCreationDraftRef.current = false;
-            setCheckoutCreationDraft(null);
+            hasLocalCheckoutSelectionAuthorityRef.current = true;
+            setCheckoutSelectionState({
+                checkoutCreationDraft: null,
+                explicitMode: effectiveCheckoutSelection.explicitMode === null ? null : 'current_path',
+            });
         }
     }, [
         checkoutCreationDraft,
+        effectiveCheckoutSelection.explicitMode,
         params.repoScmSnapshot,
         checkoutChipModel.selectedOptionId,
     ]);

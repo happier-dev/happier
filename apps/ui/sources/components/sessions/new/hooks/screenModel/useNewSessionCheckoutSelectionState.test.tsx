@@ -175,6 +175,43 @@ describe('useNewSessionCheckoutSelectionState', () => {
         await hook.unmount();
     });
 
+    it('does not replay a hydrated worktree after delayed non-Git detection invalidates it', async () => {
+        const hydratedDraft = {
+            kind: 'git_worktree' as const,
+            displayName: 'hydrated-worktree',
+            baseRef: 'main',
+            branchMode: 'new' as const,
+        };
+        const hook = await renderHook(
+            (props: HookParams) => useNewSessionCheckoutSelectionState(props),
+            {
+                initialProps: makeParams({
+                    persistedDraft: { checkoutCreationDraft: hydratedDraft },
+                    repoScmSnapshot: null,
+                }),
+            },
+        );
+
+        expect(hook.getCurrent().checkoutCreationDraft).toEqual(hydratedDraft);
+
+        await hook.rerender(makeParams({
+            persistedDraft: { checkoutCreationDraft: hydratedDraft },
+            repoScmSnapshot: makeRepoSnapshot('sapling'),
+        }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().checkoutCreationDraft).toBeNull();
+
+        await hook.rerender(makeParams({
+            persistedDraft: { checkoutCreationDraft: hydratedDraft },
+            repoScmSnapshot: makeRepoSnapshot('git'),
+        }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().checkoutCreationDraft).toBeNull();
+        await hook.unmount();
+    });
+
     it('treats a persisted explicit null as a current-path selection instead of an unset default', async () => {
         const hook = await renderHook(() => useNewSessionCheckoutSelectionState(makeParams({
             persistedDraft: { checkoutCreationDraft: null },
