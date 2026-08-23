@@ -174,16 +174,11 @@ async function waitForConcurrentCliDistBuild({
   }
 
   const startedAt = Date.now();
-  while (Date.now() - startedAt <= timeoutMs) {
-    const integrity = readIntegrity();
-    if (integrity.ok) {
-      return integrity;
-    }
-    if (!isCliDistBuildLockActive(lockPath)) {
-      break;
-    }
+  while (isCliDistBuildLockActive(lockPath) && Date.now() - startedAt <= timeoutMs) {
     await delay(pollIntervalMs);
   }
+
+  if (isCliDistBuildLockActive(lockPath)) return null;
 
   const finalIntegrity = readIntegrity();
   return finalIntegrity.ok ? finalIntegrity : null;
@@ -879,13 +874,6 @@ export async function ensureHappierCliDistExists(
     };
   }
 
-  // Fast path: if dist exists and import graph is complete, never trigger rebuild here.
-  // Rebuilding inside daemon restart can race with live restarts and transiently remove dist/.
-  const before = readIntegrity();
-  if (before.ok) {
-    return { ok: true, current: true, distEntrypoint, built: false, reason: before.reason };
-  }
-
   const concurrentBuildReady = await waitForConcurrentCliDistBuild({
     cliDir,
     readIntegrity,
@@ -898,6 +886,13 @@ export async function ensureHappierCliDistExists(
       built: false,
       reason: concurrentBuildReady.reason,
     };
+  }
+
+  // Fast path: if dist exists and import graph is complete, never trigger rebuild here.
+  // Rebuilding inside daemon restart can race with live restarts and transiently remove dist/.
+  const before = readIntegrity();
+  if (before.ok) {
+    return { ok: true, current: true, distEntrypoint, built: false, reason: before.reason };
   }
 
   // Try to recover automatically: missing dist is a common first-run worktree issue.
@@ -1760,6 +1755,19 @@ export async function startLocalDaemonWithAuth({
     }
   }
   if (!distCheck.ok) {
+    const existingAtAdmission = await checkDaemonStatePingAware(cliHomeDir, {
+      serverUrl: internalServerUrl,
+      env: daemonEnv,
+      stackName: resolvedStackName,
+    });
+    if (daemonStateHasLiveProcess(existingAtAdmission)) {
+      console.warn(
+        `[local] happier-cli dist is unavailable (${distCheck.reason ?? 'unknown'}); ` +
+          `preserving the already-live daemon instead of attempting an unsafe restart.`,
+      );
+      await syncRuntimeDaemonState({ runtimeDaemonPid: existingAtAdmission.pid });
+      return;
+    }
     const reason = String(distCheck.reason ?? '').trim();
     if (reason.startsWith('missing_runtime_launch_path:')) {
       const missingPath = reason.slice('missing_runtime_launch_path:'.length);

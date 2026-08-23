@@ -23,6 +23,7 @@ import {
 import { resolveStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
+import { writeWorkspacePackageBuildOwnerStub } from './testkit/core/workspace_package_build_owner.mjs';
 
 function runGit(args, cwd) {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
@@ -32,6 +33,10 @@ function buildDaemonDistGuardEnv(overrides = {}) {
   return {
     ...process.env,
     HAPPIER_STACK_REPO_DIR: '',
+    HAPPIER_STACK_CLI_ROOT_DIR: '',
+    HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: '',
+    HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: '',
+    HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: '',
     HAPPIER_STACK_AUTO_AUTH_SEED: '0',
     HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
     HAPPIER_STACK_LOG_TEE_DIR: '',
@@ -988,7 +993,10 @@ if (args[0] === 'daemon' && args[1] === '--help') process.exit(0);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 const eventsPath = process.env.HAPPIER_TEST_DAEMON_EVENTS_PATH;
 if (!home) process.exit(2);
-const state = join(home, 'daemon.state.json');
+const lifecycleScopeId = String(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID || '').trim();
+const state = lifecycleScopeId
+  ? join(home, 'servers', lifecycleScopeId, 'daemon.state.json')
+  : join(home, 'daemon.state.json');
 
 ${fakePingAwareDaemonSpawnerSource()}
 
@@ -1089,21 +1097,6 @@ process.exit(0);
     binHappierScript: 'process.exit(42);\n',
   });
   return join(cliBinDir, 'happier.mjs');
-}
-
-async function writeWorkspaceBuildOwnerStub(monorepoRoot) {
-  const ownerDir = join(monorepoRoot, 'scripts', 'workspaces');
-  await mkdir(ownerDir, { recursive: true });
-  await writeFile(
-    join(ownerDir, 'ensureWorkspacePackagesBuilt.mjs'),
-    [
-      'const unchanged = async () => ({ ok: true, built: [], skipped: [] });',
-      'export const ensureWorkspacePackagesBuiltByName = unchanged;',
-      'export const ensureWorkspacePackagesBuiltForComponent = unchanged;',
-      '',
-    ].join('\n'),
-    'utf-8',
-  );
 }
 
 test('pid-only false-ready fixture publishes daemon command identity and cleans up its child', async () => {
@@ -1600,7 +1593,7 @@ test('startLocalDaemonWithAuth cold-starts runnable prior dist and preserves the
     await writeFile(join(tmp, 'apps', app, 'package.json'), `{ "name": "${app}-test" }\n`, 'utf-8');
   }
   await writeFile(join(tmp, 'package.json'), '{ "private": true }\n', 'utf-8');
-  await writeWorkspaceBuildOwnerStub(tmp);
+  await writeWorkspacePackageBuildOwnerStub(tmp);
   await writeFile(join(tmp, 'yarn.lock'), '# root yarn\n', 'utf-8');
   await mkdir(join(tmp, 'node_modules'), { recursive: true });
   await writeFile(join(tmp, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
@@ -1801,7 +1794,7 @@ test('source stack start uses an unchanged runnable prior dist when the current 
   await mkdir(join(repoDir, 'apps', 'ui'), { recursive: true });
   await mkdir(join(repoDir, 'apps', 'server'), { recursive: true });
   await writeFile(join(repoDir, 'package.json'), '{ "private": true }\n', 'utf-8');
-  await writeWorkspaceBuildOwnerStub(repoDir);
+  await writeWorkspacePackageBuildOwnerStub(repoDir);
   await writeFile(join(repoDir, 'yarn.lock'), '# test lock\n', 'utf-8');
   const binDir = join(tmp, 'bin');
   const yarnPath = join(binDir, 'yarn');
@@ -2155,7 +2148,7 @@ process.exit(0);
     );
 
     await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
-    await writeWorkspaceBuildOwnerStub(tmp);
+    await writeWorkspacePackageBuildOwnerStub(tmp);
     for (const app of ['ui', 'server']) {
       const appDir = join(tmp, 'apps', app);
       await mkdir(appDir, { recursive: true });
@@ -2312,7 +2305,21 @@ test('startLocalDaemonWithAuth keeps a running daemon when a concurrent CLI buil
     const env = buildDaemonDistGuardEnv({
       HAPPIER_TEST_DAEMON_EVENTS_PATH: eventsPath,
       HAPPIER_STACK_CLI_BUILD: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '3000',
     });
+    const daemonEnv = getDaemonEnv({
+      baseEnv: env,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+    const statePath = resolveStackDaemonStatePaths({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+      env: daemonEnv,
+    }).serverScopedStatePath;
 
     await startLocalDaemonWithAuth({
       cliBin,
@@ -2325,7 +2332,7 @@ test('startLocalDaemonWithAuth keeps a running daemon when a concurrent CLI buil
       stackName: 'dev',
       cliIdentity: 'default',
     });
-    daemonPid = await readDaemonPid(join(cliHomeDir, 'daemon.state.json'));
+    daemonPid = await readDaemonPid(statePath);
     await writeFile(eventsPath, '', 'utf-8');
 
     await writeFile(
@@ -2356,7 +2363,7 @@ test('startLocalDaemonWithAuth keeps a running daemon when a concurrent CLI buil
     const events = (await readFile(eventsPath, 'utf-8')).trim().split(/\n+/).filter(Boolean);
     assert.deepEqual(events, []);
     assert.doesNotThrow(() => process.kill(daemonPid, 0));
-    assert.equal(await readDaemonPid(join(cliHomeDir, 'daemon.state.json')), daemonPid);
+    assert.equal(await readDaemonPid(statePath), daemonPid);
   } finally {
     if (daemonPid) {
       try { process.kill(daemonPid, 'SIGTERM'); } catch {}
