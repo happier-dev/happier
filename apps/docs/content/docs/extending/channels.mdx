@@ -1,0 +1,82 @@
+---
+title: Conversation channels
+description: Connect a Discord or Telegram conversation to a Happier session or automation, so people who do not use Happier can still talk to your agents.
+---
+
+A channel connects a conversation somewhere else — a Discord channel, a Telegram
+chat — to a session or an automation on your machine. Messages arrive as input,
+replies go back out, and the people on the other end never install anything.
+
+Two providers ship: **Discord** and **Telegram**. Providers are a contribution
+point rather than a fixed list, so a plugin can add another.
+
+## The two halves
+
+Channels separates *who you are connected to* from *what that connection drives*,
+and it is worth holding those apart because they are configured separately and
+can change independently.
+
+**A connection** is the link to one conversation at a provider. It has its own
+lifecycle: you create it, prepare it, enable or disable it, transfer it to
+another machine, and eventually delete it.
+
+**A binding** points a connection at a target — a session or an automation.
+Bindings are enabled and disabled on their own, and a binding's target can be
+**rotated** without tearing down the connection underneath. That is the move
+when a session ends and you want the same Discord channel driving the next one.
+
+## Getting connected
+
+Credentials do not live in the channel setup form. Both providers bind to a
+**Connected Account** holding a bot credential, and the setup action asks you to
+*select* one — Telegram's own field description says bot tokens are never entered
+there. So the order is: create the Connected Account first, then point the
+channel at it.
+
+| Provider | Credential purpose | How it reaches the provider |
+| --- | --- | --- |
+| Discord | `discord-bot-credential` | Discord REST plus a persistent gateway worker |
+| Telegram | `telegram-bot-credential` | The Telegram bot API |
+
+Connecting a conversation runs a **pairing challenge** that you then finalize —
+or cancel. Pairing exists so that connecting a conversation is something
+somebody in that conversation has to agree to, rather than something you can do
+to a channel from the outside.
+
+### The history baseline
+
+When a connection starts, Happier does not swallow everything said in that
+conversation before you arrived. It offers a **history baseline** for you to
+accept, and ingestion starts from there. This is the setting people wish they
+had thought about after connecting a busy channel, so it is asked up front.
+
+## When something is blocked
+
+Channels are conversations with other people's infrastructure, so parts of the
+model are about failure rather than success:
+
+- **Blocked ingress** can be retried, rather than the message being lost.
+- **A blocked poll** can be retried the same way.
+- **Ambiguous delivery** — where Happier cannot tell which binding an outbound
+  message belongs to — is resolved explicitly instead of guessed.
+
+Two collections sync with your account: the channel state itself, and the
+delivery records. Between them they are what lets a retry know what already went
+out.
+
+## Channels and automations
+
+A binding can target an automation rather than a session, and an automation can
+be triggered by a conversation. Together that is: someone posts in a Discord
+channel, an automation runs on your machine, and the result is delivered back
+into the conversation.
+
+Delivery of an automation's result is handled as an explicit custody handoff, so
+a result is not delivered twice and does not vanish when a run ends.
+
+## Related
+
+- [Automations](/extras/automations) — including the conversation trigger.
+- [Connected Services](/accounts/connected-services) — where the bot credentials live.
+- [What ships in the box](/plugins/bundled) — the Discord and Telegram provider plugins.
+- [Participant routing](/accounts/participant-routing) — who a message reaches inside Happier.

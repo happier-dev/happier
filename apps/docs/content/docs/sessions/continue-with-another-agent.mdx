@@ -126,24 +126,26 @@ When Happier still holds a machine-local note of the earlier Agent's own session
 native session instead of starting a fresh one, and hands it only what happened while it was away.
 That note is written on the machine that ran the session, is never uploaded, and is only usable
 there — a session on one machine cannot be resumed on another. Happier does not pre-check whether the
-session is still alive: if it is gone, the resume fails visibly and you are offered the switch back,
-the same way any session resume fails when its underlying state is gone. Without a usable note, the
-Agent starts fresh with the same carried-over context as any other switch.
+session is still alive. The cutoff advances only when the provider accepts the requested native
+identity, including when no replay seed is needed; prompt delivery or seed retirement alone is not
+that proof. If the requested identity fails, Happier leaves the earlier cutoff untouched and does not
+offer that failed identity again as a valid native return. Without a usable note, the Agent starts
+fresh with the same carried-over context as any other switch.
 
 ## When a switch does not go through
 
 Failures surface in the composer banner, not in a modal you dismiss and lose. There are deliberately
-no separate *check status* or *resume* flows to reason about — Happier reconciles against the real
-session state and then shows you one accurate line.
+no separate *Check status*, *Resume source*, or *Resume target* flows to reason about — Happier
+reconciles against the canonical Session and input facts, then shows you one accurate line.
 
 - **Nothing happened.** The old Agent is still running and your draft is untouched. Sending again is
   the retry; Happier reuses the same message identity so a successful retry cannot duplicate your
   message.
 - **The old Agent stopped but nothing else changed.** Same as above: the session is still on the old
   Agent, and sending again retries the whole switch.
-- **The session moved but your message did not send.** The banner says so — *"This Session is now
-  Codex, but your message wasn't sent. Send it again."* — and offers **Resume session** only when the
-  session genuinely has no running Agent behind it.
+- **The session moved but the target did not start.** Your exact message is already queued and will
+  be delivered when the Session resumes; do not send it again. The banner offers **Resume session**
+  only when the Session is already the target and has no running Agent.
 - **Happier could not confirm the outcome.** Sending is blocked for one reconciliation pass while
   Happier re-reads the session, so you cannot send the same message twice into an unknown state.
 

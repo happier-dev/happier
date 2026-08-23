@@ -1,30 +1,82 @@
 ---
 title: Transcripts and state
-description: Durable session data remains host-owned even when provider leaves emit evidence.
+description: Who owns durable session data, and the durable outbox that gets it to the relay without losing a turn to a dropped connection.
 ---
 
-Transcripts and session state are durable product data. Provider leaves emit evidence and expose facets; the host owns persistence.
+Transcripts and session state are durable product data. Provider leaves emit
+evidence and expose facets; the host owns persistence. That split is the whole
+design, and the mechanism below is what makes it survive a bad network.
 
-## Host-owned data
+## Who owns what
 
-- session rows
-- message/transcript rows
-- pending messages
-- encrypted/plain content envelopes
-- session metadata
-- registered session-state fields
-- execution-run public state
-- permission request lifecycle
+**Host-owned:** session rows, message and transcript rows, pending messages,
+encrypted and plain content envelopes, session metadata, registered
+session-state fields, execution-run public state, and the permission-request
+lifecycle.
 
-## Provider-owned evidence
+**Provider-owned evidence:** provider-native transcript files, provider session
+ids, provider runtime descriptors, provider tool payloads, provider status
+events, and provider auth state.
 
-- provider-native transcript files
-- provider session ids
-- provider runtime descriptors
-- provider tool payloads
-- provider status events
-- provider auth state
+A leaf maps evidence into typed runtime events, facets, or operation results. It
+does not write durable Happier state directly unless a host service explicitly
+exposes a scoped write path.
 
-## Rule
+## Writes go through a durable outbox, not straight to the relay
 
-Provider leaves map evidence into typed runtime events, facets, or operation results. They do not write durable Happier state directly unless a host service explicitly exposes a scoped write path.
+This is the part that is easy to get wrong by assuming, so it is worth stating
+plainly: the CLI does not write session mutations to the relay inline. They go
+into a **durable mutation outbox** that is persisted to disk, and delivered
+asynchronously.
+
+`apps/cli/src/api/session/client/transport/mutations/createSessionClientDurableMutationOutbox.ts`
+is the implementation. It gives you four properties that an inline write cannot:
+
+- **Survival across restarts.** The outbox is persisted, so a mutation queued
+  before a crash is still queued after one.
+- **Ordering by dependency, with cycle detection.** Mutations declare what they
+  depend on, and the outbox refuses a dependency cycle rather than deadlocking
+  on it.
+- **Retry with capped exponential backoff and jitter.**
+- **Dead letters.** A mutation that exhausts its attempts is not discarded — it
+  is written to a dead-letter list, and recoverable ones can be recovered later.
+  "Recoverable" is a property of the entry, not a guess at retry time.
+
+### Tuning it
+
+All five knobs are read from the environment, per CLI process, and clamped:
+
+| Variable | Default |
+| --- | --- |
+| `HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS` | `500` |
+| `HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS` | `30000` |
+| `HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS` | `250` |
+| `HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS` | `12` |
+| `HAPPIER_SESSION_MUTATION_OUTBOX_TRANSCRIPT_FLUSH_BATCH_LIMIT` | `25` |
+
+Backoff is `min(maxRetryMs, baseRetryMs * 2 ** attempt)` with the exponent
+capped at 8, plus up to `jitterMs` of jitter. At the defaults that reaches the
+30-second ceiling by the sixth attempt and stays there, so twelve attempts is
+roughly three minutes of trying rather than an unbounded wait.
+
+<Callout>
+  These are client-side variables read by the CLI process, not server
+  `HAPPIER_FEATURE_*` settings. They will not appear in the
+  [feature environment reference](/self-hosting/feature-env), and setting them on
+  the relay does nothing.
+</Callout>
+
+## Transcript admission
+
+Committed transcript writes are admitted rather than assumed:
+`assertCommittedTranscriptAdmission` guards them, and an admission can expire —
+`CommittedTranscriptAdmissionExpiredError` is a normal outcome to handle, not an
+internal error. A leaf that has been holding an admission across a long
+operation should expect to reacquire it.
+
+## Related
+
+- [Session loop](/development/architecture/runtime/session-loop) — what produces these mutations.
+- [Runtime events](/development/architecture/runtime/runtime-events) — the typed evidence a leaf emits. Generated.
+- [Sessions service](/plugins/services/sessions-transcripts) — the scoped write paths a plugin is given.
+- [How Happier fits together](/self-hosting/protocol) — the contract these mutations travel over.

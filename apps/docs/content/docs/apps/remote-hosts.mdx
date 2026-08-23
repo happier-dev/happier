@@ -102,6 +102,8 @@ See: [Server → Setup & bootstrap policy](/self-hosting/setup-and-bootstrap-pol
 ## Security notes
 
 - SSH host-key trust prompts should be reviewed carefully the first time you connect.
-- When secret material is supported by your server/build policy, it is stored encrypted in synced settings.
+- When secret material is supported by your server/build policy, it is stored in your synced account
+  settings. On an E2EE account it is encrypted on your device before it is sent; on a plaintext
+  account it is stored in a form the Happier server can read. See [Encryption](/security/encryption).
 - If you don’t want a host saved long-term, keep “Save this host” disabled and use one-time SSH inputs.
 - Remote hosts are separate from Relay URLs: they describe how to reach a machine over SSH, not which Relay your account uses.

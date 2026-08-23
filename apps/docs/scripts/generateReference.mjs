@@ -17,6 +17,9 @@ import { OUTPUT_PATH as LIMITS_OUT, renderRateLimitReferenceMarkdown } from './g
 import { OUTPUT_PATH as PLUGIN_AVAIL_OUT, renderPluginAvailabilityMarkdown } from './generatePluginAvailability.mjs';
 import { OUTPUT_PATH as FEATURE_ENV_OUT, renderFeatureEnvReferenceMarkdown } from './generateFeatureEnvReference.mjs';
 import { OUTPUT_PATH as RUNTIME_EVENTS_OUT, renderRuntimeEventReferenceMarkdown } from './generateRuntimeEventReference.mjs';
+import { OUTPUT_PATH as BUNDLED_PLUGINS_OUT, renderBundledPluginReferenceMarkdown } from './generateBundledPluginReference.mjs';
+import { OUTPUT_PATH as SDK_SURFACE_OUT, renderSdkSurfaceReferenceMarkdown } from './generateSdkSurfaceReference.mjs';
+import { OUTPUT_PATH as PLUGIN_ACTIONS_OUT, renderPluginActionReferenceMarkdown } from './generatePluginActionReference.mjs';
 
 export const GENERATORS = [
   { name: 'agent capabilities', outputPath: AGENTS_OUT, render: renderAgentReferenceMarkdown },
@@ -27,6 +30,9 @@ export const GENERATORS = [
   { name: 'plugin availability', outputPath: PLUGIN_AVAIL_OUT, render: renderPluginAvailabilityMarkdown },
   { name: 'feature environment', outputPath: FEATURE_ENV_OUT, render: renderFeatureEnvReferenceMarkdown },
   { name: 'runtime events', outputPath: RUNTIME_EVENTS_OUT, render: renderRuntimeEventReferenceMarkdown },
+  { name: 'bundled plugins', outputPath: BUNDLED_PLUGINS_OUT, render: renderBundledPluginReferenceMarkdown },
+  { name: 'SDK API surface', outputPath: SDK_SURFACE_OUT, render: renderSdkSurfaceReferenceMarkdown },
+  { name: 'Plugin host Actions', outputPath: PLUGIN_ACTIONS_OUT, render: renderPluginActionReferenceMarkdown },
 ];
 
 /**

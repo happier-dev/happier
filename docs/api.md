@@ -12,6 +12,16 @@ We intentionally avoid the full REST verb palette because many operations span m
 ## Authentication
 Most endpoints require `Authorization: Bearer <token>`.
 
+### Challenge transition (development source)
+
+The v1 challenge shape below remains a compatibility transition, not a future
+permanent contract. Development source adds an audience-bound, single-use v2
+challenge and capability negotiation. A server retains v1 only while the
+measured supported-client frontier includes v1-only authenticating clients; the
+retirement condition is that every supported authenticating client advertises
+v2 and the frontier has advanced beyond the recorded predecessor releases. Do
+not replace that condition with a calendar date.
+
 Auth flows:
 - `POST /v1/auth`
   - Body: `{ publicKey, challenge, signature }` (base64 strings)
@@ -36,6 +46,80 @@ Auth flows:
 
 - `POST /v1/auth/account/response`
   - Body: `{ response, publicKey }` (requires Bearer auth)
+
+### API Tokens (development source)
+
+API Tokens are opaque `hap_v1_…` credentials stored server-side as
+digest-backed records and shown in plaintext only in the mint response. The
+canonical verifier accepts them as `account_automation`; it does not make the
+caller a present user. Token creation, revocation, revocation of all tokens,
+sign-out-everywhere, approval decisions, and security/API-policy controls
+require `present_user`.
+
+There are no v1 token scopes. `account.sessions.signOutEverywhere` invalidates
+signed sessions but intentionally leaves API Tokens active; revoke API Tokens
+through their individual or all-token controls instead. Server-origin
+verification sees revocation on its next verification. The daemon has only a
+bounded, in-memory positive validation cache: at most 60 seconds and never
+extended while server introspection is unavailable.
+
+## External Action API (Developer Preview source contract)
+
+The protocol declares one public Action path and strict finite JSON envelopes:
+
+```text
+POST /v1/actions/:actionId
+Authorization: Bearer <API Token>
+```
+
+Both the daemon-local adapter and the server-origin relay are implemented in
+development source. This is not a deployed or released HTTP API, and
+composed/live proof for the server origin remains outstanding.
+
+Request:
+
+```json
+{
+  "v": 1,
+  "requestId": "optional-correlation-id",
+  "target": { "kind": "machine", "machineId": "machine-id" },
+  "input": {}
+}
+```
+
+`target` may be omitted or use the machine or session form. It is
+transport routing metadata, never Action input, caller provenance, approval
+state, or host execution context. Daemon-local omission selects that daemon's
+current machine. The server origin has no default machine: a caller must first
+use the PAT-enabled `GET /v1/machines` discovery route and then provide an exact
+machine target. Omitted targets return `target_required`. A session
+target is valid only when canonical Session ownership derives one exact current
+machine; an unavailable session placement returns `target_unavailable`. The
+server validates the PAT and finite envelope, then relays over the target
+daemon's existing server connection with server-stamped provenance. It does not
+execute or interpret the Action; the target daemon does. The successful response
+preserves the canonical Action result:
+
+```json
+{
+  "v": 1,
+  "actionId": "session.spawn_new",
+  "requestId": "optional-correlation-id",
+  "execution": { "ok": true, "result": {} }
+}
+```
+
+Only PAT bearer authentication is accepted on public Action routes; signed
+session bearers and `x-happier-daemon-token` are distinct credentials for other
+surfaces. The API does not use SSE, has a 100 MiB request-body ceiling, sends
+`Cache-Control: no-store`, and does not enable CORS. The server-mediated design
+is intentionally plaintext to the configured server and avoids requiring an
+inbound public daemon address; use daemon-local transport for direct local
+delivery. The transport does not retry or fail a mutation over to another
+origin.
+
+The generated [SDK API inventory](../packages/sdk/API.md) is the source of
+exported method names. It must not be duplicated as a hand-written action list.
 
 ## Endpoint catalog
 ### Sessions

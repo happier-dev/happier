@@ -12,8 +12,13 @@ The goal is that both surfaces:
 
 ## Key concepts (shared language)
 
-- **AgentId**: canonical id for an agent across packages (CLI + app + server).
-  - Source of truth: `@happier-dev/agents` (`packages/agents/src/manifest.ts`).
+- **AgentId**: canonical routing id for an agent across packages (CLI + app + server).
+  - Source of truth for bundled Agents: `@happier-dev/agents` (`packages/agents/src/manifest.ts`).
+- **Durable Agent identity**: every contributed Agent is durably identified by `{pluginId, localId}` (`PluginContributionIdentityV1`), because two independently authored plugins may legitimately declare the same natural local id such as `assistant`.
+  - The routing id is derived from that identity by the single owner `apps/cli/src/plugins/projection/registry/agentRoutingIdentity.ts#resolveContributedAgentRoutingId`.
+  - A **bundled first-party** Agent keeps its unqualified released identifier (`claude`, `codex`, `ohMyPi`, …); those ids already travel in persisted Sessions, CLI subcommands and wire targets, and the bundled set is generated and collision-free.
+  - An **installed** Agent is routed by its qualified key `"<pluginId>/<localId>"`, so its catalog entry, engine resolution, runtime lease, CLI subcommand and execution target are all plugin-scoped. Two plugins declaring `assistant` therefore both project and activate; neither displaces the other.
+  - Consumers that need the author's local id read `contribution.identity.localId`. Never re-derive a local id from a routing id.
 - **detectKey**: CLI executable name used for detection UX and `command -v <detectKey>`-style probes.
   - Source of truth: `@happier-dev/agents` (`AGENTS_CORE[agentId].detectKey`).
 - **cliSubcommand**: the primary CLI subcommand for this agent (usually the same as `AgentId`).
@@ -103,10 +108,33 @@ level resolves to `experimental` without a catalog-owned resume hook fails close
 `apps/cli/src/session/runtime/catalogHooks.ts#getVendorResumeSupport` and therefore at
 the daemon spawn resume gate.
 
+Runtime Activity is declared the same way, through the Agent's own Session
+capability rather than the `catalog` block: `capabilities.sessions.runtimeActivitySnapshots`
+projects to the catalog entry's `runtimeActivityApplicability`, and the host binds a
+Session's agent-runtime Activity slot only when that resolves to `supported`. Declare
+it only for an Agent whose runtime actually emits `runtime-activity-snapshot` runtime
+events — an Agent that claims the slot and never emits one leaves `runtime.activity`
+pinned at `unknown` for the whole Session instead of settling at `idle`. Claude is
+currently the only bundled Agent that emits them.
+
 Do not add a second builder for a contributed Agent's catalog entry. Manifest-only
 facts (id, CLI subcommand, CLI detect/auth spec, Connected Service ids) stay in
 `agentCliMetadata.ts#createManifestAgentCatalogEntry`; every hook-shaped fact belongs to
 the hook family.
+
+The CLI detect spec and the CLI auth spec are manifest-only facts for **every** Agent,
+bundled or installed: `createManifestAgentCatalogEntry` projects both from the declared
+`cli.executable` and `cli.auth.probe` block, and `createNativeAgentCliAuthSpec` owns every
+declared probe parser. The retired host-owned fallback (`agent/acp/catalog/builtIn/auth.ts`,
+`builtIn/detect.ts`, `capabilities/cliAuth/createUnknownCliAuthSpec.ts`) re-derived the same
+two specs from the `@happier-dev/agents` tables, which the generator emits from those same
+manifest bytes, and it silently dropped `cli.executable.alternativeBinaryNames` and the
+declared `envVars` of an `unknown` probe. It is deleted; the private `builtInAcpCatalog`
+contribution flag that selected it is gone with it.
+
+A plugin still overrides the projected auth spec by contributing `cliAuth.detectAuthStatus`
+when its probe genuinely cannot be expressed as a declared parser (Claude, Codex, Kiro and
+OpenCode do). That override no longer depends on any host-table flag.
 
 ### 4) App agents catalog: `apps/ui/sources/agents/catalog/catalog.ts`
 
@@ -118,6 +146,39 @@ This is the app’s single public surface for screens:
   - **behavior registry** (`registry/registryUiBehavior.ts`) for Agent-specific hooks projected from plugin descriptors
 
 First-party Agent UI definitions live with their plugin under `packages/plugins/<agentId>/src/ui/**`. Generated descriptor projections under `apps/ui/sources/agents/registry/generatedBundledPluginEntries*.ts` feed the host registries; do not recreate the retired `apps/ui/sources/agents/providers/**` tree.
+
+#### Selectable Agent targets are seeded from the machine's agents projection
+
+`apps/ui/sources/agents/backendCatalog/getResolvedBackendCatalogEntries.ts` is the single
+owner of the selectable Agent/backend target rows every picker consumes (New Session, the
+in-session Agent picker, Profiles, Sub-Agents, the execution-run launcher, and the Voice
+Agent-catalog tools). It seeds from three sources:
+
+- **Bundled seed** — `getEnabledAgentIds(...)` over the closed `CANONICAL_AGENT_IDS` set.
+  This owns bundled-Agent selection policy and is applied exactly once.
+- **The machine's agents projection** — every non-bundled Agent id in
+  `mergedProviderProjectionById`, which the daemon builds from `agentsById`. This is the
+  only place a standalone installed Session Agent appears: the daemon's V2 projection
+  emits an empty `backendsById`, so an installed Agent that contributes no configured
+  backend has no other route into the client.
+- **Configured ACP backends** in `acpCatalogSettingsV1`, plus targets named by
+  `backendEnabledByTargetKey`.
+
+Every row is then filtered by `readBackendTargetEnabled(...)`, so a user's Settings →
+Agents toggle is the one enable/disable authority for bundled and installed Agents alike.
+
+`ResolvedBackendCatalogEntry.agentId` is the **operational** runtime Agent identity, and
+`catalogAgentId` is optional bundled presentation/default backing only. A consumer that
+needs the Agent behind a selected target reads `agentId` (or
+`resolveBackendTargetOperationalAgentId(...)`); collapsing it to `null` because the Agent
+is not bundled is what makes model, mode, configuration and resume probing silently
+disappear for an installed Agent.
+
+Behavior facts — including New Session transcript storage modes — are read through
+`getAgentBehavior(agentId)`, which resolves a bundled Agent's build-time projection and an
+installed Agent's projected `plugin.ui.v1` descriptor through the same interpreter, with a
+fail-closed neutral floor for an Agent that declares nothing. Do not gate a behavior fact
+on `isBundledAgentId(...)`.
 
 ---
 

@@ -1,0 +1,123 @@
+---
+title: What's new in 0.3
+description: What changed between 0.2 and 0.3 — the plugin architecture, new agents and forges, PRs & Issues, channels, and the one CLI change that will break a script.
+---
+
+Happier 0.3 is a structural release: the parts of the product that used to be
+compiled in — agents, model providers, voice, source control — are plugins now.
+Most of what follows is downstream of that one change.
+
+This page is both the release summary and the upgrade path. If you script
+against the CLI, read [the last section](#the-cli-change-that-breaks-scripts)
+first — it is the only change here that can break something you already have.
+
+## Almost everything is a plugin now
+
+The single structural change: coding agents, model providers, voice engines,
+version-control backends and hosting forges are no longer built into the core.
+They are plugins, loaded through the same manifest, trust and activation path a
+plugin you write would use.
+
+[What ships in the box](/plugins/bundled) lists all of them, generated from
+their own manifests. The practical consequences:
+
+- Adding an agent or a forge no longer requires changing Happier itself.
+- A plugin's contributions are projected into catalogs **without executing its
+  code**, so an untrusted plugin's agent still appears in the picker and fails
+  only when a session tries to start it.
+- There is now a [Plugin SDK](/plugins) for writing your own.
+
+## More agents
+
+Seventeen, up from fourteen. New: **Antigravity**, **Cursor**, and
+**Oh My Pi** as coding agents, plus **CodeRabbit** and **DeepSec** as review
+agents — review CLIs rather than general coding agents, with no model choice and
+no resume.
+
+See [Agent capabilities](/agents/capabilities) for what each supports.
+
+## Model providers you configure yourself
+
+Eight provider plugins: OpenRouter, DeepSeek, Ollama, LM Studio, MiniMax, Z.AI,
+CLIProxyAPI and OpenAI. Configure them under **Settings → Providers**, then pick
+their models for compatible agents.
+
+Note the vocabulary: an **Agent** is the executable tool, a **Provider** is a
+model source. They used to be the same word.
+
+## Source control got wider, and one part got narrower
+
+Four hosting forges now, each able to create a pull request:
+
+| Forge | Change |
+| --- | --- |
+| GitHub | As before — connected account, then `gh`, then a compare URL. |
+| GitLab | Now has a connected account with a configurable `baseUrl`, so self-managed instances work. It powers **issue triage**, not merge-request creation — that is still `glab`. |
+| **Bitbucket** | New: full REST pull-request support with a connected account. |
+| **Azure DevOps** | New: full REST support for Services and Server. |
+
+The narrowing: **Sapling can no longer fetch, pull or push.** It reads, commits,
+commits selected paths, backs out and discards — but its remote operations are
+gone in 0.3. [Git](/code/git) has the full capability table.
+
+## PRs & Issues
+
+A new surface that gathers the pull requests, issues and error groups you are
+responsible for into one list, from GitHub, GitLab, Bitbucket, Azure DevOps —
+and from **Sentry** and **PostHog**, which contribute error issues.
+
+You can pin entries, link one to a session, attach one to a message from the
+composer, and save views. Agents can read the same list over MCP.
+
+See [PRs & Issues](/code/prs-and-issues).
+
+## Conversation channels
+
+Connect a **Discord** or **Telegram** conversation to a session or an automation,
+so people who do not use Happier can still talk to your agents. See
+[Conversation channels](/extending/channels).
+
+## Automations do more than schedules
+
+Two new trigger kinds beyond cron and interval:
+
+- **Plugin events** — a repository event, an issue, a review request. Observed
+  either by a checkpointed pull on one of your machines, or by a webhook that
+  does not need your machine awake.
+- **Conversation** — a message arriving in a connected channel.
+
+See [Automations](/extras/automations).
+
+## The CLI change that breaks scripts
+
+`happier setup` no longer accepts `--cloud`, `--relay` or `--this-computer`.
+
+| Before | Now |
+| --- | --- |
+| `happier setup --cloud` | `happier setup --server cloud` |
+| `happier setup --relay <url>` | `happier setup --relay-url <url>` |
+| `happier setup --this-computer` | — install a relay locally, then pass its URL |
+
+The full surface is now
+`happier setup [--relay-url <url>] [--provider <id> …] [--skip-daemon] [--skip-providers] [--yes|--non-interactive]`.
+
+There is also a new dry run:
+
+```bash
+happier setup plan --relay-url https://relay.example.test --json
+```
+
+`plan` prints the steps it would take and runs none of them, which is the safe
+way to check a change to an unattended setup script before you deploy it.
+
+<Callout>
+  `--yes` still does not mean "do everything". It performs the deterministic
+  work for a relay you named explicitly and stops before sign-in, because
+  sign-in needs a human on another device.
+</Callout>
+
+## Related
+
+- [Release channels](/releases) — stable, preview and dev.
+- [Updates](/releases/updates) — how updating works across apps, CLIs and images.
+- [Start here](/getting-started) — the current setup walkthrough.

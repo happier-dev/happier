@@ -2,6 +2,7 @@
   "title": "Extending Happier",
   "pages": [
     "index",
+    "sdk",
     "mcp-servers",
     "happier-as-mcp-server",
     "mcp-hosts",
@@ -9,6 +10,7 @@
     "prompts-and-skills",
     "installables",
     "subagents",
-    "agent-autonomy"
+    "agent-autonomy",
+    "channels"
   ]
 }

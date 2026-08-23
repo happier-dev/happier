@@ -5,9 +5,10 @@
 # sources alongside them. Those requests are served by the static-asset layer
 # and are free and unlimited on every plan; they never invoke the Worker script.
 #
-# The Worker script exists for three paths only (see worker/index.ts): the
-# /ingest/* analytics proxy, /health, and the *.mdx source rewrite. Only those
-# requests are billable invocations.
+# The Worker script exists for ONE path (see worker/index.ts): the /ingest/*
+# analytics proxy. That is the only billable invocation this site can produce —
+# everything else, including the Markdown sources behind `<page>.mdx`, is a
+# static asset.
 #
 # This replaces a Cloudflare PAGES project fed by a deploy hook, which rebuilt
 # the app inside Cloudflare's build container on every push to
@@ -37,14 +38,19 @@ directory = "./out/"
 binding = "ASSETS"
 
 # Serve out/404.html with a real HTTP 404 for anything that matches no asset.
-# A soft 404 (200 + "not found" page) would also mean the *.mdx rewrite answers
-# every typo with a page instead of a miss.
+# A soft 404 (200 + "not found" page) breaks robots.txt and sitemap.xml, both of
+# which this app generates from src/app/robots.ts and src/app/sitemap.ts.
 not_found_handling = "404-page"
 
 # /agents and /agents/ both resolve to one file.
 html_handling = "auto-trailing-slash"
 
-# Everything except these is served straight from assets without a billable
-# invocation. `/*.mdx` is a rewrite rather than a redirect, so it cannot live in
-# _redirects and has to reach the script — see worker/index.ts.
-run_worker_first = ["/ingest/*", "/health", "/*.mdx"]
+# Everything except this prefix is served straight from assets without a
+# billable invocation.
+#
+# `/*.mdx` used to be listed here, for a Worker rewrite onto the exported
+# source. scripts/exportMdxSources.mjs now MOVES those files to the URLs they
+# are served at during the build, so they need no rewrite and no invocation.
+# Re-adding the prefix without removing that build step would put a paid hop in
+# front of a file that is already sitting at the right path.
+run_worker_first = ["/ingest/*"]

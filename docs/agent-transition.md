@@ -42,7 +42,7 @@ The result union discriminates on `type` and has four arms:
 |---|---|---|
 | `accepted` | `{ localId }` | Cutover committed, divider appended, input admitted. |
 | `rejected` | `{ code, sourceEffect: 'none' }` | Nothing happened. Codes: `unsupported_operation`, `forbidden`, `same_target`, `stale_selection`, `target_unavailable`, `source_not_idle`, `source_stop_failed`. |
-| `partially_applied` | `{ localId, applied, code }` | A definite partial effect. `applied: 'source_stopped'` (source confirmed stopped, nothing committed; codes `context_unavailable`, `cutover_conflict`) or `applied: 'current_view_committed'` (the Session **is** the target; codes `divider_missing`, `divider_conflict`, `divider_unknown`, `target_start_failed`, `input_admission_failed`, `input_rejected`). |
+| `partially_applied` | `{ localId, applied, code }` | A definite partial effect. `applied: 'source_stopped'` (source confirmed stopped, nothing committed; codes `context_unavailable`, `cutover_conflict`) or `applied: 'current_view_committed'` (the Session **is** the target; codes `divider_unavailable`, `target_start_failed`, `input_admission_failed`, `input_rejected`). |
 | `outcome_unknown` | `{ localId }` | Genuinely indeterminate. Deliberately carries **no code**. |
 
 `rejected`'s `sourceEffect: 'none'` is a promise, not decoration. Anything that could have touched
@@ -128,9 +128,9 @@ publication inputs the route emits — plus non-trusted localId reconciliation.
 this write cannot use: it compares against a *current* Session publisher, and the source publisher is
 gone by the time the cutover runs. Anyone re-defending the split argues those eight, never fencing.
 
-A divider failure after a committed view is a real partial state and is reported as such:
-`divider-conflict` → `partially_applied / current_view_committed / divider_conflict`, while
-`divider-rejected` and `internal` both → `divider_missing`.
+A missing, conflicting, unreadable, or unverifiable divider after a committed view is one real
+partial state: `partially_applied / current_view_committed / divider_unavailable`. The owner keeps
+the storage-specific evidence internally; it does not become a second public recovery policy.
 
 Idempotency survives because the message owner catches the `(sessionId, localId)` unique violation
 and reconciles on the non-trusted path too — **overwriting on differing content**. That is precisely
@@ -489,11 +489,12 @@ the pair. It is proven for the SDK launch mode only and has no live evidence.
 
 The record also carries `departureSeqInclusive`: the transcript head the Agent had already seen when
 it left (`AM-26`). On a native return the coordinator hands that bound to the brief, which threads it
-to `hydrateReplayDialogFromForkChain` as `afterSeqExclusive` and on to
-`fetchEncryptedTranscriptMessagesPage({ afterSeq })` — a **server-side** bound, so the walk neither
-pages history it will discard nor spends its request ceiling on it. Reaching the bound is natural
-termination: `reachedSourceStart` stays `true`, because a seed that reported it as a truncation would
-tell the returning Agent that history is missing when nothing is.
+to `hydrateReplayDialogFromForkChain` as owner-local `afterSeqExclusive`. The hydrator must page
+backward with `beforeSeq`; the server route rejects `beforeSeq` and `afterSeq` together. It therefore
+filters returned rows at or below the lower bound and terminates its cursor there rather than adding
+a second range API. Reaching the bound is natural termination: `reachedSourceStart` stays `true`,
+because a seed that reported it as a truncation would tell the returning Agent that history is
+missing when nothing is.
 
 The head is captured **before** the source stop, not after. The two numbers differ, and the asymmetry
 decides which one is safe: a row that lands between the pre-stop instant and the confirmed stop may
@@ -504,24 +505,15 @@ head and is deliberately a different number.
 Starving a FRESH target is structurally impossible rather than merely avoided: the bound can only
 come from that Agent's own departure record, and a target that never ran in this Session has none.
 
-**The boundary only advances on accepted context (`REQ-STATE-03`).** The capture is still taken
-before the stop, but it is no longer unconditional. It reads the activation seed slot the cutover
-itself wrote: an activation brief is blanked and stamped `appliedToLocalId` the instant the provider
-takes custody of the prompt it was prefixed to, so an unretired seed is the durable statement that
-the departing Agent was handed context and never accepted it. Three outcomes follow, at
-`captureDepartingAgentNativeResumeRecord`:
+**The boundary advances only after strict native-identity acceptance (`REQ-STATE-03`).** The capture
+is still taken before the stop, but its cutoff advances only when the provider accepts the requested
+resumed identity — including an activation with no replay seed. Prompt transport and seed retirement
+are related lifecycle facts, not proof that the requested native identity was accepted. A failed
+strict return leaves the earlier cutoff unchanged and invalidates that identity so it cannot be
+recaptured as valid for this Session and Agent.
 
-- **no structurally valid identity** — any earlier record is removed, as before;
-- **the handed context was accepted, or none was handed** — the boundary advances to the pre-stop
-  head;
-- **context was handed and never accepted** — the boundary does **not** advance, so a later return
-  cannot inherit a bound the Agent never reached. If the identity still in the view is the one this
-  machine restored from the record, that strict native return also failed before acceptance, and the
-  identity is invalidated instead of being re-offered unchanged on the next switch.
-
-Acceptance is read, never re-derived: seed settlement and the cutoff advance share one fact through
-`isReplaySeedV1PendingProviderAcceptance`. No proof file, liveness probe, read-back, TTL, generation
-or sweep was added (`AM-24`). Covered by `QA-T-20`.
+No proof file, liveness probe, read-back, TTL, generation, or second native-session registry is
+added. Covered by `QA-T-20`.
 
 **Launch policy is a RETURN decision.** The capture records a structurally valid identity regardless
 of Account settings; whether this machine may resume it is decided on the way back, by the same
@@ -628,6 +620,10 @@ send *is* the retry and reuses the same `localId`; `current_view_committed` offe
 only once canonical facts show no live runtime, delegating to the same resume owner every other
 inactive-Session affordance uses; `outcome_unknown` shows a neutral notice and blocks sending for one
 reconciliation pass.
+
+When `target_start_failed` reaches that committed-target state, exact input custody already succeeded:
+the message is queued and will be delivered when the Session resumes. The banner must never tell the
+reader to send it again.
 
 The send block is enforced at the destination owner
 `resolveSessionComposerSendDestination` (refusal `unreconciledTransitionOutcome`), not inline in the

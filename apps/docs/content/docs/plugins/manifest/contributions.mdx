@@ -25,7 +25,7 @@ description: Contribution families that a plugin can declare for projection and 
 | `openableContentViewers` | **Deferred — conformance only.** Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
 | MCP servers | **Deferred — conformance only.** Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
 | MCP discovery | Runtime MCP discovery | `mcp.discoverySources.<id>.discover` |
-| UI | Host-rendered descriptors or React Native surfaces; hosted web is currently unavailable pending an Artifact-backed frame adapter | generated artifact tree where executable UI is declared |
+| UI | Host-rendered descriptors or React Native surfaces; hosted web availability is reported per host, and an unavailable host reports a typed reason | generated artifact tree where executable UI is declared |
 | `managedDependencies` | Host-managed tool/runtime dependencies | dependency installer/validator |
 | `voiceModelPacks` | Immutable STT/TTS model and voice assets for host-owned engines | none; declarative data only |
 | `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations (supported preview) | `voiceProviders.<id>.runtime` when the declared realm needs one |

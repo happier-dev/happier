@@ -69,6 +69,8 @@ Persisted selections, favorites, drafts, session metadata, fork/resume state, an
 
 Native models use the same shape with `providerConnectionId: null`. Never infer a connection from a model id, concatenate provider/model ids into a wire id, or silently fall back to a native model when a connection is stale or unavailable.
 
+When a caller names a model id but omits the connection, the Session itself completes the tuple: an active Session from the Provider binding actually applied to its running runner, an inactive Session from its persisted canonical intent. That completion has three outcomes, not two. Absent state means native. Valid state means the connection it names. State that is **present but unreadable** means unknown, and the operation is refused with `model_selection_session_provider_state_unreadable` before any transition RPC, metadata CAS, or prompt admission — a corrupted binding or intent is never reported as an explicit native selection.
+
 ## Protocol and capability matchmaking
 
 Providers declare the protocols their endpoints speak. Agents declare accepted protocols and a provider-binding adapter in their plugin-owned runtime. The host computes compatibility; it does not contain provider-by-agent special cases.
@@ -107,11 +109,15 @@ The spawn/probe order is security-sensitive:
 
 The endpoint/security fingerprints must exist before an endpoint-bound grant can be validated. No path may authorize by connection id alone and derive the endpoint afterwards.
 
+Session admission runs that whole sequence before it does any irreversible setup work. Daemon and foreground admission both reach the complete Provider decision — feature gate, Agent/target compatibility, malformed settings, a changed binding, the cold catalog rejection, and the `agent.resolvePrerequisites` hook — before the requested workspace is created and before runner bootstrap material is written or an Agent runtime contribution is activated. Cleanup removes a bootstrap file; it cannot un-create a workspace or un-activate a runtime. A prerequisite hook therefore receives the requested workspace path as a value and must not assume that directory already exists on disk.
+
 Provider data must never mutate the daemon's global `process.env`. Agent adapters materialize provider settings into the existing scoped child-spawn environment/configuration choke point.
 
 Custom-provider forms do not support arbitrary query-parameter credentials or inline bearer tokens. Rich cloud authentication such as AWS Bedrock signing, Google Vertex credentials, Azure Entra, and command-produced tokens requires explicit typed transports and is outside the V1 custom-provider contract.
 
 Endpoint validation rejects credentials in URLs, unsafe metadata destinations, ambiguous encodings, unsafe redirects, and oversized responses. Redirects are revalidated hop by hop, and credentials are not forwarded across an origin change. DNS is resolved on the daemon for probes, but the spawned Agent may resolve independently; endpoint-bound machine grants remain the authorization boundary for local/private endpoints.
+
+A catalog probe is bounded end to end, not per hop: one wall budget covers pre-dispatch resolution, request establishment and the complete response body across every redirect, and one idle budget bounds the gap between body chunks. Both apply identically to a public endpoint and to a Provider the daemon supervises — a managed probe reaches its service through that service's own supervised request handle, so a response that returns headers and never finishes its body cannot hold a Provider probe slot.
 
 ## Account scope and machine grants
 
@@ -125,6 +131,8 @@ Locality is derived by the endpoint-safety owner, not selected by the user. A ma
 - grant metadata/revision.
 
 Changing a local endpoint invalidates the previous grant. The daemon must refuse before secret resolution with an actionable error when the grant is absent or stale. A connection definition may sync across devices; authorization to use a local endpoint does not silently transfer to another machine.
+
+Revoking a machine removes that machine's grants, endpoint overrides, and machine secret bindings from Provider settings. Revocation can remove the last reachable machine, so this cleanup runs in the client against encrypted Account Settings rather than through the CLI Provider settings owner. Both writers consume the same mutation-basis decision: a Provider subtree this build cannot fully parse — a future version, or a malformed record — is left byte-for-byte unchanged and the cleanup is reported pending. The recovering reader used for display must never become the basis for a rewrite, or unparsed connections, grants, overrides, bindings, defaults, and visibility state are silently replaced by normalized defaults.
 
 Health, detected processes, discovered model catalogs, and model load state are machine-local runtime observations. They are not synced as account truth.
 
@@ -173,6 +181,8 @@ Large catalogs must use the app's virtualized option-list path. OpenRouter-scale
 
 Catalog and health refresh is demand-driven. Enabling a connection, a semantic connection-detail or model-picker read, an explicit Test/Refresh, or an eligible read of expired cached data may schedule work through the canonical Provider probe scheduler. Cache expiry makes that read schedule a refresh; it does not create a timer, background crawler, lease, or global refresh budget. The scheduler owns single-flight execution, concurrency, retry/backoff, and freshness. UI and plugin code must not add a second polling path.
 
+A model-picker read waits for the demand it schedules only when a connection is **cold**: it has no catalog observation yet and would therefore contribute no row at all. Answering that read immediately would be a silently empty picker with nothing to follow it, because the projection response is the only completion signal the client has. A connection that already holds an observation—even an empty, stale, or failed one—renders from that observation and keeps its refresh advisory, so an unreachable endpoint never blocks a later read. Waiting does not change work ownership: the demand still goes to the one probe scheduler, which keeps its single-flight execution, admission concurrency, typed local-capacity refusal, and failure backoff. Demand the scheduler refuses for capacity is left for a later read; no caller retains a second queue for it.
+
 ## Session lifecycle
 
 At launch, Happier persists the structured model selection plus exact non-secret resolution metadata: connection revision, chosen protocol, `compatibilityFingerprint`, `bindingSecurityFingerprint`, and the materialization kind. It does not persist a transient compatibility status, a derived materialization fingerprint, or credentials in session metadata.
@@ -211,10 +221,11 @@ Migration descriptors are plugin-owned provider facts. New writes use provider c
 3. Keep an ordinary Provider descriptor-only. For a local descriptor-only Provider, add only bounded declarative detection facts and a provider-specific availability probe. A command-output catalog fallback names its own output format the same way an HTTP catalog probe does, and the declaring plugin implements it with the same registered parser.
 4. When the Provider owns a supervised local runtime, declare its single cold `managedRuntime` facet and register exactly one matching runtime with `api.providers.register(localId, runtime)`.
 5. When the Provider's catalog endpoint answers in a wire format Happier does not bundle, name that format in the catalog probe's `parser` and register its implementation with `api.providers.registerCatalogParser(localId, format, parse)`. Happier bundles `openai-models`, `anthropic-models`, `ollama-tags`, and `lmstudio-native-models`; every other declared format is implemented by the declaring plugin, and a format with no reachable implementation fails the probe with `provider_contribution_unavailable` rather than being read by another Provider's parser. Set the probe's `reportsModelLoadState` when the format carries per-model load state, which is what makes model loading available — not whether the host bundles the format.
-6. Add explicit compatibility overrides only for verified pair-specific quirks.
-7. Add a legacy-profile migration descriptor only when a deterministic built-in legacy profile exists.
-8. Export the contribution through the plugin's generated contribution descriptor path; never register it by filesystem scanning or host-core branching.
-9. Test schema invariants, registration correspondence where applicable, endpoint safety, compatibility, catalog merging, connection identity, secret/grant refusal ordering, and any real external integration behind an opt-in lane.
+6. Register every arm the contribution declares. Activation validates the complete declared-vs-registered composite: a Provider that declares a managed runtime and a contributed catalog format must register both, and registering a managed runtime or catalog format the contribution does not declare is refused. A partial registration fails activation instead of silently publishing the half that registered.
+7. Add explicit compatibility overrides only for verified pair-specific quirks.
+8. Add a legacy-profile migration descriptor only when a deterministic built-in legacy profile exists.
+9. Export the contribution through the plugin's generated contribution descriptor path; never register it by filesystem scanning or host-core branching.
+10. Test schema invariants, registration correspondence where applicable, endpoint safety, compatibility, catalog merging, connection identity, secret/grant refusal ordering, and any real external integration behind an opt-in lane.
 
 Third-party plugins use the same `contributes.providers` family. Built-ins receive no privileged host path, and the bundled vocabularies below name what the host already implements rather than what a plugin may contribute (the two exceptions that are still closed are listed after them):
 

@@ -107,9 +107,34 @@ Advanced:
 
 User guide: [Features → Device linking & restore](/accounts/device-linking-and-restore)
 
+## API Tokens (Developer Preview source)
+
+The development source includes API Token authentication for automation. It is
+not a released CLI feature yet. Create the token from **Settings → Account**,
+then choose **API tokens**. Supply it for one invocation without changing your
+saved CLI credential:
+
+```bash
+happier --api-token 'hap_v1_…' list
+```
+
+For unattended automation, provide `HAPPIER_TOKEN` instead:
+
+```bash
+HAPPIER_TOKEN='hap_v1_…' happier list
+```
+
+`--api-token` is a global prefix flag and takes precedence over
+`HAPPIER_TOKEN`. Neither form persists the token. API Tokens authorize broad
+account automation but not present-user approvals, API/security-policy changes,
+or other security and trust controls.
+
+See [API Tokens](/security/api-tokens) for creation, revocation, the one-minute
+daemon-local validation-cache limit, and Action settings.
+
 ## Bootstrap & setup (one-command)
 
-`happier setup` is the guided setup executor from the terminal. It settles the Relay first, signs in if needed, configures the service, and optionally sets up Agents. Each step delegates to the existing Relay, auth, service, Agent, and Relay-access commands rather than keeping a second implementation of them.
+`happier setup` guides initial setup from the terminal. It settles the Relay first, signs in if needed, configures the service, and optionally sets up Agents using the existing Relay, auth, service, Agent, and Relay-access commands.
 
 Use it when you want Happier to do the work instead of only previewing a plan:
 
@@ -137,7 +162,7 @@ Dry-run the plan only if you want to inspect the steps before running them:
 happier setup plan --relay-url https://YOUR_RELAY_URL
 ```
 
-`happier setup plan` is a preview. `happier setup` is the executor.
+`happier setup plan` previews the work. `happier setup` applies it.
 Note: `--json` output is currently supported for `happier setup plan` only.
 
 ### Repair an existing setup
@@ -404,7 +429,7 @@ For the full user guide and the meaning of “resumable”, see [Features → Re
 Use:
 
 ```bash
-happier session list
+happier list
 ```
 
 The default output is a table that includes session id, agent, recent activity, active state, resume state, title, and path.
@@ -412,9 +437,9 @@ The default output is a table that includes session id, agent, recent activity, 
 Useful variants:
 
 ```bash
-happier session list --resumable
-happier session list --plain
-happier session list --json
+happier list --resumable
+happier list --plain
+happier list --json
 ```
 
 - `--resumable` filters to sessions that can currently be resumed
@@ -423,51 +448,52 @@ happier session list --json
 
 ## Session control (non-interactive)
 
-The `happier session ...` command group is the non-interactive surface for creating and controlling sessions.
+Use the top-level commands for everyday session work. The `happier session ...`
+family remains available for its advanced and administrative commands.
 
 Deep reference: [CLI sessions](/apps/cli-sessions).
 
 ### Create a session (scriptable)
 
 ```bash
-happier session create --title "My session" --message "Hello"
+happier spawn --title "My session" --message "Hello"
 ```
 
 Optional targeting:
 
 ```bash
-happier session create --path /path/to/repo --backend <backend-target-key> --tag <tag>
+happier spawn --path /path/to/repo --agent <agent-id> --title "My session"
 ```
 
-`--backend` expects a **backend target key** (not a short name). Common forms:
+`--agent` accepts a friendly Agent id from the installed Agent catalog:
 
 ```bash
-# Built-in catalog agent
-happier session create --backend "agent:<agent-id>"
-
-# ACP backend target (e.g. opencode, gemini, etc)
-happier session create --backend "acpBackend:<backend-id>"
+happier spawn --agent <agent-id>
 ```
+
+Use `happier spawn` to create a session from the top-level CLI. With
+`--follow --jsonl`, its first line is the normal `session_create` envelope
+containing `data.session.id`; later lines are compact transcript rows.
 
 ### Send messages
 
 ```bash
-happier session send <session-id> "ping"
+happier send <session-id> "ping"
 ```
 
 Wait for an agent response (useful for scripts; can time out if the agent is busy/offline):
 
 ```bash
-happier session send <session-id> "ping" --wait --timeout 60
+happier send <session-id> "ping" --wait --timeout 60
 ```
 
 ### Status, stop, archive
 
 ```bash
 happier session status <session-id>
-happier session history <session-id>
-happier session wait <session-id> --timeout 60
-happier session stop <session-id>
+happier history <session-id>
+happier wait <session-id> --timeout 60
+happier stop <session-id>
 happier session archive <session-id>
 happier session unarchive <session-id>
 ```
@@ -477,6 +503,7 @@ happier session unarchive <session-id>
 ```bash
 happier session set-title <session-id> "New title"
 happier session set-model <session-id> <model-id>
+happier session set-model <session-id> <model-id> --provider-connection <connection-id|native>
 happier session set-permission-mode <session-id> <mode>
 ```
 
@@ -498,7 +525,8 @@ Use the app’s **Inbox** to review/approve/deny and see the final execution res
 - [Inbox and approvals](/sessions/inbox-and-approvals)
 - [Happier tools & actions](/extending/happier-tools)
 
-For advanced automation, approvals can also be decided through the generic action executor:
+For advanced automation, approvals can also be decided with
+`happier session actions execute`:
 
 ```bash
 happier session actions execute <session-id> approval.request.decide --input-json '{"artifactId":"<id>","decision":"approve"}' --json
@@ -520,7 +548,7 @@ Execution runs are the structured “run” layer for multi-step flows in a sess
 
 ```bash
 happier session run list <session-id>
-happier session run start <session-id> --intent <intent> --backend <backend-target-key>
+happier session run start <session-id> --intent <intent> --agent <agent-id>
 happier session run send <session-id> <run-id> "message"
 happier session run stop <session-id> <run-id>
 ```
@@ -533,13 +561,14 @@ If you want an MCP host (editor/agent) to control Happier sessions and actions, 
 happier mcp serve
 ```
 
-`happier mcp start` is accepted as a compatibility alias, but `serve` is the canonical command name in the docs and CLI help.
+For compatibility, `happier mcp start` also works. Use `happier mcp serve` in
+new commands and automation.
 
 Guide: [Happier MCP (external)](/extending/happier-as-mcp-server)
 
-## Backend profiles
+## Agent profiles
 
-The CLI supports backend profiles for session starts and profile discovery:
+The CLI supports Agent profiles for session starts and profile discovery:
 
 ```bash
 happier profiles list

@@ -1,0 +1,554 @@
+---
+title: Public API surface
+description: Every symbol the Plugin SDK exports and the entrypoint it comes from — generated from the SDK's own api-surface projection.
+---
+
+The SDK exports **2,133 symbols** across **48 entrypoints**:
+430 values and 1,703 types. This page is the index — it answers
+"does this exist, and where do I import it from", which is the question a type
+definition file cannot answer until you already know the answer.
+
+For *which entrypoint a capability belongs to*, read
+[SDK entrypoints](/plugins/api/sdk-entrypoints) first. This page is the exhaustive
+counterpart to it.
+
+## How to read it
+
+**Visibility** separates the 45 entrypoints a plugin author may import
+from the 3 the host reserves for itself.
+
+<Callout type="warn">
+  Importing a `host` entrypoint from a plugin is not a compile error. It is a
+  support boundary, and code that crosses it can break on any release without
+  that being a regression.
+</Callout>
+
+**Realm** says where the code can run — `any`, `daemon`, `client`, `browser`
+or `build`. A `daemon` symbol used in client code fails at runtime rather than
+at build time, so this is the column that prevents a bug typechecking will not
+catch.
+
+## Entrypoints
+
+| Import from | Visibility | Realm | Values | Types |
+| --- | --- | --- | --- | --- |
+| `@happier-dev/plugin-sdk` | author | any | 23 | 110 |
+| `@happier-dev/plugin-sdk/actions` | author | any | 8 | 46 |
+| `@happier-dev/plugin-sdk/agents` | author | any | 4 | 22 |
+| `@happier-dev/plugin-sdk/agents/runtime` | author | daemon | 27 | 293 |
+| `@happier-dev/plugin-sdk/async` | author | any | 5 | 2 |
+| `@happier-dev/plugin-sdk/automations` | author | any | 10 | 7 |
+| `@happier-dev/plugin-sdk/background-services` | author | any | 0 | 5 |
+| `@happier-dev/plugin-sdk/browser` | author | any | 3 | 6 |
+| `@happier-dev/plugin-sdk/collections` | author | daemon | 2 | 32 |
+| `@happier-dev/plugin-sdk/connected-accounts` | author | daemon | 16 | 80 |
+| `@happier-dev/plugin-sdk/contributions` | author | any | 3 | 35 |
+| `@happier-dev/plugin-sdk/events` | author | any | 5 | 17 |
+| `@happier-dev/plugin-sdk/exec` | author | any | 0 | 16 |
+| `@happier-dev/plugin-sdk/exec/protocol-clients` | author | any | 0 | 14 |
+| `@happier-dev/plugin-sdk/fs` | author | daemon | 10 | 4 |
+| `@happier-dev/plugin-sdk/hooks` | author | daemon | 11 | 22 |
+| `@happier-dev/plugin-sdk/host/fs/json-owner-file-lock` | host | daemon | 2 | 0 |
+| `@happier-dev/plugin-sdk/host/registration` | host | any | 1 | 3 |
+| `@happier-dev/plugin-sdk/host/targeted-contributions` | host | daemon | 2 | 4 |
+| `@happier-dev/plugin-sdk/http` | author | any | 0 | 13 |
+| `@happier-dev/plugin-sdk/interactions` | author | any | 0 | 26 |
+| `@happier-dev/plugin-sdk/managed-services` | author | daemon | 3 | 23 |
+| `@happier-dev/plugin-sdk/manifest` | author | any | 8 | 40 |
+| `@happier-dev/plugin-sdk/mcp` | author | daemon | 1 | 47 |
+| `@happier-dev/plugin-sdk/notifications` | author | any | 0 | 11 |
+| `@happier-dev/plugin-sdk/protocol` | author | any | 12 | 16 |
+| `@happier-dev/plugin-sdk/providers` | author | any | 11 | 63 |
+| `@happier-dev/plugin-sdk/resources` | author | any | 0 | 55 |
+| `@happier-dev/plugin-sdk/reviews` | author | daemon | 15 | 19 |
+| `@happier-dev/plugin-sdk/scm` | author | daemon | 22 | 122 |
+| `@happier-dev/plugin-sdk/scm/backend` | author | daemon | 11 | 34 |
+| `@happier-dev/plugin-sdk/scm/hosting` | author | daemon | 5 | 37 |
+| `@happier-dev/plugin-sdk/secrets` | author | any | 1 | 3 |
+| `@happier-dev/plugin-sdk/sessions` | author | daemon | 23 | 57 |
+| `@happier-dev/plugin-sdk/sessions/external` | author | daemon | 21 | 82 |
+| `@happier-dev/plugin-sdk/sessions/file-stores` | author | daemon | 19 | 13 |
+| `@happier-dev/plugin-sdk/sessions/subagents` | author | any | 4 | 12 |
+| `@happier-dev/plugin-sdk/sessions/work-state` | author | any | 47 | 35 |
+| `@happier-dev/plugin-sdk/settings` | author | any | 0 | 14 |
+| `@happier-dev/plugin-sdk/storage` | author | daemon | 1 | 24 |
+| `@happier-dev/plugin-sdk/testing` | author | daemon | 11 | 47 |
+| `@happier-dev/plugin-sdk/ui` | author | any | 28 | 98 |
+| `@happier-dev/plugin-sdk/ui/build` | author | build | 15 | 12 |
+| `@happier-dev/plugin-sdk/ui/client` | author | browser | 4 | 1 |
+| `@happier-dev/plugin-sdk/voice` | author | any | 17 | 41 |
+| `@happier-dev/plugin-sdk/voice/client` | author | client | 12 | 26 |
+| `@happier-dev/plugin-sdk/voice/speech` | author | any | 0 | 7 |
+| `@happier-dev/plugin-sdk/webhooks` | author | any | 7 | 7 |
+
+## Every export, by entrypoint
+
+<Accordions>
+
+<Accordion title="@happier-dev/plugin-sdk — 133 exports">
+
+Anywhere. Source: `src/index.ts`.
+
+**Values** — `arePluginMachineExecutionOriginsEqual`, `COMPOSER_MEDIA_CONTENT_CAPABILITY_V1`, `ComposerReferenceCandidateIdV1Schema`, `computeCanonicalDomainSeparatedDigest`, `defineComposerAttachment`, `defineComposerControl`, `defineComposerReference`, `defineComposerRegion`, `definePlugin`, `defineUiSurfaceDefinition`, `isPluginError`, `isRecord`, `normalizePluginAccountCollectionMigrationRuntimeProjection`, `normalizePluginDaemonDatabaseRuntimeProjection`, `parseJsonLine`, `parseTimestampMs`, `PluginError`, `projectPluginAccountCollectionDeclaration`, `readString`, `readTrimmedString`, `redactBugReportSensitiveText`, `selectCurrentTargetedContribution`, `trimBugReportTextToMaxBytes`
+
+**Types** — `ActionOperationDeclarationV1`, `ComposerAttachmentAuthorDeclaration`, `ComposerAttachmentAuthorDisplay`, `ComposerAttachmentAuthorPreview`, `ComposerAttachmentMessageAcceptedV1`, `ComposerAttachmentPrepareOutcomeV1`, `ComposerAttachmentPrepareRequestV1`, `ComposerAttachmentPrepareResultV1`, `ComposerAttachmentResolveRequestV1`, `ComposerAttachmentResolveResultV1`, `ComposerAttachmentRuntime`, `ComposerAttachmentsRegistrationApi`, `ComposerContentCapabilitiesV1`, `ComposerContentHandleV1`, `ComposerContentInspectRequestV1`, `ComposerContentInspectResultV1`, `ComposerContentMediaKindV1`, `ComposerContentMimeTypeV1`, `ComposerContentPickMediaRequestV1`, `ComposerContentService`, `ComposerContentStageMediaRequestV1`, `ComposerControlAuthorInteraction`, `ComposerMediaContentCapabilityV1`, `ComposerReferenceCandidatePageV1`, `ComposerReferenceResolutionV1`, `ComposerReferenceRuntime`, `ComposerReferencesRegistrationApi`, `ComposerRendererChainAuthorInput`, `ComposerSessionMediaContentV1`, `ComposerStagedMediaContentV1`, `ContributionAdmittedEntry`, `ContributionOperationContracts`, `ContributionSurfaceHandles`, `DefinedContributionPointRef`, `DefinedContributionPoints`, `DefinedPlugin`, `DefinedPluginActionContracts`, `DefinedPluginContributes`, `DefinedPluginManifest`, `DefinePluginInput`, `Disposable`, `JsonValue`, `LoggerService`, `MessageActionAvailableSnapshotV1`, `PluginAccountCollectionMigrationRuntimeProjection`, `PluginActionOperationContextV1`, `PluginActionOperationProgressUpdateV1`, `PluginActivationModule`, `PluginApi`, `PluginCancellationOptions`, `PluginCleanup`, `PluginClientActivationModule`, `PluginClientApi`, `PluginComposerAttachmentDefinition`, `PluginComposerControlDefinition`, `PluginComposerDefinition`, `PluginComposerReferenceDefinition`, `PluginComposerRegionDefinition`, `PluginContributionLocalId`, `PluginContributionRef`, `PluginDaemonDatabaseDeclaration`, `PluginDaemonDatabaseDefinition`, `PluginDaemonDatabaseRuntimeProjection`, `PluginDiagnosticData`, `PluginErrorData`, `PluginIdentity`, `PluginInvocationCaller`, `PluginInvocationContext`, `PluginInvocationContributionIdentity`, `PluginInvocationOriginSurface`, `PluginJsonValueV2`, `PluginMachineMaterializationRefV1`, `PluginOperationAvailability`, `PluginPath`, `PluginReference`, `PluginRemediationData`, `PluginRequestInterceptorDefinition`, `PluginServiceId`, `PluginServices`, `PluginSettingDescriptor`, `PluginSettingDescriptorBase`, `PluginSettingsChange`, `PluginSettingsMutationResult`, `PluginSettingsSnapshot`, `ProtocolActionSchemaInput`, `ProtocolActionSchemaOutput`, `TargetedContributionAdmittedEntry`, `TargetedContributionObservation`, `TargetedContributionPointRef`, `TargetedContributionSelectionResult`, `TargetedContributionSelectionUnavailableReason`, `TargetedContributionSnapshot`, `TargetedContributionsService`, `UiSurface`, `UiSurfaceAppPageDefinition`, `UiSurfaceAppPageDefinitionFor`, `UiSurfaceDeclarativeDefinition`, `UiSurfaceDeclarativeRendererDefinition`, `UiSurfaceDefinition`, `UiSurfaceDetailedDefinition`, `UiSurfaceDetailedDefinitionFor`, `UiSurfaceHostedWebBuild`, `UiSurfaceHostedWebDefinition`, `UiSurfaceHostedWebRendererDefinition`, `UiSurfacePlacement`, `UiSurfaceReactNativeBuild`, `UiSurfaceReactNativeDefinition`, `UiSurfaceReactNativeRendererDefinition`, `UiSurfaceRendererDefinition`, `UiSurfaceSettingsPageDefinition`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/actions — 54 exports">
+
+Anywhere. Source: `src/actions/index.ts`.
+
+**Values** — `actionInputOptionValueKey`, `getActionSpec`, `isPluginActionHandlerInvocationKnownNotStarted`, `isSameActionInputOptionValue`, `normalizeActionInputByFieldHints`, `PluginMachineExecutionOriginV1Schema`, `readActionInputOptionValue`, `resolveEffectiveActionInputFields`
+
+**Types** — `ActionCaller`, `ActionContract`, `ActionContribution`, `ActionExecuteResult`, `ActionHandler`, `ActionId`, `ActionInputFieldHint`, `ActionInputHints`, `ActionInputOption`, `ActionInputOptionValue`, `ActionInputPredicate`, `ActionSpec`, `ActionsService`, `ActionSurfaceBindingTransform`, `AdmittedTargetedOperationExecutionHandle`, `AdmittedTargetedOperationExecutionOptions`, `AdmittedTargetedOperationExecutionWithOriginOptions`, `AdmittedTargetedOperationIdentity`, `CommandContribution`, `ContributedActionExecutionWithOriginOptions`, `ContributedActionExecutionWithOriginResult`, `EffectiveActionInputField`, `JSONType`, `PluginActionAuthorDefaults`, `PluginActionDeclaration`, `PluginActionExecutionV2`, `PluginActionHandlerInvocation`, `PluginActionInputById`, `PluginActionInvocationSurfaceV2`, `PluginActionPlacement`, `PluginActionResultById`, `PluginAgentExternalSessionLinkDataArray`, `PluginAgentExternalSessionLinkDataObject`, `PluginAgentExternalSessionLinkDataValue`, `PluginClientActionContext`, `PluginClientActionHandler`, `PluginClientActionUi`, `PluginInvocableActionId`, `PluginJsonSchemaV2`, `PluginMachineExecutionOriginV1`, `PluginPolicyExpressionV2`, `SessionTranscriptGetExternalShareableInputV1`, `SessionTranscriptGetExternalShareableResultV1`, `SessionUsageLimitCheckNowRequestV1Input`, `SessionUsageLimitConsumeResetCreditRequestV1Input`, `ToolContribution`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/agents — 26 exports">
+
+Anywhere. Source: `src/agents/index.ts`.
+
+**Values** — `AgentSurfaceOperationCatalogV1`, `buildAgentTargetKeyV2`, `PluginAgentCapabilitiesV1Schema`, `projectAgentCapabilitiesV2FromDefinition`
+
+**Types** — `AgentContribution`, `AgentDefinitionCapabilityFacts`, `AgentLocalControlDeclaration`, `AgentModelConfig`, `AgentModelDescriptor`, `AgentModelNonAcpApplyScope`, `AgentModelOption`, `AgentModelOptionOverrideRule`, `AgentModelOptionValueId`, `AgentProfile`, `AuthoredAgentCapabilitiesV2`, `AuthoredAgentCapabilitySurfaceV2`, `AuthoredAgentSessionCapabilitiesV2`, `AuthoredAgentSessionOpenRouteV2`, `EnvironmentVariable`, `PluginAgentCapabilitiesV2`, `PluginAgentCapabilitySurfaceV2`, `PluginAgentDefinition`, `PluginAgentExecutionRunCapabilitiesV2`, `PluginAgentSessionCapabilitiesV2`, `PluginCustomAgentDeclaration`, `PluginHostOwnedAgentDeclaration`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/agents/runtime — 320 exports">
+
+Daemon only. Source: `src/agents/runtime/index.ts`.
+
+**Values** — `ACP_AGENT_CLI_TRANSPORT_TIMEOUTS`, `ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES`, `ACP_WRITE_LIKE_PERMISSION_KINDS`, `AgentProviderBindingMaterializationV1Schema`, `AgentRuntimeJsonValueSchema`, `AgentSessionProviderBindingV1Schema`, `AgentSessionRealtimeStartRequestV1Schema`, `AgentSessionRealtimeStartResultV1Schema`, `AgentSessionRuntimeEventSchema`, `assertAgentSessionRealtimeRuntime`, `buildAgentAccountUsageRecordId`, `buildShellCommand`, `buildUsageObservationEffect`, `createAcpToolNameInferencePreset`, `createAgentSessionPreAdmissionBuffer`, `isRuntimeConfigUpdateOutcomeApplied`, `normalizeAcpPermissionIntent`, `parsePermissionIntentAlias`, `resolveAcpToolPermissionPolicy`, `resolveRecoverableTurnFailureRetryDecision`, `resolveRecoverableTurnFailureSecondFailure`, `resolveTerminalPromptWriteTimeoutMs`, `SessionContextUsageSnapshotV1Schema`, `UsageObservationContextSchema`, `UsageObservationCostSchema`, `UsageObservationScopeSchema`, `UsageObservationTokensSchema`
+
+**Types** — `AcpForkSessionRequestV1`, `AcpForkSessionResultV1`, `AcpLoadSessionRequestV1`, `AcpLoadSessionResultV1`, `AcpSessionOperationsV1`, `AgentAccountUsageAdoptionProof`, `AgentAccountUsageAdoptProvisionalRecordInput`, `AgentAccountUsageAdoptProvisionalRecordResult`, `AgentAccountUsageDiagnostic`, `AgentAccountUsageMeter`, `AgentAccountUsageQuotaConfidence`, `AgentAccountUsageQuotaSource`, `AgentAccountUsageRecordKey`, `AgentAccountUsageRecordSnapshotInput`, `AgentAccountUsageRecordSnapshotResult`, `AgentAccountUsageRecoveryCredit`, `AgentAccountUsageRecoveryCredits`, `AgentAccountUsageService`, `AgentAccountUsageSnapshot`, `AgentAccountUsageSourceContext`, `AgentAccountUsageSourceContextInput`, `AgentAcpAuthenticationContext`, `AgentAcpAuthenticationDefinition`, `AgentAcpAuthenticationSelection`, `AgentAcpCompletionEvidenceOutcome`, `AgentAcpExtensionContext`, `AgentAcpHistorySession`, `AgentAcpInFlightSteerDefinition`, `AgentAcpMcpInputPolicy`, `AgentAcpModel`, `AgentAcpModelControls`, `AgentAcpModelOption`, `AgentAcpNotificationExtension`, `AgentAcpPromptUsageDefinition`, `AgentAcpRequestExtension`, `AgentAcpRuntimeComposer`, `AgentAcpRuntimeDefinition`, `AgentAcpRuntimeExtensions`, `AgentAcpRuntimeOptions`, `AgentAcpStderrMatchRule`, `AgentAcpStderrRules`, `AgentAcpStderrStatusErrorRule`, `AgentAcpTimeouts`, `AgentAcpToolNameInference`, `AgentAcpToolNamePattern`, `AgentAcpToolNameResolver`, `AgentAcpToolUpdateContentSanitizer`, `AgentAcpToolUpdatePolicy`, `AgentAcpTransport`, `AgentAuthorRestoreCheckpointResult`, `AgentConfigurationScalar`, `AgentDaemonResolvedToolV1`, `AgentDaemonRunToolResultV1`, `AgentDaemonSpawnConnectedServiceBindingV1`, `AgentDaemonSpawnConnectedServicesV1`, `AgentDaemonSpawnDiagnosticV1`, `AgentDaemonSpawnHooks`, `AgentDaemonSpawnRuntimeSelectionV1`, `AgentDaemonSpawnToolResolutionContextV1`, `AgentDaemonSpawnValidationResult`, `AgentExecutionRunEvent`, `AgentExecutionRunOpenRequest`, `AgentExecutionRunRuntime`, `AgentExecutionRunRuntimeFactory`, `AgentExecutionRunSendResult`, `AgentExecutionRunStopResult`, `AgentFeatureDecisionService`, `AgentLaunchEnvironment`, `AgentPermissionIntent`, `AgentProviderBindingAdapter`, `AgentProviderBindingCredential`, `AgentProviderBindingEnvironmentEntry`, `AgentProviderBindingLaunchMaterializationV1`, `AgentProviderBindingMaterialization`, `AgentProviderBindingMaterializeInput`, `AgentProviderBindingModel`, `AgentProviderBindingPrepared`, `AgentProviderBindingPrepareInput`, `AgentProviderBindingResolvedFacts`, `AgentProviderCredentialTransport`, `AgentRuntime`, `AgentRuntimeContext`, `AgentRuntimeFactory`, `AgentRuntimeFactoryContext`, `AgentRuntimeForkSurface`, `AgentRuntimeHandoffSurface`, `AgentRuntimeProtocolComposers`, `AgentRuntimeRegistrationOptions`, `AgentRuntimeSurfaces`, `AgentSessionActiveInputBinding`, `AgentSessionActiveInputService`, `AgentSessionActiveInputStatus`, `AgentSessionAuthRefreshClassification`, `AgentSessionAuthRefreshError`, `AgentSessionAuthRefreshPayload`, `AgentSessionAuthRefreshRecovery`, `AgentSessionAuthRefreshRequest`, `AgentSessionAuthRefreshResult`, `AgentSessionAuthRefreshSelection`, `AgentSessionCancelResult`, `AgentSessionCatalogControl`, `AgentSessionCatalogRequest`, `AgentSessionCatalogResult`, `AgentSessionCompactRequest`, `AgentSessionCompactResult`, `AgentSessionConfigurationResult`, `AgentSessionConfigurationSnapshot`, `AgentSessionConfigurationUpdate`, `AgentSessionConnectedAccountSelection`, `AgentSessionContinuationControl`, `AgentSessionContinuationProbeResult`, `AgentSessionControlContext`, `AgentSessionControlFailure`, `AgentSessionConversationRollbackControl`, `AgentSessionConversationRollbackReconciliationResult`, `AgentSessionConversationRollbackRequest`, `AgentSessionConversationRollbackResult`, `AgentSessionDisposeReason`, `AgentSessionGoalCommittedResult`, `AgentSessionGoalControl`, `AgentSessionGoalControlContext`, `AgentSessionGoalMutation`, `AgentSessionGoalMutationResult`, `AgentSessionGoalRefreshResult`, `AgentSessionHookForwarderAssets`, `AgentSessionHookPluginDirCreateRequest`, `AgentSessionHookPluginFile`, `AgentSessionHookProviderPayload`, `AgentSessionHookServerHandle`, `AgentSessionHookServerStartRequest`, `AgentSessionHooksService`, `AgentSessionHostServices`, `AgentSessionInFlightConfigurationOutcome`, `AgentSessionInput`, `AgentSessionMcpLaunchConfig`, `AgentSessionMcpServer`, `AgentSessionMcpService`, `AgentSessionMcpTransport`, `AgentSessionModel`, `AgentSessionModelOption`, `AgentSessionModelOptionChoice`, `AgentSessionModelsService`, `AgentSessionModelsSnapshot`, `AgentSessionModelsSource`, `AgentSessionOpenRequest`, `AgentSessionPreAdmissionBuffer`, `AgentSessionPreAdmissionBufferResult`, `AgentSessionProviderBinding`, `AgentSessionProviderBindingUpstream`, `AgentSessionProviderCheckpoint`, `AgentSessionProviderTranscriptPublishRequest`, `AgentSessionRealtimeAvailability`, `AgentSessionRealtimeConversation`, `AgentSessionRealtimeHandle`, `AgentSessionRealtimeLifecycleEvent`, `AgentSessionRealtimeRuntime`, `AgentSessionRealtimeStartInput`, `AgentSessionRealtimeStartRequestV1`, `AgentSessionRealtimeStartResult`, `AgentSessionRealtimeStopResult`, `AgentSessionRunnerFactoryLocatorV1`, `AgentSessionRuntime`, `AgentSessionRuntimeAuthApplyRequest`, `AgentSessionRuntimeAuthApplyResult`, `AgentSessionRuntimeAuthControl`, `AgentSessionRuntimeAuthIdentityRequest`, `AgentSessionRuntimeAuthIdentityResult`, `AgentSessionRuntimeContext`, `AgentSessionRuntimeEvent`, `AgentSessionRuntimeFactory`, `AgentSessionSendRequest`, `AgentSessionSendResult`, `AgentSessionSkillCatalogItem`, `AgentSessionStartupInstructions`, `AgentSessionTerminalComposerClearOutcome`, `AgentSessionUsageLimitRecoveryControl`, `AgentSessionUsageLimitRecoveryRequest`, `AgentSessionUsageLimitRecoveryResult`, `AgentSessionVendorPluginCatalogItem`, `AgentSessionWorkflowActivityService`, `AgentTerminalControlPresentation`, `AgentTerminalHostCreateOrAttachRequest`, `AgentTerminalHostDisposeIntent`, `AgentTerminalHostLaunchInput`, `AgentTerminalHostResolutionReason`, `AgentTerminalHostResolveRequest`, `AgentTerminalHostResolveResult`, `AgentTerminalHostService`, `AgentTerminalLaunchMetadata`, `AgentTerminalLaunchPlan`, `AgentTerminalLaunchRequest`, `AgentTerminalSessionIdentityFieldId`, `AgentTerminalSessionStateUpdate`, `AgentTerminalSurface`, `AgentToolExecutionBeforeRequest`, `AgentToolExecutionBeforeResult`, `AgentToolExecutionLifecycle`, `AgentToolExecutionService`, `AgentTranscriptFileFollowHandle`, `AgentTranscriptFileFollowInput`, `AgentTranscriptFileFollowLine`, `AgentTranscriptFileFollowService`, `AgentTranscriptSessionEventPublicationResult`, `AgentTranscriptSessionEventPublisher`, `AttachAvailabilityRequest`, `AttachFailureCode`, `AttachRequest`, `AttachSessionMetadata`, `AttachSurface`, `AttachSurfaceStaticMetadataV1`, `BackendSessionLaunchHintsV1`, `BackendSurfaceAvailabilityV1`, `BackendSurfaceBaseFailureCodeV1`, `BackendSurfaceDiagnosticV1`, `BackendSurfaceOperationReceiptV1`, `BackendSurfaceResultV1`, `CheckpointAvailabilityOperationV1`, `CheckpointAvailabilityRequestV1`, `CheckpointDescriptorV1`, `CheckpointProviderTargetRefV1`, `CheckpointRestoreAnchorEvidenceV1`, `CheckpointRestoreAnchorV1`, `CheckpointRestoreScopeV1`, `CheckpointSurface`, `CheckpointTimingV1`, `ConnectedServicesProviderStateSharingPolicyV1`, `CreateCheckpointRequestV1`, `ForkAvailabilityRequestV1`, `ForkPointV1`, `ForkRequestV1`, `ForkResultV1`, `ForkSessionMetadata`, `ForkSurfaceV1`, `HandoffAvailabilityRequestV1`, `HandoffExportRequestV1`, `HandoffExportResultV1`, `HandoffExportSessionMetadata`, `HandoffFailureCodeV1`, `HandoffImportRequestV1`, `HandoffImportResultV1`, `HandoffSurfaceV1`, `ListCheckpointsRequestV1`, `ProviderBindingCanonicalJsonValue`, `ProviderBoundModelRef`, `ProviderTranscriptDispatchRequestV1`, `RecoverableTurnFailurePromptMode`, `RecoverableTurnFailureRetryDecision`, `RecoverableTurnFailureSecondFailureDecision`, `ReplayForkChildLaunchRequestV1`, `ResolveCheckpointRestoreTargetRequestV1`, `RestoreCheckpointByAnchorRequestV1`, `RestoreCheckpointByTargetRequestV1`, `RestoreCheckpointFailureCodeV1`, `RestoreCheckpointRequestV1`, `RuntimeConfigOutcomeChangeKeyV1`, `RuntimeConfigOutcomeStatusV1`, `RuntimeConfigOutcomeTimingV1`, `RuntimeConfigUpdateOutcomeV1`, `RuntimeOutboundTranscriptToolNormalizationV1`, `RuntimeOutboundTranscriptUsageObservationV1`, `SessionContextUsageSnapshotV1`, `ShellCommandDialect`, `SkillCatalogItemV1`, `SkillCatalogV1`, `TerminalAttachmentId`, `TerminalControlCapture`, `TerminalControlCaptureResult`, `TerminalControlPort`, `TerminalControlSendFailureReason`, `TerminalControlSendResult`, `TerminalControlUnsupportedReason`, `TerminalHostAttachMetadata`, `TerminalHostHandle`, `TerminalHostKind`, `TerminalHostLiveness`, `TerminalHostPreference`, `TerminalInjectionDuplicateRisk`, `TerminalInjectionFailurePhase`, `TerminalInputInjectionResult`, `TerminalInputReadinessStatusV1`, `TerminalInputReadinessV1`, `TerminalInputState`, `TerminalPromptInput`, `TerminalSpecialKey`, `TimestampedAgentValue`, `TranscriptRawAgentEventV1`, `UsageObservationContext`, `UsageObservationCost`, `UsageObservationEffectV1`, `UsageObservationScope`, `UsageObservationTokens`, `VendorPluginCatalogItemV1`, `VendorPluginCatalogV1`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/async — 7 exports">
+
+Anywhere. Source: `src/async/index.ts`.
+
+**Values** — `createCoalescedScheduler`, `raceWithTimeout`, `sleep`, `sleepWithSignal`, `throwIfAborted`
+
+**Types** — `CoalescedScheduler`, `RaceWithTimeoutResult`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/automations — 17 exports">
+
+Anywhere. Source: `src/automations/index.ts`.
+
+**Values** — `AutomationConversationAdmitInputV1Schema`, `AutomationConversationAdmitResultV1Schema`, `AutomationConversationResultDeliveryV1Schema`, `AutomationIdV1Schema`, `AutomationResultDeliveryInputV1JsonSchema`, `AutomationResultDeliveryInputV1Schema`, `AutomationResultDeliveryResultV1JsonSchema`, `AutomationResultDeliveryResultV1Schema`, `AutomationResultDeliverySourceV1JsonSchema`, `AutomationResultDeliverySourceV1Schema`
+
+**Types** — `AutomationConversationAdmitInputV1`, `AutomationConversationAdmitResultV1`, `AutomationConversationResultDeliveryV1`, `AutomationIdV1`, `AutomationResultDeliveryInputV1`, `AutomationResultDeliveryResultV1`, `AutomationResultDeliverySourceV1`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/background-services — 5 exports">
+
+Anywhere. Source: `src/background-services/index.ts`.
+
+**Types** — `BackgroundServiceContext`, `BackgroundServiceContribution`, `BackgroundServiceDefinition`, `BackgroundServiceRunner`, `BackgroundServicesRegistrationApi`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/browser — 9 exports">
+
+Anywhere. Source: `src/browser/index.ts`.
+
+**Values** — `defineBrowserAction`, `defineBrowserTarget`, `PUBLIC_TOOLCHAIN_COMPATIBILITY_V1`
+
+**Types** — `BrowserActionContribution`, `BrowserActionContributionInput`, `BrowserAvailabilityDescriptor`, `BrowserContributionReference`, `BrowserTargetContribution`, `BrowserTargetContributionInput`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/collections — 34 exports">
+
+Daemon only. Source: `src/collections/index.ts`.
+
+**Values** — `defineAccountCollection`, `PluginMachineExecutionOriginV1JsonSchema`
+
+**Types** — `NormalizedPluginCollectionUiQueryDescriptorV1`, `PluginAccountCollection`, `PluginAccountCollectionContributionV1`, `PluginAccountCollectionDeclaration`, `PluginAccountCollectionDefinition`, `PluginAccountCollectionForDefinition`, `PluginAccountCollectionIndexes`, `PluginAccountCollectionMigration`, `PluginAccountCollectionValue`, `PluginCollectionBatchAssert`, `PluginCollectionBatchMeasurement`, `PluginCollectionBatchResult`, `PluginCollectionDeleteMutation`, `PluginCollectionIndexId`, `PluginCollectionIndexScalarValueV1`, `PluginCollectionIndexV1`, `PluginCollectionInvalidation`, `PluginCollectionLimits`, `PluginCollectionMutation`, `PluginCollectionMutationConflictV1`, `PluginCollectionMutationErrorV1`, `PluginCollectionMutationResultV1`, `PluginCollectionPage`, `PluginCollectionPutMutation`, `PluginCollectionQuery`, `PluginCollectionRow`, `PluginCollectionUiQueryErrorV1`, `PluginCollectionUiQueryParameterV1`, `PluginCollectionUiQueryRequestV1`, `PluginCollectionUiQueryResultV1`, `PluginCollectionUiQueryValueV1`, `PluginCollectionWatchQuery`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/connected-accounts — 96 exports">
+
+Daemon only. Source: `src/connected-accounts/index.ts`.
+
+**Values** — `buildOauthAuthEntry`, `classifyProviderLimitEvidence`, `CLAUDE_SUBSCRIPTION_OAUTH_PROFILE`, `defineAuthMaterialization`, `HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV`, `HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV`, `isAuthenticateResult`, `OPENAI_CODEX_OAUTH_PROFILE`, `parseCredentialRecord`, `PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1`, `QualifiedConnectedAccountRefJsonSchema`, `QualifiedConnectedAccountRefSchema`, `QuotaFetchError`, `requireOauthCredentialRecordWithExpiry`, `requireTokenCredentialRecord`, `unsupportedAccountUsage`
+
+**Types** — `AuthCallbackCreateInput`, `AuthCallbackCreateResult`, `AuthCallbackMode`, `AuthCallbackResult`, `AuthCallbackService`, `AuthCallbackSession`, `AuthCallbackWaitInput`, `AuthCredentialWriteInput`, `AuthCredentialWriteResult`, `AuthDiagnostic`, `AuthenticateOptions`, `AuthenticateResult`, `Authenticator`, `AuthenticatorContext`, `AuthFailureCode`, `AuthLoopbackInput`, `AuthLoopbackResult`, `AuthMaterializationBinding`, `AuthMaterializationHelpers`, `AuthOpenBrowserResult`, `AuthPkceChallenge`, `AuthPromptTextInput`, `AuthPromptTextResult`, `ConnectedAccountAuthCompletionResult`, `ConnectedAccountAuthenticationAttempt`, `ConnectedAccountAuthenticationContext`, `ConnectedAccountAuthenticationModeRuntime`, `ConnectedAccountBindingEvent`, `ConnectedAccountBindingSummary`, `ConnectedAccountCredentialStore`, `ConnectedAccountDeviceBeginResult`, `ConnectedAccountDevicePollResult`, `ConnectedAccountHealthResult`, `ConnectedAccountListedAccount`, `ConnectedAccountListedMaterializationRequest`, `ConnectedAccountListedState`, `ConnectedAccountListRequest`, `ConnectedAccountManualCompletion`, `ConnectedAccountMaterialization`, `ConnectedAccountMaterializationOptions`, `ConnectedAccountMaterializationRequest`, `ConnectedAccountMetadataList`, `ConnectedAccountMutationContext`, `ConnectedAccountOAuthBeginRequest`, `ConnectedAccountOAuthBeginResult`, `ConnectedAccountOAuthCompletion`, `ConnectedAccountPurposeDeclaration`, `ConnectedAccountPurposeDeclarations`, `ConnectedAccountPurposeId`, `ConnectedAccountReadContext`, `ConnectedAccountReconciliationResult`, `ConnectedAccountRef`, `ConnectedAccountRuntime`, `ConnectedAccountRuntimeConfiguration`, `ConnectedAccountRuntimeConfigurationTarget`, `ConnectedAccountsService`, `ConnectedAccountState`, `ConnectedServiceCredentialRecordV1`, `ConnectedServiceId`, `CredentialRequirementOptions`, `OauthAuthEntry`, `OauthCredentialRecord`, `OauthCredentialRecordWithExpiry`, `PluginConnectedAccountAuthenticationModeV2`, `PluginConnectedAccountAuthenticationV2`, `PluginConnectedAccountConfigurationFieldV2`, `PluginConnectedAccountConfigurationV2`, `PluginConnectedAccountDescriptorContributionV2`, `PluginConnectedAccountMaterializationKind`, `PluginConnectedAccountRegistrationApi`, `ProviderLimitCategory`, `ProviderLimitEvidenceClassification`, `ProviderLimitEvidenceConfidence`, `ProviderLimitEvidenceContext`, `ProviderLimitEvidenceProvenance`, `QualifiedConnectedAccountRef`, `QualifiedConnectedAccountServiceRef`, `QuotaFetchErrorCode`, `TokenCredentialRecord`, `UnsupportedAccountUsage`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/contributions — 38 exports">
+
+Anywhere. Source: `src/contributions/index.ts`.
+
+**Values** — `defineContributionPoint`, `defineContributionProtocol`, `PluginTargetedContributionSelectionV1Schema`
+
+**Types** — `ContributionActionDangerLevel`, `ContributionActionSurface`, `ContributionAuthorDefinition`, `ContributionAuthorTargets`, `ContributionContributeInput`, `ContributionOperationBindings`, `ContributionOperationDefinition`, `ContributionOperationRole`, `ContributionPointAuthorDefinition`, `ContributionPointOptions`, `ContributionProtocol`, `ContributionProtocolDefinition`, `ContributionProtocolForPoint`, `ContributionProtocolManifest`, `ContributionSurfaceBinding`, `ContributionSurfaceBindings`, `ContributionSurfaceDefinition`, `ContributionSurfaceFallback`, `ContributionSurfaceHandle`, `ContributionSurfaceIcon`, `ContributionSurfaceLocalizedString`, `ContributionSurfaceNode`, `ContributionSurfaceNodeInput`, `ContributionSurfacePresentation`, `ContributionSurfaceRole`, `DefinedContributionPointProtocolMap`, `DescriptorFields`, `IsRequiredSurfaceDefinition`, `PluginTargetedContributionSelectionV1`, `PublicContributionProtocol`, `PublicContributionProtocols`, `RequiredSurfaceRoles`, `SchemaInput`, `SchemaOutput`, `SurfaceFields`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/events — 22 exports">
+
+Anywhere. Source: `src/events/index.ts`.
+
+**Values** — `PluginEventAutomationHistoryGapResetActionInputV1JsonSchema`, `PluginEventAutomationHistoryGapResetActionInputV1Schema`, `PluginEventAutomationHistoryGapResetActionResultV1JsonSchema`, `PluginEventAutomationHistoryGapResetActionResultV1Schema`, `PluginEventAutomationSetupResultV1Schema`
+
+**Types** — `EventContribution`, `EventsService`, `EventSubscriptionTarget`, `HostEventEnvelope`, `HostEventId`, `HostEventPayloadById`, `HostEvents`, `HostEventScope`, `HostEventScopeById`, `HostEventTarget`, `PluginEventAutomationHistoryGapResetActionInputV1`, `PluginEventAutomationHistoryGapResetActionResultV1`, `PluginEventAutomationSetupResultV1`, `PluginEventEmitResult`, `PluginEventEnvelope`, `PluginEventHandler`, `PluginEvents`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/exec — 16 exports">
+
+Anywhere. Source: `src/exec/index.ts`.
+
+**Types** — `AgentCliReadinessRequest`, `AgentCliReadinessResult`, `AgentCliReadinessService`, `ExecService`, `ExecSpawnRequest`, `PluginExecSpawnRequest`, `PluginProcessHandle`, `PluginProcessObservedTermination`, `PluginProcessOutput`, `PluginProcessResult`, `PluginProcessTerminationRequest`, `ResolvedSystemTool`, `SystemToolContribution`, `SystemToolDiagnostic`, `SystemToolResolveRequest`, `SystemToolsService`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/exec/protocol-clients — 14 exports">
+
+Anywhere. Source: `src/exec/protocol-clients/index.ts`.
+
+**Types** — `PluginFramedBytesClient`, `PluginJsonRpcClient`, `PluginJsonStreamClient`, `PluginLoopbackWebSocketClientSpec`, `PluginLoopbackWebSocketEndpoint`, `PluginLoopbackWebSocketHandshake`, `PluginLoopbackWebSocketHeader`, `PluginLoopbackWebSocketJsonClient`, `PluginProtocolClientByKind`, `PluginProtocolClientHandle`, `PluginProtocolClientKind`, `PluginProtocolClientSpec`, `PluginProtocolClientSpecByKind`, `ProtocolClientsService`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/fs — 14 exports">
+
+Daemon only. Source: `src/fs/index.ts`.
+
+**Values** — `canonicalizePath`, `canonicalizePathSync`, `expandHomePath`, `isCanonicalAbsolutePathInsideRoot`, `resolveConfiguredPath`, `resolveHomeDirFromEnvironment`, `withExclusiveFileLock`, `writeAtomicJsonFile`, `writeAtomicTextFile`, `writeSecureTempTextFileSync`
+
+**Types** — `FileSystemService`, `FsAtomicWriteJsonInput`, `FsAtomicWriteTextInput`, `SecureTempTextFileInput`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/hooks — 33 exports">
+
+Daemon only. Source: `src/hooks/index.ts`.
+
+**Values** — `ActionExecuteAfterHookPayloadSchema`, `ActionExecuteBeforeHookPayloadSchema`, `AgentToolExecuteAfterHookPayloadSchema`, `AgentToolExecuteBeforeHookPayloadSchema`, `getPluginHookDefinition`, `PLUGIN_HOOK_IDS`, `PluginAgentCompositionRequestSchema`, `PluginAgentCompositionResultSchema`, `PluginExecutionCallerSchema`, `PluginExecutionInterceptionCapabilitySchema`, `PluginExecutionInterceptionResultSchema`
+
+**Types** — `ActionExecuteAfterHookPayload`, `ActionExecuteBeforeHookPayload`, `AgentToolExecuteAfterHookPayload`, `AgentToolExecuteBeforeHookPayload`, `HookCategoryV1`, `HookContribution`, `HookExecutionKindV1`, `HookHandler`, `PluginAgentCompositionRequest`, `PluginAgentCompositionResult`, `PluginExecutionCaller`, `PluginExecutionInterceptionCapability`, `PluginExecutionInterceptionResult`, `PluginHookAggregationKind`, `PluginHookDecisionResult`, `PluginHookDefinition`, `PluginHookFailureMode`, `PluginHookId`, `PluginHookPayloadMap`, `PluginHookPurity`, `PluginHookScope`, `PluginHookSupportedRuntimeFamily`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/host/fs/json-owner-file-lock — 2 exports">
+
+Host-only. Daemon only. Source: `src/host/fs/json-owner-file-lock/index.ts`.
+
+**Values** — `reclaimJsonOwnerFileLockSnapshot`, `withJsonOwnerFileLock`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/host/registration — 4 exports">
+
+Host-only. Anywhere. Source: `src/host/registration/index.ts`.
+
+**Values** — `createPluginRegistrationScope`
+
+**Types** — `PluginAgentRuntimeRegistration`, `PluginRegistrationRight`, `PluginRuntimeRegistration`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/host/targeted-contributions — 6 exports">
+
+Host-only. Daemon only. Source: `src/host/targeted-contributions/index.ts`.
+
+**Values** — `decodeTargetedContributionPointSemantics`, `readTargetedContributionPointSemanticRefs`
+
+**Types** — `TargetedContributionPointSemanticInput`, `TargetedContributionPointSemanticOperation`, `TargetedContributionPointSemanticProjection`, `TargetedContributionPointSemanticSurface`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/http — 13 exports">
+
+Anywhere. Source: `src/http/index.ts`.
+
+**Types** — `HttpMethod`, `HttpService`, `PluginFetchCredentialBinding`, `PluginInterceptedRequest`, `PluginInterceptorRegistrationApi`, `PluginInterceptorResult`, `PluginRequestInterceptor`, `PluginWebSocketClose`, `PluginWebSocketConnection`, `PluginWebSocketHeader`, `PluginWebSocketMessage`, `PluginWebSocketOpenInput`, `RequestInterceptorContribution`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/interactions — 26 exports">
+
+Anywhere. Source: `src/interactions/index.ts`.
+
+**Types** — `ApprovalQueueListItem`, `ApprovalQueueQuery`, `ApprovalQueueRequest`, `ApprovalQueueRequestResult`, `ApprovalQueueService`, `ApprovalQueueSnapshot`, `ApprovalRequest`, `ApprovalRequestStatus`, `InteractionOptions`, `InteractionSeverity`, `InteractionsService`, `InteractionTerminalStatusV1`, `InteractionTransientApprovalAuthorRequestV1`, `InteractionTransientApprovalResultV1`, `InteractionTransientAuthorQuestionV1`, `InteractionTransientAuthorRequestV1`, `InteractionTransientChoiceSelectionV1`, `InteractionTransientConfirmationAuthorRequestV1`, `InteractionTransientConfirmationResultV1`, `InteractionTransientQuestionAnswerV1`, `InteractionTransientQuestionsAuthorRequestV1`, `InteractionTransientQuestionsResultV1`, `InteractionTransientResultV1`, `PluginInvocationSurface`, `PresentationService`, `UiWidget`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/managed-services — 26 exports">
+
+Daemon only. Source: `src/managed-services/index.ts`.
+
+**Values** — `ManagedDependencyDescriptorSchema`, `ManagedServiceLocalIdSchema`, `readManagedServiceEndpointUrl`
+
+**Types** — `ManagedDependenciesService`, `ManagedDependencyContribution`, `ManagedDependencyDescriptor`, `ManagedDependencyReady`, `ManagedDependencyStatus`, `ManagedExecutableRef`, `ManagedServiceAttachClientAccess`, `ManagedServiceClientAccess`, `ManagedServiceCredentialBinding`, `ManagedServiceEndpointHostPolicy`, `ManagedServiceEndpointUrlFacts`, `ManagedServiceEndpointUrlRejection`, `ManagedServiceEndpointUrlResult`, `ManagedServiceErrorCode`, `ManagedServiceHandle`, `ManagedServiceHealthCheck`, `ManagedServiceLocalId`, `ManagedServiceMaterializationInjection`, `ManagedServiceRequest`, `ManagedServiceResponse`, `ManagedServices`, `ManagedServiceSnapshot`, `ManagedServiceSpec`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/manifest — 48 exports">
+
+Anywhere. Source: `src/manifest/index.ts`.
+
+**Values** — `compilePluginJsonSchema`, `createPluginContributionIdentity`, `isValidPluginJsonSchemaValue`, `parsePluginManifest`, `PluginContributionIdentityV1JsonSchema`, `PluginContributionIdentityV1Schema`, `PluginIdJsonSchema`, `PluginIdSchema`
+
+**Types** — `ParsedPluginManifest`, `PluginAvailabilityDescriptor`, `PluginBrowserActionContribution`, `PluginBrowserActionContributionInput`, `PluginBrowserContributionDisplay`, `PluginBrowserTargetContribution`, `PluginBrowserTargetContributionInput`, `PluginCollectionProjectedScalarFieldRefV1`, `PluginCollectionRowCommandV1`, `PluginContributes`, `PluginContributionIdentity`, `PluginContributionReference`, `PluginDeclarativeActionNodeV2`, `PluginDeclarativeActionPanelNodeV2`, `PluginDeclarativeActionVariantV2`, `PluginDeclarativeCollectionListNodeV2`, `PluginDeclarativeComposerApplyEffectV1`, `PluginDeclarativeControlV2`, `PluginDeclarativeItemNodeV2`, `PluginDeclarativeListNodeV2`, `PluginDeclarativeMetadataEntryV2`, `PluginDeclarativeMetadataNodeV2`, `PluginDeclarativeNodeV2`, `PluginDeclarativeRowNodeV2`, `PluginDeclarativeSectionNodeV2`, `PluginDeclarativeStateNodeV2`, `PluginDeclarativeStateV2`, `PluginDeclarativeTargetedSurfaceNodeV2`, `PluginDeclarativeTargetedSurfaceReferenceV1`, `PluginDeclarativeToneV2`, `PluginHttpMethod`, `PluginJsonSchemaValidator`, `PluginLocalizedStringV2`, `PluginManifest`, `PluginManifestAuthorInput`, `PluginManifestDiagnostic`, `PluginManifestParseResult`, `PluginRequestInterceptorContribution`, `PluginTestkitManifest`, `PublicHostAccessCapability`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/mcp — 48 exports">
+
+Daemon only. Source: `src/mcp/index.ts`.
+
+**Values** — `normalizeDetectedMcpServerV1`
+
+**Types** — `DetectedMcpServerV1`, `DiscoveryWarning`, `McpAnnotations`, `McpBlobResourceContents`, `McpClient`, `McpDiscoveredEndpoint`, `McpDiscoveredServer`, `McpDiscoveryHandler`, `McpDiscoveryRequest`, `McpDiscoveryResult`, `McpDiscoverySourceContribution`, `McpDiscoverySourceRef`, `McpElicitationMode`, `McpGetPromptRequest`, `McpGetPromptResult`, `McpIcon`, `McpListToolsRequest`, `McpPageOptions`, `McpPageRequest`, `McpPrompt`, `McpPromptArgument`, `McpPromptContent`, `McpPromptMessage`, `McpPromptPage`, `McpReadResourceRequest`, `McpReadResourceResult`, `McpRegistrationApi`, `McpResource`, `McpResourceContents`, `McpResourcePage`, `McpResourceTemplate`, `McpResourceTemplatePage`, `McpResourceUpdatedEvent`, `McpServerContribution`, `McpServerRef`, `McpServerRuntime`, `McpServerSummary`, `McpServerTransport`, `McpService`, `McpSubscribeResourceRequest`, `McpTextResourceContents`, `McpTool`, `McpToolCallContent`, `McpToolCallRequest`, `McpToolCallResult`, `McpToolPage`, `McpToolPageOptions`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/notifications — 11 exports">
+
+Anywhere. Source: `src/notifications/index.ts`.
+
+**Types** — `NotificationBatchResult`, `NotificationCategoryContribution`, `NotificationCategorySummary`, `NotificationChannelContribution`, `NotificationChannelSummary`, `NotificationPreferences`, `NotificationSender`, `NotificationSendRequest`, `NotificationSendResult`, `NotificationsService`, `PluginNotificationRegistrationApi`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/protocol — 28 exports">
+
+Anywhere. Source: `src/protocol/index.ts`.
+
+**Values** — `defineProtocolArray`, `defineProtocolJsonValue`, `defineProtocolLiteral`, `defineProtocolNumber`, `defineProtocolObject`, `defineProtocolString`, `defineProtocolUnion`, `defineProtocolUniqueArray`, `defineProtocolUtf8String`, `pluginJsonValuesEqual`, `ProtocolComposerRefV1Schema`, `ProtocolValidationError`
+
+**Types** — `PluginJsonSchema`, `ProtocolArrayOptions`, `ProtocolComposableSchema`, `ProtocolComposerRefV1`, `ProtocolJsonValue`, `ProtocolJsonValueOptions`, `ProtocolNumberOptions`, `ProtocolObjectEvolutionPolicy`, `ProtocolObjectOptions`, `ProtocolSchemaInput`, `ProtocolSchemaOutput`, `ProtocolSchemaSafeParseResult`, `ProtocolStringOptions`, `ProtocolUniqueJsonArrayOptions`, `ProtocolUtf8StringOptions`, `ProtocolValidationIssue`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/providers — 74 exports">
+
+Anywhere. Source: `src/providers/index.ts`.
+
+**Values** — `areProviderContributionKeysEqualV1`, `containsProviderRegisteredSensitiveValue`, `normalizeProviderCredentialHeaderName`, `ProviderConnectionIdSchema`, `ProviderContributionV1Schema`, `ProviderEndpointUrlSyntaxSchema`, `ProviderPublicHeadersV1Schema`, `resolveProviderBindingCompatibilityWithFingerprintV1`, `resolveSessionModelSelectionIntentV1`, `SessionModelSelectionResolutionError`, `SessionModelSelectionV1Schema`
+
+**Types** — `AgentProviderRequirementsV1`, `BundledProviderCatalogParserId`, `BundledProviderWireProtocol`, `ManagedProviderEndpoint`, `ManagedProviderRuntime`, `ManagedProviderRuntimeContext`, `ManagedProviderStartRequest`, `ProviderApiKeyCredentialRequirementV1`, `ProviderBindingCompatibilityResolutionInput`, `ProviderBindingStatusRequest`, `ProviderBindingStatusResult`, `ProviderCapabilitySupport`, `ProviderCatalogCommandFallbackV1`, `ProviderCatalogDeclarationV1`, `ProviderCatalogParsedModel`, `ProviderCatalogParsedModelLoadState`, `ProviderCatalogParser`, `ProviderCatalogParseResult`, `ProviderCatalogParserId`, `ProviderCatalogProbeV1`, `ProviderCatalogService`, `ProviderCompatibilityCapabilitiesV1`, `ProviderCompatibilityOverrideV1`, `ProviderConnectionId`, `ProviderConnectionMutationRequest`, `ProviderConnectionMutationResult`, `ProviderConnectionsDescribeRequest`, `ProviderConnectionsDescribeResult`, `ProviderConnectionsService`, `ProviderContribution`, `ProviderCredentialDestinationV1`, `ProviderCredentialFormatV1`, `ProviderCredentialTransportV1`, `ProviderDetectionDescriptorV1`, `ProviderEndpointTemplateV1`, `ProviderLegacyProfileMigrationDescriptorV1`, `ProviderLocalId`, `ProviderManagedRuntimeDeclaration`, `ProviderMigrationsService`, `ProviderModelLoadDescriptorV1`, `ProviderModelLoadRequest`, `ProviderModelLoadResult`, `ProviderModelLoadStateV1`, `ProviderModelProjectionRequest`, `ProviderModelProjectionResult`, `ProviderModelSettingsMutationRequest`, `ProviderModelSettingsMutationResult`, `ProviderModelsRequest`, `ProviderModelsResult`, `ProviderProbeRequest`, `ProviderProbeResult`, `ProviderProfileMigrationConfirmRequest`, `ProviderProfileMigrationConfirmResult`, `ProviderProfileMigrationConflictConfirmRequest`, `ProviderProfileMigrationConflictConfirmResult`, `ProviderProfileMigrationPreviewRequest`, `ProviderProfileMigrationPreviewResult`, `ProvidersRegistrationApi`, `ProvidersService`, `ProviderWireProtocol`, `ResolveProviderBindingCompatibilityInputV1`, `SessionModelSelectionIntentResolutionInput`, `SessionModelSelectionResolutionErrorCode`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/resources — 55 exports">
+
+Anywhere. Source: `src/resources/index.ts`.
+
+**Types** — `PluginDynamicResourceContributionV2`, `PluginDynamicResourceInvocationOptionsV1`, `PluginDynamicResourceRuntime`, `PluginPackagedResourceContributionV2`, `PluginPromptAssetDefinition`, `PluginResourceContextV1`, `PluginResourceDefinition`, `PluginResourceKind`, `PromptAssetAdapter`, `PromptAssetBundleRecord`, `PromptAssetCapabilities`, `PromptAssetContribution`, `PromptAssetDefaultRoot`, `PromptAssetDeleteRequest`, `PromptAssetDiscoverRequest`, `PromptAssetDiscoverResult`, `PromptAssetDiscoveryItem`, `PromptAssetDocRecord`, `PromptAssetExternalRef`, `PromptAssetInstallMode`, `PromptAssetLibraryKind`, `PromptAssetListTypesResult`, `PromptAssetMutationErrorCode`, `PromptAssetMutationPreview`, `PromptAssetMutationResult`, `PromptAssetReadRequest`, `PromptAssetReadResult`, `PromptAssetScope`, `PromptAssetSupportsScope`, `PromptAssetTypeDescriptor`, `PromptAssetWriteBundleRequest`, `PromptAssetWriteDocRequest`, `PromptAssetWriteRequest`, `PromptRegistryAdapterDescriptor`, `PromptRegistryConfiguredSource`, `PromptRegistryErrorCode`, `PromptRegistryErrorResult`, `PromptRegistryFetchedItem`, `PromptRegistryFetchItemRequest`, `PromptRegistryFetchItemResult`, `PromptRegistryInstallRequest`, `PromptRegistryInstallResult`, `PromptRegistryInstallTarget`, `PromptRegistryItemSummary`, `PromptRegistryListAdaptersResult`, `PromptRegistryListSourcesRequest`, `PromptRegistryListSourcesResult`, `PromptRegistryScanSourceRequest`, `PromptRegistryScanSourceResult`, `PromptRegistrySourceDescriptor`, `PromptRegistrySources`, `ResourceContribution`, `ResourceDescriptor`, `ResourcesRegistrationApi`, `ResourcesService`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/reviews — 34 exports">
+
+Daemon only. Source: `src/reviews/index.ts`.
+
+**Values** — `createReviewCommentFingerprint`, `parseReviewFindingsV2`, `redactReviewCommentSensitiveText`, `REVIEW_SCM_SCOPE_INPUT_KEY`, `ReviewFindingSchema`, `ReviewFindingsV2Schema`, `ReviewScmScopeBaseRefSourceV1Schema`, `ReviewScmScopeBaseRefV1Schema`, `ReviewScmScopeDiagnosticCodeV1Schema`, `ReviewScmScopeDiagnosticV1Schema`, `ReviewScmScopeDiffV1Schema`, `ReviewScmScopePathDiffV1Schema`, `ReviewScmScopePathV1Schema`, `ReviewScmScopeV1Schema`, `ReviewStartInputSchema`
+
+**Types** — `CreateReviewCommentFingerprintInput`, `ReviewCommentAnchorV1`, `ReviewCommentEvidenceV1`, `ReviewCommentFingerprintV1`, `ReviewCommentSensitiveTextRedactionOptions`, `ReviewCommentSnapshotV1`, `ReviewCommentV1`, `ReviewFinding`, `ReviewFindingId`, `ReviewFindingsV2`, `ReviewScmScopeBaseRefSourceV1`, `ReviewScmScopeBaseRefV1`, `ReviewScmScopeDiagnosticCodeV1`, `ReviewScmScopeDiagnosticV1`, `ReviewScmScopeDiffV1`, `ReviewScmScopePathDiffV1`, `ReviewScmScopePathV1`, `ReviewScmScopeV1`, `ReviewStartInput`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/scm — 144 exports">
+
+Daemon only. Source: `src/scm/index.ts`.
+
+**Values** — `createScmCapabilities`, `encodeCompareRef`, `evaluateScmRemoteMutationPolicy`, `evaluateScmRemoteMutationPreconditions`, `isScmPatchBoundToPath`, `normalizeScmBranchSourceRef`, `normalizeScmRemoteName`, `normalizeScmRemoteRequest`, `normalizeScmRemoteUrl`, `parseScmRemoteUrl`, `resolveScmScopedChangedPaths`, `SCM_COMMIT_MESSAGE_MAX_LENGTH`, `SCM_COMMIT_PATCH_MAX_COUNT`, `SCM_COMMIT_PATCH_MAX_LENGTH`, `SCM_OPERATION_ERROR_CODES`, `SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN`, `ScmCapabilitiesSchema`, `ScmCloneProtocolSchema`, `ScmRefreshPolicySchema`, `ScmSelectedMutationPathSchema`, `ScmWorkingSnapshotSchema`, `stripTrailingSlash`
+
+**Types** — `ParsedScmRemoteUrl`, `PluginScmRegistrationApi`, `ScmBranchCheckoutRequest`, `ScmBranchCheckoutResponse`, `ScmBranchCreateRequest`, `ScmBranchCreateResponse`, `ScmBranchIntegrationOperation`, `ScmBranchIntegrationRequest`, `ScmBranchIntegrationResponse`, `ScmBranchListEntry`, `ScmBranchListRequest`, `ScmBranchListResponse`, `ScmBranchOperationControlRequest`, `ScmBranchSourceRefNormalizationResult`, `ScmCapabilities`, `ScmChangeApplyRequest`, `ScmChangeApplyResponse`, `ScmChangeDiscardRequest`, `ScmChangeDiscardResponse`, `ScmCloneProtocol`, `ScmCommitBackoutRequest`, `ScmCommitBackoutResponse`, `ScmCommitCreateRequest`, `ScmCommitCreateResponse`, `ScmDefaultBranchPushPolicy`, `ScmDiffCommitRequest`, `ScmDiffCommitResponse`, `ScmDiffFileRequest`, `ScmDiffFileResponse`, `ScmFollowupAction`, `ScmHostingRepositoryAuthSummary`, `ScmHostingRepositoryDescribePublishTargetsRequest`, `ScmHostingRepositoryDescribePublishTargetsResponse`, `ScmHostingRepositoryPublishRequest`, `ScmHostingRepositoryPublishResponse`, `ScmHostingRepositoryPublishTarget`, `ScmHostingRepositoryRemoteUrlKind`, `ScmHostingRepositorySummary`, `ScmHostingRepositoryVisibility`, `ScmLogEntry`, `ScmLogListRequest`, `ScmLogListResponse`, `ScmOperationErrorCode`, `ScmOperationState`, `ScmPullRequestAuthState`, `ScmPullRequestCheckoutRequest`, `ScmPullRequestCheckoutResponse`, `ScmPullRequestChecksState`, `ScmPullRequestGetRequest`, `ScmPullRequestGetResponse`, `ScmPullRequestListRequest`, `ScmPullRequestListResponse`, `ScmPullRequestOpenComposeRequest`, `ScmPullRequestOpenComposeResponse`, `ScmPullRequestOpenOrReuseRequest`, `ScmPullRequestOpenOrReuseResponse`, `ScmPullRequestPrepareWorktreeRequest`, `ScmPullRequestPrepareWorktreeResponse`, `ScmPullRequestReference`, `ScmPullRequestRunStackedPhase`, `ScmPullRequestRunStackedProgressEvent`, `ScmPullRequestRunStackedRequest`, `ScmPullRequestRunStackedResponse`, `ScmPullRequestState`, `ScmPullRequestStatusProjection`, `ScmPullRequestSummary`, `ScmRefreshPolicy`, `ScmRemoteAddRequest`, `ScmRemoteInfo`, `ScmRemoteManagementResponse`, `ScmRemoteMutationGuardResult`, `ScmRemoteMutationKind`, `ScmRemoteMutationPolicy`, `ScmRemoteMutationReason`, `ScmRemoteMutationReasonMapper`, `ScmRemoteMutationResult`, `ScmRemoteMutationSnapshot`, `ScmRemoteNameNormalizationResult`, `ScmRemotePublishRequest`, `ScmRemotePublishResponse`, `ScmRemoteRemoveRequest`, `ScmRemoteRequest`, `ScmRemoteRequestNormalizationResult`, `ScmRemoteResponse`, `ScmRemoteSetUrlRequest`, `ScmRemoteUrlNormalizationResult`, `ScmRemoteUrlScheme`, `ScmRepoMode`, `ScmRepositoryCloneInput`, `ScmRepositoryCloneOutput`, `ScmRepositoryCloneTarget`, `ScmRepositoryCloneTargetDescription`, `ScmRepositoryInitRequest`, `ScmRepositoryInitResponse`, `ScmRepositoryRemoveIndexLockRequest`, `ScmRepositoryRemoveIndexLockResponse`, `ScmSelectedMutationPath`, `ScmStashApplyRequest`, `ScmStashApplyResponse`, `ScmStashDropRequest`, `ScmStashDropResponse`, `ScmStashEntry`, `ScmStashListRequest`, `ScmStashListResponse`, `ScmStashPopRequest`, `ScmStashPopResponse`, `ScmStashShowRequest`, `ScmStashShowResponse`, `ScmStatusSnapshotRequest`, `ScmStatusSnapshotResponse`, `ScmWorkingEntry`, `ScmWorkingSnapshot`, `ScmWorktree`, `ScmWorktreeCreateRequest`, `ScmWorktreeCreateResponse`, `ScmWorktreeEnrichmentEntry`, `ScmWorktreePruneRequest`, `ScmWorktreePruneResponse`, `ScmWorktreeRemoveRequest`, `ScmWorktreeRemoveResponse`, `ScmWorktreesEnrichmentRequest`, `ScmWorktreesEnrichmentResponse`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/scm/backend — 45 exports">
+
+Daemon only. Source: `src/scm/backend/index.ts`.
+
+**Values** — `createScmCapabilitiesFromBackendCapabilities`, `mapGitScmErrorCode`, `mapSaplingScmErrorCode`, `readCurrentBackendRuntimeServices`, `resolveBackendCommandMaxOutputBytes`, `runBackendCommand`, `runWithBackendRuntimeServices`, `ScmBackendCapabilitiesSchema`, `ScmBackendContributionSchema`, `supportedCapability`, `unsupportedCapability`
+
+**Types** — `BackendCommandInput`, `BackendCommandRunInput`, `BackendCommandRunResult`, `BackendCommandSpec`, `BackendRuntime`, `BackendRuntimeContext`, `BackendRuntimeDetection`, `BackendRuntimeHandlerInput`, `BackendRuntimeHandlers`, `BackendRuntimeRegistration`, `BackendRuntimeServices`, `CheckoutMaterializationRequest`, `CreatableWorkspaceCheckoutKind`, `PortableWorkspacePathClassification`, `PortableWorkspacePathRequest`, `ScmBackendCapabilities`, `ScmBackendCapabilityLeaf`, `ScmBackendCapabilityUnavailableReason`, `ScmBackendContribution`, `ScmBackendDescribeRequest`, `ScmBackendDescribeResponse`, `ScmBackendId`, `WorkspaceCheckoutCreationRequest`, `WorkspaceCheckoutCreationResult`, `WorkspaceCheckoutMaterializationRequest`, `WorkspaceCheckoutMaterializationResult`, `WorkspaceCheckoutRealizationRequest`, `WorkspaceCheckoutRealizationResult`, `WorkspaceIntegrationHandlers`, `WorkspaceLocationInspection`, `WorkspaceTransferEntry`, `WorkspaceTransferMetadata`, `WorkspaceTransferRequest`, `WorkspaceTransferResult`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/scm/hosting — 42 exports">
+
+Daemon only. Source: `src/scm/hosting/index.ts`.
+
+**Values** — `readCurrentHostingProviderRuntimeServices`, `requestForgeJson`, `resolveScmHostingProviderFollowupAllowedBaseUrl`, `runWithHostingProviderRuntimeServices`, `ScmHostingProviderKindSchema`
+
+**Types** — `ForgeHttpErrorContext`, `ForgeHttpErrorMapper`, `ForgeHttpFetcher`, `ForgeHttpJsonRequest`, `ForgeHttpResponse`, `HostingProviderCompareUrlInput`, `HostingProviderCompareUrlResult`, `HostingProviderContribution`, `HostingProviderDefaultBranchInput`, `HostingProviderDefaultBranchMetadata`, `HostingProviderDescriptor`, `HostingProviderPullRequestCheckoutReferenceInput`, `HostingProviderPullRequestCheckoutReferenceMetadata`, `HostingProviderPullRequestCreateInput`, `HostingProviderPullRequestGetInput`, `HostingProviderPullRequestListInput`, `HostingProviderRegistryDiagnostic`, `HostingProviderRemoteDetectionInput`, `HostingProviderRemoteDetectionResult`, `HostingProviderRepositoryCreateInput`, `HostingProviderRepositoryDescribeCloneTargetsInput`, `HostingProviderRepositoryDescribePublishTargetsInput`, `HostingProviderRepositoryDescribePublishTargetsResult`, `HostingProviderRepositoryGetInput`, `HostingProviderResolvedProvider`, `HostingProviderResolvedRegistry`, `HostingProviderResolvedRemote`, `HostingProviderRuntime`, `HostingProviderRuntimeAdapter`, `HostingProviderRuntimeBasicAuthMaterializationResult`, `HostingProviderRuntimeCommandResult`, `HostingProviderRuntimeRegistration`, `HostingProviderRuntimeServices`, `HostingProviderRuntimeTokenMaterializationResult`, `HostingProviderUnresolvedRemote`, `ScmHostingProviderKind`, `ScmHostingProviderRef`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/secrets — 4 exports">
+
+Anywhere. Source: `src/secrets/index.ts`.
+
+**Values** — `SecretStringV1Schema`
+
+**Types** — `SecretMutationResult`, `SecretsService`, `SecretStatus`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/sessions — 80 exports">
+
+Daemon only. Source: `src/sessions/index.ts`.
+
+**Values** — `AgentPermissionIntentV1Schema`, `CHANGE_TITLE_TOOL_NAME_ALIASES`, `HappierStructuredInputV1Schema`, `isChangeTitleToolNameAlias`, `isSlashCommandSupported`, `MENTION_KIND_V1`, `MentionRefV1Schema`, `normalizeSessionAttachmentUploadPath`, `normalizeSlashCommandName`, `readHappierStructuredInputV1FromMeta`, `readPendingLocalId`, `readSlashCommandNames`, `readStructuredInputMentionSourcesV1`, `resolveTranscriptBodySessionMessageRole`, `sanitizeHappierStructuredInputV1`, `SessionIdSchema`, `SessionIndexedIdentifierMaxLengthV1`, `SessionMessageProvenanceV1Schema`, `SessionRuntimeIssueV1Schema`, `SessionServerStartSpawnDraftV1Schema`, `SessionSpawnNewInputV2Schema`, `SessionUsageLimitRecoveryV1Schema`, `SPAWN_SESSION_ERROR_CODES`
+
+**Types** — `AgentPermissionIntentV1`, `CurrentSessionHandle`, `HappierStructuredInputV1`, `MentionRefV1`, `SessionAuthService`, `SessionEvent`, `SessionHandle`, `SessionId`, `SessionListQuery`, `SessionMcpElicitDecision`, `SessionMcpElicitRequest`, `SessionMcpElicitResult`, `SessionMcpService`, `SessionMediaPublishGeneratedRequest`, `SessionMediaService`, `SessionMediaSourceRoot`, `SessionMessagePart`, `SessionMessageProvenanceV1`, `SessionMessageRole`, `SessionPage`, `SessionPermissionDecision`, `SessionPermissionDecisionRequest`, `SessionPermissionDecisionResult`, `SessionPermissionFollowUpPromptDelivery`, `SessionPermissionFollowUpPromptIntent`, `SessionPermissionMode`, `SessionPermissionPersistAllowRule`, `SessionPermissionPersistAllowRuleScope`, `SessionPermissionsService`, `SessionRuntimeAuthRefreshRequest`, `SessionRuntimeAuthRefreshResult`, `SessionRuntimeAuthServices`, `SessionRuntimeIssueV1`, `SessionSchema`, `SessionSendRequest`, `SessionSendResult`, `SessionServerStartSpawnDraftV1`, `SessionSpawnNewInputV2`, `SessionsService`, `SessionStateCapabilitiesV1`, `SessionSummary`, `SessionSystemRecord`, `SessionSystemRecordAddress`, `SessionSystemRecordDeleteRequest`, `SessionSystemRecordListQuery`, `SessionSystemRecordPage`, `SessionSystemRecordReadRequest`, `SessionSystemRecordRevision`, `SessionSystemRecordUpsertRequest`, `SessionUsageLimitRecoveryResumePromptModeV1`, `SessionUsageLimitRecoveryV1`, `SessionWatchEvent`, `SessionWatchQuery`, `SkillMentionV1`, `StructuredImageInputV1`, `StructuredInputMentionSourcesV1`, `VendorPluginMentionV1`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/sessions/external — 103 exports">
+
+Daemon only. Source: `src/sessions/external/index.ts`.
+
+**Values** — `AGENT_EXTERNAL_SESSION_HOOK_LIMITS`, `AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS`, `AgentExternalSessionTranscriptRawRecordSchema`, `compareExternalSessionCandidatePrecedence`, `deriveExternalSessionActivity`, `ExternalSessionAgentIdSchema`, `HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1`, `HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1`, `HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1`, `HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1`, `isAgentExternalSessionsFailureCode`, `resolveExternalSessionCandidateIdentityKey`, `validateAgentExternalSessionHookMapEventRequest`, `validateAgentExternalSessionHookMapEventResult`, `validateAgentExternalSessionHookResolveInstallationRequest`, `validateAgentExternalSessionHookResolveInstallationResult`, `validateAgentExternalSessionHooksContribution`, `validateAgentExternalSessionTakeoverContribution`, `validateAgentExternalSessionTakeoverLaunchPlan`, `validateAgentExternalSessionTakeoverResolveLaunchRequest`, `validateAgentExternalSessionTakeoverResolveLaunchResult`
+
+**Types** — `AgentExternalSessionCandidate`, `AgentExternalSessionHookCustodiedEntryProjection`, `AgentExternalSessionHookInstallationVariant`, `AgentExternalSessionHookMapEventRequest`, `AgentExternalSessionHookMapEventResult`, `AgentExternalSessionHookMapEventValue`, `AgentExternalSessionHookResolveInstallationRequest`, `AgentExternalSessionHookResolveInstallationResult`, `AgentExternalSessionHookResolveInstallationValue`, `AgentExternalSessionHooksContribution`, `AgentExternalSessionLinkData`, `AgentExternalSessionLinkDataValue`, `AgentExternalSessionObservationContribution`, `AgentExternalSessionObservationDescribeResourceRequest`, `AgentExternalSessionObservationLinkEvidenceBatchV1`, `AgentExternalSessionObservationLinkKeyV1`, `AgentExternalSessionObservationObserveResourceRequest`, `AgentExternalSessionObservationReconcileLink`, `AgentExternalSessionObservationReconcilePurposeV1`, `AgentExternalSessionObservationReconcileRequestV1`, `AgentExternalSessionObservationReconcileResourceRequest`, `AgentExternalSessionObservationReconcileResultV1`, `AgentExternalSessionObservationResourceDescriptorOutcomeV1`, `AgentExternalSessionObservationResourceDescriptorV1`, `AgentExternalSessionObservationResourceGroupingV1`, `AgentExternalSessionObservationResourceKeyV1`, `AgentExternalSessionObservationWatchFileChangesV1`, `AgentExternalSessionsCandidatePreparation`, `AgentExternalSessionsContribution`, `AgentExternalSessionsFailureCode`, `AgentExternalSessionsInvocation`, `AgentExternalSessionsInvocationBounds`, `AgentExternalSessionsListCandidatesRequest`, `AgentExternalSessionsListCandidatesResult`, `AgentExternalSessionsManagedEndpointRead`, `AgentExternalSessionsManagedEndpointReadRequest`, `AgentExternalSessionsManagedEndpointReadResponse`, `AgentExternalSessionsManagedEndpointServiceRequest`, `AgentExternalSessionSource`, `AgentExternalSessionsPageTranscriptRequest`, `AgentExternalSessionsReadAfterDiagnostic`, `AgentExternalSessionsReadAfterTranscriptRequest`, `AgentExternalSessionsReadAfterTranscriptResult`, `AgentExternalSessionsResolvedIdentity`, `AgentExternalSessionsResolveLinkedIdentityRequest`, `AgentExternalSessionsResolveLinkIdentityRequest`, `AgentExternalSessionsResolveSourceRequest`, `AgentExternalSessionsResolveSourceResult`, `AgentExternalSessionsResult`, `AgentExternalSessionsTranscriptPage`, `AgentExternalSessionTakeoverContribution`, `AgentExternalSessionTakeoverLaunchPlan`, `AgentExternalSessionTakeoverResolveLaunchCallback`, `AgentExternalSessionTakeoverResolveLaunchRequest`, `AgentExternalSessionTakeoverResolveLaunchResult`, `AgentExternalSessionTranscriptItem`, `AgentExternalSessionTranscriptRawRecord`, `AgentExternalSessionUserProjection`, `ExternalSessionAgentId`, `ExternalSessionAttachResult`, `ExternalSessionCandidateRecord`, `ExternalSessionListPage`, `ExternalSessionListQuery`, `ExternalSessionMaterializeActionResult`, `ExternalSessionOperationActionResult`, `ExternalSessionOperationPresentation`, `ExternalSessionOperationReference`, `ExternalSessionReadAfterDiagnostic`, `ExternalSessionRef`, `ExternalSessionsCapabilities`, `ExternalSessionSourceId`, `ExternalSessionsService`, `ExternalSessionTakeoverCapability`, `ExternalSessionTakeoverIdempotencyKey`, `ExternalSessionTakeoverRequest`, `ExternalSessionTranscriptFollowEvent`, `ExternalSessionTranscriptFollowOptions`, `ExternalSessionTranscriptFollowResult`, `ExternalSessionTranscriptItem`, `ExternalSessionTranscriptListener`, `ExternalSessionTranscriptQuery`, `ExternalSessionTranscriptReadResult`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/sessions/file-stores — 32 exports">
+
+Daemon only. Source: `src/sessions/file-stores/index.ts`.
+
+**Values** — `decodeIndexCursor`, `decodeJsonlByteCursor`, `encodeIndexCursor`, `encodeJsonlByteCursor`, `extractUserMessageText`, `findNewestSessionFileInDir`, `isBareSessionFileId`, `listSessionFileStoreRoots`, `parseDefaultSessionHeader`, `parseSessionIdFromFileName`, `readJsonlAfterCursor`, `readJsonlFileBackwardPage`, `readJsonlFileForward`, `readJsonlFileForwardLines`, `resolveSessionFileStoreDirs`, `resolveSessionFileStoreDirsSync`, `resolveSessionFileStoreLaunchEnvironment`, `scanJsonlSessionFile`, `sessionFileNameMatchesSessionId`
+
+**Types** — `JsonlByteCursorV1`, `JsonlForwardLine`, `JsonlParsedLine`, `JsonlScanBounds`, `JsonlScannerFileSystem`, `JsonlSessionFileDescriptor`, `JsonlSourceDiagnostic`, `SessionFileStoreDirSource`, `SessionFileStoreHeaderDescriptor`, `SessionFileStoreProductDescriptor`, `SessionFileStoreResolution`, `SessionFileStoreResolutionInput`, `SessionFileStoreRootDescriptorV1`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/sessions/subagents — 16 exports">
+
+Anywhere. Source: `src/sessions/subagents/index.ts`.
+
+**Values** — `isGenericSubagentToolName`, `parseParticipantMessageV1`, `parseSubagentCommandV1`, `parseSubagentLaunchV1`
+
+**Types** — `ExecutionRunProfileContribution`, `ParticipantMessageV1`, `ParticipantRecipientV1`, `SubagentCommandV1`, `SubagentLaunchV1`, `SubagentLifecycleDetailV1`, `SubagentObservation`, `SubagentRefInputV1`, `SubagentRefV1`, `SubagentsService`, `SubagentStatusV1`, `SubagentSummary`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/sessions/work-state — 82 exports">
+
+Anywhere. Source: `src/sessions/work-state/index.ts`.
+
+**Values** — `ACTIVITY_SESSION_SYSTEM_RECORD_KINDS`, `AGENT_ACTIVITY_KINDS_V1`, `AGENT_ACTIVITY_STATUSES_V1`, `AGENT_ACTIVITY_TONES_V1`, `AgentActivityKindV1Schema`, `AgentActivityStatusV1Schema`, `AgentActivityToneV1Schema`, `BACKGROUND_TASK_KINDS_V1`, `BACKGROUND_TASK_LABEL_MAX`, `BACKGROUND_TASK_LABEL_TRUNCATION_SUFFIX`, `BACKGROUND_TASK_SUMMARY_MAX`, `BackgroundTaskKindV1Schema`, `boundSessionWorkStateItemsV1`, `buildAgentActivityEntryId`, `buildBackgroundTaskSystemRecordLocalId`, `buildSessionAgentActivityHeadline`, `buildSessionWorkflowActivityHeadline`, `buildWorkflowRunSystemRecordLocalId`, `bumpWorkflowRunRecordRevision`, `createWorkflowActivityPublisher`, `fromWorkflowAgentStatus`, `fromWorkflowRunStatus`, `isTerminalAgentActivityStatus`, `isTerminalWorkflowRunStatus`, `isWorkflowRunSnapshotMaterialChange`, `parseAgentActivityEntryId`, `parseSessionAgentActivityHeadlineV1`, `projectWorkflowRunAgentActivityEntries`, `readSessionAgentActivityHeadlineFromMetadata`, `redactBackgroundCommand`, `resolveAgentActivityEntryAgentHandle`, `resolveAgentActivityTone`, `resolveSessionWorkStatePrimaryItemId`, `SESSION_AGENT_ACTIVITY_ENTRY_TITLE_MAX`, `SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY`, `SESSION_AGENT_ACTIVITY_RECENT_ENTRIES_LIMIT`, `SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE`, `SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION`, `SESSION_WORKFLOW_RUN_SNAPSHOT_RESULT_PREVIEW_MAX`, `SESSION_WORKFLOW_RUN_SNAPSHOT_SUMMARY_MAX`, `SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX`, `SessionActivityHeadlineBundleV1Schema`, `SessionAgentActivityEntryV1Schema`, `SessionAgentActivityHeadlineV1Schema`, `SessionBackgroundTaskRecordV1Schema`, `SessionWorkflowActivityHeadlineV1Schema`, `SessionWorkflowRunSnapshotV1Schema`
+
+**Types** — `ActivitySessionSystemRecordKind`, `AgentActivityEntryRefV1`, `AgentActivityKindV1`, `AgentActivityStatusV1`, `AgentActivityToneV1`, `BackgroundCommandPathCollapse`, `BackgroundTaskKindV1`, `BuildSessionAgentActivityHeadlineInput`, `BuildSessionWorkflowActivityHeadlineInput`, `ResolveSessionWorkStatePrimaryOptions`, `SessionActivityHeadlineBundleV1`, `SessionAgentActivityEntryV1`, `SessionAgentActivityHeadlineV1`, `SessionBackgroundTaskRecordV1`, `SessionWorkflowActivityHeadlineV1`, `SessionWorkflowAgentSnapshotV1`, `SessionWorkflowAgentStatusV1`, `SessionWorkflowPhaseSnapshotV1`, `SessionWorkflowRunHeadlineV1`, `SessionWorkflowRunSnapshotV1`, `SessionWorkflowRunStatusReasonV1`, `SessionWorkflowRunStatusV1`, `SessionWorkStateGoalCapabilitiesV1`, `SessionWorkStateItemV1`, `SessionWorkStateStatusV1`, `SessionWorkStateTruncationV1`, `SessionWorkStateUnknownItemV1`, `SessionWorkStateV1`, `WorkflowActivityPublisher`, `WorkflowActivityPublishInput`, `WorkflowActivityPublishResult`, `WorkStateItem`, `WorkStatePublisher`, `WorkStateService`, `WorkStateTruncation`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/settings — 14 exports">
+
+Anywhere. Source: `src/settings/index.ts`.
+
+**Types** — `PluginSettingFieldIdV2`, `PluginSettingsActionDeclaration`, `PluginSettingsActionInput`, `PluginSettingsActionResult`, `PluginSettingsActionRuntime`, `PluginSettingsContribution`, `ScopedSettingsService`, `SettingDescriptor`, `SettingField`, `SettingsChange`, `SettingsMutationResult`, `SettingsScopeRef`, `SettingsService`, `SettingsSnapshot`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/storage — 25 exports">
+
+Daemon only. Source: `src/storage/index.ts`.
+
+**Values** — `requireAccountStorage`
+
+**Types** — `AccountKvEntry`, `AccountKvListItem`, `AccountKvService`, `AccountKvTransaction`, `DaemonDatabase`, `DaemonDatabaseExecutionResult`, `DaemonDatabaseIncumbentQueryFixture`, `DaemonDatabaseMigration`, `DaemonDatabaseMigrationDeclaration`, `DaemonDatabaseMigrationReadTransaction`, `DaemonDatabaseMigrationTransaction`, `DaemonDatabaseOperationOptions`, `DaemonDatabaseReadTransaction`, `DaemonDatabaseRow`, `DaemonDatabaseService`, `DaemonDatabaseStorageScope`, `DaemonDatabaseTransaction`, `DaemonDatabaseValue`, `PluginAccountStorageConsumerContext`, `PluginAccountStorageScope`, `StorageConsistency`, `StorageScopeService`, `StorageService`, `StorageTransaction`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/testing — 58 exports">
+
+Daemon only. Source: `src/testing/index.ts`.
+
+**Values** — `createAgentSessionRuntimeHarness`, `createPluginTestkit`, `createPluginUiTestkit`, `createSurfaceContextFixture`, `PluginUiSemanticAdapterSnapshotSchema`, `PluginUiSemanticRoleSchema`, `PluginUiSemanticStateSchema`, `PluginUiSemanticTargetSchema`, `PluginUiSemanticTextTargetSchema`, `readPluginUiTestkitTargetedSurfaceAdmission`, `SURFACE_CONTEXT_THEME_FIXTURE`
+
+**Types** — `AgentSessionRuntimeEventKind`, `AgentSessionRuntimeEventSubscriber`, `AgentSessionRuntimeEventValidationFailure`, `AgentSessionRuntimeHarness`, `PluginTestkit`, `PluginTestkitAdmittedTargetedOperation`, `PluginTestkitAdmittedTargetedOperationRequest`, `PluginTestkitInvokeActionOptions`, `PluginTestkitOptions`, `PluginTestkitRegistration`, `PluginTestkitRegistrationByFamily`, `PluginTestServicesFixture`, `PluginUiHostApiWireIdentityV1`, `PluginUiSemanticAdapterNode`, `PluginUiSemanticAdapterSnapshot`, `PluginUiSemanticAdapterText`, `PluginUiSemanticQueryOptions`, `PluginUiSemanticRole`, `PluginUiSemanticState`, `PluginUiSemanticSurfaceAdapter`, `PluginUiSemanticSurfaceMount`, `PluginUiSemanticTarget`, `PluginUiSemanticTextTarget`, `PluginUiTestkit`, `PluginUiTestkitAcquireComposerInputLockInput`, `PluginUiTestkitActiveComposerInput`, `PluginUiTestkitApplyComposerInput`, `PluginUiTestkitExecuteActionInput`, `PluginUiTestkitHostHandlers`, `PluginUiTestkitInspectComposerContentInput`, `PluginUiTestkitMountAvailability`, `PluginUiTestkitMountInput`, `PluginUiTestkitMountOptions`, `PluginUiTestkitMountResult`, `PluginUiTestkitOpenSurfaceInput`, `PluginUiTestkitOptions`, `PluginUiTestkitPickComposerMediaInput`, `PluginUiTestkitReadComposerInput`, `PluginUiTestkitReadOpenableContentInput`, `PluginUiTestkitReadResourceInput`, `PluginUiTestkitReleaseComposerContentInput`, `PluginUiTestkitReplacePageLocationInput`, `PluginUiTestkitSelectActionInputInput`, `PluginUiTestkitSetComposerDecorationsInput`, `PluginUiTestkitStatOpenableContentInput`, `PluginUiTestkitTargetedSurfaceAdmission`, `PluginUiTestkitWatchResourceInput`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/ui — 126 exports">
+
+Anywhere. Source: `src/ui/index.ts`.
+
+**Values** — `ComposerContentHandleV1Schema`, `ComposerContentInspectRequestV1Schema`, `ComposerContentPickMediaRequestV1Schema`, `ComposerDecorationResultV1Schema`, `ComposerDecorationSetV1Schema`, `ComposerFocusResultV1Schema`, `ComposerInputLockRequestV1Schema`, `ComposerOperationV1Schema`, `ComposerReadResultV1Schema`, `ComposerRefV1Schema`, `ComposerSnapshotV1Schema`, `ComposerSurfaceInputV1Schema`, `ComposerTransactionResultV1Schema`, `ComposerTransactionV1Schema`, `CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1`, `CURRENT_UI_CONTEXT_MAX_COMMANDS_V1`, `CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1`, `defineHostedWebBridgeMessage`, `definePluginDeclarativeDocumentV1`, `MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1`, `MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1`, `normalizePluginUiSubPathV1`, `PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1`, `PLUGIN_UI_ICON_TOKENS_V1`, `PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1`, `PluginHostedWebCollectionUiQueryBridgeOperationV1Schema`, `PluginHostedWebCollectionUiQueryBridgeResponseV1Schema`, `pluginUiTargetedContributionOperationKey`
+
+**Types** — `ComposerAttachmentAuthorPresentationV1`, `ComposerAttachmentAuthorValueV1`, `ComposerAttachmentPresentationV1`, `ComposerAttachmentUpdateV1`, `ComposerAttachmentViewV1`, `ComposerCapabilitiesV1`, `ComposerDecorationResultV1`, `ComposerDecorationSetV1`, `ComposerFocusResultV1`, `ComposerInputLockRequestV1`, `ComposerMentionRefV1`, `ComposerOperationV1`, `ComposerReadResultV1`, `ComposerReferenceSelectorV1`, `ComposerRefV1`, `ComposerSnapshotV1`, `ComposerSurfaceInputV1`, `ComposerTextPositionV1`, `ComposerTextRangeV1`, `ComposerTransactionResultV1`, `ComposerTransactionV1`, `ComposerUnavailableReasonV1`, `CurrentUiCommandDeclarationV1`, `CurrentUiCommandDescriptorV1`, `CurrentUiContextBoundedIncompletenessV1`, `CurrentUiContextEntityV1`, `CurrentUiContextSnapshotV1`, `HostedWebBridgeEnvelopeV1`, `OpenableContentBody`, `OpenableContentReadRequest`, `OpenableContentReadResult`, `OpenableContentRef`, `OpenableContentStatResult`, `OpenSurfaceOptions`, `PluginDeclarativeDocumentContentTypeV1`, `PluginDeclarativeDocumentV1`, `PluginHostedWebCollectionUiQueryBridgeChangeV1`, `PluginHostedWebCollectionUiQueryBridgeOperationV1`, `PluginHostedWebCollectionUiQueryBridgeResponseV1`, `PluginSurfaceTarget`, `PluginUiActionExecutionOptions`, `PluginUiActionInputFor`, `PluginUiActionReference`, `PluginUiActionResultFor`, `PluginUiActionTransportResult`, `PluginUiAttachmentToneV1`, `PluginUiChannel`, `PluginUiContainerV1`, `PluginUiContextEnrichmentV1`, `PluginUiContributionIdentityV1`, `PluginUiDeclarativeNodeV2`, `PluginUiDeclarativeToneV2`, `PluginUiHostApi`, `PluginUiHostMethodV1`, `PluginUiIconTokenV1`, `PluginUiJsonObjectV1`, `PluginUiJsonValueV1`, `PluginUiMountContextV1`, `PluginUiPageHeaderActionV1`, `PluginUiPlatform`, `PluginUiSchema`, `PluginUiSelectActionInputTargetedSubmittedV1`, `PluginUiSelectedActionInputCarrierV1`, `PluginUiSemanticCommandV1`, `PluginUiSemanticExecuteActionCommandV1`, `PluginUiSemanticOpenSurfaceCommandV1`, `PluginUiSettingsPageV1`, `PluginUiTargetedContributionContributorV1`, `PluginUiTargetedContributionOperationV1`, `PluginUiTargetedContributionPointRefV1`, `PluginUiTargetedContributionPointSnapshotV1`, `PluginUiTargetedContributionProtocolSnapshotV1`, `PluginUiTargetedContributionProtocolV1`, `PluginUiTargetedContributionSelectionV1`, `PluginUiTargetedContributionSurfaceV1`, `PluginUiTargetedContributionsV1`, `PluginUiTargetedContributionTargetV1`, `PluginUiTargetedContributionV1`, `PluginUiThemeV1`, `PluginUiToneV1`, `PluginUiViewDestinationBindingInputV2`, `PluginUiViewTargetV2`, `PluginUiViewV2`, `PluginUiViewV2Input`, `RenderContext`, `RenderSurface`, `ResourceContent`, `ResourceSubscriptionEvent`, `SelectActionInputRequest`, `SelectActionInputResult`, `SessionHeaderActionContribution`, `SurfaceContext`, `SurfaceHostMethod`, `UiHost`, `UiRenderer`, `UiResource`, `UiTranslationBundle`, `UiView`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/ui/build — 27 exports">
+
+Build time only. Source: `src/ui/build/index.ts`.
+
+**Values** — `assertSinglePluginUiPackageInstance`, `BUILD_CONFIG_BASENAMES`, `buildUiSurfaceTargets`, `createPluginUiPackageInstanceRepackPlugin`, `createPluginUiPackageInstanceVitePlugin`, `createPublicToolchainCompatibilityV1`, `createPublicToolchainScaffoldBindingsV1`, `createReactNativeRepackResolveOptions`, `createReactNativeRepackSharedModules`, `createReactNativeWebVitePlugins`, `defineBuildConfig`, `defineReactNativeWebViteBuildPreset`, `PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1`, `PublicToolchainCompatibilityV1Schema`, `resolvePluginUiSurfaceOutDir`
+
+**Types** — `PluginUiArtifactFileV1`, `PluginUiArtifactPlatform`, `PluginUiBuildConfig`, `PluginUiBuildTarget`, `PluginUiHostNativeRuntimeExternalSpecifierV1`, `PluginUiHostRuntimeExternalSpecifierV1`, `PublicToolchainAuthoringDependencyV1`, `PublicToolchainCompatibilityV1`, `PublicToolchainScaffoldBindingsV1`, `ReactNativeRepackSharedModules`, `ReactNativeWebViteBuildPreset`, `ReactNativeWebViteBuildPresetInput`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/ui/client — 5 exports">
+
+Browser only. Source: `src/ui/client/index.ts`.
+
+**Values** — `applyPluginUiThemeCssVariables`, `buildPluginUiThemeCssVariables`, `createPluginUiHostApiClient`, `createPluginUiRenderContext`
+
+**Types** — `PluginUiThemeVariableTarget`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/voice — 58 exports">
+
+Anywhere. Source: `src/voice/index.ts`.
+
+**Values** — `classifyVoiceProviderHttpFailure`, `createVoiceRecordSchema`, `VoiceCredentialSlotIdSchema`, `VoiceModelPackContributionV1Schema`, `VoiceModelPackDirectoryArtifactV1Schema`, `VoiceModelPackExecutionHostV1Schema`, `VoiceModelPackFileArtifactV1Schema`, `VoiceModelPackKokoroArtifactsV1Schema`, `VoiceModelPackLicenseV1Schema`, `VoiceModelPackLocalIdV1Schema`, `VoiceModelPackManifestV1Schema`, `VoiceModelPackRuntimeV1Schema`, `VoiceModelPackSupportArtifactKindV1Schema`, `VoiceModelPackSupportArtifactV1Schema`, `VoiceModelPackTransducerArtifactsV1Schema`, `VoiceProviderContributionSchema`, `withVoiceSchemaField`
+
+**Types** — `ConnectedAccountHttpHeadersRequest`, `PluginVoiceProviderDefinition`, `VoiceAccountOperationService`, `VoiceAvailabilityPlatform`, `VoiceConversationCapabilities`, `VoiceConversationProviderRole`, `VoiceConversationToolCapabilities`, `VoiceConversationToolEffectCalls`, `VoiceCredentialAccess`, `VoiceCredentialAccessPhase`, `VoiceCredentialDeclaration`, `VoiceCredentialOperationProjection`, `VoiceCredentialSlotId`, `VoiceModelPackContributionV1`, `VoiceModelPackDirectoryArtifactV1`, `VoiceModelPackExecutionHostV1`, `VoiceModelPackFileArtifactV1`, `VoiceModelPackKokoroArtifactsV1`, `VoiceModelPackLicenseV1`, `VoiceModelPackManifestV1`, `VoiceModelPackRuntimeV1`, `VoiceModelPackSupportArtifactKindV1`, `VoiceModelPackSupportArtifactV1`, `VoiceModelPackTransducerArtifactsV1`, `VoiceProviderContribution`, `VoiceProviderRuntime`, `VoiceProviderSettings`, `VoiceProvidersRegistrationApi`, `VoiceRawCredentialAccess`, `VoiceRawCredentialGrantDeclaration`, `VoiceRealtimeJsonValue`, `VoiceRealtimeToolCall`, `VoiceRealtimeToolResult`, `VoiceSchema`, `VoiceSettingReadinessDeclaration`, `VoiceSettingsActionContext`, `VoiceSpeechCatalogDeclaration`, `VoiceSpeechInputMimeType`, `VoiceSpeechProviderLimits`, `VoiceSpeechProviderRole`, `VoiceTranscriptCanonicalEvent`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/voice/client — 38 exports">
+
+Client only. Source: `src/voice/client/index.ts`.
+
+**Values** — `buildVoiceClientToolAgentPrompt`, `createVoiceTranscriptLadderMapper`, `describeActionForVoiceTool`, `describeActionInputFieldForVoice`, `HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE`, `HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE`, `isVoiceSdkSafeActionSpec`, `listVoiceSdkSafeToolActionSpecs`, `VoiceRealtimeJsonValueSchema`, `VoiceRealtimeToolCallV1Schema`, `VoiceRealtimeToolResultV1Schema`, `VoiceTranscriptCanonicalEventV1Schema`
+
+**Types** — `PluginVoiceAgentSessionRealtimeService`, `RealtimeVoiceProviderProtocol`, `RealtimeVoiceProviderRuntime`, `RealtimeVoiceProviderSettingsOperations`, `VoiceClientAuthArtifact`, `VoiceClientToolAgentPromptOptions`, `VoiceClientToolDefinition`, `VoiceConnectionMediaHost`, `VoiceGuidanceAvailability`, `VoiceHostedConversationService`, `VoiceMicrophoneMode`, `VoiceMicSession`, `VoiceOutputInterruptionResolution`, `VoiceProviderConversationService`, `VoiceProviderExecutionAuthority`, `VoiceRealtimeCanonicalEvent`, `VoiceRealtimeConnection`, `VoiceRealtimeConnectionCloseReason`, `VoiceRealtimePreflight`, `VoiceRealtimePreparation`, `VoiceRuntimePlatform`, `VoiceSdkHandleConnectionDriver`, `VoiceTranscriptLadderMapper`, `VoiceTranscriptLadderMode`, `VoiceTranscriptLadderObservation`, `VoiceTurnControlAction`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/voice/speech — 7 exports">
+
+Anywhere. Source: `src/voice/speech/index.ts`.
+
+**Types** — `SpeechProviderRuntime`, `VoiceProviderCatalogItem`, `VoiceSpeechOperationContext`, `VoiceSpeechSynthesizeRequest`, `VoiceSpeechSynthesizeResult`, `VoiceSpeechTranscribeRequest`, `VoiceSpeechTranscribeResult`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/webhooks — 14 exports">
+
+Anywhere. Source: `src/webhooks/index.ts`.
+
+**Values** — `decodePluginWebhookActionRawBody`, `definePluginWebhookTestFixture`, `PluginWebhookActionInputSchema`, `PluginWebhookActionResultSchema`, `PluginWebhookEndpointIdV1JsonSchema`, `PluginWebhookEndpointIdV1Schema`, `PluginWebhookEndpointSetupV1Schema`
+
+**Types** — `PluginWebhookActionInput`, `PluginWebhookActionResult`, `PluginWebhookContribution`, `PluginWebhookEndpointIdV1`, `PluginWebhookEndpointSetupV1`, `PluginWebhookTestFixture`, `PluginWebhookVerifier`
+
+</Accordion>
+
+</Accordions>
+
+## Related
+
+- [SDK entrypoints](/plugins/api/sdk-entrypoints) — choosing the right one by task.
+- [What you can build today](/plugins/manifest/availability) — availability, which is a different question from existence.
+- [Activation](/plugins/api/activation) — binding the values above to declared ids.

@@ -464,14 +464,23 @@ export function checkAgentPageCoverage({
   const ids = [...definitions.matchAll(/^\s{2}"([A-Za-z0-9_]+)": Object\.freeze/gm)].map((m) => m[1]);
   if (ids.length === 0) return [];
 
-  const providersDir = join(contentRoot, 'providers');
+  // This section lives inside this package, so a missing directory means a
+  // rename silently disabled the check — not that a sibling workspace is
+  // absent. The two need different answers, and conflating them is how this
+  // check read green through the entire `providers` -> `agents` restructure
+  // while running against a directory that no longer existed.
+  const agentsDir = join(contentRoot, 'agents');
   let pages;
   try {
     pages = new Set(
-      readdirSync(providersDir).filter((f) => f.endsWith('.mdx')).map((f) => f.replace(/\.mdx$/, '')),
+      readdirSync(agentsDir).filter((f) => f.endsWith('.mdx')).map((f) => f.replace(/\.mdx$/, '')),
     );
   } catch {
-    return [];
+    return [{
+      at: 'agents/',
+      label: 'agents section',
+      reason: 'the agents section is missing — if it moved, repoint checkAgentPageCoverage at its new home',
+    }];
   }
 
   const problems = [];
@@ -479,7 +488,7 @@ export function checkAgentPageCoverage({
     const expected = AGENT_PAGE_ALIASES.get(id) ?? id.toLowerCase();
     if (pages.has(expected)) continue;
     problems.push({
-      at: `providers/${expected}.mdx`,
+      at: `agents/${expected}.mdx`,
       label: id,
       reason: `agent "${id}" ships in the app but has no page — add one, or map it in AGENT_PAGE_ALIASES`,
     });
@@ -617,5 +626,5 @@ if (isEntrypoint) {
     console.error(`\ncontent checks failed: ${failures} problem${failures === 1 ? '' : 's'}\n`);
     process.exit(1);
   }
-  console.log('content checks passed: links resolve, documented UI labels exist');
+  console.log('content checks passed: links, UI labels, navigation, hubs, code-derived lists');
 }

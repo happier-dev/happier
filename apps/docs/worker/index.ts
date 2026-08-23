@@ -3,14 +3,19 @@
  *
  * The site is a fully static Next export: every page is a real file under out/,
  * served by the Workers static-asset layer without ever invoking this script.
- * Those requests are free and unlimited. Only three things reach this code, and
- * `run_worker_first` in wrangler.toml names each of them.
+ * Those requests are free and unlimited. ONE path reaches this code — /ingest/*,
+ * named in `run_worker_first` in wrangler.toml — and it is the only billable
+ * invocation the site can produce.
  *
- * All three were server behaviours that `output: 'export'` cannot keep:
+ * Two other paths used to live here and deliberately no longer do:
  *
- *   /ingest/*   the analytics proxy, `force-dynamic` by nature
- *   /health     liveness, which a cached file cannot report
- *   *.mdx       a Next `rewrites()` rule, and rewrites are a server feature
+ *   *.mdx     was a Worker rewrite onto the exported source. The sources are
+ *             now MOVED to those URLs at build time (scripts/exportMdxSources.mjs),
+ *             so they are plain static assets and cost nothing to serve.
+ *   /health   reported liveness of this script. Nothing consumed it — the
+ *             deploy job already asserts the artifact is real — and a monitor
+ *             polling it every 60s would have spent 1,440 free-tier requests a
+ *             day to learn what the deploy already proved.
  *
  * ---------------------------------------------------------------------------
  * First-party analytics ingest
@@ -70,56 +75,12 @@ async function proxyToPostHog(request: Request, url: URL): Promise<Response> {
     return out;
 }
 
-/**
- * `/anything/here.mdx` → the exported `/llms.mdx/docs/anything/here.mdx` asset.
- *
- * This was `rewrites()` in next.config.mjs: appending `.mdx` to any docs URL
- * returns that page's Markdown source, which is what an agent asked to "read
- * the docs" should fetch instead of scraping HTML.
- *
- * It has to happen HERE and not in `_redirects`, because that file only emits
- * 3xx: a redirect would change the URL the caller sees, and the whole point is
- * that `<page>.mdx` IS the address of the source. So the Worker rewrites the
- * path internally and serves the already-exported file — same response, same
- * URL, no round trip.
- *
- * A 200 with the wrong body would be worse than a 404 here, so an unmatched
- * path falls through to the asset layer's `not_found_handling` rather than
- * being answered with something plausible.
- */
-function mdxSourceRequest(request: Request, url: URL): Request {
-    const rewritten = new URL(url);
-    // The exported file keeps the extension (see the route's own note on why),
-    // so this is a pure prefix — nothing to strip, nothing to re-append.
-    rewritten.pathname = `/llms.mdx/docs${url.pathname}`;
-    return new Request(rewritten, request);
-}
-
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
         const url = new URL(request.url);
 
         if (url.pathname === '/ingest' || url.pathname.startsWith('/ingest/')) {
             return proxyToPostHog(request, url);
-        }
-
-        // Answered by the script on purpose. A static /health file would be
-        // served by the asset layer whether or not this Worker deployed, so it
-        // would report "ok" in exactly the situation worth detecting: assets
-        // live, script missing, every analytics event 404ing in silence.
-        if (url.pathname === '/health') {
-            return Response.json(
-                {
-                    status: 'ok',
-                    service: 'happier-docs',
-                    timestamp: new Date().toISOString(),
-                },
-                { headers: { 'cache-control': 'no-store' } },
-            );
-        }
-
-        if (url.pathname.endsWith('.mdx')) {
-            return env.ASSETS.fetch(mdxSourceRequest(request, url));
         }
 
         // Anything else that reaches the script (it should not, given

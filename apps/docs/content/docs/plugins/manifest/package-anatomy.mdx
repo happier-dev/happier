@@ -70,8 +70,8 @@ export const { manifest, activate } = definePlugin({
 
 - React Native is trusted executable package code and is the default
   cross-platform renderer.
-- Packaged hosted web is currently unavailable because no Artifact-backed frame
-  adapter has passed its platform feasibility gate.
+- Packaged hosted web availability is per host: each host reports the one frame
+  adapter it constructed, or a typed unavailable reason.
 - Declarative settings, status, and actions are rendered entirely by the host.
 
 Generated UI artifacts belong in the selected `dist` tree. Authors do not

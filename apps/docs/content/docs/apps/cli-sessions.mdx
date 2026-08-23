@@ -7,7 +7,19 @@ This page focuses on **session lifecycle and session control** from the CLI.
 
 If you’re looking for install/auth/server profiles first, start at [CLI](/apps/cli).
 
-The same canonical **action catalog** also powers the app, session agents, voice, and the external MCP server. That is why the session CLI, the built-in action surface, and external MCP controls all describe the same session operations in different transports.
+For everyday command-line work, use these top-level commands. The longer
+`happier session ...` forms remain available when they fit an existing script
+or a detailed session workflow.
+
+| Top-level command | Session command |
+| --- | --- |
+| `happier spawn` | `happier session create` |
+| `happier list` or `happier ls` | `happier session list` |
+| `happier send` | `happier session send` |
+| `happier history` | `happier session history` |
+| `happier wait` | `happier session wait` |
+| `happier stop` | `happier session stop` |
+| `happier delegate` | `happier session delegate start` |
 
 ## Session identifiers
 
@@ -15,7 +27,6 @@ Most commands accept either:
 
 - a full `<session-id>`
 - or an **unambiguous prefix** (`<session-id-or-prefix>`)
-- (often) an exact **session tag** if the session metadata is available locally (`--tag` from `session create`)
 
 If the prefix matches multiple sessions, the command fails and prints candidates (use `--json` for structured output).
 
@@ -36,55 +47,82 @@ happier resume <session-id>
 Short version:
 
 - **attach** = reconnect to a running session
-- **resume** = reopen an inactive session through the provider/backend
+- **resume** = reopen an inactive session through its Agent runtime
 
 For the full workflows, see [Attach to a running session](/sessions/attach-to-session) and [Resume inactive sessions](/sessions/session-resume).
 
 ## Create a session
 
 ```bash
-happier session create --title "My session" --message "Hello"
+happier spawn --title "My session" --message "Hello"
 ```
 
 Target a different directory:
 
 ```bash
-happier session create --path /path/to/repo --title "Repo session"
+happier spawn --path /path/to/repo --title "Repo session"
 ```
 
-### Backend targeting (`--backend`)
+### Agent targeting (`--agent`)
 
-`--backend` expects a **backend target key**:
+`--agent` accepts a friendly Agent id from the installed Agent catalog:
 
 ```bash
-happier session create --backend "agent:<agent-id>"
-happier session create --backend "acpBackend:<backend-id>"
+happier spawn --agent <agent-id>
 ```
 
-When in doubt, inspect the canonical schema and available options via the action catalog:
+When in doubt, inspect the current schema and available options via the action catalog:
 
 ```bash
 happier session actions describe session.spawn_new --json
 ```
 
+Use `spawn` to create a Session from the top-level CLI:
+
+```bash
+happier spawn "Fix the failing tests" --agent <agent-id>
+```
+
+### Follow a new session from automation
+
+In the current development source, use `--follow --jsonl` when a script needs
+the created Session id and the live transcript in one stream:
+
+```bash
+happier spawn "Fix the failing tests" --agent <agent-id> --follow --jsonl
+```
+
+The first line is the normal `session_create` JSON envelope, including
+`data.session.id`. Each later line is an existing compact history row. A
+session that produces no history rows still emits the creation envelope and
+exits successfully.
+
+If creation requires approval, the command emits the successful
+`approval_request_created` creation envelope and does not start following. If
+creation fails, it emits one failure envelope. If following fails after
+creation, the already-emitted creation envelope remains first and a standard
+failure envelope terminates the stream.
+
+`--follow --json` is rejected; use `--jsonl` for a multi-line stream.
+
 ## List sessions
 
 ```bash
-happier session list
+happier list
 ```
 
 Scripting-friendly:
 
 ```bash
-happier session list --json
+happier list --json
 ```
 
 Useful filters:
 
 ```bash
-happier session list --active
-happier session list --archived
-happier session list --resumable
+happier list --active
+happier list --archived
+happier list --resumable
 ```
 
 ## Status
@@ -104,43 +142,55 @@ happier session status <session-id-or-prefix> --live
 Send a user message:
 
 ```bash
-happier session send <session-id-or-prefix> "ping"
+happier send <session-id-or-prefix> "ping"
 ```
 
 Wait for the agent to become idle:
 
 ```bash
-happier session send <session-id-or-prefix> "ping" --wait --timeout 60
+happier send <session-id-or-prefix> "ping" --wait --timeout 60
 ```
 
 Or wait without sending:
 
 ```bash
-happier session wait <session-id-or-prefix> --timeout 60
+happier wait <session-id-or-prefix> --timeout 60
 ```
 
 Notes:
 
-- `session send` targets active sessions. For inactive sessions, use `happier session list --resumable` and `happier resume <session-id-or-prefix>` first.
-- `--wait` can time out if the agent is offline/busy or if the backend does not emit an “idle” signal.
+- `send` targets active sessions. For inactive sessions, use `happier list --resumable` and `happier resume <session-id-or-prefix>` first.
+- `--wait` can time out if the Agent is offline/busy or its Agent runtime does not emit an “idle” signal.
 - `--permission-mode` lets you override the permission intent for a single send.
-- `--model` lets you target a specific model for that message when the backend supports it.
+- `--model` lets you target a specific model for that message when the selected Agent supports it.
 - `--json` + explicit timeouts are recommended for scripts.
+
+## Delegate work
+
+Start delegated work from an existing Session with a chosen Agent:
+
+```bash
+happier delegate <session-id-or-prefix> "Review the failing tests" --agent <agent-id>
+```
+
+See [Delegated work](/extending/subagents) for lifecycle and result details.
 
 ## History
 
 Get recent transcript rows:
 
 ```bash
-happier session history <session-id-or-prefix> --limit 20
+happier history <session-id-or-prefix> --tail 20
 ```
+
+`--limit 20` remains accepted for existing scripts and has the same behavior.
 
 Scripting / debugging variants:
 
 ```bash
-happier session history <session-id-or-prefix> --json
-happier session history <session-id-or-prefix> --format raw --include-meta --json
-happier session history <session-id-or-prefix> --format raw --include-meta --include-structured-payload --json
+happier history <session-id-or-prefix> --json
+happier history <session-id-or-prefix> --format raw --include-meta --json
+happier history <session-id-or-prefix> --format raw --include-meta --include-structured-payload --json
 ```
 
 Use `compact` when you want a simpler text-focused view.
@@ -151,7 +201,7 @@ Use `raw` when you need provider payloads, metadata, or structured tool/message 
 Stop a session:
 
 ```bash
-happier session stop <session-id-or-prefix>
+happier stop <session-id-or-prefix>
 ```
 
 Archive / unarchive:
@@ -169,6 +219,35 @@ happier session set-model <session-id-or-prefix> <model-id>
 happier session set-permission-mode <session-id-or-prefix> <mode>
 ```
 
+### Choosing the model source (`--provider-connection`)
+
+A model selection names a model **and** where it comes from. `happier session create`
+already accepts `--provider-connection <id>`; `set-model` and `session send` accept the
+same flag, plus `native` for the Agent's own model source:
+
+```bash
+happier session set-model <session-id-or-prefix> <model-id> --provider-connection <connection-id>
+happier session set-model <session-id-or-prefix> <model-id> --provider-connection native
+happier session send <session-id-or-prefix> "ping" --model <model-id> --provider-connection <connection-id>
+```
+
+Omit the flag to leave the current source unchanged. `--provider-connection <id>` requires a
+concrete `--model` value on `session send`; `native` clears the connection so the Agent's own
+model source answers.
+
+### Retrying one message safely (`--local-id`)
+
+`happier session send` prints and returns the message's durable `localId`. If a send fails
+ambiguously, retry with that exact id instead of sending again:
+
+```bash
+happier session send <session-id-or-prefix> "ping" --local-id <local-id>
+```
+
+The pending queue is keyed by `localId`, so a retry rejoins the same durable input rather than
+queueing a second message. `happier session create` has the same property through
+`--spawn-attempt-id <id> --resume-spawn-attempt`.
+
 ### Permission intent (`set-permission-mode` and `--permission-mode`)
 
 Happier stores a provider-agnostic **permission intent** string for each session.
@@ -185,17 +264,17 @@ Use it in either place:
 
 ```bash
 happier session set-permission-mode <session-id-or-prefix> read_only
-happier session send <session-id-or-prefix> "ping" --permission-mode safe-yolo
+happier send <session-id-or-prefix> "ping" --permission-mode safe-yolo
 ```
 
 Notes:
 
 - `set-permission-mode` updates the session’s persisted intent.
 - `session send --permission-mode ...` is a one-message override.
-- The exact allowed operations still depend on the backend/provider and your account policy.
+- The exact allowed operations still depend on the Agent runtime, selected model provider, and your account policy.
 - Use `--json` to see the normalized intent stored/used.
 
-These session control commands map to canonical actions such as:
+These session control commands invoke Actions such as:
 
 - `session.title.set`
 - `session.model.set`
@@ -205,9 +284,9 @@ These session control commands map to canonical actions such as:
 - `session.unarchive`
 - `session.wait.idle`
 - `session.message.send`
-- `session.run.start`
-- `session.run.send`
-- `session.run.stop`
+- `execution.run.start`
+- `execution.run.send`
+- `execution.run.stop`
 
 That is what makes them available not just from the CLI, but also from external MCP hosts and session agents when the relevant surface is enabled.
 
@@ -228,7 +307,8 @@ Approve/deny in the app Inbox:
 
 ### Decide approvals from the CLI (advanced)
 
-For automation-heavy workflows, the same approval flow is also available through the generic action executor.
+For automation-heavy workflows, the same approval flow is also available from
+`happier session actions execute`.
 
 Example:
 
@@ -236,7 +316,7 @@ Example:
 # 1) run an approval-gated command
 happier session set-title <session-id> "New title" --json
 
-# 2) approve it through the generic action path
+# 2) approve it through the Action command
 happier session actions execute <session-id> approval.request.decide \
   --input-json '{"artifactId":"<approval-artifact-id>","decision":"approve"}' \
   --json
@@ -270,7 +350,7 @@ Current JSON envelopes:
 Execution runs are the structured “run” layer for multi-step flows (review / plan / delegate / voice agent):
 
 ```bash
-happier session run start <session-id> --intent <intent> --backend <backend-target-key> --json
+happier session run start <session-id> --intent <intent> --agent <agent-id> --json
 happier session run list <session-id> --json
 happier session run get <session-id> <run-id> --json
 happier session run send <session-id> <run-id> "message" --json

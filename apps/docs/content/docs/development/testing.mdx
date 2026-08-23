@@ -220,6 +220,7 @@ yarn test:wiring:self
 yarn test:wiring
 yarn test:policy:self
 yarn test:policy
+yarn test:tooling:self
 yarn test:inventory
 yarn test:migration:inventory
 yarn test:migration:v2-zero:enforce
@@ -228,6 +229,7 @@ yarn test:migration:governance
 
 Notes:
 - `test:wiring:self` and `test:policy:self` are fast governance self-tests for the validators themselves.
+- `test:tooling:self` runs the repo-root build/QA tooling contracts under `scripts/workspaces/**` and `scripts/qa/**`. They live outside every workspace, so no package lane can reach them; without this script they exist but never execute.
 - `test:wiring` fails on invalid feature tags, obvious lane naming mistakes, and root-script/workflow/docs parity drift.
 - `test:policy` enforces only the low-noise rules that are safe today; noisier rules stay report-only until the repo cleanup catches up.
 - `test:inventory` and `test:migration:inventory` are report-only. They print lane/package-local coverage and write governance inventory artifacts under `.project/testing/reports/governance/`.

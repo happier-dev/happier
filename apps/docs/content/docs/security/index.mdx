@@ -60,6 +60,24 @@ Under the default policy:
 Under `optional` or `plaintext_only`, add session content itself to that list
 for anything stored in plain mode.
 
+## API tokens and Action API traffic
+
+API Tokens are server-side credentials: the server retains a digest-backed
+record, while the full token is shown only to its creator. They authenticate
+automation, not a present user, so they cannot approve requests or loosen the
+security controls that limit them.
+
+The Developer Preview Action API is a separate transport boundary. A configured
+server can read a request and response when it mediates that traffic, even when
+the daemon remains the Action executor. Current development source implements
+that server relay through the daemon's existing server connection, so the daemon
+does not need an inbound public address. Neither origin is published or shipped,
+and the server origin is not live-proven; use daemon-local transport when direct
+local delivery is required.
+
+See [API Tokens](/security/api-tokens) for creation, revocation, and the
+daemon-local validation-cache limit.
+
 ## Related
 
 - [Encryption model](/security/encryption) — the mechanism, key by key, and what your secret key is for.

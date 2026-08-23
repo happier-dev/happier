@@ -258,7 +258,7 @@ test('flags an agent that ships in the app with no page', () => {
     }),
     'defs.ts',
   );
-  const contentRoot = fixture({ 'providers/claude.mdx': '# Claude\n' });
+  const contentRoot = fixture({ 'agents/claude.mdx': '# Claude\n' });
 
   const problems = checkAgentPageCoverage({ contentRoot, agentDefinitionsFile: definitions });
   assert.deepEqual(problems.map((p) => p.label), ['cursor']);
@@ -266,9 +266,21 @@ test('flags an agent that ships in the app with no page', () => {
 
 test('accepts an agent whose page is deliberately named differently', () => {
   const definitions = join(fixture({ 'defs.ts': '  "auggie": Object.freeze(({\n' }), 'defs.ts');
-  const contentRoot = fixture({ 'providers/augment.mdx': '# Auggie\n' });
+  const contentRoot = fixture({ 'agents/augment.mdx': '# Auggie\n' });
 
   assert.deepEqual(checkAgentPageCoverage({ contentRoot, agentDefinitionsFile: definitions }), []);
+});
+
+test('a missing agents section fails loudly instead of silently passing', () => {
+  // This is the bug the `providers` -> `agents` rename caused: the directory
+  // moved, `readdirSync` threw, the catch returned no problems, and the check
+  // read green while inspecting nothing. Skipping is right for an unbuilt
+  // sibling workspace and wrong for a directory inside this package.
+  const definitions = join(fixture({ 'defs.ts': '  "claude": Object.freeze(({\n' }), 'defs.ts');
+  const contentRoot = fixture({ 'sessions/index.mdx': '# Sessions\n' });
+
+  const problems = checkAgentPageCoverage({ contentRoot, agentDefinitionsFile: definitions });
+  assert.deepEqual(problems.map((p) => p.label), ['agents section']);
 });
 
 test('a cross-reference written as a code span is caught, but a repo file path is not', () => {

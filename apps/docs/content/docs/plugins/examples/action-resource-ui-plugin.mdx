@@ -1,0 +1,130 @@
+---
+title: Action + Resource + UI plugin
+description: One small plugin that declares an Action, a Resource, and a surface that reads both.
+---
+
+This is the smallest plugin that spans all three ordinary contribution kinds:
+one Action the user can run, one Resource the UI reads, and one surface that
+mounts them together. Everything below is one `definePlugin(...)` declaration
+plus one component file.
+
+## The declaration
+
+```ts
+import {
+  definePlugin,
+  defineUiSurfaceDefinition,
+} from '@happier-dev/plugin-sdk';
+
+const statusPanel = defineUiSurfaceDefinition({
+  id: 'status',
+  placement: 'appPage',
+  title: 'Build status',
+  renderer: {
+    kind: 'reactNative',
+    // Name only the host methods the surface cannot run without.
+    requiredHostMethods: ['context', 'executeAction', 'readResource'],
+  },
+  build: {
+    entry: 'src/ui/StatusPanel.tsx',
+    platforms: ['web', 'ios', 'android'],
+    module: {
+      containerName: 'happier_plugin_com_example_build_status_status_renderer',
+      modulePath: './StatusPanel',
+      exportName: 'renderSurface',
+    },
+  },
+});
+
+let lastBuild = 'never';
+let invalidateBuildStatus: (() => void) | null = null;
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.build-status',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  actions: {
+    'run-build': {
+      title: 'Run build',
+      description: 'Runs the workspace build and records when it finished.',
+      execution: { target: 'daemon' },
+      surfaces: ['ui', 'cli'],
+      async run(_input, context) {
+        context.signal?.throwIfAborted();
+        lastBuild = new Date(0).toISOString();
+        invalidateBuildStatus?.();
+        return { lastBuild };
+      },
+    },
+  },
+  resources: {
+    'build-status': {
+      source: 'dynamic',
+      kind: 'config',
+      scope: 'global',
+      contentType: 'application/json',
+      maxBytes: 4096,
+      runtime: {
+        read() {
+          return JSON.stringify({ lastBuild });
+        },
+        // The host invalidates readers; the plugin only says when to look again.
+        observe(invalidate) {
+          invalidateBuildStatus = invalidate;
+          return { dispose() { invalidateBuildStatus = null; } };
+        },
+      },
+    },
+  },
+  ui: { surfaces: [statusPanel] },
+});
+```
+
+Three things are doing the work:
+
+- The **Action** is the only implementation. A CLI call, an agent tool, and the
+  button below all reach this one handler.
+- The **Resource** is how the surface reads plugin-owned state. It is a read
+  path, not a second write path — the Action still owns the mutation.
+- The **surface** derives its renderer and artifact ids from its surface id, so
+  there is no separate `ui.views` / `ui.renderers` pair to keep in sync.
+
+## The surface
+
+```tsx
+import * as React from 'react';
+import { Action, Card, Text, defineUiSurface, usePluginResource } from '@happier-dev/plugin-ui';
+
+function StatusPanel() {
+  const { resource } = usePluginResource('build-status');
+  const lastBuild = resource.value
+    ? (JSON.parse(
+        new TextDecoder().decode(resource.value.bytes),
+      ) as Readonly<{ lastBuild: string }>).lastBuild
+    : 'unknown';
+
+  return (
+    <Card>
+      <Text variant="title" value="Build status" />
+      <Text variant="body" value={`Last build: ${lastBuild}`} />
+      <Action.Execute action="run-build" title="Run build" />
+    </Card>
+  );
+}
+
+export const renderSurface = defineUiSurface(StatusPanel);
+```
+
+`Action.Execute` names the same local id the manifest declared; the host binds
+it. Do not add a local click handler that calls your daemon another way.
+
+## What to add next
+
+- Needs the Resource to refresh when the Action lands? Swap
+  `usePluginResource` for `useLivePluginResource` and add `watchResource` to
+  `requiredHostMethods`. It watches for invalidation — it does not poll.
+- Needs Account-backed rows instead of one document? Use
+  [Account Collections](/plugins/guides/account-collections) with
+  `usePluginCollectionQuery`.
+- Needs to test it? [Testkit recipes](/plugins/testing/recipes) covers the
+  Action, its host boundaries, its typed failures, and its cancellation.

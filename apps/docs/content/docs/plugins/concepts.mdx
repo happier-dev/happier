@@ -37,8 +37,8 @@ serving, rather than leaving two author-selected implementations active.
 A realm is where code runs, while a surface is where a declared capability is
 made available. Daemon code runs from the daemon entrypoint; React Native code
 runs as trusted code in a supported client realm; declarative UI is rendered
-by the host. Packaged hosted web remains unavailable until its Artifact-backed
-adapter passes its platform gate. A declaration can project to several
+by the host. Packaged hosted web availability is reported per host: a host either names
+the one frame adapter it constructed or reports a typed unavailable reason. A declaration can project to several
 surfaces without giving one handler more than one lifecycle owner or making
 state shared across realms.
 

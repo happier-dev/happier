@@ -9,6 +9,25 @@ Package-specific instructions for `apps/docs`. These supplement the root constit
 - Internal implementation and product-architecture documentation belongs in `../../docs/**`. Update both surfaces when both the internal contract and published behavior changed.
 - Search for the existing canonical page before adding one. Extend, correct, move, or consolidate it rather than creating a similar-but-different explanation.
 
+The main sidebar runs in the order a reader meets Happier, and the four tabs
+hold audiences that stay put:
+
+| Section | Holds |
+| --- | --- |
+| `getting-started` | installing, signing in, first session |
+| `sessions` | everything that happens inside one |
+| `organize` | keeping track across sessions |
+| `code` | git, review, PRs and issues |
+| `agents` | one page per agent, plus models and profiles |
+| `extending` | MCP, tools, skills, delegation, channels |
+| `accounts` | accounts, machines, devices, sharing |
+| `voice`, `apps`, `extras` | voice, the clients, everything else |
+| `security`, `releases`, `legal` | policy and process |
+| `self-hosting` *(tab)* | running the server yourself |
+| `plugins` *(tab)* | the Plugin SDK, for plugin authors |
+| `development` *(tab)* | contributing to Happier |
+| `hstack` *(tab)* | the local development stack |
+
 Classify the page before editing:
 
 - **Task guide:** help a reader complete one real workflow.
@@ -50,13 +69,17 @@ These pages are generated. Do not hand-edit the output — change the generator 
 
 | Page | Generated from |
 | --- | --- |
-| `/providers/capabilities` | `packages/agents/.../generated/bundledAgentDefinitions.ts` (built form) |
-| `/features/feature-flags` | the protocol feature catalog, the client's UI feature registry, and the server's feature env schema |
-| `/features/keyboard-shortcuts` | the client's keyboard command registry and the protocol's account preferences |
-| `/deployment/feature-env` | `apps/server/.../features/catalog/featureEnvSchema.ts` |
-| `/deployment/rate-limits` | the server's rate-limit catalog |
+| `/agents/capabilities` | `packages/agents/.../generated/bundledAgentDefinitions.ts` (built form) |
+| `/extras/feature-flags` | the protocol feature catalog, the client's UI feature registry, and the server's feature env schema |
+| `/apps/keyboard-shortcuts` | the client's keyboard command registry and the protocol's account preferences |
+| `/self-hosting/feature-env` | `apps/server/.../features/catalog/featureEnvSchema.ts` |
+| `/self-hosting/rate-limits` | the server's rate-limit catalog |
 | `/getting-started/get-the-apps` | `apps/website/src/data/downloads.ts` |
 | `/plugins/manifest/availability` | `packages/plugin-sdk/capability-matrix.json` |
+| `/plugins/bundled` | every `packages/plugins/*/.happier-plugin/plugin.json`, cross-checked against the bundled registry |
+| `/plugins/api/surface` | `packages/plugin-sdk/api-surface.json` |
+| `/plugins/api/host-actions` | the Protocol Action registry through `packages/protocol/scripts/generate-plugin-action-reference.ts` |
+| `/development/architecture/runtime/runtime-events` | the protocol's `agentSessionV1` runtime schema (built form) |
 
 Regenerate with `yarn --cwd apps/docs generate:reference`. A generator whose source is not built in this checkout is skipped, not failed — a docs-only build is legitimate.
 
@@ -132,17 +155,87 @@ Published product pages avoid repository paths and implementation trivia unless 
 
 Use `skills/happier-docs` for the complete evidence, editing, validation, and handoff workflow.
 
+## Navigation and hubs
+
+**A page that is not listed in a `meta.json` does not exist.** It builds, it has a
+URL, and nothing on the site links to it — the only way to reach it is to type
+the route. Adding a page means adding it to the `pages` array of its directory's
+`meta.json`, in the position a reader should meet it. That array is reading
+order, not alphabetical order.
+
+**`"root": true` promotes a directory to its own sidebar tab.** Four sections have earned one: `self-hosting` for operators, `plugins` for plugin authors, `development` for contributors, and `hstack` for the local stack. A tab is
+for an audience that stays inside it for a whole session. A section a reader
+dips into and leaves does not earn one.
+
+**Section landing pages are not decorative.** Every section has an `index.mdx`,
+and it must link every page its own `meta.json` lists. The sidebar reaching a
+page and the section hub reaching it are two different claims, and one proves
+nothing about the other: the sidebar was complete for months while the hubs were
+dead ends, and no check could see it because no check was asking. Both are
+checked now, separately, because they failed separately.
+
+**Moving a page is four edits**, and skipping any one of them ships a hole: the
+file itself, the `pages` arrays it leaves and joins, every link that pointed at
+the old route, and the hub that listed it. The link checker catches the third.
+Nothing catches the first two except running the checks.
+
 ## Links, components, and what the build enforces
 
-**Links are root-absolute and prefix-free**: `/features/permissions`. Not `./permissions`, not `../features/permissions`, not `/docs/features/permissions`. Relative links silently 404 from any section landing page — the page lives at `/features` with no trailing slash, so `./git` resolves to `/git` — and the `/docs` prefix costs a permanent redirect on every click. Never use a URL or a slug as link text.
+**Links are root-absolute and prefix-free**: `/sessions/permissions`. Not
+`./permissions`, not `../sessions/permissions`, not `/docs/sessions/permissions`.
+Relative links silently 404 from any section landing page — the hub lives at
+`/code` with no trailing slash, so `./git` resolves to `/git` — and the `/docs`
+prefix costs a permanent redirect on every click. Never use a URL or a slug as
+link text.
 
-**Use the components.** `fumadocs-ui` ships `Callout`, `Steps`, `Tabs`, `Accordion`, `Files` and `TypeTable`, and they are registered in `src/mdx-components.tsx`. A warning written as a bold sentence inside a bullet list is indistinguishable from the facts around it. Per-OS instructions belong in a `Tabs` group, not stacked as consecutive code blocks. Reach for a table when the reader is comparing things and prose when they are learning something.
+**A cross-reference is a link, not a code span.** `` `/sessions/permissions` ``
+renders as monospace a reader cannot click, and the link checker never sees it,
+so it survives every rename that would have broken a real link. Twenty-five of
+them shipped carrying a `/docs` prefix the site had already dropped. Write
+`[permissions](/sessions/permissions)`. A route with a file extension is
+exempt — `/docs/tool-normalization.md` is a path in the repository, not a route
+on this site.
 
-**Two checks run before every build** (`scripts/checkContent.mjs`, wired into `scripts/build.mjs`, tested in `scripts/checkContent.test.mjs`):
+**Use the components.** `fumadocs-ui` ships `Callout`, `Steps`, `Tabs`,
+`Accordion`, `Files` and `TypeTable`, and they are registered in
+`src/mdx-components.tsx`. A component used in MDX but missing from that registry
+fails the production build at prerender, not at typecheck. A warning written as
+a bold sentence inside a bullet list is indistinguishable from the facts around
+it. Per-OS instructions belong in a `Tabs` group, not stacked as consecutive
+code blocks. Reach for a table when the reader is comparing things and prose
+when they are learning something.
 
-- Every internal link resolves to a real page, and every `#fragment` to a real heading on it. Non-canonical link forms fail.
-- Every `Settings → …` path names strings the app actually renders, checked against `apps/ui/sources/text/translations/en.ts`.
+**What fails the build** (`scripts/checkContent.mjs`, wired into
+`scripts/build.mjs`, tested in `scripts/checkContent.test.mjs`):
 
-The second exists because sixteen pages spent months sending readers to a menu item that had been renamed after one day. If you write a navigation path, mark it up as a UI label so the check can see it. If the path belongs to another product — a GitHub console, an IdP — name that product on the same line; the check skips those deliberately, because it cannot adjudicate a UI this repository does not own.
+| Check | Fails on |
+| --- | --- |
+| internal links | a link to a page that does not exist, a `#fragment` with no matching heading, or a non-canonical link form |
+| UI labels | a `Settings → …` path naming a string the app does not render |
+| nav coverage | a page no `meta.json` lists |
+| hub coverage | a section landing page that does not link a page its own `meta.json` lists |
+| route code spans | a route written as a code span instead of a link |
+| feature env coverage | a `HAPPIER_FEATURE_*` variable the server parses that no page mentions |
+| CLI command coverage | a command the CLI exposes that no page documents |
+| agent page coverage | an agent the app ships with no page under `/agents` |
+| generated drift | a published generated page that differs from a fresh render |
 
-Run them directly with `yarn --cwd apps/docs check:content`.
+Run them with `yarn --cwd apps/docs check:content`.
+
+Every one of these exists because the defect shipped and then stayed shipped.
+The UI-label check exists because sixteen pages spent months sending readers to
+a menu item that had been renamed after one day. They are cheap to add and they
+are the only thing standing between a restructure and a quietly broken site, so
+when you find a new class of invisible breakage, add a check for it rather than
+fixing the instances.
+
+Two failure modes to watch for in the checks themselves:
+
+- **A check that skips when its input is missing reads exactly like a check that
+  passes.** Skipping is right for an unbuilt sibling workspace and wrong for a
+  directory inside this package — a rename there should be loud. Get that
+  distinction wrong and the check goes green forever.
+- **If you write a navigation path, mark it up as a UI label** so the check can
+  see it. If the path belongs to another product — a GitHub console, an IdP —
+  name that product on the same line; the check skips those deliberately,
+  because it cannot adjudicate a UI this repository does not own.

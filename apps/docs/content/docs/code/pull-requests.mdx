@@ -1,6 +1,6 @@
 ---
 title: Pull requests
-description: Publish a branch and open or reuse a pull request from inside a session, using a connected credential or your local gh.
+description: Publish a branch and open or reuse a pull request from inside a session — on GitHub, GitLab, Bitbucket or Azure DevOps.
 ---
 
 When the work is done, the next step is usually a pull request. Happier can
@@ -15,7 +15,8 @@ browser or a terminal.
 
 ## Pull requests and merge requests
 
-The Git tab includes a pull request / merge request surface for the current branch when Happier can detect a hosting provider from the repository remotes.
+The Git tab includes a pull request / merge request surface for the current
+branch when Happier can detect a hosting provider from the repository remotes.
 
 It can show:
 
@@ -24,30 +25,47 @@ It can show:
 - whether the branch is ready to open a request
 - blocked reasons and the next safe action when a request cannot be opened yet
 
+### Hosting providers are plugins
+
+Source control is not built into the core any more. Two version-control
+backends and four hosting providers ship as bundled plugins, and each provider
+brings its own authentication, pull-request operations and issue triage:
+
+| Plugin | What it covers |
+| --- | --- |
+| `scm-git` | Git itself — status, branches, worktrees, checkpoints. |
+| `scm-sapling` | Sapling, as an alternative version-control backend. |
+| `scm-github` | GitHub and GitHub Enterprise-style remotes. |
+| `scm-gitlab` | GitLab, including self-managed instances. |
+| `scm-bitbucket` | Bitbucket. |
+| `scm-azure-devops` | Azure DevOps Services and Server. |
+
+Practically, that means a provider Happier does not ship can be added the same
+way these are — see the [SCM guide](/plugins/guides/scm) in the Plugin SDK.
+
 ### Provider support
 
-| Provider | Current support |
-| --- | --- |
-| GitHub | Remote detection, compare URLs, connected-account REST read/write, optional authenticated `gh` fallback, repository publishing, PR checkout, and PR worktree preparation. |
-| GitLab | Remote detection, compare URLs, optional authenticated `glab` read/write/checkout, and MR worktree preparation. GitLab connected accounts are not yet supported. |
-| Bitbucket | Remote detection and compare URLs. Authenticated Bitbucket PR creation is not currently supported. |
-| Unknown remotes | Safe unsupported state with no write actions. |
+| Provider | Creating a request | Credential |
+| --- | --- | --- |
+| GitHub | Connected-account REST first, then authenticated `gh`, then a no-auth compare URL | Connected GitHub account |
+| GitLab | Authenticated `glab`, then a no-auth compare URL | — see below |
+| Bitbucket | Bitbucket REST API | Connected account: email or username, plus an API token |
+| Azure DevOps | Azure DevOps REST API | Connected account: an explicitly configured organization (Services) or collection path (Server), plus a PAT |
+| Unknown remotes | Safe unsupported state, no write actions | — |
 
-GitHub Enterprise-style remotes can be detected. Connected-account REST operations are designed for GitHub.com; enterprise/self-hosted cases usually depend on CLI auth or compare URLs.
+Two provider-specific details are worth knowing before you plan around them:
 
-GitLab self-managed remotes keep their detected base URL. When `glab` is used, Happier checks authentication for the detected host when possible.
+- **GitHub Enterprise** remotes are detected, but the connected-account REST
+  path is built for github.com. Enterprise and self-hosted remotes generally
+  fall through to `gh` or to the compare URL.
+- **GitLab's connected account is not a merge-request credential.** It exists —
+  a personal access token with a configurable `baseUrl`, so self-managed
+  instances work — but it powers issue triage. Creating a merge request still
+  goes through an authenticated `glab`, and Happier checks that `glab` is
+  authenticated for the detected host where it can.
 
-### Opening or reusing a request
-
-When the current branch is ready, Happier can open or reuse a pull request / merge request from the Git tab.
-
-Authentication order:
-
-- **GitHub**: connected GitHub account first, then authenticated `gh`, then no-auth compare URL.
-- **GitLab**: authenticated `glab`, then no-auth compare URL.
-- **Bitbucket**: no-auth compare URL.
-
-If Happier cannot create a request directly, it opens the provider's compare page so you can finish in the browser.
+If Happier cannot create a request directly, it opens the provider's compare
+page so you can finish in the browser.
 
 ### Default branch guard
 
@@ -99,3 +117,5 @@ Use this when:
 - [Git](/code/git) — branches, commits and remotes.
 - [Diffs and review](/code/diffs)
 - [Review comments](/code/review-comments)
+- [Connected Services](/accounts/connected-services) — where the provider credentials above are stored.
+- [SCM plugins](/plugins/guides/scm) — adding a hosting provider Happier does not ship.

@@ -72,7 +72,11 @@ by the same guard; do not depend on an internal transport-error class.
 2. Run `happier plugins test .` for the package's daemon-independent suite, or
    `happier plugins test . --packed` for the explicit disposable-daemon smoke.
 3. Run `happier plugins doctor .` for an import or top-level evaluation issue.
-   It evaluates once; it does not prove repeated evaluation is pure.
+   It evaluates once; it does not prove repeated evaluation is pure. For an
+   already-installed plugin whose files may have been moved, replaced, or
+   removed on disk, run `happier plugins doctor --installed [<pluginId>]`
+   instead: it inspects the committed immutable generation and reports
+   structural and loadability facts with repair guidance.
 4. Use `happier plugins dev` or `happier plugins reload` for the
    daemon-owned candidate result. A rejected candidate leaves the last accepted
    generation serving.

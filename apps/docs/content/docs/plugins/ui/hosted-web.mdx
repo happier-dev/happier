@@ -18,8 +18,9 @@ happier plugins dev
 ```
 
 The scaffold creates a code-defined plugin declaration, an isolated Vite
-application, a `pluginUiBuild.mjs` target, relative assets, and the managed
-author scripts. `plugins dev`, `happier plugins author build .`, and
+application, one `src/ui/surfaces.ts` surface declaration with the
+`pluginUiBuild.ts` config that derives its target from it, relative assets, and
+the managed author scripts. `plugins dev`, `happier plugins author build .`, and
 `happier plugins pack .` use the same UI-build owner. During `plugins dev`,
 the CLI first submits the captured source batch; the daemon runs the build
 before candidate adoption. A failed build prevents adoption and leaves the

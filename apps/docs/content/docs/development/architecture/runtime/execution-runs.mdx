@@ -1,34 +1,62 @@
 ---
 title: Execution-runs
-description: How task-like AI execution uses the same backend runtime path as sessions.
+description: Task-like AI execution on the same backend path as sessions — the five states a run can end in, and the two different ways it can stop early.
 ---
 
-Execution-runs are host-owned product runs backed by backend execution.
+An execution-run is a host-owned product run backed by backend execution: a
+bounded piece of AI work that is not a conversation. Commit-message generation
+is the everyday example.
 
-## Shared backend seam
+The bridge is `apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge.ts`.
 
-Execution-runs resolve the same backend engine and consume `runtimeCore.createExecutionRunBackend(...)`.
+## The same backend seam as sessions
 
-This removes the old pattern where each backend maintained its own one-shot execution manager.
+Execution-runs resolve the same backend engine as sessions and consume
+`runtimeCore.createExecutionRunBackend(...)`. That is the point of the design:
+it replaced a pattern where every backend maintained its own one-shot execution
+manager, each with its own idea of what "finished" meant.
 
-## Host bridge owns
+**The host bridge owns:** run public state, status and activity markers, bounded
+loop behaviour, cancellation, permission dispatch, lifecycle hook events,
+session provisioning, and execution-run actions.
 
-- run public state
-- status and activity markers
-- bounded loop behavior
-- cancellation
-- permission dispatch
-- lifecycle hook events
-- session provisioning
-- execution-run actions
+**The backend owns:** provider runtime creation, prompt delivery, event mapping,
+and provider-specific liveness or completion checks.
 
-## Backend owns
+## The five states
 
-- provider runtime creation
-- provider prompt delivery
-- provider event mapping
-- provider-specific liveness or completion checks
+`ExecutionRunStatus` is a closed enum in
+`packages/protocol/src/execution/runs/listRequest.ts`:
+
+| Status | Meaning |
+| --- | --- |
+| `running` | In flight. |
+| `succeeded` | Finished and produced its result. |
+| `failed` | Finished without one. |
+| `cancelled` | Stopped before finishing. |
+| `timeout` | Ran past its bound. |
+
+<Callout type="warn">
+  **`cancelled` and `timeout` are not interchangeable, and inactivity produces
+  the first one.** A run abandoned by its backend is finalized as `cancelled`
+  with the summary *"Cancelled after inactivity"* — not as `timeout`. So
+  filtering for `timeout` to find runs that stalled will miss exactly the runs
+  that stalled. The summary is the distinguishing evidence, not the status.
+</Callout>
+
+Terminal transitions are claimed once. The bridge checks that a run is still
+`running` before finalizing it, so a late completion arriving after a
+cancellation does not overwrite the terminal state.
 
 ## Session-backed execution-runs
 
-When an execution-run can use a session runtime, use the shared adapter from the plugin SDK. That keeps session and execution-run behavior converged.
+When an execution-run can be served by a session runtime, use the shared adapter
+from the plugin SDK rather than writing a parallel path. Convergence is the
+whole value here: a behaviour fixed for sessions should not need fixing again
+for runs.
+
+## Related
+
+- [Session loop](/development/architecture/runtime/session-loop) — the same seam, for conversations.
+- [Agent runtime registry](/development/architecture/runtime/engine-registry) — how the backend is resolved.
+- [Execution-runs](/plugins/agent-runtimes/execution-runs) — implementing `AgentExecutionRunRuntime` as a plugin author.

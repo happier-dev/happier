@@ -1,0 +1,115 @@
+---
+title: API Tokens
+description: Create and revoke a token for approved automation without handing scripts your interactive account authority.
+---
+
+Give a script or developer tool account-automation access that you can revoke
+separately from your signed-in sessions.
+
+<Callout>
+  **Developer Preview:** this guide describes the API Tokens flow in Happier's
+  development source. It is not a released or publicly available feature yet.
+</Callout>
+
+## What you need first
+
+- A development build that includes this preview.
+- A signed-in account. Creating or revoking a token requires a present user;
+  automation cannot change the controls that protect it.
+
+## Create a token
+
+1. Open **Settings → Account**, then choose **API tokens**.
+2. Choose **Create token**, give it a label you will recognize, and select its
+   expiry (30 days, 90 days, one year, or no expiry).
+3. Copy the token when it is shown and store it in your secret manager or the
+   environment of the tool that needs it.
+
+Happier shows the full secret once. The list keeps only a prefix and metadata,
+so it cannot reveal the same secret later. A token is broad account automation
+in this first version; it does not have scopes.
+
+## Use a token from the CLI
+
+Pass a token for one command with the global, prefix-only `--api-token` flag:
+
+```bash
+happier --api-token 'hap_v1_…' list
+```
+
+For automation, set `HAPPIER_TOKEN` instead:
+
+```bash
+HAPPIER_TOKEN='hap_v1_…' happier list
+```
+
+The flag takes precedence over `HAPPIER_TOKEN`. Neither form saves the token in
+your CLI profile; use your normal secret-management mechanism to provide it.
+
+## Choose what automation and plugins may do
+
+In **Settings → Actions**, open an Action and find its **API** and **Trusted
+plugins** entries under **Integrations**. Set each independently to:
+
+- **Allowed** — the Action can run from that integration without an approval
+  prompt.
+- **Ask first** — a present user must approve the Action before it runs.
+- **Off** — the integration cannot invoke the Action.
+
+An API Token follows the **API** setting. An installed trusted plugin follows
+the **Trusted plugins** setting. Start with the smallest set of Actions your
+automation needs.
+
+An API token cannot create, revoke, or replace API tokens; sign out every
+device; change Action, API, or security policy; approve requests; or make other
+present-user security and trust decisions. Those operations remain
+discoverable where applicable but return `present_user_required` instead of
+treating a bearer token as an interactive user.
+
+## Revoke access
+
+Use the token's overflow menu to revoke one token, or **Revoke all API tokens**
+when you need to remove every automation credential. Revocation takes effect on
+the server's next verification.
+
+**Sign out everywhere** is different: it invalidates signed sessions but leaves
+API tokens active. Revoke the token separately if the automation credential may
+be exposed.
+
+The daemon-local Action API has a bounded positive validation cache. After a
+token is revoked, a daemon that already validated it can accept it for up to
+60 seconds; it never extends that cached authorization while the server cannot
+be reached. Once the cache expires, an unreachable server produces
+`auth_unavailable` rather than an offline exception.
+
+## Keep the boundary clear
+
+Only API Tokens authenticate public Action API routes. A signed-in session
+bearer and the daemon's private control token are not substitutes for one.
+Always send a token in the `Authorization` header, never in a URL.
+
+The Action API's server-mediated transport is intentionally readable by the
+configured server while it forwards the request to the exact connected daemon.
+That relay works without an inbound public daemon address. Choose the
+daemon-local transport when direct local delivery is required. Both origins are
+implemented only in the current Developer Preview source; neither is published
+or shipped, and the server origin is not live-proven yet.
+
+## When it goes wrong
+
+- If you did not save the secret, revoke that token and create another one; it
+  cannot be revealed again.
+- If an operation returns `present_user_required`, complete it from the app
+  while signed in rather than widening the token's authority.
+- If the **API** target is **Off**, or is **Ask first** without a completed
+  approval, adjust the Action setting or complete the approval from the app.
+- If a just-revoked token still works through a local daemon, wait up to one
+  minute for its positive validation cache to expire. A server-origin request
+  is checked on its next verification.
+
+## Related
+
+- [SDK and Action API](/extending/sdk) — the Developer Preview source contract
+  that consumes API Tokens.
+- [CLI](/apps/cli) — the normal command-line workflow.
+- [Security](/security) — storage and server-readability boundaries.

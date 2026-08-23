@@ -1,0 +1,157 @@
+---
+title: What ships in the box
+description: Every plugin Happier bundles — agents, model providers, voice engines, source control and channels — generated from their projected manifests.
+---
+
+Happier bundles 43 plugins. That number is the clearest statement
+of how this version is built: the coding agents, the model providers, the voice
+engines, both version-control backends and all four hosting forges are plugins,
+loaded through the same manifest, trust and activation path your own plugin
+would use.
+
+They are not a privileged tier. A bundled plugin declares its contributions in a
+manifest, gets projected into catalogs without its code being executed, and
+activates the same way. Reading one is the most useful thing you can do before
+writing your own.
+
+## The plugins
+
+### Coding agents
+
+One plugin per agent. This is why adding an agent no longer means changing Happier itself.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Antigravity** | `happier.agent.antigravity` | — |
+| **Auggie** | `happier.agent.auggie` | — |
+| **Claude** | `happier.agent.claude` | Claude Code coding agent. |
+| **Codex** | `happier.agent.codex` | OpenAI Codex coding agent. |
+| **Cursor** | `happier.agent.cursor` | — |
+| **Gemini** | `happier.agent.gemini` | — |
+| **GitHub Copilot** | `happier.agent.copilot` | — |
+| **Grok** | `happier.agent.grok` | — |
+| **Kilo** | `happier.agent.kilo` | — |
+| **Kimi** | `happier.agent.kimi` | — |
+| **Kiro** | `happier.agent.kiro` | — |
+| **Oh My Pi** | `happier.agent.ohmypi` | — |
+| **OpenCode** | `happier.agent.opencode` | — |
+| **Pi** | `happier.agent.pi` | — |
+| **Qwen Code** | `happier.agent.qwen` | — |
+
+### Review agents
+
+Review CLIs rather than general coding agents — no model choice, no resume.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **CodeRabbit review engine** | `happier.review.coderabbit` | Runs CodeRabbit as a review-only execution engine. |
+| **DeepSec review engine** | `happier.review.deepsec` | Runs DeepSec as a review and security-review execution engine. |
+
+### Model providers
+
+Model sources that compatible agents can draw from, configured under **Settings → Providers**.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **CLIProxyAPI** | `happier.provider.cliproxyapi` | Use models served by an external or locally detected CLIProxyAPI gateway. |
+| **DeepSeek** | `happier.provider.deepseek` | Use DeepSeek models through Anthropic- or OpenAI-compatible agents. |
+| **LM Studio** | `happier.provider.lmstudio` | Use models served locally by LM Studio 0.4.1 or newer. |
+| **MiniMax** | `happier.provider.minimax` | Use MiniMax models through compatible agents on the global or China endpoint. |
+| **Ollama** | `happier.provider.ollama` | Use models served locally by Ollama. |
+| **OpenAI** | `happier.provider.openai` | Use OpenAI API models through a SavedSecret-backed provider connection. |
+| **OpenRouter** | `happier.provider.openrouter` | Use OpenRouter models through one provider connection. |
+| **Z.AI** | `happier.provider.zai` | Use Z.AI Coding Plan models through compatible agents. |
+
+### Voice engines
+
+Speech-to-text and text-to-speech backends behind the voice modes.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **ElevenLabs Voice** | `happier.voice.elevenlabs` | — |
+| **Google Voice** | `happier.voice.google` | Google Gemini speech-to-text and Google Cloud text-to-speech. |
+| **OpenAI Realtime Voice** | `happier.voice.openai` | — |
+| **OpenAI-compatible Speech** | `happier.voice.openai-compat` | Batch speech-to-text and text-to-speech through a selected-machine OpenAI-compatible endpoint. |
+| **xAI Grok Voice** | `happier.voice.xai` | — |
+
+### Version-control backends
+
+The systems Happier can read and write a working copy through.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Git SCM backend** | `happier.scm.backend.git` | First-party local Git SCM backend. |
+| **Sapling SCM backend** | `happier.scm.backend.sapling` | Provides the first-party local Sapling SCM backend with audited limited capabilities. |
+
+### Hosting providers
+
+Pull requests, issues and repository events, per forge.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Azure DevOps SCM hosting provider** | `happier.scm.forge.azure-devops` | Detects Azure DevOps remotes, provides Azure Repos operations, and brings its pull requests into PRs & Issues. |
+| **Bitbucket SCM hosting provider** | `happier.scm.forge.bitbucket` | Detects Bitbucket Cloud remotes, provides repository operations, and brings its pull requests into PRs & Issues. |
+| **GitHub SCM hosting provider** | `happier.scm.forge.github` | Detects GitHub remotes and provides GitHub repository operations. |
+| **GitLab SCM hosting provider** | `happier.scm.forge.gitlab` | Detects GitLab remotes and provides GitLab repository operations. |
+
+### Conversation channels
+
+Places a session can talk to people outside Happier.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Discord Channels** | `happier.channel.discord` | Connects Discord conversations to Happier Channels. |
+| **Telegram Channels** | `happier.channel.telegram` | Connects Telegram bot conversations to Happier Channels. |
+
+### Everything else
+
+Single-purpose plugins that do not belong to a family.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Conversation Channels** | `happier.channels` | Connects external conversations to Happier sessions and automations. |
+| **Plugin Inspector** | `happier.inspector` | First-party Plugin SDK inspector for installed plugin state and reload diagnostics. |
+| **PostHog** | `happier.posthog` | Brings PostHog error issues into PRs & Issues with their own detail body. |
+| **PRs & Issues** | `happier.triage` | Aggregates pull requests, issues and error groups from configured sources into one reviewable surface. |
+| **Sentry** | `happier.sentry` | Brings Sentry error issues into PRs & Issues with their own detail body. |
+
+## What they contribute
+
+The contribution families in use across the bundled set, and how many plugins
+declare each. A family with one consumer is a family that has been proven once —
+useful to know before you build on it.
+
+| Family | Plugins |
+| --- | --- |
+| `mcp` | 43 |
+| `ui` | 43 |
+| `systemTools` | 21 |
+| `agents` | 17 |
+| `settings` | 14 |
+| `connectedAccountDescriptors` | 12 |
+| `actions` | 11 |
+| `providers` | 9 |
+| `targetedPluginContributions` | 8 |
+| `hooks` | 7 |
+| `resources` | 6 |
+| `voiceProviders` | 6 |
+| `managedDependencies` | 4 |
+| `scmHostingProviders` | 4 |
+| `accountCollections` | 3 |
+| `backgroundServices` | 3 |
+| `executionRunProfiles` | 2 |
+| `pluginContributionPoints` | 2 |
+| `promptAssets` | 2 |
+| `scmBackends` | 2 |
+| `composerAttachments` | 1 |
+| `composerControls` | 1 |
+| `events` | 1 |
+| `transcriptActivities` | 1 |
+| `webhooks` | 1 |
+
+## Related
+
+- [Plugin concepts](/plugins/concepts) — the ownership boundaries these follow.
+- [Contributions](/plugins/manifest/contributions) — what each family above means.
+- [What you can build today](/plugins/manifest/availability) — availability, rather than usage.
+- [Coding agents](/agents) — the user-facing side of the agent plugins.

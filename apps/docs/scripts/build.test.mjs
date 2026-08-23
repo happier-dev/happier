@@ -25,6 +25,9 @@ test('writes the redirects file and typechecks before invoking the local Next bu
     packageRoot: '/repo/apps/docs',
     processExecPath: '/managed/node',
     renderRedirectsImpl: () => '/old /new 301\n',
+    relocateMdxSourcesImpl(options) {
+      calls.push({ kind: 'relocate', options });
+    },
     writeFileImpl(path, contents) {
       calls.push({ kind: 'write', path, contents });
     },
@@ -54,6 +57,8 @@ test('writes the redirects file and typechecks before invoking the local Next bu
       args: ['/repo/node_modules/next/dist/bin/next', 'build', '--webpack'],
       options: { cwd: '/repo/apps/docs', env: process.env, stdio: 'inherit' },
     },
+    // AFTER the build, not before: it rearranges what the export produced.
+    { kind: 'relocate', options: { outDir: '/repo/apps/docs/out' } },
   ]);
 });
 
@@ -64,6 +69,7 @@ test('fails when the local Next CLI exits unsuccessfully', async () => {
       packageRoot: '/repo/apps/docs',
       renderRedirectsImpl: () => '',
       writeFileImpl() {},
+      relocateMdxSourcesImpl() {},
       execYarnImpl() {},
       resolveNextCliPathImpl: () => '/repo/node_modules/next/dist/bin/next',
       spawnSyncImpl: () => ({ status: 2 }),

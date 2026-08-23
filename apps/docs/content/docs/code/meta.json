@@ -6,6 +6,7 @@
     "diffs",
     "git",
     "review-comments",
-    "pull-requests"
+    "pull-requests",
+    "prs-and-issues"
   ]
 }

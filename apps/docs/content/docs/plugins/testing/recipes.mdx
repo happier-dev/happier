@@ -1,0 +1,287 @@
+---
+title: Testkit recipes
+description: Five focused createPluginTestkit recipes for the contracts authors actually break.
+---
+
+Each recipe below is one complete file: the plugin it tests and the check that
+exercises it. Drop the exported function into your test runner of choice —
+`createPluginTestkit` has no runner dependency of its own.
+
+Every recipe disposes the testkit. Disposal runs registration cleanup plus the
+`activate()` cleanup your module returned, which is the only way to prove your
+plugin does not leak between invocations.
+
+## 1. Invoke a declared Action
+
+The baseline: activate the module through its real manifest projection and call
+one declared Action by local id.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.recipe-invoke',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  actions: {
+    echo: {
+      title: 'Echo',
+      execution: { target: 'daemon' },
+      surfaces: ['cli'],
+      run(input: unknown) {
+        const { text } = input as Readonly<{ text: string }>;
+        return { text };
+      },
+    },
+  },
+});
+
+export async function invokesTheDeclaredAction(): Promise<void> {
+  const plugin = await createPluginTestkit({ manifest, module: { activate } });
+  try {
+    const result = await plugin.invokeAction('echo', { text: 'hello' });
+    if (JSON.stringify(result) !== JSON.stringify({ text: 'hello' })) {
+      throw new Error(`Unexpected echo result: ${JSON.stringify(result)}`);
+    }
+  } finally {
+    await plugin.dispose();
+  }
+}
+```
+
+`invokeAction` dispatches the handler the manifest declared, not a handler you
+handed the testkit. A local id your manifest does not declare is rejected, so
+this recipe also proves the declaration and the registration agree.
+
+## 2. Prove an undeclared registration is refused
+
+`createPluginTestkit` enforces the manifest as the registration authority: an
+`activate()` that registers an id the manifest never declared fails activation
+rather than quietly exposing a hidden contribution. Assert that refusal for any
+hand-written activation.
+
+```ts
+import { definePlugin, type PluginApi } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+
+export const { manifest } = definePlugin({
+  id: 'com.example.recipe-registrations',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  actions: {
+    'rebuild-index': {
+      title: 'Rebuild index',
+      execution: { target: 'daemon' },
+      surfaces: ['cli'],
+      run() {
+        return { rebuilt: true };
+      },
+    },
+  },
+});
+
+// A hand-written activation that registers one id the manifest never declared.
+function activateWithUndeclaredAction(api: PluginApi): void {
+  api.actions.register('rebuild-index', () => ({ rebuilt: true }));
+  api.actions.register('drain-index', () => ({ drained: true }));
+}
+
+export async function refusesAnUndeclaredRegistration(): Promise<void> {
+  let activated = false;
+  try {
+    const plugin = await createPluginTestkit({
+      manifest,
+      module: { activate: activateWithUndeclaredAction },
+    });
+    activated = true;
+    await plugin.dispose();
+  } catch {
+    return;
+  }
+  if (activated) {
+    throw new Error('Expected activation to refuse the undeclared drain-index registration');
+  }
+}
+```
+
+Remove the `drain-index` line and the recipe fails, because activation then
+succeeds. That is the difference between this check and one that merely
+re-reads the manifest back to itself: `definePlugin(...)` registers exactly what
+it declares, so comparing its own two halves can never fail.
+
+## 3. Supply only the host boundaries the handler really uses
+
+The testkit's service defaults fail closed. That is deliberate: an unsupplied
+boundary throws instead of quietly returning a plausible value. Supply a fixture
+for the one real boundary your handler touches, and leave everything else
+closed.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.recipe-boundaries',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  actions: {
+    'check-token': {
+      title: 'Check token',
+      execution: { target: 'daemon' },
+      surfaces: ['cli'],
+      async run(_input, context) {
+        const status = await context.services.secrets.status('api-token');
+        return { configured: status.state === 'configured' };
+      },
+    },
+  },
+});
+
+const configuredSecrets: SecretsService = {
+  status: async () => ({ state: 'configured', revision: 'r1' }),
+  get: async () => 'token-value',
+  set: async () => ({ revision: 'r2' }),
+  delete: async () => ({ revision: 'r3' }),
+};
+
+export async function readsTheSecretThroughItsHostBoundary(): Promise<void> {
+  const plugin = await createPluginTestkit({
+    manifest,
+    module: { activate },
+    services: { secrets: configuredSecrets },
+  });
+  try {
+    const result = await plugin.invokeAction('check-token', {});
+    if (JSON.stringify(result) !== JSON.stringify({ configured: true })) {
+      throw new Error(`Unexpected result: ${JSON.stringify(result)}`);
+    }
+  } finally {
+    await plugin.dispose();
+  }
+}
+```
+
+Do not replace an internal parser, reducer, or catalog with a fixture. Only a
+genuine host boundary — secrets, filesystem, exec, HTTP, sessions — belongs
+here.
+
+## 4. Prove the typed failure, not the message
+
+Callers branch on `PluginError.code`. A test that asserts prose passes even when
+the code is wrong, so assert the code.
+
+```ts
+import { definePlugin, PluginError, isPluginError } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.recipe-errors',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  actions: {
+    'open-ticket': {
+      title: 'Open ticket',
+      execution: { target: 'daemon' },
+      surfaces: ['cli'],
+      run(input: unknown) {
+        const { ticketId } = input as Readonly<{ ticketId?: string }>;
+        if (!ticketId) {
+          throw new PluginError({ code: 'invalid_input', message: 'ticketId is required' });
+        }
+        return { ticketId };
+      },
+    },
+  },
+});
+
+export async function reportsATypedInvalidInput(): Promise<void> {
+  const plugin = await createPluginTestkit({ manifest, module: { activate } });
+  try {
+    await plugin.invokeAction('open-ticket', {});
+    throw new Error('Expected open-ticket to reject an empty ticketId');
+  } catch (error) {
+    if (!isPluginError(error) || error.code !== 'invalid_input') throw error;
+  } finally {
+    await plugin.dispose();
+  }
+}
+```
+
+## 5. Prove the handler honours cancellation
+
+A long-running handler that ignores its signal keeps working after the user
+navigates away. An already-aborted signal proves nothing — the host rejects the
+invocation with `plugin_action_aborted` before your handler ever runs. Cancel
+*while the handler is in flight* and assert it stopped.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+
+let releaseFirstStep: () => void = () => {};
+const firstStepReleased = new Promise<void>((resolve) => {
+  releaseFirstStep = resolve;
+});
+let announceStarted: () => void = () => {};
+const handlerStarted = new Promise<void>((resolve) => {
+  announceStarted = resolve;
+});
+let completedSteps = 0;
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.recipe-cancellation',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  actions: {
+    'scan-workspace': {
+      title: 'Scan workspace',
+      execution: { target: 'daemon' },
+      surfaces: ['cli'],
+      async run(_input, context) {
+        announceStarted();
+        await firstStepReleased;
+        // The one line under test: stop between units of work.
+        context.signal?.throwIfAborted();
+        completedSteps += 1;
+        return { completedSteps };
+      },
+    },
+  },
+});
+
+export async function stopsWhenTheHostCancels(): Promise<void> {
+  const plugin = await createPluginTestkit({ manifest, module: { activate } });
+  const controller = new AbortController();
+  try {
+    const invocation = plugin.invokeAction('scan-workspace', {}, { signal: controller.signal });
+    await handlerStarted;
+    controller.abort();
+    releaseFirstStep();
+    await invocation;
+    throw new Error('Expected scan-workspace to stop when the host cancelled');
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Expected ')) throw error;
+    if (completedSteps !== 0) {
+      throw new Error(`Handler completed ${completedSteps} step(s) after cancellation`);
+    }
+  } finally {
+    await plugin.dispose();
+  }
+}
+```
+
+Delete the `throwIfAborted()` line and this recipe fails: the handler finishes
+its step, `completedSteps` becomes `1`, and the check reports it. That is what
+makes it worth writing.
+
+## What these recipes do not prove
+
+`createPluginTestkit` runs in-process. It does not prove installed discovery,
+on-demand activation, generation replacement, trust, machine routing, or
+Surface Registry admission. Use `happier plugins test . --packed` and the
+relevant loaded-host lane for those claims — see
+[Testing plugins](/plugins/testing) for the layer boundary and
+[`createPluginUiTestkit`](/plugins/testing#semantic-ui-fixture) for mounted
+surface behavior.

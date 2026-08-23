@@ -17,13 +17,100 @@ const result = await context.services.actions.execute('action.spec.get', {
 
 The Action service validates the exact input and result contract for each id. Use the input guidance below when it is present; the TypeScript API remains the final typed contract.
 
+## `account.apiTokens.create`
+
+**Create API token** — Create a named API token for the current Account. The token secret is shown once.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+- `label` (text, required): Label
+- `expiresAt` (text): Expiry
+
+## `account.apiTokens.list`
+
+**List API tokens** — List non-secret API-token summaries for the current Account.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `account.apiTokens.revoke`
+
+**Revoke API token** — Revoke one API token for the current Account.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+- `tokenId` (text, required): Token id
+
+## `account.apiTokens.revokeAll`
+
+**Revoke all API tokens** — Revoke every API token for the current Account. Signed sessions are unaffected.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `account.plugins.data.erase`
+
+**Erase Account plugin data** — Erase the current Account’s retained data for one plugin without uninstalling local plugin code.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+- `pluginId` (text, required): Plugin id
+
+## `account.sessions.signOutEverywhere`
+
+**Sign out everywhere** — Invalidate all signed sessions for the current Account. API tokens remain active.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `action.invoke`
+
+**Invoke contributed action** — Invoke one currently available contributed Action through the canonical host dispatcher. If the result is \`denied\`, the person declined the confirmation: report that and do not invoke it again unless they ask.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `voice`, `api`.
+
+### Input guidance
+
+- `action.pluginId` (text, required): Plugin id
+- `action.localId` (text, required): Action id
+- `input` (textarea): Declared Action input
+
 ## `action.options.resolve`
 
 **Resolve action options** — Resolve valid options for an action field, including dynamic options sources.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
 
 ### Input guidance
 
@@ -40,11 +127,24 @@ The Action service validates the exact input and result contract for each id. Us
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
 
 ### Input guidance
 
 - `id` (text, required): Action id — The exact Happier action id.
+
+## `action.spec.search`
+
+**Search action specs** — Search available Happier action specs by name, description, bindings, and field hints.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `query` (text): Query — Natural-language search text.
+- `limit` (text): Limit — Maximum number of action specs to return.
 
 ## `agents.backends.list`
 
@@ -52,7 +152,7 @@ The Action service validates the exact input and result contract for each id. Us
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -66,7 +166,7 @@ The Action service validates the exact input and result contract for each id. Us
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -82,7 +182,7 @@ The Action service validates the exact input and result contract for each id. Us
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -97,7 +197,7 @@ The Action service validates the exact input and result contract for each id. Us
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -105,6 +205,58 @@ The Action service validates the exact input and result contract for each id. Us
 - `backendTargetKey` (text): Backend target key
 - `machineId` (text): Machine id (optional)
 - `limit` (text): Max results
+
+## `approval.request.create`
+
+**Create approval request** — Create an approval request for another action to run.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `summary` (textarea, required): Summary
+- `actionId` (text, required): Action id
+- `actionArgs` (textarea, required): Action args (json)
+
+## `approval.request.decide`
+
+**Decide approval request** — Approve or reject an approval request.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `artifactId` (text, required): Approval artifact id
+- `decision` (select, required): Decision
+
+## `approval.request.get`
+
+**Get approval request** — Fetch one approval request by approval artifact id.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+- `artifactId` (text, required): Approval artifact id
+
+## `approval.request.list`
+
+**List approval requests** — List approval queue entries from targeted approval artifact headers.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+- `status` (select): Status
+- `limit` (text): Limit
 
 ## `automation.conversation.admit`
 
@@ -178,13 +330,841 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 No field hints are published. Use the typed input accepted by `execute`.
 
+## `browser.automation.cancelActive`
+
+**Cancel active browser automation** — Cancel the active browser automation operation.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.click`
+
+**Click browser element** — Automate clicking a browser element.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.focus`
+
+**Focus browser element** — Automate focusing a browser element.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.goBack`
+
+**Automate browser back navigation** — Automate navigating back in the browser view.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.goForward`
+
+**Automate browser forward navigation** — Automate navigating forward in the browser view.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.hover`
+
+**Hover browser element** — Automate hovering over a browser element.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.navigate`
+
+**Automate browser navigation** — Automate navigation of the browser view to a URL.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.press`
+
+**Press browser key** — Automate pressing a key in the browser view.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.queryElements`
+
+**Query browser elements** — Query elements in the browser view by selector or role.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.reload`
+
+**Automate browser reload** — Automate reloading the current browser page.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.scroll`
+
+**Scroll browser surface** — Automate scrolling the browser surface.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.select`
+
+**Select browser option** — Automate selecting an option in the browser view.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.semanticSnapshot`
+
+**Capture browser semantic snapshot** — Capture a semantic accessibility snapshot of the browser view.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.setValue`
+
+**Set browser field value** — Automate setting the value of a browser field.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.snapshot`
+
+**Capture browser automation snapshot** — Capture an automation snapshot of the browser view.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.status`
+
+**Get browser automation status** — Read the current browser automation status.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.tap`
+
+**Tap browser surface** — Automate tapping the browser surface.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.timeline.get`
+
+**Get browser automation timeline** — Read the recorded browser automation action timeline.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.type`
+
+**Type into browser** — Automate typing text into the browser view.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.automation.waitFor`
+
+**Wait for browser condition** — Wait for a browser condition before continuing automation.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.annotation.attachComment`
+
+**Attach browser annotation comment** — Attach a comment to the active browser annotation.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.annotation.attachStroke`
+
+**Attach browser annotation stroke** — Attach a freehand stroke to the active browser annotation.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.annotation.attachStyleIntent`
+
+**Attach browser annotation style intent** — Set the drawing style for the active browser annotation.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.annotation.cancel`
+
+**Cancel browser annotation** — Cancel the active browser annotation session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.annotation.captureElement`
+
+**Capture browser annotation element** — Capture a selected element for the active browser annotation.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.annotation.captureRegion`
+
+**Capture browser annotation region** — Capture a cropped region for the active browser annotation.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.annotation.start`
+
+**Start browser annotation** — Start an in-page browser annotation session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.attachToAgentTurn`
+
+**Attach browser context to agent turn** — Attach browser context to agent turn
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.attachToComposer`
+
+**Attach browser context to composer** — Attach browser context to composer
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.captureConsoleSummary`
+
+**Capture browser console summary** — Capture a redacted summary of recent browser console output.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.captureNetworkSummary`
+
+**Capture browser network summary** — Capture a redacted summary of recent browser network activity.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.capturePage`
+
+**Capture browser page context** — Capture the current browser page as shareable context.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.captureScreenshot`
+
+**Capture browser screenshot context** — Capture a screenshot of the browser view as context.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.captureSelectedElement`
+
+**Capture selected browser element** — Capture the selected browser element as context.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.context.clear`
+
+**Clear browser context** — Clear browser context
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.clear`
+
+**Clear browser diagnostics** — Clear browser diagnostics
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.elementPicker.cancel`
+
+**Cancel browser element picker** — Cancel browser element picker
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.elementPicker.start`
+
+**Start browser element picker** — Start browser element picker
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.eval`
+
+**Evaluate browser diagnostics expression** — Evaluate browser diagnostics expression
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.getProperties`
+
+**Get browser remote object properties** — Get browser remote object properties
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.pause`
+
+**Pause browser diagnostics** — Pause browser diagnostics
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.releaseObjectGroup`
+
+**Release browser remote object group** — Release browser remote object group
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.resume`
+
+**Resume browser diagnostics** — Resume browser diagnostics
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.diagnostics.snapshot`
+
+**Get browser diagnostics snapshot** — Get browser diagnostics snapshot
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.goBack`
+
+**Go back in browser** — Navigate back in a browser view history.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.goForward`
+
+**Go forward in browser** — Navigate forward in a browser view history.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
 ## `browser.navigate`
 
 **Navigate browser** — Navigate a browser view to a URL.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.recording.attachToComposer`
+
+**Attach browser recording to composer** — Attach a captured browser recording to the message composer.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.recording.cancel`
+
+**Cancel browser recording** — Cancel browser recording
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.recording.cleanupExpired`
+
+**Clean up expired browser recordings** — Clean up expired browser recordings
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.recording.discard`
+
+**Discard browser recording** — Discard browser recording
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.recording.listForView`
+
+**List browser recordings for view** — List browser recordings for view
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.recording.start`
+
+**Start browser recording** — Start browser recording
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.recording.status`
+
+**Get browser recording status** — Get browser recording status
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.recording.stop`
+
+**Stop browser recording** — Stop browser recording
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.reload`
+
+**Reload browser** — Reload the current page in a browser view.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.stop`
+
+**Stop browser load** — Stop the in-progress page load in a browser view.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.target.set`
+
+**Set browser target** — Point a browser view at a launch target or URL.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.view.close`
+
+**Close browser view** — Close a browser view and detach it from its session.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.view.focus`
+
+**Focus browser view** — Bring a browser view to the foreground of its session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `browser.view.open`
+
+**Open browser view** — Open a browser view inside an existing browser session.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `bugreport.collectDiagnostics`
+
+**Collect bug report diagnostics** — Collect bounded, redacted daemon diagnostics for a bug report.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `bugreport.getLogTail`
+
+**Read bug report log tail** — Read a bounded daemon log tail from diagnostics-approved candidate paths.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `bugreport.uploadArtifact`
+
+**Upload bug report artifact** — Return daemon-side bug report artifact upload availability without exposing secret material.
+
+- Safety: `safe`; side effect: `none`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.filesystem.browseDirectory`
+
+**Browse filesystem directory** — List a machine file-browser directory constrained to a configured browse root.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.filesystem.getDirectoryTree`
+
+**Get directory tree** — Read a bounded directory tree through daemon filesystem path authorization.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.filesystem.listDirectory`
+
+**List directory** — List a directory through daemon filesystem path authorization.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.filesystem.listRoots`
+
+**List filesystem roots** — List bounded machine file-browser roots resolved from daemon filesystem access policy.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.filesystem.readFile`
+
+**Read file** — Read a bounded file through daemon filesystem path authorization.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `daemon.filesystem.writeFile`
+
+**Write file** — Write a bounded file through daemon filesystem path authorization.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -196,7 +1176,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -208,7 +1188,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -220,7 +1200,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -232,7 +1212,211 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.input.button`
+
+**Press simulator hardware button** — Press simulator hardware button
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.input.key`
+
+**Press simulator key** — Press simulator key
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.input.pinch`
+
+**Pinch simulator** — Pinch simulator
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.input.rotate`
+
+**Rotate simulator** — Rotate simulator
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.input.swipe`
+
+**Swipe simulator** — Swipe simulator
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.input.tap`
+
+**Tap simulator** — Tap simulator
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.input.text`
+
+**Type simulator text** — Type simulator text
+
+- Safety: `danger`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.lease.acquire`
+
+**Acquire simulator control lease** — Acquire simulator control lease
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.lease.release`
+
+**Release simulator control lease** — Release simulator control lease
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.lease.renew`
+
+**Renew simulator control lease** — Renew simulator control lease
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.list`
+
+**List simulator devices** — List simulator devices
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.sideband.request`
+
+**Request simulator sideband data** — Request simulator sideband data
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.stream.fps.set`
+
+**Set simulator stream frame rate** — Set simulator stream frame rate
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.stream.keyframe`
+
+**Request simulator stream keyframe** — Request simulator stream keyframe
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.stream.quality.set`
+
+**Set simulator stream quality** — Set simulator stream quality
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.stream.scale.set`
+
+**Set simulator stream scale** — Set simulator stream scale
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `devices.simulator.stream.snapshot`
+
+**Request simulator stream snapshot** — Request simulator stream snapshot
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
 
@@ -244,7 +1428,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -259,7 +1443,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `agent`, `rpc`.
+- Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -273,7 +1457,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `agent`, `rpc`.
+- Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -288,7 +1472,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -302,7 +1486,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -317,7 +1501,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -332,7 +1516,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -357,7 +1541,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -370,7 +1554,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `agent`, `rpc`.
+- Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -384,7 +1568,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `agent`, `rpc`.
+- Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -400,7 +1584,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `agent`, `rpc`.
+- Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -416,7 +1600,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -425,13 +1609,253 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `timeoutSeconds` (text): Timeout seconds (optional)
 - `pollIntervalMs` (text): Poll interval (ms)
 
+## `localServices.actions.copyUrl`
+
+**Copy local service URL** — Copy the URL of a local service.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.actions.forget`
+
+**Forget local service** — Forget a detected local service.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.actions.openPreview`
+
+**Open local service preview** — Open a browser preview for a local service.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.actions.restartManaged`
+
+**Restart managed local service** — Restart a Happier-managed local service.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.actions.stopManaged`
+
+**Stop managed local service** — Stop a Happier-managed local service.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.actions.terminateDetected`
+
+**Terminate detected local service** — Terminate a detected (non-managed) local service.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.inventory.list`
+
+**List local services** — List the local services detected on a machine.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.inventory.refresh`
+
+**Refresh local services** — Refresh the detected local services inventory.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.launcher.history.clear`
+
+**Clear local service launcher history** — Clear the local service launcher history.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.launcher.openPreview`
+
+**Open local service launcher preview** — Open a browser preview for a local service launch target.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.launcher.registerPreview`
+
+**Register local service launcher preview** — Register a browser preview for a local service launch target.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.launcher.snapshot`
+
+**Get local service launcher snapshot** — Read the current local service launcher state.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.launcher.start`
+
+**Start local service launcher target** — Start a managed local service from a launch target.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.preview.openOrCreate`
+
+**Open or create local service preview** — Open an existing or create a new private local service preview.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.preview.revoke`
+
+**Revoke local service preview** — Revoke a local service preview.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.preview.status`
+
+**Get local service preview status** — Read the status of a local service preview.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.publicPreview.copyUrl`
+
+**Copy public local service preview URL** — Copy the public URL of a local service exposure.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.publicPreview.create`
+
+**Create public local service preview** — Create a public exposure for a local service preview (requires confirmation).
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.publicPreview.revoke`
+
+**Revoke public local service preview** — Revoke a local service public exposure.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `localServices.publicPreview.status`
+
+**Get public local service preview status** — Read the status of a local service public exposure.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
 ## `machines.list`
 
 **List machines** — List machines available on the active server scope.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`.
+- Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
 
@@ -443,7 +1867,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`.
+- Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
 
@@ -456,7 +1880,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`.
+- Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
 
@@ -471,7 +1895,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`.
+- Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
 
@@ -485,12 +1909,48 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
 - `machineId` (text): Machine id
 - `limit` (text): Limit
+
+## `peerMediation.observability.snapshot`
+
+**Get peer mediation observability snapshot** — Get peer mediation observability snapshot
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `peerMediation.observability.subscribe`
+
+**Subscribe to peer mediation observability** — Subscribe to peer mediation observability
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `peerMediation.observability.unsubscribe`
+
+**Unsubscribe from peer mediation observability** — Unsubscribe from peer mediation observability
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
 
 ## `plugin.webhook.endpoint.checkCorrespondence`
 
@@ -498,7 +1958,187 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: none.
+- Also surfaced on: `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugin.webhook.endpoint.credential.configure`
+
+**Configure webhook credential** — Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugin.webhook.endpoint.credential.finishRotation`
+
+**Finish webhook credential rotation** — Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugin.webhook.endpoint.credential.rotate`
+
+**Rotate webhook credential** — Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugin.webhook.endpoint.ensure`
+
+**Ensure webhook endpoint** — Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugin.webhook.endpoint.read`
+
+**Read webhook endpoint** — Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugin.webhook.endpoint.retarget`
+
+**Retarget webhook endpoint** — Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugin.webhook.endpoint.revoke`
+
+**Revoke webhook endpoint** — Manage one Account-owned webhook endpoint through the canonical Webhook ingress owner.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.author.build`
+
+**Build plugin author source** — Build an external plugin-author source through the managed runtime.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.author.install`
+
+**Prepare plugin author dependencies** — Prepare external plugin-author dependencies through the managed runtime.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.author.test`
+
+**Test plugin author source** — Run the external plugin-author test command through the managed runtime.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.author.typecheck`
+
+**Typecheck plugin author source** — Run the managed TypeScript check for an external plugin-author source.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.change.status`
+
+**Get plugin change status** — Read one daemon-issued pending plugin change without creating or deciding it.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.dev`
+
+**Submit plugin development snapshot** — Inspect a local plugin source and submit its current snapshot to the daemon-owned development cycle without starting a watcher.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.doctor`
+
+**Diagnose plugin author source** — Evaluate and diagnose an external plugin-author source.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.install`
+
+**Install plugin** — Install a local plugin source and optionally enable the dev reload loop.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -510,7 +2150,43 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.pack`
+
+**Pack plugin** — Validate and package a local plugin into an installable archive.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.permissions.grants.dismissRequest`
+
+**Dismiss plugin permission request** — Manage durable user-approved optional plugin permission grants.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.permissions.grants.grant`
+
+**Grant plugin permission** — Manage durable user-approved optional plugin permission grants.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -522,7 +2198,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -534,7 +2210,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -546,7 +2222,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`.
 
 ### Input guidance
 
@@ -558,7 +2234,19 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.scaffold`
+
+**Scaffold plugin** — Create a local plugin scaffold from the first-party template.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -570,7 +2258,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -582,7 +2270,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -594,7 +2282,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -606,7 +2294,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -618,7 +2306,115 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.settings.get`
+
+**Get plugin setting** — Read one declared non-secret plugin Setting from one exact scope.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.settings.list`
+
+**List plugin settings** — List declared plugin Settings for one exact Account or daemon scope.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.settings.reset`
+
+**Reset plugin setting** — Reset one declared non-secret plugin Setting to its owner default.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.settings.secret.bind`
+
+**Bind existing saved secret** — Bind one plugin secret to an existing SavedSecret identity without exposing its value.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.settings.secret.delete`
+
+**Delete plugin secret** — Delete one plugin secret through its declared custody owner without exposing its value.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.settings.secret.status`
+
+**Get plugin secret status** — Read safe configured status for one declared plugin secret.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.settings.secret.unbind`
+
+**Unbind plugin secret** — Remove the binding for one plugin secret without exposing its value.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.settings.set`
+
+**Set plugin setting** — Compare-and-set one declared non-secret plugin Setting.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.uninstall`
+
+**Uninstall plugin** — Remove a local installed plugin through the daemon-owned plugin lifecycle.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -630,7 +2426,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`.
+- Also surfaced on: `ui`, `api`.
 
 ### Input guidance
 
@@ -649,7 +2445,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`.
+- Also surfaced on: `ui`, `api`.
 
 ### Input guidance
 
@@ -665,7 +2461,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -681,7 +2477,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`.
+- Also surfaced on: `ui`, `api`.
 
 ### Input guidance
 
@@ -701,7 +2497,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`.
+- Also surfaced on: `ui`, `voice`, `api`.
 
 ### Input guidance
 
@@ -714,7 +2510,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -731,7 +2527,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -743,7 +2539,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -755,7 +2551,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -767,7 +2563,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -779,7 +2575,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -791,7 +2587,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -803,7 +2599,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -815,7 +2611,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -827,7 +2623,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -839,7 +2635,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`, `sdk`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -851,7 +2647,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -869,7 +2665,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -882,7 +2678,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -904,7 +2700,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -919,7 +2715,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -934,7 +2730,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -950,7 +2746,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -965,7 +2761,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -982,7 +2778,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -999,7 +2795,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1020,7 +2816,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1038,7 +2834,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1051,7 +2847,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`, `sdk`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1065,7 +2861,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`.
+- Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
 
@@ -1077,7 +2873,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1090,7 +2886,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1102,7 +2898,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1115,7 +2911,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1129,7 +2925,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1137,13 +2933,27 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `backendTarget` (text, required): Backend target
 - `replay` (textarea, required): Replay seed
 
+## `session.events.get`
+
+**Get session events** — Inspect raw session events (tool calls, tool results, token counts, lifecycle, permission, stream, session events) for diagnostics. Use session_transcript_get for normal transcript reading.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `limit` (text): Limit
+- `cursor` (text): Cursor
+
 ## `session.fork`
 
 **Fork session** — Create a new session from the latest state of the selected session.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1155,7 +2965,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1167,7 +2977,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1179,7 +2989,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1194,12 +3004,40 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
 - `sessionId` (text): Session id
 - `targetMachineId` (text): Target machine id
+
+## `session.handoff.status.get`
+
+**Get session handoff status** — Read scalar status for an in-progress session handoff.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+- `handoffId` (text, required): Handoff id
+
+## `session.history.get`
+
+**Get session history** — DEPRECATED: use session_events_get. Returns diagnostic session events with cleaner pagination.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `limit` (text): Limit
+- `format` (select): Format
+- `includeMeta` (boolean): Include meta
+- `includeStructuredPayload` (boolean): Include structured payload
 
 ## `session.list`
 
@@ -1207,7 +3045,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1221,7 +3059,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1235,7 +3073,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1247,13 +3085,29 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `wait` (boolean): Wait for idle (optional)
 - `timeoutSeconds` (text): Timeout seconds (optional)
 
+## `session.messages.recent.get`
+
+**Get recent messages** — DEPRECATED: use session_transcript_get. Returns semantic transcript items with cleaner pagination.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `limit` (text): Limit
+- `cursor` (text): Cursor
+- `includeUser` (boolean): Include user
+- `includeAssistant` (boolean): Include assistant
+
 ## `session.mode.set`
 
 **Set session mode** — Request a new ACP session mode for the current session when the active provider supports session modes.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1266,7 +3120,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1280,7 +3134,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`.
+- Also surfaced on: `ui`, `voice`, `api`.
 
 ### Input guidance
 
@@ -1293,7 +3147,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1307,7 +3161,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1321,7 +3175,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1365,13 +3219,26 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `decision` (select, required): Decision
 - `scope` (select, required): Scope
 
+## `session.permission_mode.set`
+
+**Set session permission mode** — Update the permission intent (read_only/workspace_write/etc) for the specified session.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `permissionMode` (text, required): Permission mode
+
 ## `session.restore`
 
 **Restore checkpoint** — Restore a selected session checkpoint source.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1385,7 +3252,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `rpc`.
+- Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1397,7 +3264,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1410,7 +3277,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1440,7 +3307,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1453,7 +3320,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1465,7 +3332,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `mcp`, `api`.
 
 ### Input guidance
 
@@ -1478,7 +3345,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `api`.
 
 ### Input guidance
 
@@ -1490,7 +3357,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1503,7 +3370,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1516,7 +3383,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1532,7 +3399,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1544,7 +3411,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1559,7 +3426,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1573,7 +3440,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1588,7 +3455,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1603,7 +3470,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -1619,7 +3486,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1632,7 +3499,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1645,7 +3512,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1657,7 +3524,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1670,7 +3537,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1696,7 +3563,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1710,7 +3577,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1724,7 +3591,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1738,7 +3605,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1752,7 +3619,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1766,7 +3633,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1778,7 +3645,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1791,7 +3658,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1805,7 +3672,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1823,7 +3690,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1831,13 +3698,53 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `backendTargetKey` (text): Backend target key
 - `limit` (text): Max results
 
+## `sessions.subagents.get`
+
+**Get session subagent** — Return one provider-neutral subagent projection by id.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+- `id` (text, required): Subagent id
+- `parentSessionId` (text): Parent session id
+
+## `sessions.subagents.list`
+
+**List session subagents** — Return bounded provider-neutral subagent projections for a session.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `agent`, `rpc`, `api`.
+
+### Input guidance
+
+- `parentSessionId` (text): Parent session id
+- `groupId` (text): Group id
+- `limit` (text): Limit
+
+## `sessions.subagents.watch`
+
+**Watch session subagents** — Register the bounded host subagent watcher path and return its initial typed projection snapshot.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+- `parentSessionId` (text): Parent session id
+- `id` (text): Subagent id
+
 ## `subagents.delegate.start`
 
 **Start delegate run** — No additional description is published.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1854,7 +3761,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -1870,7 +3777,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1887,7 +3794,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1902,7 +3809,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1917,7 +3824,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1932,7 +3839,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`.
+- Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
 
@@ -1942,3 +3849,89 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `maxBytes` (text): Maximum bytes
 - `maxItems` (text): Maximum items
 - `maxReads` (text): Maximum reads
+
+## `transcript.unfollow`
+
+**Unfollow session transcript** — Release a retained transcript follow lease.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `leaseId` (text, required): Lease id
+
+## `ui.current_context.command.invoke`
+
+**Invoke current UI command** — Invoke one currently available opaque command from the local current UI context. If the result is \`denied\`, the person declined the confirmation: report that and do not invoke it again unless they ask.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `voice`, `api`.
+
+### Input guidance
+
+- `commandId` (text, required): Opaque command id
+
+## `ui.current_context.read`
+
+**Read current UI context** — Read the current local UI navigation context and its bounded opaque command descriptors.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `voice`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `ui.pet.choose`
+
+**Choose pet** — Open pet settings so the user can choose or manage their companion.
+
+- Safety: `safe`; side effect: not classified.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `ui.voice_agent.teleport`
+
+**Teleport voice agent to session root** — Move the daemon-backed voice agent into the current or specified session root.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `api`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+
+## `ui.voice_global.reset`
+
+**Reset voice agent** — No additional description is published.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `voice_agent.start`
+
+**Start voice agent run** — No additional description is published.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `backendTargetKeys` (multiselect, required): Provider/backend targets — Select provider/backend targets for the Happier-managed voice agent run; this is not parallelism capacity.
+- `instructions` (textarea, required): Instructions — Initial instructions for the voice agent run.

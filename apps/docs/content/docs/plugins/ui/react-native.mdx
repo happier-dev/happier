@@ -113,35 +113,29 @@ export const { manifest, activate } = definePlugin({
 });
 ```
 
-`definePlugin(...)` projects the cold manifest, while `pluginUiBuild.mjs` is a
-build-only source input that must load before the daemon module has compiled.
-Use the generated source-relative target there; do not import `dist/index.js`
-or turn the build target into a second manifest-shaped object:
+`definePlugin(...)` projects the cold manifest, while the plugin UI build
+config is a build-only source input that must load before the daemon module has
+compiled. Derive its targets from the same surface declaration through
+`buildUiSurfaceTargets`; do not import `dist/index.js` and do not restate the
+renderer, entry, platforms, or Module Federation identity a second time:
 
 ```ts
-import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+import { buildUiSurfaceTargets, defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+
+import { mainSurface } from './src/ui/surfaces.ts';
 
 export default defineBuildConfig({
-  targets: [{
-    rendererId: 'main-renderer',
-    entry: 'src/ui/PluginPanel.tsx',
-    kind: 'reactNative',
-    platforms: ['web', 'ios', 'android'],
-    module: {
-      containerName: 'happier_plugin_com_example_my_plugin_main_renderer',
-      modulePath: './renderSurface',
-      exportName: 'renderSurface',
-    },
-  }],
+  targets: [...buildUiSurfaceTargets(mainSurface)],
 });
 ```
 
-The scaffold derives the matching initial declaration and build target from one
-plugin id. If you move the source entry, update both declared source paths;
-the build target remains build input only, while `definePlugin(...)` remains
-the one manifest owner. Use explicit `ui.views` and `ui.renderers` only for
-advanced forms such as a shared renderer, fallback chain, or custom artifact;
-those raw forms remain supported rather than becoming a second beginner path.
+`happier plugins create --ui …` generates exactly this shape: one
+`src/ui/surfaces.ts` declaration, a `pluginUiBuild.ts` that derives from it, and
+a `src/index.ts` that projects the same surface into `ui.surfaces`. Moving the
+source entry is therefore a single edit. Use explicit `ui.views`, `ui.renderers`
+and a hand-written `targets` array only for advanced forms such as a shared
+renderer, fallback chain, or custom artifact; those raw forms remain supported
+rather than becoming a second beginner path.
 
 `requiredHostMethods` is a renderer admission requirement, not a
 method-availability claim. Name only the host methods without which the
@@ -213,6 +207,17 @@ query. The Data owner validates the query, keeps cursor and Account currentness,
 reacts to Account changes, and retains last-known-good rows. Do not issue an
 arbitrary predicate/index query, construct a data cache, or treat a UI query as
 a general Account-storage transport.
+
+For the plugin's own small, Account-portable state — a remembered selection, a
+collapsed section, a last-used filter — use `usePluginAccountKv` from
+`@happier-dev/plugin-ui/data`. It is the same Account KV service the plugin's
+daemon side gets from `services.storage.account.kv`, over the same Account row:
+same keys, same per-key versions, the same `expectedVersion` conditional write,
+and the same visible tombstone that stops a stale writer from resurrecting a
+deleted key. It needs no daemon. Keep growing or queryable records in a
+Collection and declared preferences in Plugin Settings; one value never has both
+Settings and KV authority. Account KV is not available inside a hosted-web
+surface, whose host bridge carries Collection UI queries only.
 
 ## Accessibility and offline snapshots
 

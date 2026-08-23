@@ -1,34 +1,95 @@
 ---
 title: Session loop
-description: How Happier runs live backend sessions through host-owned lifecycle.
+description: The host executor for a live session — where it starts, what makes it stop, and how a failure gets a name.
 ---
 
-The session loop is the host executor for live backend sessions.
+The session loop is the host executor for live backend sessions. It is the code
+that turns "a person sent a message" into "the Agent ran a turn" and back again.
 
-## Constructor/executor split
+Entry point: `apps/cli/src/agent/runtime/session/loop/runHostSessionRuntime.ts`.
+It is around 2,600 lines and orchestrates rather than implements — most of what
+it calls lives beside it under `session/loop/` and `agent/runtime/`.
 
-`runtimeCore.createSessionRuntime(...)` constructs the provider runtime or host runtime plan. The host bridge then executes that plan.
+## The loop is named after permission mode, and that is not incidental
 
-## Host loop owns
+The loop function is `runPermissionModePromptLoop`
+(`apps/cli/src/agent/runtime/runPermissionModePromptLoop.ts`). Permission mode
+is not a setting the loop consults — it is the thing the loop is organised
+around, because changing mode has to end the current prompt scope rather than
+apply halfway through it.
 
-- prompt dispatch
-- pending queue waits
-- ready notifications
-- runtime event observation
-- transcript projection
-- permission orchestration
-- model/mode/config updates
-- recoverable turn failure behavior
-- connected-service auth refresh routing
-- cleanup and disposal
+That shows up directly in the two small unions worth knowing before you read
+anything else:
 
-## Runtime leaf owns
+| Type | Values | What it answers |
+| --- | --- | --- |
+| `PromptLoopBoundaryReason` | `turn_completed`, `mode_change_reset`, `clear_reset` | Why the loop reached a boundary |
+| `PromptLoopResetReason` | `mode_change`, `clear` | Why loop state was discarded |
 
-- provider protocol send/cancel/update operations
-- provider event mapping
-- provider session identity reads
-- provider resource cleanup
+So there are exactly three ways a prompt scope ends, and two of the three are
+not a turn finishing. Code that assumes "the loop advanced, therefore a turn
+completed" is wrong for both reset paths.
+
+## Constructor and executor are separate
+
+`runtimeCore.createSessionRuntime(...)` **constructs** the provider runtime or
+host runtime plan. The host bridge then **executes** it. Keeping those apart is
+what lets the host own lifecycle while an Agent leaf owns protocol.
+
+**The host loop owns:** prompt dispatch, pending-queue waits, ready
+notifications, runtime event observation, transcript projection, permission
+orchestration, model/mode/config updates, recoverable turn-failure behaviour,
+connected-service auth refresh routing, and cleanup and disposal.
+
+**The runtime leaf owns:** provider protocol send/cancel/update, provider event
+mapping, provider session identity reads, and provider resource cleanup.
+
+Nothing in that first list belongs in a leaf, and a leaf that reimplements one
+of them will diverge from every other Agent the first time the host changes.
+
+## When a turn fails, the failure gets a name
+
+`classifyPrimarySessionRuntimeIssue` turns whatever went wrong into a
+`SessionRuntimeIssueV1`, which surfaces on session updates as
+`lastRuntimeIssue`. There are ten sources, and they are a closed set:
+
+| Source | Typically means |
+| --- | --- |
+| `agent_status_error` | The Agent reported a bad status. |
+| `agent_process_exit` | The Agent process died. |
+| `agent_process_exit_after_switch` | It died right after an Agent switch — tracked separately because the cause is usually the switch. |
+| `agent_session_error` | The Agent's own session errored. |
+| `usage_limit` | A quota was hit. |
+| `auth_error` | Credentials failed. |
+| `dependency_failure` | Something the Agent needs was not available. |
+| `stream_error` | The event stream broke. |
+| `permission_blocked` | The turn needed permission it did not have. |
+| `unknown` | Everything else. |
+
+Two of these carry structured recovery information rather than just a message,
+which is what lets the UI offer the right next step instead of a generic retry:
+
+- **`usage_limit`** carries a `quotaScope` — `account`, `workspace`,
+  `organization`, `model`, `provider` or `unknown` — and a `recoverability` of
+  `wait`, `switch_account`, `manual` or `unknown`. "Wait" and "switch account"
+  are very different answers, and the scope is how you tell which one applies.
+- **`auth_error`** carries a `recoverability` of `retry`, `manual`, `wait` or
+  `unknown`.
+
+`agent_process_exit_after_switch` also carries detail worth having when you are
+debugging one: exit code, signal, the last stderr line, the vendor resume id and
+the materialization root.
 
 ## Structured input
 
-Runtime input is typed and can include text plus structured selections. Provider leaves must explicitly support, reject, or report unavailable structured input instead of silently dropping it.
+Runtime input is typed, and can carry text plus structured selections. A leaf
+must explicitly **support**, **reject**, or **report unavailable** for structured
+input. Silently dropping it is the one behaviour that is not allowed, because it
+looks identical to success from the composer's side.
+
+## Related
+
+- [Agent runtime registry](/development/architecture/runtime/engine-registry) — how the runtime got here.
+- [Runtime events](/development/architecture/runtime/runtime-events) — what the loop observes. Generated.
+- [Transcripts and state](/development/architecture/runtime/transcripts-state) — what it projects into.
+- [Agent session runtime](/plugins/agent-runtimes/session-runtime) — the leaf side of this contract.

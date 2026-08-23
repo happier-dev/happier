@@ -1,36 +1,93 @@
 ---
 title: Agent runtime registry
-description: Resolve manifest-declared Agents to registered native runtimes.
+description: How a manifest-declared Agent becomes a running native runtime, and the three ways that resolution quietly does nothing.
 ---
 
-The Agent runtime registry is the host-owned resolver for executable Agent
-contributions.
+Every selectable Agent is a plugin contribution. The registry is what turns one
+of those contributions into an executable runtime when a session actually needs
+it.
 
-## Inputs
+Start in `apps/cli/src/agent/runtime/registry/engineRegistry.ts`. The types it
+resolves to are next door in `engineRegistryTypes.ts`, and the plugin-side
+registry it consults is
+`apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts`.
 
-- normalized plugin Agent contributions
-- registered native `AgentRuntime` factories
-- Agent catalog entries
-- host runtime params such as happy home dir and daemon-local services
+## Activation is on demand, and per agent
 
-## Output
+Resolving an Agent does not activate every plugin. `activationDemand.ts` builds
+a demand for exactly one contribution — `{ pluginId, family: 'agents', localId }`
+— and asks the plugin registry to activate that:
 
-The registry resolves one native runtime for an Agent identity. A runtime can
-include:
+```
+resolveAgentRuntimeActivationDemand(registry, agentId)
+  → activateContributionsOnDemand([demand])
+```
 
-- session factories
-- execution-run factories
-- optional typed Agent surfaces
-- Agent-native message and provider-binding adapters
+`activateAllAgentRuntimeContributionsOnDemand` exists for the cases that
+genuinely need the whole set — catalog work, mostly — and it sorts by agent id,
+so activation order is deterministic rather than map-insertion order.
 
-## Runtime context
+<Callout type="warn">
+  **The first way this does nothing.** `resolveAgentRuntimeActivationDemand`
+  returns `null` when `contribution.identity.pluginId` disagrees with
+  `contribution.pluginId`, and a `null` demand activates nothing at all. There is
+  no diagnostic and no throw — the Agent is simply never activated. If a
+  plugin's Agent resolves to a catalog entry but never starts, check that the
+  identity and the owning plugin id are the same string before looking anywhere
+  else.
+</Callout>
 
-The host creates bounded factory, session, and execution-run contexts only
-after resolving the registered runtime. Invocation services stay out of cold
-manifest projection and registration-only activation.
+## Provenance decides whether trust applies
 
-## Resolution rule
+A resolution carries a `provenance`, and it has three values:
 
-Selectable Agents resolve through this path. Production session and
-execution-run code does not instantiate Agent-specific engines directly or
-fall back to V1 runtime aliases.
+| Provenance | What it means |
+| --- | --- |
+| `first_party` | Bundled with Happier. |
+| `external` | An installed plugin. |
+| `configured` | Configured on the account rather than contributed by a package — the account-configured ACP path. |
+
+`throwIfPluginRuntimeStartBlocked.ts` returns immediately unless provenance is
+`external`. Bundled and account-configured Agents are never gated on plugin
+trust, which is right — you already trust what shipped in the app — but it does
+mean a trust bug will not reproduce with a built-in Agent.
+
+For an `external` resolution it looks for a blocking diagnostic, and only two
+detail codes block:
+
+- `plugin_trust_approval_required` → *"Plugin trust approval is required before this backend can run."*
+- `plugin_untrusted` → *"Refusing to load executable plugin daemon entry from an untrusted source."*
+
+<Callout>
+  **The second way this does nothing.** Trust blocks the *runtime*, not the
+  catalog. Projection never executes plugin code, so an untrusted plugin's Agent
+  still appears everywhere an Agent can be picked, and fails only at the moment
+  a session tries to start. That asymmetry is deliberate, and it is why "the
+  Agent is listed" is not evidence that it can run.
+</Callout>
+
+## What a resolved runtime carries
+
+One native runtime per Agent identity, which may supply session factories,
+execution-run factories, optional typed Agent surfaces, and the Agent-native
+message and provider-binding adapters.
+
+The host builds bounded factory, session and execution-run contexts *after*
+resolution, never before. Invocation services stay out of both cold manifest
+projection and registration-only activation — see
+[No-execute projection](/development/architecture/plugins/no-execute-projection)
+for why that boundary is load-bearing rather than stylistic.
+
+## The rule that keeps this honest
+
+Selectable Agents resolve through this path and no other. Production session and
+execution-run code does not instantiate an Agent-specific engine directly, and
+does not fall back to a V1 runtime alias. A direct instantiation is the third
+way an Agent can appear to work while bypassing everything above — trust,
+activation demand and context bounding included.
+
+## Related
+
+- [Host runtime](/development/architecture/runtime/host-runtime) — what wraps the resolved runtime.
+- [Session loop](/development/architecture/runtime/session-loop) — what consumes it.
+- [Agent runtimes](/plugins/agent-runtimes/agent-runtime) — the author's side of the same contract.

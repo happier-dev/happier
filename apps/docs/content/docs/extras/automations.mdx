@@ -1,6 +1,6 @@
 ---
 title: Automations
-description: Run a session on a schedule, or queue recurring messages into one you already have.
+description: Run a session on a schedule, on a plugin event, on a conversation, or on demand — and queue recurring messages into a session you already have.
 ---
 
 Some work is worth doing on a timer rather than when you remember it: a nightly
@@ -17,7 +17,7 @@ opening the app.
 Find them at **Settings → Automations** — "Manage scheduled sessions and
 recurring runs".
 
-## Two kinds
+## Two shapes
 
 **A scheduled session** starts a new session on a machine you choose, on a
 schedule. This is the one for work that should happen whether or not you are
@@ -28,12 +28,68 @@ machine, folder, agent and model.
 repeatedly. Add one from the session itself when you want a recurring nudge in a
 conversation you are keeping around.
 
-## Scheduling
+## What can trigger one
+
+A timer is only one of four things that can start an automation.
+
+| Trigger | What starts the run |
+| --- | --- |
+| **Schedule** | A cron expression or an interval. |
+| **Manual** | You, from the app or the CLI. Nothing runs on its own. |
+| **Plugin event** | Something a plugin observed — a new issue, a push, a review request. |
+| **Conversation** | A message arriving in a conversation the automation watches. |
+
+### Schedule
 
 A schedule is either an interval — every *n* minutes — or a cron expression,
 with presets for the common cases (**Every hour**, **Daily midnight**). Cron
 schedules run against a timezone you set, so a "daily at midnight" automation
 means midnight where you are rather than wherever the machine thinks it is.
+
+### Plugin events
+
+This is the one that makes automations more than a scheduler. A plugin declares
+events it can observe, and an automation binds to one — so a GitHub repository
+event can start a session on your machine without you or a timer involved.
+
+An event trigger is observed in one of two ways, and the difference matters
+operationally:
+
+- **Checkpointed pull** — a watcher materialized on a specific machine polls
+  the source and records a checkpoint as it goes. It needs that machine to be
+  up; when it comes back, the checkpoint tells it where to resume, so nothing
+  is re-processed and nothing between the two points is lost.
+- **Durable push** — the source calls a webhook endpoint Happier owns.
+  Delivery does not depend on one of your machines being awake, and the
+  endpoint records the moment observation started so earlier events are not
+  replayed at you.
+
+#### Setting up durable push
+
+Pick **Webhook** when the composer offers the choice, then configure the source
+as usual. Happier creates the endpoint for you and shows two values:
+
+- a **payload URL** on your Happier server, and
+- a **secret**, shown once and never again.
+
+Nothing arrives until you add that webhook at the source yourself. In GitHub,
+open the repository or organization settings, select **Webhooks**, then choose
+**Add webhook**. Paste the payload URL, paste the secret into **Secret**, set the content type to
+`application/json`, and choose the events you want. Happier verifies every
+delivery against that secret and drops anything that does not match, so a
+mistyped secret looks like silence rather than an error.
+
+Happier does not create the webhook for you and does not need a GitHub App: a
+plain repository or organization webhook is the whole setup. If you lose the
+secret, rotate the endpoint credential from its webhook settings rather than
+creating a second automation — a new secret means editing the same GitHub
+webhook again.
+
+An event trigger can also carry a **filter**, and a maximum observation age —
+past which an event is considered too old to act on rather than triggering a
+run late.
+
+### Active and paused
 
 Each automation is **Active** or **Paused**. Pausing keeps the definition and
 stops the runs, which is what you want while you are away.
@@ -62,4 +118,5 @@ run the automation twice.
 - [Starting a session](/sessions/new-session-shortcuts) — where scheduled sessions are created.
 - [Agent autonomy](/extending/agent-autonomy) — agents creating sessions themselves.
 - [Feature flags](/extras/feature-flags) — the `automations` gate.
+- [Webhook ingress](/plugins/guides/webhooks) — declaring the events an automation can bind to.
 - [CLI](/apps/cli)

@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "cross-plugin-contributions",
+    "composer",
     "agent-modes",
     "providers",
     "scm",

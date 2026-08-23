@@ -1,0 +1,246 @@
+---
+title: Composer
+description: Declare Composer references, attachments, controls and regions, then read the mounted draft from your surface.
+---
+
+> **Development status:** the four `composer.*` contribution families are
+> **deferred** in the installed SDK's `capability-matrix.json`, which stays the
+> availability authority. The source author contract below is current; a
+> declared Composer family is not yet an advertised runtime capability. The
+> mounted read path (`useComposer` / `useComposerView`) is ordinary
+> `@happier-dev/plugin-ui` API.
+
+The Composer is the message draft a person is writing. A plugin touches it in
+two places, and they are deliberately different:
+
+| You want to… | Use |
+| --- | --- |
+| Add something the person can insert or attach | `composer` in `definePlugin(...)` |
+| Read or change the draft from your own mounted surface | `useComposer()` / `useComposerView()` |
+
+The host owns the draft, its revision, and its lifecycle. A plugin never keeps a
+second copy of the draft, a shared draft store, or its own submit path.
+
+## Declare what the Composer offers
+
+`composer` is one author namespace with four families. Declare only the ones the
+feature needs; each entry's key is its local id.
+
+- **`references`** — searchable candidates the person inserts inline (`@`-style).
+- **`attachments`** — structured values the draft carries alongside its text.
+- **`controls`** — the affordances shown in the Composer toolbar.
+- **`regions`** — a surface mounted directly before or after the Composer.
+
+A control is the affordance; an attachment is what the draft ends up holding.
+They are separate local ids on purpose.
+
+```ts
+import {
+  defineComposerAttachment,
+  defineComposerControl,
+  defineComposerReference,
+  defineComposerRegion,
+  definePlugin,
+  defineUiSurfaceDefinition,
+} from '@happier-dev/plugin-sdk';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+
+// A region names one of your own declared renderers. `defineUiSurfaceDefinition`
+// derives that renderer id as `<surfaceId>-renderer`.
+const ticketPanel = defineUiSurfaceDefinition({
+  id: 'ticket-panel',
+  placement: 'appPage',
+  title: 'Tickets',
+  renderer: { kind: 'reactNative', requiredHostMethods: ['context'] },
+  build: {
+    entry: 'src/ui/TicketContext.tsx',
+    platforms: ['web', 'ios', 'android'],
+    module: {
+      containerName: 'happier_plugin_com_example_tickets_ticket_panel_renderer',
+      modulePath: './TicketContext',
+      exportName: 'renderSurface',
+    },
+  },
+});
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.tickets',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  composer: {
+    references: {
+      tickets: defineComposerReference({
+        title: 'Tickets',
+        icon: 'search',
+        async search(query, signal) {
+          const found = await findTickets(query, signal);
+          return found.map((ticket) => ({ id: ticket.id, label: ticket.title }));
+        },
+        async resolve(candidateId, signal) {
+          const [ticket] = await findTickets(candidateId, signal);
+          return {
+            id: candidateId,
+            label: ticket?.title ?? candidateId,
+            // The text the model actually receives for this reference.
+            context: `Ticket ${candidateId}: ${ticket?.title ?? 'unknown'}`,
+          };
+        },
+      }),
+    },
+    attachments: {
+      ticket: defineComposerAttachment({
+        title: 'Ticket',
+        icon: 'file',
+        cardinality: 'many',
+        // The draft carries identity only. Publish the schema once so the
+        // attachment and whatever reads it cannot disagree about its shape.
+        value: defineProtocolObject({
+          ticketId: defineProtocolString(),
+        }, { policy: 'closed' }),
+      }),
+    },
+    controls: {
+      'add-ticket': defineComposerControl({
+        label: 'Attach ticket',
+        icon: 'file',
+        // Omitting `scopes` is the widest policy, not none. Name the scopes
+        // whose messages can actually hold this attachment.
+        scopes: ['session', 'newSession', 'pendingMessage'],
+        interaction: {
+          kind: 'attachmentPicker',
+          attachment: 'ticket',
+          presentation: 'popover',
+          layout: 'list',
+        },
+      }),
+    },
+    regions: {
+      'ticket-context': defineComposerRegion({
+        placement: 'afterComposer',
+        renderer: 'ticket-panel-renderer',
+      }),
+    },
+  },
+  ui: { surfaces: [ticketPanel] },
+});
+
+async function findTickets(
+  query: string,
+  signal: AbortSignal,
+): Promise<readonly Readonly<{ id: string; title: string }>[]> {
+  signal.throwIfAborted();
+  return [{ id: 'T-1', title: `Ticket matching ${query}` }];
+}
+```
+
+`search` and `resolve` receive the host's `AbortSignal`. Honour it: the person
+keeps typing and the host retires the previous query.
+
+## Read the mounted draft
+
+From a mounted surface, `useComposer()` returns the Composer facade and
+`useComposerView(handle)` reads and observes one exact handle. The hook owns
+React lifecycle only — the snapshot, its revision, availability, and
+subscription disposal stay with the host.
+
+```tsx
+import * as React from 'react';
+import { Button, Text, useComposer, useComposerView } from '@happier-dev/plugin-ui';
+
+export function TicketContext() {
+  const composers = useComposer();
+  const composer = composers.current();
+  const view = useComposerView(composer);
+
+  if (view.pending === 'initial') return <Text variant="body" value="Loading draft…" />;
+  if (view.error) return <Text variant="body" value={view.error.message} />;
+  if (view.result?.status !== 'ready') return null;
+
+  const { revision, capabilities } = view.result.snapshot;
+
+  return (
+    <Button
+      title="Attach this ticket"
+      disabled={!capabilities.attachments || composer === null}
+      onPress={() => {
+        void composer?.apply({
+          expectedRevision: revision,
+          operations: [{
+            kind: 'attachment.add',
+            attachmentLocalId: 'ticket',
+            value: {
+              key: 'ticket:T-1',
+              value: { ticketId: 'T-1' },
+              presentation: { label: 'Ticket T-1' },
+            },
+          }],
+        });
+      }}
+    />
+  );
+}
+```
+
+`current()` is non-null only when the host supplied a Composer surface input to
+this mount. `active()` and an exact `get(ref)` remain available on generic
+mounts. Always pass the `expectedRevision` you read: the host rejects an apply
+built on a stale draft instead of silently overwriting the person's edits.
+
+## Staged media
+
+`composer.content.pickMedia(...)` returns an opaque staged handle. Pass it
+unchanged into the attachment operation, and release it if the apply does not
+land. Authors never supply a transfer id, digest, path, or execution target.
+
+```ts
+import type { ComposerHandle } from '@happier-dev/plugin-ui';
+
+export async function attachTicketEvidence(composer: ComposerHandle, ticketId: string) {
+  const handle = await composer.content.pickMedia({
+    attachmentLocalId: 'ticket-evidence',
+    kinds: ['image'],
+  });
+  let attached = false;
+  try {
+    const read = await composer.read();
+    if (read.status !== 'ready') return read;
+    const result = await composer.apply({
+      expectedRevision: read.snapshot.revision,
+      operations: [{
+        kind: 'attachment.add',
+        attachmentLocalId: 'ticket-evidence',
+        value: {
+          key: `evidence:${ticketId}`,
+          value: { ticketId },
+          presentation: { label: `Evidence for ${ticketId}` },
+        },
+        content: { kind: 'stagedMedia', handle },
+      }],
+    });
+    attached = result.status === 'applied';
+    return result;
+  } finally {
+    if (!attached) await composer.content.release(handle);
+  }
+}
+```
+
+## Boundaries
+
+- The host owns the draft, its revision, submission, and Message admission.
+  There is no plugin-owned shared-draft state and no second submit path.
+- A control's `interaction` is a declaration, not a callback registry. It names
+  an Action, a `composerApply` operation set, a surface, or a destination.
+- Renderers named by an attachment picker or a region are your own declared UI
+  renderers; see [React Native UI](/plugins/ui/react-native).
+- Read availability from `capability-matrix.json` and the mounted snapshot's
+  `capabilities`, never from a plugin-local feature flag.
+
+## Related
+
+- [React Native UI](/plugins/ui/react-native) — declaring the renderers a
+  picker or region names.
+- [Actions, tools and commands](/plugins/api/actions-tools-commands) — the
+  Action a control interaction can invoke.
+- [Testing plugins](/plugins/testing) — driving a mounted surface with
+  `createPluginUiTestkit`.

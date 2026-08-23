@@ -9,6 +9,7 @@
     "host-actions",
     "hooks",
     "events",
-    "lifecycle"
+    "lifecycle",
+    "surface"
   ]
 }

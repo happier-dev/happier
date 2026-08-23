@@ -29,7 +29,7 @@ description: Public terms used by the Happier Plugin SDK.
 | Provider | A model source such as OpenRouter, Ollama, or LM Studio. Provider contribution metadata and account-owned Provider connections are separate from Agents. |
 | Host access | Required disclosure/cooperative service configuration or optional access to an independently host-owned resource. Ambient local process powers are not sandbox grants. |
 | Declarative UI | A host-rendered surface described by public data rather than arbitrary client code. |
-| Hosted web UI | A planned isolated web surface. It is currently unavailable because no Artifact-backed frame adapter has passed its platform feasibility gate; it does not sandbox other code in the package. |
+| Hosted web UI | An isolated web surface whose runtime availability each host reports for itself — either the one frame adapter it constructed or a typed unavailable reason. It does not sandbox other code in the package. |
 | React Native UI | Trusted package code loaded in a supported client realm. It is the default native-feeling executable UI model, not a sandbox. |
 | UI artifact | A build output described by `ui-artifacts.json` and verified by the host before use. |
 | Plugin testkit | `createPluginTestkit` from `@happier-dev/plugin-sdk/testing`, used to activate a module and invoke registered contributions in tests. |

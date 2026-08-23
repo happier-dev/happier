@@ -15,7 +15,7 @@ Manifest host-access requests constrain host-mediated services. They do not prev
 
 ## Isolated UI
 
-Packaged hosted web is currently unavailable because no Artifact-backed frame adapter has passed its platform feasibility gate. A future iframe or WebView boundary would limit the UI's direct access to Happier client internals, but it would not sandbox daemon code or other executable code shipped by the same plugin.
+Packaged hosted web renders inside a host-constructed frame adapter where the host reports one, and is unavailable with a typed reason where it does not. That iframe or WebView boundary limits the UI's direct access to Happier client internals, but it does not sandbox daemon code or other executable code shipped by the same plugin.
 
 ## Declarative surfaces
 

@@ -1,33 +1,60 @@
 ---
 title: Host runtime
-description: The host-owned runtime layer around provider leaves.
+description: The layer between product flows and Agent-specific code — what it owns, and where to look for each part.
 ---
 
-The host runtime is the shared Happier layer that sits between product flows and provider-specific code.
+The host runtime is the shared Happier layer that sits between product flows and
+Agent-specific code. It is the reason every Agent behaves the same way in the
+parts that belong to Happier, and differs only where the Agent's own CLI does.
 
-## Host responsibilities
+This page is orientation. Each responsibility below has its own page or its own
+file, and the code is the authority for detail.
 
-- resolve backend engines
-- build plugin runtime context
-- run session host loops
-- run execution-run bridges
-- route permission requests and responses
-- manage pending prompt delivery
-- publish runtime identity and facets
-- project transcript and session state changes
-- coordinate cleanup and disposal
-- emit lifecycle hook events
+## What the host owns, and where it lives
 
-## Provider leaf responsibilities
+| Responsibility | Start here |
+| --- | --- |
+| Resolve backend engines | `agent/runtime/registry/engineRegistry.ts` — see [Agent runtime registry](/development/architecture/runtime/engine-registry) |
+| Run session host loops | `agent/runtime/session/loop/runHostSessionRuntime.ts` — see [Session loop](/development/architecture/runtime/session-loop) |
+| Run execution-run bridges | `agent/runtime/bridges/executionRun/ExecutionRunHostBridge.ts` — see [Execution-runs](/development/architecture/runtime/execution-runs) |
+| Project transcript and session state | The durable outbox — see [Transcripts and state](/development/architecture/runtime/transcripts-state) |
+| Build plugin runtime context | `plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts` |
 
-- launch or connect to provider protocol clients
-- encode prompts and structured input
-- decode provider events
-- map provider permission requests
-- publish `AgentSessionRuntimeEvent` facts
-- expose provider-specific backend surfaces
-- dispose provider-owned resources
+It also routes permission requests and responses, manages pending prompt
+delivery, publishes runtime identity and facets, coordinates cleanup and
+disposal, and emits lifecycle hook events.
 
-## Forbidden split-brain paths
+## What an Agent leaf owns
 
-Provider leaves should not own duplicate host loops, direct Happier transcript writes, direct session row mutation, UI status heuristics, or execution-run public state.
+Launching or connecting to the Agent's protocol client, encoding prompts and
+structured input, decoding events, mapping permission requests, publishing
+`AgentSessionRuntimeEvent` facts, exposing Agent-specific backend surfaces, and
+disposing its own resources.
+
+## Split-brain is the failure mode to watch for
+
+Everything above is one list because the alternative is worse in a specific,
+recurring way: a leaf that reimplements a host responsibility diverges from every
+other Agent the moment the host changes, and the divergence shows up as "it works
+for Claude but not Codex" rather than as an obvious bug.
+
+A leaf must not own:
+
+- **a duplicate host loop** — the boundary and reset semantics in
+  [Session loop](/development/architecture/runtime/session-loop) are host rules,
+  and a second loop will not have them;
+- **direct transcript writes** — those bypass the durable outbox, so they are the
+  writes that vanish when the connection drops;
+- **direct session row mutation**;
+- **UI status heuristics** — status is projected from typed events, not inferred
+  from output;
+- **execution-run public state**.
+
+If a leaf appears to need one of these, the answer is a scoped host service, not
+a local implementation.
+
+## Related
+
+- [Runtime events](/development/architecture/runtime/runtime-events) — the typed vocabulary a leaf publishes. Generated.
+- [Provider leaves](/development/architecture/plugins/provider-leaves) — the same boundary from the plugin platform's side.
+- [Agent runtimes](/plugins/agent-runtimes/agent-runtime) — writing one.

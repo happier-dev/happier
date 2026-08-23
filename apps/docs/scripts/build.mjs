@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { formatProblems, runContentChecks } from './checkContent.mjs';
 import { renderRedirects } from './generateRedirects.mjs';
+import { relocateMdxSources } from './exportMdxSources.mjs';
 
 const require = createRequire(import.meta.url);
 const defaultPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,6 +25,7 @@ export async function runDocsBuild({
   runContentChecksImpl = runContentChecks,
   renderRedirectsImpl = renderRedirects,
   writeFileImpl = writeFile,
+  relocateMdxSourcesImpl = relocateMdxSources,
 } = {}) {
   // Before anything expensive: a broken internal link, a renamed UI label and a
   // stale generated page all build perfectly green, and all three mislead every
@@ -56,6 +58,11 @@ export async function runDocsBuild({
   if ((result.status ?? 1) !== 0) {
     throw new Error(`Next build failed with code ${result.status ?? 'unknown'}`);
   }
+
+  // AFTER the export, because it rearranges what the export produced: the
+  // Markdown sources move from the route's staging path to the URLs they are
+  // served at, so `<page>.mdx` is a static asset rather than a Worker rewrite.
+  await relocateMdxSourcesImpl({ outDir: resolve(packageRoot, 'out') });
 }
 
 const isEntrypoint = process.argv[1]

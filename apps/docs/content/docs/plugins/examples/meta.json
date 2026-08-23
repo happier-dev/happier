@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "action-plugin",
+    "action-resource-ui-plugin",
     "agent-runtime-plugin",
     "acp-agent-runtime",
     "external-session-source",

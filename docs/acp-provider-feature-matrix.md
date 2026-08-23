@@ -61,5 +61,5 @@ Shared migration target for that group:
 
 - Copilot and Kiro have no provider harness spec file under `packages/plugins/<providerId>/src/agent/e2e/providerSpec.json`.
 - Kiro has no execution-run registration.
-- Most catalogizable ACP providers still ship `createUnknownCliAuthSpec(...)` for auth-status detection, even though native login-launch flows are already implemented for Qwen, Kilo, Kimi, and Auggie.
+- Most catalogizable ACP Agents still declare the `unknown` CLI auth probe parser in their manifest `cli.auth.probe`, even though native login-launch flows are already implemented for Qwen, Kilo, Kimi, and Auggie.
 - None of PI, Qwen, Kilo, Copilot, Auggie, Kimi, or Gemini currently ship a direct-session browser/import surface comparable to Codex / Claude / OpenCode.

@@ -162,8 +162,8 @@ test('keeps final UI author contracts scoped to the one public owner', () => {
   assert.match(localDevelopment, /daemon-owned candidate path creates an operation-local copy/u);
 
   assert.match(reactNative, /entry: 'src\/ui\/PluginPanel\.tsx'/u);
-  assert.match(reactNative, /`pluginUiBuild\.mjs`/u);
-  assert.doesNotMatch(reactNative, /buildUiSurfaceTargets/u);
+  assert.match(reactNative, /`pluginUiBuild\.ts`/u);
+  assert.match(reactNative, /buildUiSurfaceTargets/u);
   assert.doesNotMatch(reactNative, /from '\.\/plugin\.js'/u);
   assert.match(uiArtifacts, /entry: 'src\/ui\/renderSurface\.tsx'/u);
   assert.match(uiArtifacts, /entry: 'src\/ui\/index\.ts'/u);

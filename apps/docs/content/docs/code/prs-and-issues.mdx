@@ -1,0 +1,71 @@
+---
+title: PRs & Issues
+description: One surface for the pull requests, issues and error groups you are responsible for, gathered from every source you configure.
+---
+
+Work does not arrive in one place. Pull requests sit on a forge, issues sit on
+another tab, and the errors that turn into issues sit in an observability tool
+none of the others know about. **PRs & Issues** gathers them into a single
+reviewable list, and lets you turn any entry into a session.
+
+## Where entries come from
+
+Sources are contributed by plugins rather than built in, through a contribution
+point the PRs & Issues plugin declares. Happier ships six:
+
+| Source | What it brings |
+| --- | --- |
+| GitHub | Pull requests and issues |
+| GitLab | Merge requests and issues |
+| Bitbucket | Pull requests |
+| Azure DevOps | Pull requests |
+| Sentry | Error issues, with their own detail body |
+| PostHog | Error issues, with their own detail body |
+
+Each source is configured as an *instance* — an account, an origin, and what to
+watch. Self-managed GitLab and Azure DevOps Server are configured by origin, so
+an origin change is explicit reconfiguration rather than a silent alias.
+
+Because sources are a contribution point, a plugin you write can add one. See
+[SCM plugins](/plugins/guides/scm).
+
+## What an entry is
+
+Every entry declares one of four source-neutral subjects, and the subject is
+what decides which actions apply:
+
+- **Pull request**
+- **Issue**
+- **Error issue** — a group from Sentry or PostHog rather than a tracker
+- **Other** — anything a source declares that is none of the above
+
+<Callout>
+  Preparing a review workspace is admitted for **pull requests only**. An issue
+  or an error group can start a session, but it has no branch to check out, so
+  there is nothing to prepare a worktree from.
+</Callout>
+
+## What you can do with one
+
+- **Pin it.** Pins are yours and sync with your account, so the entry you pinned on your laptop is pinned on your phone.
+- **Link it to a session.** The link is a durable relation, not a copied URL — an entry can carry up to 32 linked sessions, and a session opened from an entry stays associated with it.
+- **Attach it to a message.** The composer has a **PRs & Issues** attachment, so you can hand an agent the entry itself rather than pasting a link and hoping it fetches the right thing.
+- **Save a view.** Filters you use often become saved views, under **Saved views** in the plugin's settings.
+
+Three things sync with your account: the sources you configured, the links
+between entries and sessions, and your pins. Nothing else about the list is
+stored — entries themselves are read from their source each time.
+
+## Agents can read it too
+
+The plugin contributes MCP servers and discovery sources, so an agent in a
+session can query the same list you are looking at. That is what makes "look at
+my review queue and start on the oldest one" a thing you can ask for rather than
+a thing you have to do by hand.
+
+## Related
+
+- [Pull requests](/code/pull-requests) — creating one, rather than triaging it.
+- [Review comments](/code/review-comments) — marking up the diff once you are in.
+- [Automations](/extras/automations) — starting work from a repository event rather than from the list.
+- [What ships in the box](/plugins/bundled) — the plugins providing the sources above.

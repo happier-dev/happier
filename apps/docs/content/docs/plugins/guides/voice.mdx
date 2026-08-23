@@ -77,8 +77,8 @@ Voice's independent `currentUiContextMode` privacy setting defaults to
 | Mode | Disclosure contract |
 | --- | --- |
 | `off` | Expose no current-UI read or command tool, and send no automatic updates. |
-| `on_demand` | Advertise an explicit current-UI read; send no navigation updates. |
-| `automatic` | Keep that explicit read and add best-effort metadata-only navigation transitions. |
+| `on_demand` | Advertise an explicit current-UI read; send no automatic updates. |
+| `automatic` | Keep that explicit read, add best-effort metadata-only navigation transitions, and announce the session the user opens on this client. |
 
 Disclosure and command availability are separate. A read can disclose opaque
 contextual-command descriptors, but the `invokeCurrentUiCommand` tool is
@@ -93,6 +93,13 @@ content and is disclosed only by an explicit current-UI read, alongside entity
 summaries, detail, form content, and command payloads. Automatic updates are
 ephemeral: they are not persisted, synchronized, replayed across restarts, or
 ordered across clients.
+
+Opening a session on this client is the same kind of observation — nothing but
+the user navigating here produces it — so the session-focus announcement
+answers to this mode rather than to a second switch. `off` and `on_demand` send
+no announcement at all; under `automatic` the announcement carries only the
+session context the Voice sharing settings already permit, and a session whose
+update level is `none` still contributes nothing.
 
 Contextual command ids are opaque and scoped to the current snapshot. The
 invoking client resolves them again immediately before execution, then

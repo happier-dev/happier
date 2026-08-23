@@ -604,8 +604,16 @@ appears once under "Low-level ABI equivalent" and is for conformance only.
 
 `installationVariants` is the complete registration-time snapshot. Each
 variant declares its configuration targets and every event the host must
-install. Every command selects the closed `posix` or `windows_cmd` shell
-dialect; plugins do not supply raw command fragments. The Agent leaf owns
+install. Every command selects one of the closed `posix`, `windows_cmd`, or
+`powershell_encoded` shell dialects; plugins do not supply raw command
+fragments. The dialect chooses the host serializer that quotes the generated
+command, so it must match a shell the installing machine actually runs: the
+host accepts `posix` on macOS and Linux and `windows_cmd` or
+`powershell_encoded` on Windows, and refuses a selected variant that fails that
+check with `installation_unsupported` rather than installing an entry the Agent
+could never execute. Declare one variant per dialect and return the right
+`variantId` from `resolveInstallation` using `request.installation.platform`,
+and make sure `mapHookEvent` admits every variant id you can install. The Agent leaf owns
 installed-version selection, concrete configuration paths, native event names,
 payload parsing, and source-native correlation. The host owns preview and
 consent, safe command serialization, configuration writes, durable custody,

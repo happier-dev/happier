@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "quickstart",
+    "bundled",
     "concepts",
     "glossary",
     "guides",

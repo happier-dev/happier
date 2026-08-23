@@ -1,0 +1,364 @@
+---
+title: SDK and Action API
+description: Use Happier Actions from a typed SDK or its HTTP API with an API Token.
+---
+
+Use the SDK or HTTP API to drive Happier Actions from a trusted developer tool.
+
+<Callout>
+  **Developer Preview:** `@happier-dev/sdk` is a private `0.0.0` workspace
+  package, not a package-registry install. A release pipeline can produce a
+  candidate tarball for its proof workflow, but no candidate is currently
+  published. The Action API is also development source only. Neither is
+  released or publicly available; the server origin has not completed
+  composed/live proof.
+</Callout>
+
+## What you need first
+
+- A development checkout that supplies the SDK package and a daemon with the
+  Developer Preview Action API enabled. There is not yet a supported
+  `npm install @happier-dev/sdk` workflow.
+- An API Token created by a present user. Public Action API routes accept API
+  Tokens only; signed-session bearers and daemon control tokens are rejected.
+
+## Supported environment
+
+The current supported consumer is a server-side Node.js program. The Action API does not
+enable CORS, and no same-origin browser delivery is proven in this preview. Do
+not put an API Token in browser code or expect an arbitrary browser origin to
+call either Action endpoint.
+
+## Install and run a candidate
+
+When the release workflow provides an exact candidate tarball, install that
+local file—not a registry version. The pipeline output is a `.tgz` under its
+SDK candidate directory; replace the placeholder with the absolute path you
+received.
+
+```bash
+mkdir happier-sdk-consumer && cd happier-sdk-consumer
+npm init --yes
+SDK_TARBALL='/absolute/path/to/sdk-candidate.tgz'
+npm install --ignore-scripts --no-audit --no-fund "$SDK_TARBALL"
+```
+
+The candidate includes a TypeScript end-to-end example. Install its development
+runner and launch it with Node.js:
+
+```bash
+npm install --save-dev --no-audit --no-fund tsx
+HAPPIER_API_ENDPOINT='https://configured-server.example' \
+HAPPIER_TOKEN='hap_v1_…' \
+node --import tsx ./node_modules/@happier-dev/sdk/examples/basic/index.ts
+```
+
+For a configured server endpoint, the example uses the authenticated
+machine-list bootstrap. For a daemon-local endpoint, set
+`HAPPIER_MACHINE_ID` to that daemon's current machine before running it. The
+example performs spawn, wait, send, transcript read, and stop. This is
+candidate proof guidance, not a published installation method.
+
+## Connect with an explicit endpoint and token
+
+The SDK accepts its endpoint and token explicitly. It does not read a CLI
+profile, persist credentials, or accept an Account signing seed or encryption
+material. If your program reads an environment variable, that is your program's
+choice; `connect()` does not implicitly read `HAPPIER_TOKEN`.
+
+```ts
+import { connect } from '@happier-dev/sdk';
+
+const token = process.env.HAPPIER_TOKEN;
+if (!token) throw new Error('Set HAPPIER_TOKEN before starting this script.');
+
+const happier = connect({
+  endpoint: 'http://127.0.0.1:<daemon-port>',
+  token,
+});
+
+try {
+  // Call a typed Action method or actions.execute(...) with its typed input.
+} finally {
+  happier.close();
+}
+```
+
+## Choose the SDK call style
+
+The SDK offers three ways to call the same Action API:
+
+- **Raw:** `actions.execute(actionId, input, options)` is useful when the
+  Action id is selected at runtime.
+- **Typed Action methods:** use the matching path under `actions` when the
+  Action is known in your code.
+- **Session helpers:** use `sessions` for daemon-local work, or
+  `machine(machineId).sessions` when an exact remote/server machine must stay
+  bound to the workflow.
+
+At a daemon-local endpoint, `happier.sessions.spawn(...)` omits the routing
+target and the daemon uses its current machine. It does not perform machine
+discovery or choose a fallback. A server endpoint has no default machine: an
+unbound `happier.sessions.spawn(...)` returns the `target_required` Action
+result, so select an exact id and use `happier.machine(machineId).sessions`.
+
+```ts
+const target = { kind: 'machine', machineId: 'machine-id' } as const;
+
+// Raw Action id with its explicit routing target
+await happier.actions.execute('action.spec.search', { query: 'session', limit: 5 }, { target });
+
+// Typed Action method bound to the same target
+await happier.machine('machine-id').actions.search({ query: 'session', limit: 5 });
+
+// Fluent Session creation on a daemon-local endpoint uses its current machine.
+const created = await happier.sessions.spawn({
+  directory: '/path/to/project',
+  agent: 'codex',
+  initialMessage: 'Inspect the failing tests.',
+});
+await created.waitForIdle();
+
+// A selected machine and an existing Session
+const existingSession = happier.machine('machine-id').sessions.get('session-id');
+await existingSession.send('Please inspect the failure.');
+await existingSession.waitForIdle();
+await existingSession.stop();
+```
+
+### Recover when the initial message is not admitted
+
+Fluent `sessions.spawn()` has a deliberate partial-success case. Happier can
+commit the Session and then reject the requested `initialMessage`, or be unable
+to determine whether that message was admitted. In that case, the promise
+rejects with `HappierSessionInitialInputError`; it does not erase the committed
+Session.
+
+Inspect both `error.session` and `error.result.initialInput` before deciding how
+to recover:
+
+```ts
+import { HappierSessionInitialInputError } from '@happier-dev/sdk';
+
+try {
+  const session = await happier.machine('machine-id').sessions.spawn({
+    directory: '/path/to/project',
+    agent: 'codex',
+    initialMessage: 'Inspect the failing tests.',
+  });
+  await session.waitForIdle();
+} catch (error) {
+  if (!(error instanceof HappierSessionInitialInputError)) throw error;
+
+  console.error('Initial input disposition:', error.result.initialInput);
+  const recentHistory = await error.session.history({ limit: 20 });
+  console.error('Recent history:', recentHistory);
+  // The Session already exists. Use its history and current state to decide
+  // whether to send, keep, or explicitly stop it.
+}
+```
+
+The disposition is `rejected`, `outcomeUnknown`, or `notRequested` in this
+error. Do not blindly retry `sessions.spawn()` or delete `error.session`: either
+choice can create duplicate work or discard a valid committed Session. Inspect
+the disposition and current Session state, then continue with `error.session`,
+keep it for later, or stop it explicitly when that is the intended outcome.
+
+The raw `session.spawn_new` Action does not turn this partial success into an
+exception. It returns the successful creation result, including `sessionId` and
+`initialInput`, for the caller to interpret.
+
+### Invoke an Action contributed by a plugin
+
+Use Action discovery to obtain the exact identity and declared input of an
+Action supplied by an installed plugin, then invoke it dynamically:
+
+```ts
+const result = await happier.machine('machine-id').actions.invoke(
+  { pluginId: 'acme.notes', localId: 'save-note' },
+  { note: 'Remember this' },
+);
+```
+
+Contributed Actions use their qualified plugin-and-Action identity in Action
+settings. Their **API** enablement and approval choice is enforced just like the
+corresponding setting for a built-in Action; installing an Action does not
+bypass an **Off** or **Ask first** decision.
+
+Consult the [SDK API reference](https://github.com/happier-dev/happier/blob/dev/packages/sdk/API.md)
+and its declaration report for the current development tree instead of copying
+a method list into an integration.
+
+For raw `session.spawn_new`, pass a machine target once in the outer
+`options.target` when targeting a server or remote machine; omit it at a
+daemon-local endpoint to use that daemon's current machine. The public input
+deliberately omits `executionTarget`; the daemon supplies its local placement
+after resolving the target. Supplying `executionTarget` in a public request is
+rejected as invalid input. The server relay forwards the exact machine target
+without receiving or inventing a daemon-local server id. Use
+the SDK types and the Action reference for the remaining spawn fields, such as
+`directory`, `agentTarget`, and an optional `creationKey`.
+
+## Call the HTTP API
+
+The v1 protocol has one relative path:
+
+```text
+POST /v1/actions/:actionId
+Authorization: Bearer <API Token>
+Content-Type: application/json
+```
+
+Both forms are implemented in the current Developer Preview source:
+
+```text
+POST http://127.0.0.1:<daemon-port>/v1/actions/:actionId
+
+POST https://<configured-server>/v1/actions/:actionId
+```
+
+Use a direct daemon origin when the caller can reach that daemon. Use the
+configured server origin when the target daemon is connected to that server:
+the server authenticates and relays over the daemon's existing connection, so
+the daemon does not need an inbound public address. This remains a Developer
+Preview contract, not a published integration surface. The server origin has
+not completed composed/live proof.
+
+The request envelope is strict. `target` is routing metadata, never action
+input or caller authority.
+
+```json
+{
+  "v": 1,
+  "requestId": "optional-correlation-id",
+  "target": { "kind": "machine", "machineId": "machine-id" },
+  "input": {}
+}
+```
+
+`target` may be omitted, a machine target, or a session target
+(`{ "kind": "session", "sessionId": "session-id" }`). The daemon-local
+route defaults an omitted target to its current machine. The server origin has
+no default machine: callers first select one through the API Token-authenticated
+`GET /v1/machines` discovery route (the SDK exposes this as
+`happier.machines.list()`), then send that exact machine target. A session
+target is also valid when Happier can establish one exact current machine for
+that Session. An omitted server target returns the typed `target_required` Action
+result; the server never silently selects another machine. Account-level
+Actions still run through the selected daemon.
+
+An admitted response preserves the Action result without an SDK-specific
+remapping:
+
+```json
+{
+  "v": 1,
+  "actionId": "session.spawn_new",
+  "requestId": "optional-correlation-id",
+  "execution": { "ok": true, "result": {} }
+}
+```
+
+Failed Actions use the same `execution` field with `ok: false`, an error code,
+an error string, and optional details. Authentication failures are HTTP `401`
+with `invalid_token`; malformed outer envelopes and unknown Action ids are HTTP
+`400` with `invalid_request` and a typed code.
+
+## Try the HTTP API with curl
+
+For the configured server origin, first find an available machine with the API
+Token-authenticated bootstrap route. Its `id` is the value used in the Action
+target.
+
+```bash
+curl --fail-with-body \
+  --header "Authorization: Bearer $HAPPIER_TOKEN" \
+  "$HAPPIER_API_ENDPOINT/v1/machines"
+```
+
+Then use the safe, read-only Action discovery operation. The same request also
+works against a daemon-local endpoint when `machine-id` is that daemon's
+current machine.
+
+```bash
+curl --fail-with-body --request POST \
+  --header "Authorization: Bearer $HAPPIER_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "v": 1,
+    "target": { "kind": "machine", "machineId": "machine-id" },
+    "input": { "query": "session", "limit": 5 }
+  }' \
+  "$HAPPIER_API_ENDPOINT/v1/actions/action.spec.search"
+```
+
+If you already have a Session id, this safe status lookup is a real operation
+against that Session. The Session target and `input.sessionId` must name the
+same Session; the server derives its current owning machine rather than asking
+you to duplicate that machine in the input.
+
+```bash
+curl --fail-with-body --request POST \
+  --header "Authorization: Bearer $HAPPIER_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "v": 1,
+    "target": { "kind": "session", "sessionId": "session-id" },
+    "input": { "sessionId": "session-id", "live": false }
+  }' \
+  "$HAPPIER_API_ENDPOINT/v1/actions/session.status.get"
+```
+
+The server does not choose a machine on your behalf. For example, omitting
+`target` from that server request returns HTTP `200` with this Action error
+envelope, not a request sent to an arbitrary daemon:
+
+```json
+{
+  "v": 1,
+  "actionId": "action.spec.search",
+  "execution": {
+    "ok": false,
+    "errorCode": "target_required",
+    "error": "target_required"
+  }
+}
+```
+
+## Transport limits
+
+v1 uses finite JSON request/response messages—there is no SSE endpoint. The
+shared request-body ceiling is 100 MiB, responses send `Cache-Control:
+no-store`, and public Action routes do not enable CORS. Put the bearer token in
+the `Authorization` header, never in a query string.
+
+The SDK supports `AbortSignal` and closes outstanding calls when `close()` is
+called. It does not replay a mutation or move a failed mutation to another
+endpoint. A request ID is correlation unless the Action that receives it owns
+idempotence.
+
+Transcript following is a finite async iterator; ending it stops following.
+Snapshot Actions remain ordinary methods.
+
+## Server relay, readability, and revocation
+
+The configured server deliberately can read requests and responses while it
+relays them to the exact target daemon. This is not direct-server E2EE. The
+server authenticates the API Token, validates the outer envelope, and proves
+placement; the selected daemon handles the Action using its configured Action
+settings.
+Use the daemon-local transport when you need direct local delivery.
+
+Server-side token verification observes revocation on the next verification. A
+daemon-local positive validation cache can remain valid for at most 60 seconds;
+after expiry, an unreachable server returns `auth_unavailable` instead of
+extending access offline.
+
+## Related
+
+- [API Tokens](/security/api-tokens) — create, limit, and revoke the
+  credential used here.
+- [CLI](/apps/cli) — use the same token for a single command or an automation
+  environment.
+- [Versioning and compatibility](/plugins/packaging/versioning-compat) — why
+  the private package has no released SemVer contract yet.

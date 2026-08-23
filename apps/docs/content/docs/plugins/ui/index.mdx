@@ -268,9 +268,12 @@ happier plugins create ./my-plugin \
 
 ## Boundaries
 
-- Keep the direct view `id`, `container`, `target`, `renderer`, optional
-  `fallbackRenderers`, `title`, `instancePolicy`, and `headerActions` in the
-  cold manifest. The host projects those fields into its own normalized binding.
+- Declare surfaces with `defineUiSurfaceDefinition`. **Advanced:** the raw
+  `ui.views` / `ui.renderers` pair — direct `id`, `container`, `target`,
+  `renderer`, optional `fallbackRenderers`, `title`, `instancePolicy`, and
+  `headerActions` — stays supported for a shared renderer, a fallback chain, or
+  a custom artifact. It is not a second beginner path. The host projects either
+  form into its own normalized binding.
 - Use only public SDK paths. Do not import app, daemon, or protocol internals.
 - For cross-plugin behavior, consume a maintained feature-owned operation
   protocol; it binds existing Actions and does not create a separate renderer
@@ -283,4 +286,5 @@ happier plugins create ./my-plugin \
 - [Host-rendered plugin UI](/plugins/ui/settings-ui) — declarative settings, status and actions, with no renderer code of your own.
 - [React Native UI](/plugins/ui/react-native) — trusted, native-feeling UI in supported clients.
 - [UI artifacts](/plugins/ui/ui-artifacts) — building, digesting and verifying a portable artifact tree.
-- [Hosted web UI](/plugins/ui/hosted-web) — the isolated artifact, and the frame runtime it is still waiting on.
+- [Hosted web UI](/plugins/ui/hosted-web) — the isolated artifact, and the per-host frame adapter that admits it.
+- [Composer](/plugins/guides/composer) — declaring Composer references, attachments, controls and regions, and reading the mounted draft.

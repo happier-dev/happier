@@ -264,7 +264,14 @@ When creating a restricted ElevenLabs API key for Happier, enable:
 
 ### Saved credentials
 
-Your ElevenLabs API key is saved in Happier as an encrypted secret setting rather than a plaintext field, so you do not need to re-enter it every time.
+Your ElevenLabs API key is stored as a **Saved Secret** in your Happier account settings rather than as an ordinary settings field, so you do not need to re-enter it every time.
+
+Saved Secrets are account data: they synchronize to your other signed-in devices, and how they are protected depends on your account's encryption mode.
+
+- On an **E2EE account**, the value is encrypted on your device before it is sent. Happier's sync server stores ciphertext it cannot read.
+- On a **plaintext account**, the value is sent and stored in a form the Happier server can read. That is intentional for plaintext accounts, and access is restricted by authentication, authorization and TLS. A deployment may additionally seal such values at rest with a server-owned key, but the live server still opens them for authorized use.
+
+See [Encryption](/security/encryption) for how account encryption mode is chosen. If you do not want a provider key stored as account data at all, use a machine environment variable on the execution machine instead.
 
 ### Auto-provisioning a Happier agent
 

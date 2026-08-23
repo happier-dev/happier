@@ -41,6 +41,99 @@ Prefer stable error codes over parsing text. See
 [Diagnostics](/plugins/testing/diagnostics) for the public guard and the
 diagnostic workflow.
 
+## Keep a long daemon Action visible in Activity
+
+> **Development status:** Tracked plugin Actions are part of the current
+> Developer Preview contract. The public SDK package is not yet released for
+> supported use.
+
+A daemon Action can opt into a host-owned operation view. The user may
+**Collapse** the running view, navigate elsewhere, and reopen it from Activity
+without cancelling or starting the Action again.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+async function indexFile(path: string) {
+  await Promise.resolve(path); // Replace with the plugin's real indexing work.
+}
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.indexer',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  actions: {
+    'rebuild-index': {
+      title: 'Rebuild index',
+      execution: { target: 'daemon' },
+      operation: {
+        version: 1,
+        visibility: 'activity',
+        progress: 'reported',
+        presentation: { onStart: 'current' },
+      },
+      async run(_input, context) {
+        context.operation?.update({
+          phase: 'discovering',
+          label: 'Discovering files',
+        });
+
+        const files = ['notes.md', 'decisions.md'];
+        for (const [index, file] of files.entries()) {
+          await indexFile(file);
+          context.operation?.update({
+            phase: 'indexing',
+            label: 'Indexing files',
+            current: index + 1,
+            total: files.length,
+          });
+        }
+
+        return { indexed: files.length };
+      },
+    },
+  },
+});
+```
+
+`presentation.onStart` is required and states what the invoking surface does
+the moment the host accepts the operation. `current` keeps the user exactly
+where they are and lets them collapse the running view themselves; `detail`
+opens the operation detail view immediately; `activity` collapses the
+invoking surface so the work continues in Activity. It does not change
+custody: the daemon owns the operation in every case.
+
+Use `progress: 'indeterminate'` when the handler cannot report honest phases
+or bounded numeric progress. For `reported` progress, `update(...)` accepts an
+optional bounded `label` and `phase`, or finite non-negative `current` and
+`total` values where `total` is greater than zero and `current <= total`.
+Invalid updates are rejected by the host. `context.operation` is
+invocation-scoped and optional, so the handler can keep its existing terminal
+execution behavior when invoked through a surface that does not provide a
+tracked-operation reporter.
+
+The host, not the plugin, owns `accepted`, `running`, and terminal lifecycle
+transitions. Returning the validated Action result succeeds the operation;
+throwing fails it; host-owned cancellation uses the invocation signal when
+supported. There is deliberately no `complete()` or `fail()` API.
+
+Tracking requires `execution: { target: 'daemon' }`; a client-targeted Action
+cannot declare `operation`. Once accepted, tracking survives modal close,
+navigation, ordinary reconnect, and browser visibility changes while the same
+daemon process remains alive. The operation history is held in daemon memory,
+so daemon restart may make its status unavailable. It is not an offline queue,
+durable job store, restart-replay mechanism, or exactly-once guarantee.
+
+The operation snapshot does not retain raw Action input, form drafts, tokens,
+credentials, attachments, or arbitrary plugin state. Keep secret input in the
+ordinary invocation only, and never copy it into progress labels or results.
+Existing public HTTP and generated SDK Action execution still wait for and
+return the terminal Action result; the tracked accepted receipt is not a new
+public HTTP/SDK response shape.
+
+The maintained source example is
+[`examples/tracked-action`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/tracked-action).
+
 ## Invocation surface and execution target
 
 An Action is declared and implemented once. Its `surfaces` say who may invoke

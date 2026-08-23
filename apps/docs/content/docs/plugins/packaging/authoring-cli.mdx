@@ -62,6 +62,13 @@ happier plugins test . --packed
 - `happier plugins doctor [path]` evaluates the code-defined author module once
   and reports import or top-level evaluation diagnostics. It does not prove
   repeated evaluation is pure.
+- `happier plugins doctor --installed [<pluginId>]` inspects installed plugins
+  instead of author source. It reads the immutable generation this machine
+  currently commits and reports declared files that are missing, escaped
+  through a symbolic link, no longer a regular file, no longer their recorded
+  byte length, or whose manifest no longer loads, then names the command that
+  restores the plugin. It reports structural and loadability facts only; it
+  computes no content digest and makes no tampering claim.
 
 Use [Diagnostics and errors](/plugins/testing/diagnostics) to distinguish
 these owner-level checks from an admitted candidate or a loaded client surface.

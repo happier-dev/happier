@@ -2,6 +2,7 @@
   "title": "Testing",
   "pages": [
     "index",
+    "recipes",
     "fixtures",
     "runtime-tests",
     "manual-qa",

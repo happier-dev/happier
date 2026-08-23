@@ -1012,7 +1012,9 @@ External transcript authority is separate from the session's `e2ee | plain` cont
 | `server_partial` | The linked Agent source remains authoritative while reachable. An offline incomplete initial import is fenced at `acceptedThroughServerSeq`, and the UI may select that subset only while the matching public operation projection proves the same initial-partial fence. | Not shareable. |
 | `snapshot_complete` | The Agent source remains live authority while reachable. Offline server reads are capped at `publishedThroughServerSeq` and require a complete publication tuple. | Shareable as a complete published snapshot. |
 | `hosted` | The hosted transcript is authoritative; no External Sessions publication ceiling applies. | Shareable under the normal hosted-session rules. |
-| `legacy_external_unknown` | Fails closed at sequence zero until a supported compatibility reader establishes authority. | Not shareable. |
+| `legacy_external_unknown` | Fails closed at sequence zero until the owner machine reconciles the row. | Not shareable. |
+
+`legacy_external_unknown` has exactly one producer: the publication-authority migration (`20260723150000_add_external_session_publication_authority`) backfills every predecessor `direct:v1:*` Session into it, because those rows were created before any server-readable publication authority existed and nothing proves their server transcript is the complete conversation. Ordinary Sessions keep the `hosted` column default. Message count is never consulted — a partial predecessor import is exactly the row that looks non-empty — so a predecessor direct row with server messages also fails closed. The one transition out is the owner machine relinking the tag, which reaches the fenced `machine_only` reconciliation only while the row still holds no server transcript sequence and no publication tuple.
 
 The server applies the publication ceiling before ordinary pagination and derived projections, including counts, list previews, latest-turn/attention state, exports, notifications, and friend/public/share readers. Operation-private staging is never public. A failed or cancelled catch-up leaves the prior complete publication visible; only canonical publication advances the public ceiling.
 
@@ -1023,6 +1025,7 @@ Canonical owners:
 - secure refresh schema and application decision: `packages/protocol/src/sessions/external/secureRefreshV1.ts`
 - storage/publication state: `packages/protocol/src/sessions/external/operationV1.ts`
 - server publication and sharing fence: `apps/server/sources/app/session/sessionTranscriptPublicationPolicy.ts`
+- owner-machine predecessor reconciliation: `apps/server/sources/app/session/externalLinkedSessionStorageInitialization.ts`
 - client read-authority selection: `apps/ui/sources/sync/runtime/external/externalSessionTranscriptAuthority.ts`
 
 ## Implementation references
