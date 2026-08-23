@@ -18,6 +18,8 @@ export interface PiSessionEntry {
   readonly timestamp?: string;
   /** Present on `compaction` entries; the first entry id retained after summarization. */
   readonly firstKeptEntryId?: string;
+  /** `message` entries carry the pi message payload; its `timestamp` is the epoch-ms field. */
+  readonly message?: Readonly<{ timestamp?: unknown }> & Record<string, unknown>;
   readonly [key: string]: unknown;
 }
 

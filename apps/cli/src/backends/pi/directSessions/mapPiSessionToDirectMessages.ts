@@ -25,7 +25,7 @@ export function mapPiSessionToDirectMessages(params: Readonly<{
     items.push({
       id,
       localId: id,
-      createdAtMs: resolvePiEntryTimestampMs(entry, message),
+      createdAtMs: resolvePiEntryTimestampMs(entry),
       messageRole: resolvePiMessageRole(piRole),
       raw: message,
     });
@@ -210,10 +210,12 @@ function resolvePiMessageRole(role: string | undefined): SessionMessageRole {
   return 'event';
 }
 
-function resolvePiEntryTimestampMs(entry: PiSessionEntry, message: Record<string, unknown>): number {
+function resolvePiEntryTimestampMs(entry: PiSessionEntry): number {
   const fromEntry = timestampToMs(entry.timestamp);
   if (fromEntry > 0) return fromEntry;
-  return timestampToMs(message.timestamp);
+  // The projected envelope carries no timestamp; fall back to the pi message's own
+  // epoch field on the entry (entries that have neither resolve to 0, same as before).
+  return timestampToMs(entry.message?.timestamp);
 }
 
 function timestampToMs(value: unknown): number {

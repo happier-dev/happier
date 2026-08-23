@@ -18,6 +18,7 @@ import type { Credentials } from '@/persistence';
 import { fetchSessionById, fetchSessionsPage, getOrCreateSessionByTag } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { normalizePathForComparison } from '@/utils/path/normalizePathForComparison';
 import {
   hasConnectedServiceBindings,
   mergeConnectedServiceRuntimeSnapshots,
@@ -322,7 +323,10 @@ function resolveSourceKey(providerId: DirectSessionsProviderId, source: DirectSe
     }
     case 'pi': {
       if (source.kind !== 'piAgentDir') return 'piAgentDir:invalid';
-      const agentDir = normalizeNullableString(source.agentDir) ?? '';
+      // Dedupe keys must survive equivalent path spellings (mixed separators, home
+      // syntax, trailing separators) or repeated linking mints a second session for
+      // one pi source — normalize with the canonical comparison owner.
+      const agentDir = normalizePathForComparison(source.agentDir) ?? '';
       return `piAgentDir:${agentDir}`;
     }
     default:

@@ -97,12 +97,16 @@ async function buildPiCandidate(params: Readonly<{
   env: NodeJS.ProcessEnv;
 }>): Promise<DirectSessionCandidateV1> {
   const title = await readPiSessionTitle(params.session.filePath).catch(() => null);
+  // DirectSessionCandidateV1Schema.updatedAtMs is `.int()`; stat's mtimeMs can carry
+  // fractional milliseconds. Truncate once and reuse the same value for the activity
+  // derivation so both fields agree.
+  const updatedAtMs = Math.max(0, Math.trunc(params.session.mtimeMs));
 
   return {
     remoteSessionId: params.session.remoteSessionId,
     ...(title ? { title } : {}),
-    updatedAtMs: params.session.mtimeMs,
-    activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs: params.session.mtimeMs, env: params.env }),
+    updatedAtMs,
+    activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs, env: params.env }),
     details: {
       ...(params.session.cwd ? { cwd: params.session.cwd } : {}),
       sessionDirName: params.session.dirName,
