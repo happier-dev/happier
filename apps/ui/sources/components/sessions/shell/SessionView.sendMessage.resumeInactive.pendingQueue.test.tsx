@@ -461,6 +461,12 @@ vi.mock('@/components/sessions/agentInput', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
+vi.mock('@/hooks/server/useFeatureDecision', () => {
+    const disabledDecision = { state: 'disabled' as const };
+    return {
+        useFeatureDecision: () => disabledDecision,
+    };
+});
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
     useCLIDetection: (_machineId: string | null, options?: { serverId?: string | null }) => {
         cliDetectionServerIds.push(typeof options?.serverId === 'string' ? options.serverId : '');
@@ -583,6 +589,7 @@ vi.mock('@/sync/ops', async (importOriginal) => {
         overrides: {
             sessionAbort: vi.fn(),
             resumeSession: (...args: any[]) => resumeSessionSpy(...args),
+            ensureSessionRuntimeForPendingInput: (...args: any[]) => resumeSessionSpy(...args),
             sessionAttachmentsUploadFile: vi.fn(),
         },
     });
@@ -643,8 +650,10 @@ vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
     ensureAgentInstallablesBackground: (params: any) => ensureAgentInstallablesBackgroundSpy(params),
 }));
 vi.mock('@/utils/system/fireAndForget', () => ({
-    fireAndForget: (promise: Promise<unknown>) => {
-        pendingFireAndForget.push(promise);
+    fireAndForget: (promise: Promise<unknown>, options?: { tag?: string }) => {
+        if (options?.tag?.startsWith('SessionView.sendMessage.')) {
+            pendingFireAndForget.push(promise);
+        }
         return promise;
     },
 }));
@@ -810,7 +819,11 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         );
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         expect(findAgentInput(screen).props.value).toBe('');
-        expect(screen.findByTestId('session-pendingQueue-resumeFailed')).toBeTruthy();
+        const pendingResumeBanner = screen.findByTestId('session-pendingQueue-resumeFailed');
+        expect(pendingResumeBanner).toBeTruthy();
+        const pendingResumeRetry = screen.findByTestId('session-pendingQueue-resumeFailed-retry');
+        expect(pendingResumeRetry?.props.accessibilityLabel).toBe('common.retry');
+        expect(pendingResumeRetry?.findAll((node) => node.props.children === 'common.retry').length).toBeGreaterThan(0);
 
         await screen.unmount();
     });
