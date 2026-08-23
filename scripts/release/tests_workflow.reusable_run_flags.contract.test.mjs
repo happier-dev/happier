@@ -42,6 +42,12 @@ test('reusable tests calls make their run flags authoritative regardless of the 
     );
   }
 
+  assert.equal(
+    testsWorkflow.jobs.stress.if,
+    '${{ inputs.run_stress }}',
+    'scheduled reusable callers must be able to enable the stress job through its authoritative run flag',
+  );
+
   for (const workflowName of [
     'self-host-e2e.yml',
     'stress-tests.yml',

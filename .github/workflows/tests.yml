@@ -1948,7 +1948,7 @@ jobs:
           path: .project/logs/e2e
 
   stress:
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_stress }}
+    if: ${{ inputs.run_stress }}
     name: Stress (repeat/chaos)
     runs-on: ubuntu-latest
     timeout-minutes: 120
