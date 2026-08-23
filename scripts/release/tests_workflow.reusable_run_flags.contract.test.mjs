@@ -15,6 +15,12 @@ test('reusable tests calls make their run flags authoritative regardless of the 
 
   assert.equal(testsWorkflow.on.workflow_call.inputs.select_jobs_explicitly.type, 'boolean');
   assert.equal(testsWorkflow.on.workflow_call.inputs.select_jobs_explicitly.default, false);
+  assert.equal(
+    testsWorkflow.concurrency.group,
+    'tests-${{ github.workflow }}-${{ github.ref }}',
+    'the reusable tests workflow must not share its caller concurrency group and cancel the caller',
+  );
+  assert.equal(testsWorkflow.concurrency['cancel-in-progress'], true);
 
   const defaultSuiteInputs = new Map([
     ['ui-e2e', 'run_ui_e2e'],
