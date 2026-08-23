@@ -10,8 +10,10 @@ export type VoiceSpawnAttempt = Readonly<{
   attachmentMessageLocalId: string;
 }>;
 
-export function createVoiceSpawnAttempt(): VoiceSpawnAttempt {
-  const userAttemptId = createUiSessionSpawnUserAttemptId();
+export function createVoiceSpawnAttempt(stableUserAttemptId?: string | null): VoiceSpawnAttempt {
+  const userAttemptId = typeof stableUserAttemptId === 'string' && stableUserAttemptId.trim().length > 0
+    ? stableUserAttemptId.trim()
+    : createUiSessionSpawnUserAttemptId();
   return {
     userAttemptId,
     firstTurnLocalId: `voice-spawn-first-turn:${userAttemptId}`,

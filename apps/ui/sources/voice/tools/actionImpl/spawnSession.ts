@@ -7,6 +7,7 @@ import { supportsSpawnPendingFirstInput } from '@/sync/domains/session/spawn/spa
 import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
 
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
 import { postprocessSpawnedSession } from './spawnSessionPostProcess';
@@ -30,6 +31,8 @@ type VoiceSpawnTarget = Readonly<{
   directory: string;
   replacementCanonicalized: boolean;
 }>;
+
+type SessionSpawnNewActionInput = Parameters<ActionExecutorDeps['sessionSpawnNew']>[0];
 
 function canonicalizeSpawnTarget(
   target: Readonly<{ machineId: string; directory: string }> | null,
@@ -93,21 +96,18 @@ function resolveSpawnTarget(state: StorageState): VoiceSpawnTarget | null {
   return null;
 }
 
-export async function spawnSessionForVoiceTool(params: Readonly<{
-  tag?: string;
-  agentId?: string;
-  modelId?: string;
-  path?: string;
-  host?: string;
-  initialMessage?: string;
-}>): Promise<unknown> {
+export async function spawnSessionForVoiceTool(params: SessionSpawnNewActionInput): Promise<unknown> {
   const state = storage.getState();
 
   const requestedHost = normalizeNonEmptyString(params.host);
   const machinesObj = state?.machines ?? {};
   const machines = Object.values(machinesObj) as Machine[];
   const fallbackTarget = resolveSpawnTarget(state);
-  let machineId = fallbackTarget?.machineId ?? null;
+  const requestedMachineId = normalizeNonEmptyString(params.machineId);
+  const requestedMachineTarget = requestedMachineId
+    ? canonicalizeSpawnTarget({ machineId: requestedMachineId, directory: '' }, machines)
+    : null;
+  let machineId = requestedMachineTarget?.machineId ?? requestedMachineId ?? fallbackTarget?.machineId ?? null;
   if (requestedHost) {
     const hostMatches = Object.values(machinesObj)
       .filter((machine) => normalizeNonEmptyString(machine?.metadata?.host) === requestedHost);
@@ -137,7 +137,10 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
     }
   }
 
-  const directory = normalizeNonEmptyString(params.path) ?? fallbackTarget?.directory ?? null;
+  const directory = normalizeNonEmptyString(params.directory)
+    ?? normalizeNonEmptyString(params.path)
+    ?? fallbackTarget?.directory
+    ?? null;
   if (!machineId || !directory) {
     return { type: 'error', errorCode: 'spawn_target_missing', errorMessage: 'spawn_target_missing' };
   }
@@ -158,7 +161,16 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   }
 
   const serverId = getActiveServerSnapshot().serverId;
-  const requestedAgentId = normalizeNonEmptyString(params.agentId);
+  if (params.sourceContext && params.backendTarget && params.backendTarget.kind !== 'builtInAgent') {
+    return {
+      type: 'error',
+      errorCode: 'invalid_parameters',
+      errorMessage: 'source_context_requires_built_in_agent',
+    };
+  }
+  const requestedAgentId = normalizeNonEmptyString(
+    params.backendTarget?.kind === 'builtInAgent' ? params.backendTarget.agentId : params.agentId,
+  );
   if (requestedAgentId && !isAgentId(requestedAgentId)) {
     return { type: 'error', errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
   }
@@ -177,7 +189,7 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
     path: directory,
   });
 
-  const spawnAttempt = createVoiceSpawnAttempt();
+  const spawnAttempt = createVoiceSpawnAttempt(normalizeNonEmptyString(params.actionRequestId));
   const initialMessage = normalizeNonEmptyString(params.initialMessage);
   const daemonOwnsFirstTurn = supportsSpawnPendingFirstInput(targetMachine?.daemonState?.startedWithCliVersion);
   const spawned = await machineSpawnNewSessionUntilResolved({
@@ -193,6 +205,7 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
       : {}),
     ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
+    ...(params.sourceContext ? { sourceContext: params.sourceContext } : {}),
   });
 
   const spawnedSessionId = readVoiceSpawnedSessionIdForAttempt(spawned, spawnAttempt);

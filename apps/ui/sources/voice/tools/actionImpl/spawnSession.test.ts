@@ -142,6 +142,54 @@ describe('spawnSessionForVoiceTool', () => {
         }));
     });
 
+    it('keeps sourceContext and the stable Action attempt identity on the canonical machine spawn', async () => {
+        const { spawnSessionForVoiceTool } = await import('./spawnSession');
+        state.machines['machine-current'].daemonState = { startedWithCliVersion: '0.2.10-dev.76' };
+        const sourceContext = {
+            v: 1,
+            kind: 'session_replay',
+            sourceSessionId: 'sess_source',
+            forkPoint: { type: 'latest' },
+        } as const;
+
+        await spawnSessionForVoiceTool({
+            host: 'mac',
+            path: '/Users/test/repo',
+            agentId: 'claude',
+            sourceContext,
+            actionRequestId: 'stable-action-attempt',
+        } as any);
+
+        expect(machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-current',
+            directory: '/Users/test/repo',
+            sourceContext,
+            userAttemptId: 'stable-action-attempt',
+        }));
+    }, 120_000);
+
+    it('fails closed instead of dropping sourceContext for a backend this bridge cannot carry', async () => {
+        const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+        await expect(spawnSessionForVoiceTool({
+            host: 'mac',
+            path: '/Users/test/repo',
+            sourceContext: {
+                v: 1,
+                kind: 'session_replay',
+                sourceSessionId: 'sess_source',
+                forkPoint: { type: 'latest' },
+            },
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'remote-agent' },
+        } as any)).resolves.toMatchObject({
+            type: 'error',
+            errorCode: 'invalid_parameters',
+            errorMessage: 'source_context_requires_built_in_agent',
+        });
+
+        expect(machineSpawnNewSessionMock).not.toHaveBeenCalled();
+    });
+
     it('rejects duplicate same-host raw recent targets without explicit replacement', async () => {
         const { spawnSessionForVoiceTool } = await import('./spawnSession');
 
