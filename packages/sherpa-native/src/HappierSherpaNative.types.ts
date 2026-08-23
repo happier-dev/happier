@@ -32,6 +32,19 @@ export type SherpaNativeCancelParams = {
   jobId: string;
 };
 
+/**
+ * The outcome of finalizing a streaming-ASR job.
+ *
+ * `cancelled` and `missing` are not empty transcripts: the job was stopped, or
+ * its model pack was invalidated, before the tail decode could produce one.
+ * Reporting all three as `{ text: '' }` is what let the controller submit its
+ * last revisable interim partial as a final transcript.
+ */
+export type SherpaNativeStreamingFinalResult =
+  | { status: 'finalized'; text: string }
+  | { status: 'cancelled' }
+  | { status: 'missing' };
+
 export type SherpaNativeVadFrameResult = {
   speechStarted: boolean;
   speechEnded: boolean;
@@ -54,16 +67,25 @@ export type SherpaNativeModule = {
     sampleRate: number;
     channels: number;
   }): Promise<{ text: string; isEndpoint: boolean }>;
-  finishStreaming(params: { jobId: string }): Promise<{ text: string }>;
   /**
-   * Drop the streaming recognizer cached for `assetsDir` and cancel the jobs
-   * decoding against it, so a model pack whose bytes are about to be replaced or
-   * removed stops being served from memory.
-   *
-   * Optional because a JS-only update can run against an older native binary
-   * that predates this method; callers must tolerate its absence.
+   * Drain the tail of the job and report which outcome actually happened.
+   * Callers must branch on `status`: only `finalized` carries a transcript, and
+   * only `finalized` may be submitted. A finalized empty `text` is silence --
+   * a successful empty transcript, not a failure.
    */
-  releaseStreamingAssetsDir?(params: { assetsDir: string }): Promise<{ cancelledJobs: number }>;
+  finishStreaming(params: { jobId: string }): Promise<SherpaNativeStreamingFinalResult>;
+  /**
+   * Retire everything the native side caches for `assetsDir` -- the streaming
+   * recognizer and the jobs decoding against it, and the offline TTS engine and
+   * the synthesis running on it -- so a model pack whose bytes are about to be
+   * replaced or removed stops being served from memory.
+   *
+   * Optional in the type because `requireOptionalNativeModule` resolves whatever
+   * the installed binary exposes: a JS bundle running against a native binary
+   * that predates this method has no way to retire those engines, which callers
+   * must detect rather than silently promote over a live engine.
+   */
+  releaseAssetsDir?(params: { assetsDir: string }): Promise<{ cancelledJobs: number; releasedEngines: number }>;
   createVadDetector(params: {
     detectorId: string;
     minSpeechMs: number;

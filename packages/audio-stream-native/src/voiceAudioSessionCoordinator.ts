@@ -45,7 +45,19 @@ export type VoiceAudioSessionPlatformEvent =
   | Readonly<{ generation: number; kind: 'lifecycle_changed'; state: 'foreground' | 'background' }>
   | Readonly<{ generation: number; kind: 'capabilities_changed'; aecAvailable: boolean; aecActive: boolean }>
   | Readonly<{ generation: number; kind: 'restoration_completed' }>
-  | Readonly<{ generation: number; kind: 'restoration_failed'; reason: string }>;
+  | Readonly<{ generation: number; kind: 'restoration_failed'; reason: string }>
+  /**
+   * The platform's audio graph is dead and this owner did not rebuild it: the
+   * media server was reset, or a configuration change invalidated the graph the
+   * capture tap and playback node were built against. Emitted once per audio
+   * session generation, because a session that keeps looking connected while no
+   * audio flows is indistinguishable from a hang.
+   */
+  | Readonly<{
+    generation: number;
+    kind: 'audio_graph_terminal';
+    reason: 'media_services_reset' | 'configuration_unrecoverable';
+  }>;
 
 export type VoiceAudioSessionPlatform = Readonly<{
   apply: (request: VoiceAudioSessionApplyRequest) => Promise<VoiceAudioSessionApplyResult>;

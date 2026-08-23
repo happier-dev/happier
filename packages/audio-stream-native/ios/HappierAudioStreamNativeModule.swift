@@ -10,6 +10,18 @@ private enum AudioCaptureAecRequest {
   case required
 }
 
+/// Result of an `AVAudioEngineConfigurationChange` for one capture session.
+private enum AudioGraphConfigurationOutcome {
+  /// No engine is attached to this session, so there is no graph to judge.
+  case inactive
+  /// The graph is running against the same input hardware format it was built
+  /// against, so the installed tap and the attached player remain valid.
+  case intact
+  /// The graph cannot be resumed without being rebuilt against a format this
+  /// owner has not proven, so it is dead.
+  case unrecoverable
+}
+
 private final class AudioStreamSession {
   private let queue: DispatchQueue
   private let emitFrame: (_ event: [String: Any]) -> Void
@@ -23,6 +35,10 @@ private final class AudioStreamSession {
 
   private var engine: AVAudioEngine?
   private var player: AVAudioPlayerNode?
+  /// The input node's hardware format at the moment the tap and the player
+  /// connection were built. It is the only thing that makes a later restart of
+  /// this same graph provably safe.
+  private var builtInputFormat: AVAudioFormat?
   private var accumulated = Data()
   private var playbackFormat: AVAudioFormat?
   private var playbackGeneration: Int?
@@ -142,6 +158,7 @@ private final class AudioStreamSession {
       try engine.start()
       self.engine = engine
       self.player = player
+      self.builtInputFormat = input.outputFormat(forBus: 0)
     } catch {
       input.removeTap(onBus: 0)
       player.stop()
@@ -172,7 +189,30 @@ private final class AudioStreamSession {
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
     self.engine = nil
+    self.builtInputFormat = nil
     self.accumulated.removeAll(keepingCapacity: false)
+  }
+
+  /// AVAudioEngine stops itself when its I/O configuration changes, and the
+  /// installed tap plus the attached player node stay valid only while the
+  /// input hardware format is unchanged. Restarting that same graph is the only
+  /// recovery this owner performs; it never rebuilds a graph against a format
+  /// it has not observed working.
+  func handleConfigurationChange() -> AudioGraphConfigurationOutcome {
+    guard let engine else { return .inactive }
+    guard let baseline = builtInputFormat else { return .unrecoverable }
+    let current = engine.inputNode.outputFormat(forBus: 0)
+    guard
+      current.sampleRate == baseline.sampleRate,
+      current.channelCount == baseline.channelCount
+    else { return .unrecoverable }
+    if engine.isRunning { return .intact }
+    do {
+      try engine.start()
+    } catch {
+      return .unrecoverable
+    }
+    return engine.isRunning ? .intact : .unrecoverable
   }
 
   private func matchesPlayback(streamId: String, generation: Int) -> Bool {
@@ -384,6 +424,10 @@ public final class HappierAudioStreamNativeModule: Module {
   private var captureAecRequest: AudioCaptureAecRequest = .off
   private var previousAudioSessionState: PreviousAudioSessionState? = nil
   private var notificationObservers: [NSObjectProtocol] = []
+  /// One terminal report per audio-session generation. A dead graph produces a
+  /// burst of notifications, and repeating the terminal event would race the
+  /// lifecycle owner already tearing the session down.
+  private var audioGraphTerminalReported = false
 
   private func emitAudioSessionEvent(_ event: [String: Any], generation: Int? = nil) {
     var payload = event
@@ -393,6 +437,45 @@ public final class HappierAudioStreamNativeModule: Module {
 
   private func currentRouteName() -> String? {
     AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue
+  }
+
+  /// Ends the native graph and tells the canonical lifecycle owner once. Every
+  /// caller runs on `queue`, so this serializes against start/stop/playback.
+  private func reportAudioGraphTerminal(reason: String, generation: Int) {
+    guard
+      audioSessionConfigured,
+      generation == audioSessionGeneration,
+      !audioGraphTerminalReported
+    else { return }
+    audioGraphTerminalReported = true
+    active?.stop()
+    active = nil
+    emitAudioSessionEvent(["kind": "audio_graph_terminal", "reason": reason], generation: generation)
+  }
+
+  private func handleEngineConfigurationChange(generation: Int) {
+    queue.async { [weak self] in
+      guard let self, generation == self.audioSessionGeneration else { return }
+      // Ordinary route changes reach here too. Only a graph this owner cannot
+      // resume is fatal; a resumed one keeps the session running untouched.
+      switch self.active?.handleConfigurationChange() ?? .inactive {
+      case .inactive, .intact:
+        return
+      case .unrecoverable:
+        self.reportAudioGraphTerminal(reason: "configuration_unrecoverable", generation: generation)
+      }
+    }
+  }
+
+  private func handleMediaServicesReset(generation: Int) {
+    queue.async { [weak self] in
+      guard let self, generation == self.audioSessionGeneration else { return }
+      // A media-server reset invalidates every AVAudioSession and engine object,
+      // including the pre-session state captured to restore later. Restoring a
+      // category onto a session the system already reset is not a restoration.
+      self.previousAudioSessionState = nil
+      self.reportAudioGraphTerminal(reason: "media_services_reset", generation: generation)
+    }
   }
 
   private func installNotificationObservers(generation: Int) {
@@ -435,6 +518,29 @@ public final class HappierAudioStreamNativeModule: Module {
       queue: nil
     ) { [weak self] _ in
       self?.emitAudioSessionEvent(["kind": "lifecycle_changed", "state": "foreground"], generation: generation)
+    })
+    // AVAudioEngine stops itself on an I/O configuration change. Without this
+    // the module keeps reporting an active stream while no audio flows.
+    notificationObservers.append(center.addObserver(
+      forName: .AVAudioEngineConfigurationChange,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      self?.handleEngineConfigurationChange(generation: generation)
+    })
+    notificationObservers.append(center.addObserver(
+      forName: AVAudioSession.mediaServicesWereLostNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      self?.handleMediaServicesReset(generation: generation)
+    })
+    notificationObservers.append(center.addObserver(
+      forName: AVAudioSession.mediaServicesWereResetNotification,
+      object: nil,
+      queue: nil
+    ) { [weak self] _ in
+      self?.handleMediaServicesReset(generation: generation)
     })
   }
 
@@ -485,6 +591,7 @@ public final class HappierAudioStreamNativeModule: Module {
     try session.setActive(true, options: [])
     audioSessionGeneration = generation
     audioSessionConfigured = true
+    audioGraphTerminalReported = false
     let aecAvailable: Bool
     if #available(iOS 13.0, *) { aecAvailable = true } else { aecAvailable = false }
     if mode == "conversation" {
@@ -519,6 +626,7 @@ public final class HappierAudioStreamNativeModule: Module {
     previousAudioSessionState = nil
     audioSessionGeneration = generation
     audioSessionConfigured = false
+    audioGraphTerminalReported = false
     captureAecRequest = .off
     removeNotificationObservers()
     if wasConfigured {

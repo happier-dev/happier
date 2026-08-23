@@ -3,13 +3,23 @@ import ExpoModulesCore
 import Foundation
 
 public class HappierSherpaNativeModule: Module {
+  // Expo dispatches every `AsyncFunction` on one shared *serial* queue
+  // (`expo.modules.AsyncFunctionQueue`), so any function that blocks it blocks
+  // every other function of every module -- including its own cancellation.
+  // Sherpa's synthesis and decode calls are synchronous and multi-second, so
+  // they are declared with `.runOnQueue` onto the workers below and the control
+  // functions (`cancel`, `releaseAssetsDir`, `cancelVadDetector`) are left on the
+  // default queue, where they stay reachable while native work is in flight.
+  //
+  // TTS and ASR get one worker each because they run concurrently during a
+  // conversation: the assistant is speaking while the microphone stays open for
+  // barge-in. Sharing a worker would stall live capture frames behind a
+  // multi-second synthesis and trip the capture queue's backpressure guard.
+  private let ttsQueue = DispatchQueue(label: "dev.happier.sherpa.tts", qos: .userInitiated)
+  private let asrQueue = DispatchQueue(label: "dev.happier.sherpa.asr", qos: .userInitiated)
+  // Serializes the VAD detector registry, which is not thread-safe. VAD frames
+  // are short, so this stays on the default queue rather than taking a worker.
   private let queue = DispatchQueue(label: "dev.happier.sherpa", qos: .userInitiated)
-  // Offline TTS synthesis runs on its own serial queue so that a `cancel`
-  // dispatched on `queue` can flip the engine's atomic cancel flag mid-synthesis.
-  // If synthesis ran on `queue`, the serial queue could not service the async
-  // cancel until synthesis finished, making cancellation a no-op.
-  private let synthQueue = DispatchQueue(label: "dev.happier.sherpa.synthesis", qos: .userInitiated)
-  private var engines: [String: HappierSherpaOfflineTtsEngine] = [:]
   private lazy var vadDetectors = FrameFedVadDetectorRegistry { sampleRate, minSpeechSec, minSilenceSec in
     let modelPath = try VadModelResolver.resolveSileroVadModelPath()
     return try SileroVadDetector(
@@ -21,20 +31,11 @@ public class HappierSherpaNativeModule: Module {
   }
 
   private func handleModuleDestroy() {
-    // Streaming ASR recognizers and streams are owned by the process-wide native
-    // registry, so they are released here rather than dying with this module.
+    // Streaming recognizers and offline TTS engines are owned by the process-wide
+    // native caches, so they are released here rather than dying with this module.
     HappierSherpaOnlineAsrEngine.releaseAll()
+    HappierSherpaOfflineTtsEngine.releaseAll()
     vadDetectors.cancelAll()
-  }
-
-  private func getEngine(assetsDir: String) throws -> HappierSherpaOfflineTtsEngine {
-    if let cached = engines[assetsDir] {
-      return cached
-    }
-
-    let engine = try HappierSherpaOfflineTtsEngine(assetsDir: assetsDir)
-    engines[assetsDir] = engine
-    return engine
   }
 
   public func definition() -> ModuleDefinition {
@@ -48,10 +49,8 @@ public class HappierSherpaNativeModule: Module {
       if assetsDir.isEmpty {
         throw NSError(domain: "HappierSherpaNative", code: 101, userInfo: [NSLocalizedDescriptionKey: "assetsDir is required"])
       }
-      try self.queue.sync {
-        _ = try self.getEngine(assetsDir: assetsDir)
-      }
-    }
+      try HappierSherpaOfflineTtsEngine.prepare(assetsDir: assetsDir)
+    }.runOnQueue(ttsQueue)
 
     AsyncFunction("listVoices") { (params: [String: Any]) -> [[String: Any]] in
       let assetsDir = (params["assetsDir"] as? String) ?? ""
@@ -59,19 +58,19 @@ public class HappierSherpaNativeModule: Module {
         throw NSError(domain: "HappierSherpaNative", code: 102, userInfo: [NSLocalizedDescriptionKey: "assetsDir is required"])
       }
 
-      return try self.queue.sync {
-        let engine = try self.getEngine(assetsDir: assetsDir)
-        let n = Int(engine.numSpeakers())
-        if n <= 0 { return [] }
-        return (0..<n).map { i in
-          [
-            "id": "sid:\(i)",
-            "title": "Speaker \(i)",
-            "sid": i,
-          ]
-        }
+      // `prepare` reports a pack that cannot be loaded; the speaker count itself
+      // only distinguishes a loaded engine's 0 speakers from its N.
+      try HappierSherpaOfflineTtsEngine.prepare(assetsDir: assetsDir)
+      let n = Int(HappierSherpaOfflineTtsEngine.numSpeakers(assetsDir: assetsDir))
+      if n <= 0 { return [] }
+      return (0..<n).map { i in
+        [
+          "id": "sid:\(i)",
+          "title": "Speaker \(i)",
+          "sid": i,
+        ]
       }
-    }
+    }.runOnQueue(ttsQueue)
 
     AsyncFunction("synthesizeToWavFile") { (params: [String: Any]) -> [String: Any] in
       let jobId = (params["jobId"] as? String) ?? ""
@@ -86,32 +85,29 @@ public class HappierSherpaNativeModule: Module {
       if text.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 105, userInfo: [NSLocalizedDescriptionKey: "text is required"]) }
       if outWavPath.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 106, userInfo: [NSLocalizedDescriptionKey: "outWavPath is required"]) }
 
-      // Resolve/create the engine under the shared-state queue, but run the
-      // (potentially multi-second) synthesis on the dedicated synth queue so a
-      // concurrent `cancel` dispatched on `queue` can flip the atomic cancel flag.
-      let engine = try self.queue.sync {
-        try self.getEngine(assetsDir: assetsDir)
-      }
-      return try self.synthQueue.sync {
-        try engine.synthesizeToWavFile(atPath: outWavPath, text: text, sid: Int32(sid), speed: Float(speed), jobId: jobId)
-        return [
-          "wavPath": outWavPath,
-          "sampleRate": Int(engine.sampleRate()),
-        ]
-      }
-    }
+      var sampleRate: Int32 = 0
+      try HappierSherpaOfflineTtsEngine.synthesizeToWavFile(
+        atPath: outWavPath,
+        assetsDir: assetsDir,
+        text: text,
+        sid: Int32(sid),
+        speed: Float(speed),
+        jobId: jobId,
+        sampleRate: &sampleRate
+      )
+      return [
+        "wavPath": outWavPath,
+        "sampleRate": Int(sampleRate),
+      ]
+    }.runOnQueue(ttsQueue)
 
+    // Left on the default queue on purpose: both registries own their locking, so
+    // the mark lands while the workers are still inside a synthesis or a decode.
     AsyncFunction("cancel") { (params: [String: Any]) in
       let jobId = (params["jobId"] as? String) ?? ""
       if jobId.isEmpty { return }
-      // The ASR registry owns its own locking, so the mark lands immediately
-      // instead of queueing behind the TTS engine dictionary.
       HappierSherpaOnlineAsrEngine.cancelJob(jobId)
-      self.queue.async {
-        for (_, engine) in self.engines {
-          engine.cancelJob(jobId)
-        }
-      }
+      HappierSherpaOfflineTtsEngine.cancelJob(jobId)
     }
 
     AsyncFunction("createStreamingRecognizer") { (params: [String: Any]) in
@@ -122,7 +118,7 @@ public class HappierSherpaNativeModule: Module {
       if assetsDir.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 302, userInfo: [NSLocalizedDescriptionKey: "assetsDir is required"]) }
 
       try HappierSherpaOnlineAsrEngine.createStream(forJob: jobId, assetsDir: assetsDir)
-    }
+    }.runOnQueue(asrQueue)
 
     AsyncFunction("pushAudioFrame") { (params: [String: Any]) -> [String: Any] in
       let jobId = (params["jobId"] as? String) ?? ""
@@ -139,21 +135,24 @@ public class HappierSherpaNativeModule: Module {
       let result = HappierSherpaOnlineAsrEngine.pushPcm16Data(data, forJob: jobId, sampleRate: Int32(sampleRate), channels: Int32(channels), error: &err)
       if let err { throw err }
       return result as? [String: Any] ?? ["text": "", "isEndpoint": false]
-    }
+    }.runOnQueue(asrQueue)
 
     AsyncFunction("finishStreaming") { (params: [String: Any]) -> [String: Any] in
       let jobId = (params["jobId"] as? String) ?? ""
       if jobId.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 306, userInfo: [NSLocalizedDescriptionKey: "jobId is required"]) }
 
-      return ["text": HappierSherpaOnlineAsrEngine.finishJob(jobId)]
-    }
+      return HappierSherpaOnlineAsrEngine.finishJob(jobId) as? [String: Any] ?? ["status": "missing"]
+    }.runOnQueue(asrQueue)
 
-    AsyncFunction("releaseStreamingAssetsDir") { (params: [String: Any]) -> [String: Any] in
+    // Left on the default queue on purpose: pack invalidation must preempt the
+    // work it is retiring, not queue behind it.
+    AsyncFunction("releaseAssetsDir") { (params: [String: Any]) -> [String: Any] in
       let assetsDir = (params["assetsDir"] as? String) ?? ""
       if assetsDir.isEmpty { throw NSError(domain: "HappierSherpaNative", code: 307, userInfo: [NSLocalizedDescriptionKey: "assetsDir is required"]) }
 
       let cancelledJobs = HappierSherpaOnlineAsrEngine.releaseAssetsDir(assetsDir)
-      return ["cancelledJobs": Int(cancelledJobs)]
+      let releasedEngines = HappierSherpaOfflineTtsEngine.releaseAssetsDir(assetsDir)
+      return ["cancelledJobs": Int(cancelledJobs), "releasedEngines": Int(releasedEngines)]
     }
 
     AsyncFunction("createVadDetector") { (params: [String: Any]) in

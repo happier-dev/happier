@@ -65,10 +65,14 @@ Pod::Spec.new do |s|
   s.source_files = [
     '*.{h,m,mm,swift}',
     '../common/cpp/HappierSherpaAsrStreamRegistry.h',
+    '../common/cpp/HappierSherpaCacheEpoch.h',
+    '../common/cpp/HappierSherpaOfflineTtsEngineCache.h',
     '../common/cpp/HappierSherpaTtsJobRegistry.h'
   ]
   s.private_header_files = [
     '../common/cpp/HappierSherpaAsrStreamRegistry.h',
+    '../common/cpp/HappierSherpaCacheEpoch.h',
+    '../common/cpp/HappierSherpaOfflineTtsEngineCache.h',
     '../common/cpp/HappierSherpaTtsJobRegistry.h'
   ]
   s.exclude_files = 'Tests/**/*'

@@ -34,3 +34,13 @@ assert.doesNotMatch(
   /std::unordered_map<std::string,\s*std::unique_ptr<JobState>>\s+jobs/,
   "Android must not keep a parallel active-only TTS job map",
 );
+assert.match(
+  androidJniSource,
+  /#include "HappierSherpaOfflineTtsEngineCache\.h"/,
+  "Android TTS engines must be owned by the shared cache so one invalidation reaches them",
+);
+assert.match(
+  androidJniSource,
+  /const auto engine = LeaseEngine\(JStringToUtf8\(env, assetsDir\)\);/,
+  "Android synthesis must lease its engine for the call rather than trust a handle from JS",
+);

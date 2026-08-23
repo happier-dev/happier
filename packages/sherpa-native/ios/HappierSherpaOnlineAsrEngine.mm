@@ -85,17 +85,21 @@ std::shared_ptr<const SherpaOnnxOnlineRecognizer> CreateRecognizer(const std::st
   return std::shared_ptr<const SherpaOnnxOnlineRecognizer>(recognizer, SherpaOnnxDestroyOnlineRecognizer);
 }
 
+/**
+ * Lease the recognizer for `assetsDir`, building it on first use. The registry
+ * owns the whole find/create/publish sequence: creation runs outside its lock,
+ * because it loads a model and would block invalidation for seconds, and the
+ * registry refuses the publication when a pack invalidation overtook that load.
+ */
 std::shared_ptr<const SherpaOnnxOnlineRecognizer> GetOrCreateRecognizer(const std::string &assetsDir,
                                                                         NSError * _Nullable * _Nullable error) {
-  if (auto cached = AsrJobs().recognizerForAssetsDir(assetsDir)) {
-    return cached;
+  const auto recognizer = AsrJobs().leaseOrCreateRecognizer(assetsDir, [&] { return CreateRecognizer(assetsDir, error); });
+  if (!recognizer && error && !*error) {
+    // Creation succeeded but the pack it was built from was retired while it
+    // loaded, so there is no creation error to report.
+    SetError(error, 203, @"Model pack was invalidated while the ASR recognizer was loading");
   }
-
-  auto created = CreateRecognizer(assetsDir, error);
-  if (!created) {
-    return nullptr;
-  }
-  return AsrJobs().rememberRecognizer(assetsDir, std::move(created));
+  return recognizer;
 }
 
 std::vector<float> Pcm16LeToMonoFloats(NSData *pcm16le, int32_t channels) {
@@ -176,7 +180,9 @@ std::vector<float> Pcm16LeToMonoFloats(NSData *pcm16le, int32_t channels) {
     SetError(error, 210, @"ASR stream not initialized");
     return @{};
   }
-  if (job->cancelled()) {
+  // A cancelled or draining job is still registered, but its stream no longer
+  // takes audio; report an empty decode rather than feeding a closed stream.
+  if (job->cancelled() || job->finishing()) {
     return @{@"text": @"", @"isEndpoint": @NO};
   }
 
@@ -212,14 +218,23 @@ std::vector<float> Pcm16LeToMonoFloats(NSData *pcm16le, int32_t channels) {
   };
 }
 
-+ (NSString *)finishJob:(NSString *)jobId {
-  // Taking the job moves ownership here for the tail decode; the stream is
-  // destroyed when this scope releases it. A job that is no longer live has
-  // nothing left to drain, which is a normal stop after a cancel rather than a
-  // failure, so it yields empty text.
-  const auto job = AsrJobs().takeJob(NsToStd(jobId));
-  if (!job || job->cancelled()) {
-    return @"";
++ (NSDictionary *)finishJob:(NSString *)jobId {
+  // Claiming the tail decode keeps the job registered, so a cancel or a pack
+  // invalidation arriving while it drains still reaches it. This scope holds the
+  // only remaining reference once it is retired, so the stream dies with it.
+  const std::string jobKey = NsToStd(jobId);
+  const auto job = AsrJobs().beginFinish(jobKey);
+  // Nothing live under this id: it was cancelled, its pack was invalidated, or
+  // another caller is already draining it. There is no transcript to report, and
+  // reporting one as empty text is what let the JS controller promote its last
+  // interim partial to a final.
+  if (!job) {
+    return @{@"status": @"missing"};
+  }
+
+  if (job->cancelled()) {
+    AsrJobs().endFinish(jobKey, job);
+    return @{@"status": @"cancelled"};
   }
 
   SherpaOnnxOnlineStreamInputFinished(job->stream());
@@ -227,11 +242,13 @@ std::vector<float> Pcm16LeToMonoFloats(NSData *pcm16le, int32_t channels) {
     SherpaOnnxDecodeOnlineStream(job->recognizer(), job->stream());
   }
   if (job->cancelled()) {
-    return @"";
+    AsrJobs().endFinish(jobKey, job);
+    return @{@"status": @"cancelled"};
   }
 
-  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(job->recognizer(), job->stream());
   std::string text;
+  const SherpaOnnxOnlineRecognizerResult *result =
+      SherpaOnnxGetOnlineStreamResult(job->recognizer(), job->stream());
   if (result && result->text) {
     text = std::string(result->text);
   }
@@ -239,7 +256,9 @@ std::vector<float> Pcm16LeToMonoFloats(NSData *pcm16le, int32_t channels) {
     SherpaOnnxDestroyOnlineRecognizerResult(result);
   }
 
-  return [NSString stringWithUTF8String:text.c_str()];
+  AsrJobs().endFinish(jobKey, job);
+  // A finalized empty utterance -- silence -- is a successful empty transcript.
+  return @{@"status": @"finalized", @"text": [NSString stringWithUTF8String:text.c_str()]};
 }
 
 + (void)cancelJob:(NSString *)jobId {

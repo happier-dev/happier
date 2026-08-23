@@ -28,11 +28,16 @@ NS_ASSUME_NONNULL_BEGIN
                           error:(NSError * _Nullable * _Nullable)error;
 
 /**
- * Drain the tail of `jobId` and release its stream, returning the final text.
- * A job that is no longer live yields empty text rather than an error: it has
- * already been cancelled or finished, which is a normal stop.
+ * Drain the tail of `jobId` and release its stream, reporting which outcome
+ * actually happened: `{ status: "finalized", text }`, `{ status: "cancelled" }`,
+ * or `{ status: "missing" }` when nothing live is registered under the id.
+ *
+ * Only a finalized outcome carries text. A finalized empty utterance -- silence
+ * -- is a successful empty transcript; a cancelled or absent job is not, and
+ * collapsing the three into one empty string is what let the JS controller
+ * promote its last interim partial to a final transcript.
  */
-+ (NSString *)finishJob:(NSString *)jobId;
++ (NSDictionary *)finishJob:(NSString *)jobId;
 
 /** Mark `jobId` cancelled and release the registry's reference to it. */
 + (void)cancelJob:(NSString *)jobId;

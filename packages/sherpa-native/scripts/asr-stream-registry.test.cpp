@@ -55,7 +55,7 @@ void CancelDuringDecodeKeepsHandlesAlive() {
   std::atomic<bool> streamDestroyed{false};
   Registry registry;
 
-  auto recognizer = registry.rememberRecognizer("/packs/stt", MakeRecognizer(&recognizerDestroyed));
+  auto recognizer = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&recognizerDestroyed); });
   assert(registry.beginJob("job", "/packs/stt", recognizer, MakeStream(&streamDestroyed)) != nullptr);
 
   std::atomic<bool> decoding{false};
@@ -91,26 +91,111 @@ void CancelDuringDecodeKeepsHandlesAlive() {
   assert(!recognizerDestroyed.load());
 }
 
-// Finishing takes the job out of the registry but leaves it owned by the caller,
-// so a cancel that arrives afterwards cannot free the tail decode's stream.
-void FinishTakesOwnershipFromTheRegistry() {
+// A tail decode must stay reachable. The finish path claims the job without
+// removing it, so a stop pressed while the tail drains still cancels it and the
+// handles still outlive the decode that owns them.
+void FinishKeepsTheJobCancellableUntilItSettles() {
   std::atomic<bool> recognizerDestroyed{false};
   std::atomic<bool> streamDestroyed{false};
   Registry registry;
 
-  auto recognizer = registry.rememberRecognizer("/packs/stt", MakeRecognizer(&recognizerDestroyed));
+  auto recognizer = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&recognizerDestroyed); });
   registry.beginJob("job", "/packs/stt", recognizer, MakeStream(&streamDestroyed));
 
   {
-    auto job = registry.takeJob("job");
+    auto job = registry.beginFinish("job");
     assert(job != nullptr);
+    assert(job->finishing());
     assert(!job->cancelled());
+    // Still registered: this is what makes the tail decode reachable at all.
+    assert(registry.activeJobCount() == 1);
+    // A second finish must not drain the same stream concurrently.
+    assert(registry.beginFinish("job") == nullptr);
+
+    // The cancel a user's stop button issues while the tail drains.
+    assert(registry.cancelJob("job"));
+    assert(job->cancelled());
     assert(registry.activeJobCount() == 0);
-    assert(!registry.cancelJob("job"));
-    assert(registry.takeJob("job") == nullptr);
     assert(!streamDestroyed.load());
+
+    // The cancel already retired this identity, so settling removes nothing.
+    assert(!registry.endFinish("job", job));
   }
   assert(streamDestroyed.load());
+}
+
+// Pack invalidation must reach a draining job too: a model whose bytes are about
+// to be replaced cannot keep decoding just because a finish started first.
+void ReleaseAssetsDirReachesADrainingJob() {
+  std::atomic<bool> recognizerDestroyed{false};
+  std::atomic<bool> streamDestroyed{false};
+  Registry registry;
+
+  auto recognizer = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&recognizerDestroyed); });
+  registry.beginJob("job", "/packs/stt", recognizer, MakeStream(&streamDestroyed));
+
+  auto job = registry.beginFinish("job");
+  assert(job != nullptr);
+  assert(registry.releaseAssetsDir("/packs/stt") == 1);
+  assert(job->cancelled());
+  assert(registry.recognizerForAssetsDir("/packs/stt") == nullptr);
+  assert(!streamDestroyed.load());
+  job.reset();
+  assert(streamDestroyed.load());
+}
+
+// Settling a finish removes exactly the identity that drained, never a successor
+// registered under the same id while the tail was still running.
+void EndFinishRemovesOnlyTheSettledIdentity() {
+  std::atomic<bool> recognizerDestroyed{false};
+  std::atomic<bool> firstStreamDestroyed{false};
+  std::atomic<bool> secondStreamDestroyed{false};
+  Registry registry;
+
+  auto recognizer = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&recognizerDestroyed); });
+  registry.beginJob("job", "/packs/stt", recognizer, MakeStream(&firstStreamDestroyed));
+
+  auto draining = registry.beginFinish("job");
+  assert(draining != nullptr);
+
+  // The session restarts under the same id before the tail settles.
+  auto restarted = registry.beginJob("job", "/packs/stt", recognizer, MakeStream(&secondStreamDestroyed));
+  assert(restarted != nullptr);
+  assert(restarted != draining);
+  assert(draining->cancelled());
+
+  assert(!registry.endFinish("job", draining));
+  assert(registry.activeJobCount() == 1);
+  assert(registry.findJob("job") == restarted);
+
+  assert(registry.endFinish("job", restarted));
+  assert(registry.activeJobCount() == 0);
+}
+
+// A recognizer retired by an invalidation must not be admitted afterwards: the
+// creation path builds the recognizer and the stream outside the lock, so this
+// is where an update that landed mid-creation has to win.
+void AdmissionIsRefusedAfterItsRecognizerWasInvalidated() {
+  // Declared before the registry so the flags outlive the deleters it runs.
+  std::atomic<bool> recognizerDestroyed{false};
+  std::atomic<bool> freshDestroyed{false};
+  std::atomic<bool> streamDestroyed{false};
+  Registry registry;
+
+  auto recognizer = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&recognizerDestroyed); });
+  assert(recognizer != nullptr);
+
+  // The pack is replaced while the caller is still creating its stream.
+  assert(registry.releaseAssetsDir("/packs/stt") == 0);
+
+  assert(registry.beginJob("job", "/packs/stt", recognizer, MakeStream(&streamDestroyed)) == nullptr);
+  assert(registry.activeJobCount() == 0);
+
+  // The next recognizer built from the new bytes admits normally.
+  auto fresh = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&freshDestroyed); });
+  assert(fresh != recognizer);
+  assert(registry.beginJob("job", "/packs/stt", fresh, MakeStream(&streamDestroyed)) != nullptr);
+  assert(registry.activeJobCount() == 1);
 }
 
 // Re-registering a job id retires the previous stream instead of leaking it.
@@ -120,7 +205,7 @@ void BeginJobReplacesAnExistingJobId() {
   std::atomic<bool> secondDestroyed{false};
   Registry registry;
 
-  auto recognizer = registry.rememberRecognizer("/packs/stt", MakeRecognizer(&recognizerDestroyed));
+  auto recognizer = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&recognizerDestroyed); });
   auto first = registry.beginJob("job", "/packs/stt", recognizer, MakeStream(&firstDestroyed));
   assert(first != nullptr);
 
@@ -145,8 +230,8 @@ void ReleaseAssetsDirCancelsOnlyThatPack() {
   std::atomic<bool> otherStreamDestroyed{false};
   Registry registry;
 
-  auto stt = registry.rememberRecognizer("/packs/stt", MakeRecognizer(&sttDestroyed));
-  auto other = registry.rememberRecognizer("/packs/other", MakeRecognizer(&otherDestroyed));
+  auto stt = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&sttDestroyed); });
+  auto other = registry.leaseOrCreateRecognizer("/packs/other", [&] { return MakeRecognizer(&otherDestroyed); });
   registry.beginJob("stt-job", "/packs/stt", stt, MakeStream(&sttStreamDestroyed));
   registry.beginJob("other-job", "/packs/other", other, MakeStream(&otherStreamDestroyed));
   assert(registry.cachedRecognizerCount() == 2);
@@ -177,8 +262,8 @@ void ReleaseAllDropsEveryPackAndJob() {
   std::atomic<bool> secondStreamDestroyed{false};
   Registry registry;
 
-  auto first = registry.rememberRecognizer("/packs/a", MakeRecognizer(&firstDestroyed));
-  auto second = registry.rememberRecognizer("/packs/b", MakeRecognizer(&secondDestroyed));
+  auto first = registry.leaseOrCreateRecognizer("/packs/a", [&] { return MakeRecognizer(&firstDestroyed); });
+  auto second = registry.leaseOrCreateRecognizer("/packs/b", [&] { return MakeRecognizer(&secondDestroyed); });
   registry.beginJob("a-job", "/packs/a", first, MakeStream(&firstStreamDestroyed));
   auto inFlight = registry.beginJob("b-job", "/packs/b", second, MakeStream(&secondStreamDestroyed));
 
@@ -202,7 +287,7 @@ void ReleaseAllDropsEveryPackAndJob() {
 void ConcurrentPushCancelFinishStress() {
   Registry registry;
   std::atomic<bool> recognizerDestroyed{false};
-  auto recognizer = registry.rememberRecognizer("/packs/stt", MakeRecognizer(&recognizerDestroyed));
+  auto recognizer = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&recognizerDestroyed); });
 
   constexpr int kRounds = 300;
   std::vector<std::unique_ptr<std::atomic<bool>>> destroyedFlags;
@@ -222,8 +307,10 @@ void ConcurrentPushCancelFinishStress() {
     });
     std::thread canceller([&, jobId] { registry.cancelJob(jobId); });
     std::thread finisher([&, jobId] {
-      auto job = registry.takeJob(jobId);
-      if (job) job->stream()->decoded.fetch_add(1);
+      auto job = registry.beginFinish(jobId);
+      if (!job) return;
+      job->stream()->decoded.fetch_add(1);
+      registry.endFinish(jobId, job);
     });
 
     pusher.join();
@@ -241,6 +328,84 @@ void ConcurrentPushCancelFinishStress() {
   assert(recognizerDestroyed.load());
 }
 
+
+// The window the registry lock cannot cover: building a recognizer loads a model
+// and takes seconds, so it runs unlocked. An invalidation landing inside that
+// window finds nothing cached for the directory and reports it clear -- and must
+// still stop the recognizer built from the retired bytes from being published.
+// Publishing it would also defeat `beginJob`'s admission check, which asks only
+// whether the recognizer is the one currently cached.
+void ReleaseAssetsDirDuringCreationRefusesThePublication() {
+  std::atomic<bool> staleDestroyed{false};
+  std::atomic<bool> freshDestroyed{false};
+  std::atomic<bool> streamDestroyed{false};
+  Registry registry;
+
+  auto published = registry.leaseOrCreateRecognizer("/packs/stt", [&] {
+    // The pack is replaced while this recognizer is still loading. Cancelling
+    // published jobs and dropping cached recognizers reaches neither: there are
+    // none yet.
+    assert(registry.releaseAssetsDir("/packs/stt") == 0);
+    return MakeRecognizer(&staleDestroyed);
+  });
+
+  assert(published == nullptr);
+  assert(registry.recognizerForAssetsDir("/packs/stt") == nullptr);
+  assert(registry.cachedRecognizerCount() == 0);
+  assert(staleDestroyed.load());
+
+  // The invalidation is not sticky: a recognizer built from the new bytes
+  // publishes and admits normally.
+  auto fresh = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&freshDestroyed); });
+  assert(fresh != nullptr);
+  assert(registry.recognizerForAssetsDir("/packs/stt") == fresh);
+  assert(registry.beginJob("job", "/packs/stt", fresh, MakeStream(&streamDestroyed)) != nullptr);
+  assert(registry.activeJobCount() == 1);
+
+  assert(registry.releaseAll() == 1);
+}
+
+// Teardown has the same window, and must reject a creation for a directory that
+// no single-directory invalidation ever named -- otherwise the process-static
+// registry is repopulated after the module that owned it is gone.
+void ReleaseAllDuringCreationRefusesThePublication() {
+  std::atomic<bool> staleDestroyed{false};
+  std::atomic<bool> freshDestroyed{false};
+  Registry registry;
+
+  auto published = registry.leaseOrCreateRecognizer("/packs/stt", [&] {
+    assert(registry.releaseAll() == 0);
+    return MakeRecognizer(&staleDestroyed);
+  });
+
+  assert(published == nullptr);
+  assert(registry.cachedRecognizerCount() == 0);
+  assert(staleDestroyed.load());
+
+  auto fresh = registry.leaseOrCreateRecognizer("/packs/stt", [&] { return MakeRecognizer(&freshDestroyed); });
+  assert(fresh != nullptr);
+  assert(registry.cachedRecognizerCount() == 1);
+  registry.releaseAll();
+}
+
+// Retirement is scoped to the directory it named. A concurrent creation for a
+// different pack must not be collateral damage: refusing it would fail a start
+// the user did nothing to invalidate.
+void ReleaseAssetsDirDuringCreationLeavesAnotherPackPublishable() {
+  std::atomic<bool> otherDestroyed{false};
+  Registry registry;
+
+  auto other = registry.leaseOrCreateRecognizer("/packs/other", [&] {
+    assert(registry.releaseAssetsDir("/packs/stt") == 0);
+    return MakeRecognizer(&otherDestroyed);
+  });
+
+  assert(other != nullptr);
+  assert(registry.recognizerForAssetsDir("/packs/other") == other);
+  assert(registry.cachedRecognizerCount() == 1);
+  registry.releaseAll();
+}
+
 }  // namespace
 
 int main() {
@@ -248,7 +413,13 @@ int main() {
   assert(constQualified.activeJobCount() == 0);
 
   CancelDuringDecodeKeepsHandlesAlive();
-  FinishTakesOwnershipFromTheRegistry();
+  FinishKeepsTheJobCancellableUntilItSettles();
+  ReleaseAssetsDirReachesADrainingJob();
+  EndFinishRemovesOnlyTheSettledIdentity();
+  AdmissionIsRefusedAfterItsRecognizerWasInvalidated();
+  ReleaseAssetsDirDuringCreationRefusesThePublication();
+  ReleaseAllDuringCreationRefusesThePublication();
+  ReleaseAssetsDirDuringCreationLeavesAnotherPackPublishable();
   BeginJobReplacesAnExistingJobId();
   ReleaseAssetsDirCancelsOnlyThatPack();
   ReleaseAllDropsEveryPackAndJob();

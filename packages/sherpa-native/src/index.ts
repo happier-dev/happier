@@ -8,6 +8,7 @@ export type {
   SherpaNativeInitializeParams,
   SherpaNativeListVoicesParams,
   SherpaNativeModule,
+  SherpaNativeStreamingFinalResult,
   SherpaNativeSynthesizeParams,
   SherpaNativeSynthesizeResult,
   SherpaNativeVadFrameResult,

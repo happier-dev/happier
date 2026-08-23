@@ -11,6 +11,7 @@
 
 #include "sherpa-onnx/c-api/c-api.h"
 #include "HappierSherpaAsrStreamRegistry.h"
+#include "HappierSherpaOfflineTtsEngineCache.h"
 #include "HappierSherpaTtsJobRegistry.h"
 
 namespace {
@@ -28,14 +29,14 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
   return parg->state->cancelled.load() ? 0 : 1;
 }
 
+/**
+ * One cached offline-TTS engine: the sherpa handle plus the cancellation
+ * registry for the jobs synthesizing against it. Held by `shared_ptr` in the
+ * shared cache, so the handle is destroyed by whichever holder releases last --
+ * never underneath a synthesis already inside sherpa's generation callback.
+ */
 struct Engine {
   const SherpaOnnxOfflineTts *tts = nullptr;
-  std::string assetsDir;
-  std::string modelPath;
-  std::string voicesPath;
-  std::string tokensPath;
-  std::string dataDirPath;
-
   happier_sherpa::TtsJobRegistry jobs;
 
   ~Engine() {
@@ -68,17 +69,15 @@ AsrStreams &AsrJobs() {
   return registry;
 }
 
-Engine *CreateEngine(const std::string &assetsDir) {
-  auto engine = std::make_unique<Engine>();
-  engine->assetsDir = assetsDir;
-  engine->modelPath = assetsDir + "/model.onnx";
-  engine->voicesPath = assetsDir + "/voices.bin";
-  engine->tokensPath = assetsDir + "/tokens.txt";
-  engine->dataDirPath = assetsDir + "/espeak-ng-data";
+std::shared_ptr<Engine> CreateEngine(const std::string &assetsDir) {
+  const std::string modelPath = assetsDir + "/model.onnx";
+  const std::string voicesPath = assetsDir + "/voices.bin";
+  const std::string tokensPath = assetsDir + "/tokens.txt";
+  const std::string dataDirPath = assetsDir + "/espeak-ng-data";
 
-  if (!SherpaOnnxFileExists(engine->modelPath.c_str()) ||
-      !SherpaOnnxFileExists(engine->voicesPath.c_str()) ||
-      !SherpaOnnxFileExists(engine->tokensPath.c_str())) {
+  if (!SherpaOnnxFileExists(modelPath.c_str()) ||
+      !SherpaOnnxFileExists(voicesPath.c_str()) ||
+      !SherpaOnnxFileExists(tokensPath.c_str())) {
     __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Missing required Kokoro assets in %s", assetsDir.c_str());
     return nullptr;
   }
@@ -92,10 +91,10 @@ Engine *CreateEngine(const std::string &assetsDir) {
   config.max_num_sentences = 1;
   config.silence_scale = 0.2f;
 
-  config.model.kokoro.model = engine->modelPath.c_str();
-  config.model.kokoro.voices = engine->voicesPath.c_str();
-  config.model.kokoro.tokens = engine->tokensPath.c_str();
-  config.model.kokoro.data_dir = engine->dataDirPath.c_str();
+  config.model.kokoro.model = modelPath.c_str();
+  config.model.kokoro.voices = voicesPath.c_str();
+  config.model.kokoro.tokens = tokensPath.c_str();
+  config.model.kokoro.data_dir = dataDirPath.c_str();
   config.model.kokoro.length_scale = 1.0f;
   config.model.kokoro.lexicon = nullptr;
   config.model.kokoro.lang = nullptr;
@@ -106,8 +105,28 @@ Engine *CreateEngine(const std::string &assetsDir) {
     return nullptr;
   }
 
+  auto engine = std::make_shared<Engine>();
   engine->tts = tts;
-  return engine.release();
+  return engine;
+}
+
+using EngineCache = happier_sherpa::OfflineTtsEngineCache<Engine>;
+
+EngineCache &Engines() {
+  static EngineCache cache;
+  return cache;
+}
+
+/**
+ * Lease the engine for `assetsDir`, building it on first use. The cache owns the
+ * whole find/create/publish sequence: creation runs outside its lock, because it
+ * loads a model and would block invalidation for seconds, and the cache refuses
+ * the publication when a pack invalidation overtook that load. Returns nullptr
+ * both when creation failed and when the pack it was built from was retired
+ * meanwhile; the caller treats either as a failed start.
+ */
+std::shared_ptr<Engine> LeaseEngine(const std::string &assetsDir) {
+  return Engines().leaseOrCreate(assetsDir, [&] { return CreateEngine(assetsDir); });
 }
 
 std::shared_ptr<const SherpaOnnxOnlineRecognizer> CreateAsrRecognizer(const std::string &assetsDir) {
@@ -172,16 +191,9 @@ std::shared_ptr<const SherpaOnnxOnlineRecognizer> CreateAsrRecognizer(const std:
   return std::shared_ptr<const SherpaOnnxOnlineRecognizer>(recognizer, SherpaOnnxDestroyOnlineRecognizer);
 }
 
+/** The recognizer lease counterpart of `LeaseEngine`, with the same contract. */
 std::shared_ptr<const SherpaOnnxOnlineRecognizer> GetOrCreateAsrRecognizer(const std::string &assetsDir) {
-  if (auto cached = AsrJobs().recognizerForAssetsDir(assetsDir)) {
-    return cached;
-  }
-
-  auto created = CreateAsrRecognizer(assetsDir);
-  if (!created) {
-    return nullptr;
-  }
-  return AsrJobs().rememberRecognizer(assetsDir, std::move(created));
+  return AsrJobs().leaseOrCreateRecognizer(assetsDir, [&] { return CreateAsrRecognizer(assetsDir); });
 }
 
 std::string JStringToUtf8(JNIEnv *env, jstring str) {
@@ -246,6 +258,14 @@ VadSession *CreateVadSession(const std::string &modelPath, int32_t sampleRate, f
   return session.release();
 }
 
+jintArray MakeIntPair(JNIEnv *env, jint first, jint second) {
+  jintArray out = env->NewIntArray(2);
+  if (!out) return nullptr;
+  const jint values[2] = {first, second};
+  env->SetIntArrayRegion(out, 0, 2, values);
+  return out;
+}
+
 jobject MakePushFrameResult(JNIEnv *env, const std::string &text, bool endpoint) {
   jclass mapClass = env->FindClass("java/util/HashMap");
   if (!mapClass) return nullptr;
@@ -270,53 +290,71 @@ jobject MakePushFrameResult(JNIEnv *env, const std::string &text, bool endpoint)
   return map;
 }
 
+/**
+ * The tail-decode outcome, as the discriminated result the JS bridge parses:
+ * `{ status: "finalized", text }`, `{ status: "cancelled" }`, or
+ * `{ status: "missing" }`. Only a finalized outcome carries text, because only a
+ * finalized outcome has a transcript -- collapsing the other two into empty text
+ * is what let the JS controller promote its last interim partial to a final.
+ */
+jobject MakeFinishResult(JNIEnv *env, const char *status, const char *text) {
+  jclass mapClass = env->FindClass("java/util/HashMap");
+  if (!mapClass) return nullptr;
+  jmethodID ctor = env->GetMethodID(mapClass, "<init>", "()V");
+  jmethodID put = env->GetMethodID(mapClass, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+  jobject map = env->NewObject(mapClass, ctor);
+
+  jstring keyStatus = env->NewStringUTF("status");
+  jstring valStatus = env->NewStringUTF(status);
+  env->CallObjectMethod(map, put, keyStatus, valStatus);
+  env->DeleteLocalRef(keyStatus);
+  env->DeleteLocalRef(valStatus);
+
+  if (text) {
+    jstring keyText = env->NewStringUTF("text");
+    jstring valText = env->NewStringUTF(text);
+    env->CallObjectMethod(map, put, keyText, valText);
+    env->DeleteLocalRef(keyText);
+    env->DeleteLocalRef(valText);
+  }
+
+  return map;
+}
+
 }  // namespace
 
-extern "C" JNIEXPORT jlong JNICALL
-Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeCreateEngine(JNIEnv *env, jclass /*clazz*/, jstring assetsDir) {
-  const std::string dir = JStringToUtf8(env, assetsDir);
-  if (dir.empty()) return 0;
-  Engine *engine = CreateEngine(dir);
-  return reinterpret_cast<jlong>(engine);
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeDestroyEngine(JNIEnv * /*env*/, jclass /*clazz*/, jlong handle) {
-  auto *engine = reinterpret_cast<Engine *>(handle);
-  delete engine;
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeEnsureEngine(JNIEnv *env, jclass /*clazz*/, jstring assetsDir) {
+  return LeaseEngine(JStringToUtf8(env, assetsDir)) ? 1 : 0;
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeGetSampleRate(JNIEnv * /*env*/, jclass /*clazz*/, jlong handle) {
-  auto *engine = reinterpret_cast<Engine *>(handle);
-  if (!engine || !engine->tts) return 0;
-  return SherpaOnnxOfflineTtsSampleRate(engine->tts);
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeGetNumSpeakers(JNIEnv * /*env*/, jclass /*clazz*/, jlong handle) {
-  auto *engine = reinterpret_cast<Engine *>(handle);
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeGetNumSpeakers(JNIEnv *env, jclass /*clazz*/, jstring assetsDir) {
+  const auto engine = LeaseEngine(JStringToUtf8(env, assetsDir));
   if (!engine || !engine->tts) return 0;
   return SherpaOnnxOfflineTtsNumSpeakers(engine->tts);
 }
 
+/** Returns the engine's sample rate on success and 0 on any failure. */
 extern "C" JNIEXPORT jint JNICALL
 Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeSynthesizeToWavFile(
     JNIEnv *env,
     jclass /*clazz*/,
-    jlong handle,
+    jstring assetsDir,
     jstring text,
     jint sid,
     jfloat speed,
     jstring outWavPath,
     jstring jobId) {
-  auto *engine = reinterpret_cast<Engine *>(handle);
-  if (!engine || !engine->tts) return 0;
-
   const std::string jobKey = JStringToUtf8(env, jobId);
   const std::string outPath = JStringToUtf8(env, outWavPath);
   const std::string inputText = JStringToUtf8(env, text);
   if (jobKey.empty() || outPath.empty() || inputText.empty()) return 0;
+
+  // The lease is held for the whole synthesis, so an invalidation racing this
+  // call retires the cache entry and cancels the job without freeing the engine.
+  const auto engine = LeaseEngine(JStringToUtf8(env, assetsDir));
+  if (!engine || !engine->tts) return 0;
 
   bool wasAlreadyCancelled = false;
   happier_sherpa::TtsJobState *statePtr = engine->jobs.beginJob(jobKey, &wasAlreadyCancelled);
@@ -350,16 +388,23 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeSynthesizeToWavFile(
   const int32_t ok = SherpaOnnxWriteWave(audio->samples, audio->n, audio->sample_rate, outPath.c_str());
   const bool wasCancelled = engine->jobs.finishJob(jobKey);
   SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
-  return ok && !wasCancelled ? 1 : 0;
+  if (!ok || wasCancelled) return 0;
+  return SherpaOnnxOfflineTtsSampleRate(engine->tts);
 }
 
+/**
+ * Mark `jobId` cancelled in both engine kinds. Every registry owns its locking,
+ * so this lands while a worker thread is still inside a synthesis or a decode --
+ * it never waits for the work it is cancelling.
+ */
 extern "C" JNIEXPORT void JNICALL
-Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeCancel(JNIEnv *env, jclass /*clazz*/, jlong handle, jstring jobId) {
-  auto *engine = reinterpret_cast<Engine *>(handle);
-  if (!engine) return;
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeCancel(JNIEnv *env, jclass /*clazz*/, jstring jobId) {
   const std::string jobKey = JStringToUtf8(env, jobId);
   if (jobKey.empty()) return;
-  engine->jobs.cancel(jobKey);
+  for (const auto &engine : Engines().snapshot()) {
+    engine->jobs.cancel(jobKey);
+  }
+  AsrJobs().cancelJob(jobKey);
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -404,7 +449,9 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativePushAudioFrame(
   // a session whose pack was invalidated stops instead of going quiet.
   const auto job = AsrJobs().findJob(jobKey);
   if (!job) return nullptr;
-  if (job->cancelled()) return MakePushFrameResult(env, "", false);
+  // A cancelled or draining job is still registered, but its stream no longer
+  // takes audio; report an empty decode rather than feeding a closed stream.
+  if (job->cancelled() || job->finishing()) return MakePushFrameResult(env, "", false);
 
   const jsize len = env->GetArrayLength(pcm16le);
   if (len <= 0) return MakePushFrameResult(env, "", false);
@@ -433,50 +480,83 @@ Java_dev_happier_sherpa_HappierSherpaNativeJni_nativePushAudioFrame(
   return MakePushFrameResult(env, text, endpoint);
 }
 
-extern "C" JNIEXPORT jstring JNICALL
+/**
+ * Drain the tail of `jobId`, reporting which outcome actually happened. A
+ * finalized empty utterance -- silence -- is a successful empty transcript; a
+ * cancelled or absent job is not, and must not be reported as one.
+ */
+extern "C" JNIEXPORT jobject JNICALL
 Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeFinishStreaming(JNIEnv *env, jclass /*clazz*/, jstring jobId) {
   const std::string jobKey = JStringToUtf8(env, jobId);
-  if (jobKey.empty()) return env->NewStringUTF("");
+  if (jobKey.empty()) return MakeFinishResult(env, "missing", nullptr);
 
-  // Taking the job moves ownership here for the tail decode; the stream is
-  // destroyed when this scope releases it.
-  const auto job = AsrJobs().takeJob(jobKey);
-  if (!job) return env->NewStringUTF("");
+  // Claiming the tail decode keeps the job registered, so a cancel or a pack
+  // invalidation arriving while it drains still reaches it. This scope holds the
+  // only remaining reference once it is retired, so the stream dies with it.
+  const auto job = AsrJobs().beginFinish(jobKey);
+  // Nothing live under this id: it was cancelled, its pack was invalidated, or
+  // another caller is already draining it. There is no transcript to report.
+  if (!job) return MakeFinishResult(env, "missing", nullptr);
+
+  if (job->cancelled()) {
+    AsrJobs().endFinish(jobKey, job);
+    return MakeFinishResult(env, "cancelled", nullptr);
+  }
 
   SherpaOnnxOnlineStreamInputFinished(job->stream());
   while (!job->cancelled() && SherpaOnnxIsOnlineStreamReady(job->recognizer(), job->stream())) {
     SherpaOnnxDecodeOnlineStream(job->recognizer(), job->stream());
   }
-  if (job->cancelled()) return env->NewStringUTF("");
+  if (job->cancelled()) {
+    AsrJobs().endFinish(jobKey, job);
+    return MakeFinishResult(env, "cancelled", nullptr);
+  }
 
-  const SherpaOnnxOnlineRecognizerResult *result = SherpaOnnxGetOnlineStreamResult(job->recognizer(), job->stream());
   std::string text;
+  const SherpaOnnxOnlineRecognizerResult *result =
+      SherpaOnnxGetOnlineStreamResult(job->recognizer(), job->stream());
   if (result && result->text) text = std::string(result->text);
   if (result) SherpaOnnxDestroyOnlineRecognizerResult(result);
 
-  return env->NewStringUTF(text.c_str());
+  AsrJobs().endFinish(jobKey, job);
+  return MakeFinishResult(env, "finalized", text.c_str());
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeCancelStreaming(JNIEnv *env, jclass /*clazz*/, jstring jobId) {
-  const std::string jobKey = JStringToUtf8(env, jobId);
-  if (jobKey.empty()) return;
-  AsrJobs().cancelJob(jobKey);
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeReleaseStreamingAssetsDir(
+/**
+ * Retire everything keyed on `assetsDir` -- the streaming recognizer, the jobs
+ * decoding against it, and the offline TTS engine -- so a pack whose bytes are
+ * about to be replaced or deleted stops being served from memory. Returns
+ * `[cancelledJobs, releasedEngines]`.
+ */
+extern "C" JNIEXPORT jintArray JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeReleaseAssetsDir(
     JNIEnv *env,
     jclass /*clazz*/,
     jstring assetsDir) {
   const std::string dir = JStringToUtf8(env, assetsDir);
-  if (dir.empty()) return 0;
-  return static_cast<jint>(AsrJobs().releaseAssetsDir(dir));
+  jint counts[2] = {0, 0};
+  if (!dir.empty()) {
+    counts[0] = static_cast<jint>(AsrJobs().releaseAssetsDir(dir));
+    if (const auto retired = Engines().release(dir)) {
+      // Retiring the entry is immediate for the next caller; marking the jobs is
+      // what stops work already inside sherpa's generation callback from
+      // finishing against the superseded model.
+      retired->jobs.retire();
+      counts[1] = 1;
+    }
+  }
+  return MakeIntPair(env, counts[0], counts[1]);
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeReleaseAllStreaming(JNIEnv * /*env*/, jclass /*clazz*/) {
-  return static_cast<jint>(AsrJobs().releaseAll());
+/** Teardown counterpart of `nativeReleaseAssetsDir`, across every cached pack. */
+extern "C" JNIEXPORT jintArray JNICALL
+Java_dev_happier_sherpa_HappierSherpaNativeJni_nativeReleaseAll(JNIEnv *env, jclass /*clazz*/) {
+  const jint cancelledJobs = static_cast<jint>(AsrJobs().releaseAll());
+  const auto retired = Engines().releaseAll();
+  for (const auto &engine : retired) {
+    engine->jobs.retire();
+  }
+  return MakeIntPair(env, cancelledJobs, static_cast<jint>(retired.size()));
 }
 
 extern "C" JNIEXPORT jlong JNICALL

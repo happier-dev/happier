@@ -52,7 +52,12 @@ test("iOS podspec exposes the shared native registry headers to the pod target",
   const publicHeaders = extractOptionalPodspecAssignment(podspec, "public_header_files");
   const targetConfig = extractPodspecAssignment(podspec, "pod_target_xcconfig");
 
-  for (const header of ["HappierSherpaTtsJobRegistry.h", "HappierSherpaAsrStreamRegistry.h"]) {
+  for (const header of [
+    "HappierSherpaTtsJobRegistry.h",
+    "HappierSherpaAsrStreamRegistry.h",
+    "HappierSherpaOfflineTtsEngineCache.h",
+    "HappierSherpaCacheEpoch.h",
+  ]) {
     assert.ok(
       sourceFiles.includes(`../common/cpp/${header}`),
       `shared registry header ${header} must be part of the iOS pod sources`,
@@ -115,17 +120,29 @@ test("iOS Swift module uses Objective-C failable and throwing imports", () => {
   const offlineHeader = readFileSync(path.join(packageRoot, "ios", "HappierSherpaOfflineTtsEngine.h"), "utf8");
   const onlineHeader = readFileSync(path.join(packageRoot, "ios", "HappierSherpaOnlineAsrEngine.h"), "utf8");
 
-  assert.match(offlineHeader, /-\s*\(nullable instancetype\)initWithAssetsDir:/);
-  assert.match(moduleSource, /try HappierSherpaOfflineTtsEngine\(assetsDir: assetsDir\)/);
-  assert.match(moduleSource, /try engine\.synthesizeToWavFile\(atPath: outWavPath, text: text, sid: Int32\(sid\), speed: Float\(speed\), jobId: jobId\)/);
-  assert.doesNotMatch(moduleSource, /engine\.synthesizeToWavFile\(.*error: &err/);
+  // Offline TTS is addressed by assets directory on the class, the same shape as
+  // streaming ASR, so the engine cache -- not a Swift dictionary -- owns lifetime
+  // and one invalidation reaches both engine kinds.
+  assert.doesNotMatch(offlineHeader, /instancetype\)initWithAssetsDir:/);
+  assert.match(offlineHeader, /\+\s*\(BOOL\)prepareAssetsDir:\(NSString \*\)assetsDir/);
+  assert.match(offlineHeader, /NS_SWIFT_NAME\(prepare\(assetsDir:\)\)/);
+  assert.match(offlineHeader, /NS_SWIFT_NAME\(synthesizeToWavFile\(atPath:assetsDir:text:sid:speed:jobId:sampleRate:\)\)/);
+  assert.match(offlineHeader, /\+\s*\(NSUInteger\)releaseAssetsDir:\(NSString \*\)assetsDir NS_SWIFT_NAME\(releaseAssetsDir\(_:\)\);/);
+  assert.match(offlineHeader, /\+\s*\(NSUInteger\)releaseAll NS_SWIFT_NAME\(releaseAll\(\)\);/);
+  assert.match(moduleSource, /try HappierSherpaOfflineTtsEngine\.prepare\(assetsDir: assetsDir\)/);
+  assert.match(moduleSource, /try HappierSherpaOfflineTtsEngine\.synthesizeToWavFile\(/);
+  assert.match(moduleSource, /HappierSherpaOfflineTtsEngine\.releaseAssetsDir\(assetsDir\)/);
+  assert.match(moduleSource, /HappierSherpaOfflineTtsEngine\.releaseAll\(\)/);
+  // A Swift-side engine dictionary would be a second lifetime owner that cannot
+  // hand a running synthesis a lease surviving eviction.
+  assert.doesNotMatch(moduleSource, /var engines\b|ttsEngines/);
 
   // Streaming ASR is addressed by job id on the class, so these selectors are the
   // whole iOS bridge; the Swift spellings below are what the Clang importer
   // produces for them.
   assert.match(onlineHeader, /\+\s*\(BOOL\)createStreamForJob:\(NSString \*\)jobId/);
   assert.match(onlineHeader, /\+\s*\(NSDictionary \*\)pushPcm16Data:\(NSData \*\)pcm16le/);
-  assert.match(onlineHeader, /\+\s*\(NSString \*\)finishJob:\(NSString \*\)jobId;/);
+  assert.match(onlineHeader, /\+\s*\(NSDictionary \*\)finishJob:\(NSString \*\)jobId;/);
   assert.match(onlineHeader, /\+\s*\(void\)cancelJob:\(NSString \*\)jobId;/);
   assert.match(onlineHeader, /\+\s*\(NSUInteger\)releaseAssetsDir:\(NSString \*\)assetsDir;/);
   assert.match(onlineHeader, /\+\s*\(NSUInteger\)releaseAll;/);

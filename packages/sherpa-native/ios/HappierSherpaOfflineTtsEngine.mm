@@ -1,4 +1,5 @@
 #import "HappierSherpaOfflineTtsEngine.h"
+#import "HappierSherpaOfflineTtsEngineCache.h"
 #import "HappierSherpaTtsJobRegistry.h"
 
 #include <cstring>
@@ -8,6 +9,32 @@
 #include <sherpa-onnx/c-api/c-api.h>
 
 namespace {
+
+/**
+ * One cached offline-TTS engine: the sherpa handle plus the cancellation
+ * registry for the jobs synthesizing against it. Held by `shared_ptr` in the
+ * shared cache, so the handle is destroyed by whichever holder releases last --
+ * never underneath a synthesis that is already inside sherpa's generation
+ * callback.
+ */
+struct TtsEngine {
+  const SherpaOnnxOfflineTts *tts = nullptr;
+  happier_sherpa::TtsJobRegistry jobs;
+
+  ~TtsEngine() {
+    if (tts) {
+      SherpaOnnxDestroyOfflineTts(tts);
+      tts = nullptr;
+    }
+  }
+};
+
+using EngineCache = happier_sherpa::OfflineTtsEngineCache<TtsEngine>;
+
+EngineCache &Engines() {
+  static EngineCache cache;
+  return cache;
+}
 
 struct ProgressArg {
   happier_sherpa::TtsJobState *state;
@@ -20,50 +47,35 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
   return parg->state->cancelled.load() ? 0 : 1;
 }
 
-}  // namespace
-
-@interface HappierSherpaOfflineTtsEngine () {
-  const SherpaOnnxOfflineTts *_tts;
-  std::string _assetsDir;
-  std::string _modelPath;
-  std::string _voicesPath;
-  std::string _tokensPath;
-  std::string _dataDirPath;
-
-  happier_sherpa::TtsJobRegistry _jobs;
+std::string NsToStd(NSString *s) {
+  if (!s) return std::string();
+  const char *c = [s UTF8String];
+  return std::string(c ? c : "");
 }
-@end
 
-@implementation HappierSherpaOfflineTtsEngine
-
-- (instancetype)initWithAssetsDir:(NSString *)assetsDir error:(NSError **)error {
-  self = [super init];
-  if (!self) return nil;
-
-  _tts = nullptr;
-
-  _assetsDir = std::string([assetsDir UTF8String]);
-  if (_assetsDir.empty()) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:2 userInfo:@{NSLocalizedDescriptionKey: @"assetsDir is empty"}];
-    return nil;
+void SetError(NSError * _Nullable * _Nullable error, NSInteger code, NSString *message) {
+  if (error) {
+    *error = [NSError errorWithDomain:@"HappierSherpaNative" code:code userInfo:@{NSLocalizedDescriptionKey: message}];
   }
+}
 
-  _modelPath = _assetsDir + "/model.onnx";
-  _voicesPath = _assetsDir + "/voices.bin";
-  _tokensPath = _assetsDir + "/tokens.txt";
-  _dataDirPath = _assetsDir + "/espeak-ng-data";
+std::shared_ptr<TtsEngine> CreateEngine(const std::string &assetsDir, NSError * _Nullable * _Nullable error) {
+  const std::string modelPath = assetsDir + "/model.onnx";
+  const std::string voicesPath = assetsDir + "/voices.bin";
+  const std::string tokensPath = assetsDir + "/tokens.txt";
+  const std::string dataDirPath = assetsDir + "/espeak-ng-data";
 
-  if (!SherpaOnnxFileExists(_modelPath.c_str())) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:3 userInfo:@{NSLocalizedDescriptionKey: @"model.onnx not found"}];
-    return nil;
+  if (!SherpaOnnxFileExists(modelPath.c_str())) {
+    SetError(error, 3, @"model.onnx not found");
+    return nullptr;
   }
-  if (!SherpaOnnxFileExists(_voicesPath.c_str())) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:4 userInfo:@{NSLocalizedDescriptionKey: @"voices.bin not found"}];
-    return nil;
+  if (!SherpaOnnxFileExists(voicesPath.c_str())) {
+    SetError(error, 4, @"voices.bin not found");
+    return nullptr;
   }
-  if (!SherpaOnnxFileExists(_tokensPath.c_str())) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:5 userInfo:@{NSLocalizedDescriptionKey: @"tokens.txt not found"}];
-    return nil;
+  if (!SherpaOnnxFileExists(tokensPath.c_str())) {
+    SetError(error, 5, @"tokens.txt not found");
+    return nullptr;
   }
 
   SherpaOnnxOfflineTtsConfig config;
@@ -75,66 +87,85 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
   config.max_num_sentences = 1;
   config.silence_scale = 0.2f;
 
-  config.model.kokoro.model = _modelPath.c_str();
-  config.model.kokoro.voices = _voicesPath.c_str();
-  config.model.kokoro.tokens = _tokensPath.c_str();
-  config.model.kokoro.data_dir = _dataDirPath.c_str();
+  config.model.kokoro.model = modelPath.c_str();
+  config.model.kokoro.voices = voicesPath.c_str();
+  config.model.kokoro.tokens = tokensPath.c_str();
+  config.model.kokoro.data_dir = dataDirPath.c_str();
   config.model.kokoro.length_scale = 1.0f;
   config.model.kokoro.lexicon = nullptr;
   config.model.kokoro.lang = nullptr;
 
   const SherpaOnnxOfflineTts *tts = SherpaOnnxCreateOfflineTts(&config);
   if (!tts) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Failed to initialize sherpa offline TTS"}];
-    return nil;
+    SetError(error, 6, @"Failed to initialize sherpa offline TTS");
+    return nullptr;
   }
 
-  _tts = tts;
-  return self;
+  auto engine = std::make_shared<TtsEngine>();
+  engine->tts = tts;
+  return engine;
 }
 
-- (void)dealloc {
-  if (_tts) {
-    SherpaOnnxDestroyOfflineTts(_tts);
-    _tts = nullptr;
+/**
+ * Lease the engine for `assetsDir`, building it on first use. The cache owns the
+ * whole find/create/publish sequence: creation runs outside its lock, because it
+ * loads a model and would block invalidation for seconds, and the cache refuses
+ * the publication when a pack invalidation overtook that load.
+ */
+std::shared_ptr<TtsEngine> LeaseEngine(const std::string &assetsDir, NSError * _Nullable * _Nullable error) {
+  if (assetsDir.empty()) {
+    SetError(error, 2, @"assetsDir is empty");
+    return nullptr;
   }
+
+  const auto engine = Engines().leaseOrCreate(assetsDir, [&] { return CreateEngine(assetsDir, error); });
+  if (!engine && error && !*error) {
+    // Creation succeeded but the pack it was built from was retired while it
+    // loaded, so there is no creation error to report. Distinguished from a
+    // missing-assets failure because retrying against the new bytes is the
+    // right response.
+    SetError(error, 11, @"Model pack was invalidated while the TTS engine was loading");
+  }
+  return engine;
 }
 
-- (int32_t)sampleRate {
-  if (!_tts) return 0;
-  return SherpaOnnxOfflineTtsSampleRate(_tts);
+}  // namespace
+
+@implementation HappierSherpaOfflineTtsEngine
+
++ (BOOL)prepareAssetsDir:(NSString *)assetsDir error:(NSError * _Nullable * _Nullable)error {
+  return LeaseEngine(NsToStd(assetsDir), error) != nullptr;
 }
 
-- (int32_t)numSpeakers {
-  if (!_tts) return 0;
-  return SherpaOnnxOfflineTtsNumSpeakers(_tts);
++ (int32_t)numSpeakersForAssetsDir:(NSString *)assetsDir {
+  const auto engine = LeaseEngine(NsToStd(assetsDir), nullptr);
+  if (!engine || !engine->tts) return 0;
+  return SherpaOnnxOfflineTtsNumSpeakers(engine->tts);
 }
 
-- (void)cancelJob:(NSString *)jobId {
-  const std::string key([jobId UTF8String]);
-  _jobs.cancel(key);
-}
-
-- (BOOL)synthesizeToWavFileAtPath:(NSString *)wavPath
++ (BOOL)synthesizeToWavFileAtPath:(NSString *)wavPath
+                        assetsDir:(NSString *)assetsDir
                              text:(NSString *)text
                               sid:(int32_t)sid
                             speed:(float)speed
                             jobId:(NSString *)jobId
-                            error:(NSError **)error {
-  if (!_tts) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:7 userInfo:@{NSLocalizedDescriptionKey: @"TTS not initialized"}];
+                       sampleRate:(int32_t *)outSampleRate
+                            error:(NSError * _Nullable * _Nullable)error {
+  if (outSampleRate) *outSampleRate = 0;
+
+  // The lease is held for the whole synthesis, so an invalidation racing this
+  // call retires the cache entry and cancels the job without freeing the engine.
+  const auto engine = LeaseEngine(NsToStd(assetsDir), error);
+  if (!engine || !engine->tts) {
+    if (error && !*error) SetError(error, 7, @"TTS not initialized");
     return NO;
   }
 
-  const std::string jobKey([jobId UTF8String]);
+  const std::string jobKey = NsToStd(jobId);
   bool wasAlreadyCancelled = false;
-  happier_sherpa::TtsJobState *statePtr = _jobs.beginJob(jobKey, &wasAlreadyCancelled);
-  if (wasAlreadyCancelled) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
-    return NO;
-  }
-  if (!statePtr) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
+  happier_sherpa::TtsJobState *statePtr = engine->jobs.beginJob(jobKey, &wasAlreadyCancelled);
+  if (wasAlreadyCancelled || !statePtr) {
+    SetError(error, 8, @"Synthesis cancelled");
     return NO;
   }
 
@@ -154,41 +185,65 @@ int32_t ProgressCallback(const float * /*samples*/, int32_t /*n*/, float /*p*/, 
   };
 
   const SherpaOnnxGeneratedAudio *audio = SherpaOnnxOfflineTtsGenerateWithConfig(
-      _tts, [text UTF8String], &genCfg, ProgressCallback, &arg);
+      engine->tts, [text UTF8String], &genCfg, ProgressCallback, &arg);
 
   if (!audio) {
-    const bool wasCancelled = _jobs.finishJob(jobKey);
-    if (wasCancelled) {
-      if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
-      return NO;
-    }
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:9 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis failed"}];
+    const bool wasCancelled = engine->jobs.finishJob(jobKey);
+    SetError(error, wasCancelled ? 8 : 9, wasCancelled ? @"Synthesis cancelled" : @"Synthesis failed");
     return NO;
   }
 
   if (statePtr->cancelled.load()) {
-    _jobs.finishJob(jobKey);
+    engine->jobs.finishJob(jobKey);
     SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
+    SetError(error, 8, @"Synthesis cancelled");
     return NO;
   }
 
-  const std::string out([wavPath UTF8String]);
+  const std::string out = NsToStd(wavPath);
   const int32_t ok = SherpaOnnxWriteWave(audio->samples, audio->n, audio->sample_rate, out.c_str());
-  const bool wasCancelled = _jobs.finishJob(jobKey);
+  const bool wasCancelled = engine->jobs.finishJob(jobKey);
   SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio);
 
   if (wasCancelled) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Synthesis cancelled"}];
+    SetError(error, 8, @"Synthesis cancelled");
     return NO;
   }
-
   if (!ok) {
-    if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:10 userInfo:@{NSLocalizedDescriptionKey: @"Failed to write wav"}];
+    SetError(error, 10, @"Failed to write wav");
     return NO;
   }
 
+  if (outSampleRate) *outSampleRate = SherpaOnnxOfflineTtsSampleRate(engine->tts);
   return YES;
+}
+
++ (void)cancelJob:(NSString *)jobId {
+  const std::string jobKey = NsToStd(jobId);
+  if (jobKey.empty()) return;
+  for (const auto &engine : Engines().snapshot()) {
+    engine->jobs.cancel(jobKey);
+  }
+}
+
++ (NSUInteger)releaseAssetsDir:(NSString *)assetsDir {
+  const std::string dir = NsToStd(assetsDir);
+  if (dir.empty()) return 0;
+  // Retiring the entry is immediate for the next caller; marking the jobs is what
+  // stops work already inside sherpa's generation callback from finishing against
+  // the superseded model.
+  const auto retired = Engines().release(dir);
+  if (!retired) return 0;
+  retired->jobs.retire();
+  return 1;
+}
+
++ (NSUInteger)releaseAll {
+  const auto retired = Engines().releaseAll();
+  for (const auto &engine : retired) {
+    engine->jobs.retire();
+  }
+  return static_cast<NSUInteger>(retired.size());
 }
 
 @end
