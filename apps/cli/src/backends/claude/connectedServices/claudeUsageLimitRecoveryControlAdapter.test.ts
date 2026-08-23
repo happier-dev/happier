@@ -118,8 +118,8 @@ describe('claudeUsageLimitRecoveryControlAdapter', () => {
       status: 'ready',
       metadata: {
         sessionUsageLimitRecoveryV1: {
-          status: 'cancelled',
-          nextCheckAtMs: 1_700_000_060_000,
+          status: 'paused',
+          nextCheckAtMs: null,
           attemptCount: 1,
         },
       },

@@ -15,6 +15,7 @@ import {
   ConnectedServiceSessionAuthSwitchLockRegistry,
   createConnectedServiceSessionAuthSwitchCore,
 } from '@/daemon/connectedServices/runtimeAuth/connectedServiceSessionAuthSwitchCore';
+import { createConnectedServiceGroupMutationCurrentnessValidator } from '@/daemon/connectedServices/credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { resolveTrackedConnectedServiceSwitchContinuityContext } from '@/daemon/connectedServices/sessionAuthSwitch/resolveTrackedConnectedServiceSwitchContinuityContext';
 import { createSessionConnectedServiceAuthHotApply } from '@/daemon/connectedServices/sessionAuthSwitch/sessionConnectedServiceAuthHotApply';
 import {
@@ -132,6 +133,13 @@ describe('Claude shared-group switch continuity', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     } satisfies Credentials;
     const api = {
+      getAccountEncryptionMode: async () => 'plain' as const,
+      getConnectedServiceCredentialPlain: async () => ({
+        content: { t: 'plain' as const, v: selectedRecord },
+        revisionSemantics: 'revisioned' as const,
+        credentialRevision: NEW_CREDENTIAL_REVISION,
+      }),
+      getConnectedServiceCredentialSealed: async () => null,
       listConnectedServiceProfiles: async () => ({
         serviceId: 'claude-subscription' as const,
         profiles: [{ profileId: 'lb_bat', status: 'connected' as const }],
@@ -176,6 +184,10 @@ describe('Claude shared-group switch continuity', () => {
     };
     const restartSession = vi.fn(async () => {});
     const registerHotApplyTargets = vi.fn();
+    const validateGroupMutationCurrentness = vi.fn(createConnectedServiceGroupMutationCurrentnessValidator({
+      api: api as unknown as ApiClient,
+      credentials,
+    }));
 
     const result = await switchSessionConnectedServiceAuth({
       core: createConnectedServiceSessionAuthSwitchCore({
@@ -250,6 +262,7 @@ describe('Claude shared-group switch continuity', () => {
       restartSession,
       hotApply: createSessionConnectedServiceAuthHotApply({
         resolveRuntimeAuthAdapter: async () => createClaudeConnectedServiceRuntimeAuthAdapter(),
+        validateGroupMutationCurrentness,
       }),
       persistSessionBindings: vi.fn(),
       registerHotApplyTargets,
@@ -273,6 +286,13 @@ describe('Claude shared-group switch continuity', () => {
     });
     expect(restartSession).not.toHaveBeenCalled();
     expect(registerHotApplyTargets).toHaveBeenCalledOnce();
+    expect(validateGroupMutationCurrentness).toHaveBeenCalledWith({
+      serviceId: 'claude-subscription',
+      groupId: 'work',
+      profileId: 'lb_bat',
+      generation: 272,
+      credentialRevision: NEW_CREDENTIAL_REVISION,
+    });
 
     const registeredSelections = registerHotApplyTargets.mock.calls[0]?.[1]
       ?.runtimeAuthSelectionsByServiceId as ReadonlyMap<string, unknown> | undefined;

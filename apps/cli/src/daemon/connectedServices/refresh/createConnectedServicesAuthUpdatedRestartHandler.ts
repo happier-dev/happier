@@ -250,6 +250,7 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
       params.restartRequestedPids.add(target.pid);
       let restartRequest: Promise<Readonly<{ signaled: boolean }>>;
       try {
+        // K5:gated_restart credential refresh inherits canonical deferral and reachability checks.
         restartRequest = params.requestRestartSignal({
           pid: target.pid,
           tracked,
