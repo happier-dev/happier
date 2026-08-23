@@ -702,10 +702,17 @@ async function copyWithSafePublication({
 
     await assertSameDirectory('disposable root', output.root);
     await assertSameDirectory('output parent', output.outputParent);
-    await assertSameRegularFile('published SQLite output', output.outputPath, publishedIdentity);
-    const finalPublished = await inspectFinalDatabase(output.outputPath);
-    if (!hasIdentity(await lstat(output.outputPath), publishedIdentity)) {
-      throw new Error('published SQLite output identity changed during final verification');
+    let finalPublished;
+    try {
+      await assertSameRegularFile('published SQLite output', output.outputPath, publishedIdentity);
+      finalPublished = await inspectFinalDatabase(output.outputPath);
+      if (!hasIdentity(await lstat(output.outputPath), publishedIdentity)) {
+        throw new Error('published SQLite output identity changed during final verification');
+      }
+    } catch (error) {
+      await assertSameDirectory('disposable root', output.root);
+      await assertSameDirectory('output parent', output.outputParent);
+      throw error;
     }
     compareFingerprints(finalPublished.fingerprints, published.fingerprints);
     if (expectedFingerprints) compareFingerprints(finalPublished.fingerprints, expectedFingerprints);
