@@ -34,14 +34,7 @@ import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 const CutoverSuccessSchema = z.object({
   success: z.literal(true),
   dividerSeq: z.number().int().min(0),
-  /**
-   * The server found an unreadable row already occupying the reserved divider
-   * localId and could not establish that this operation wrote it. A server that
-   * seals dividers deterministically decides authorship by byte comparison and
-   * never sends this; one that seals with a random nonce has to defer.
-   */
-  dividerVerificationRequired: z.literal(true).optional(),
-}).passthrough();
+}).strict();
 
 const CutoverNoEffectErrorSchema = z.enum([
   'invalid-params',
@@ -65,7 +58,7 @@ const CutoverConflictSchema = z.discriminatedUnion('effect', [
 ]);
 
 export type SessionAgentTransitionCutoverResponse =
-  | Readonly<{ ok: true; dividerSeq: number; dividerVerificationRequired?: true }>
+  | Readonly<{ ok: true; dividerSeq: number }>
   | Readonly<{
       ok: false;
       effect: 'none';
@@ -137,9 +130,6 @@ export async function commitSessionAgentTransitionCutover(params: Readonly<{
           response: {
             ok: true,
             dividerSeq: success.data.dividerSeq,
-            ...(success.data.dividerVerificationRequired
-              ? { dividerVerificationRequired: true as const }
-              : {}),
           },
         }
       : { status: 'unknown', reason: 'Unexpected cutover response shape' };

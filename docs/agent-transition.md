@@ -4,7 +4,7 @@ How one Happier Session changes the coding Agent that runs it, in place, without
 forking and without changing the Session id.
 
 Published, user-facing documentation for this feature lives at
-`apps/docs/content/docs/features/continue-with-another-agent.mdx`. This page is
+`apps/docs/content/docs/sessions/continue-with-another-agent.mdx`. This page is
 the internal contract: canonical owners, ordering, effect depth, and the
 operator surface.
 
@@ -162,10 +162,10 @@ identity; failure here degrades to native CLI auth rather than failing a
 transition whose source is already gone.
 
 **Cutover.** `commitSessionAgentTransitionCutover` commits the target current
-view (CAS on `metadataVersion`/`agentStateVersion`) and the divider in one call.
-A refused divider is split into `divider_conflict` (a different payload already
-occupies the reserved localId — retrying re-derives the same conflict forever)
-and `divider_missing`.
+view (CAS on `metadataVersion`/`agentStateVersion`), then appends the divider
+through the canonical message owner. Missing, conflicting, unreadable, or
+unverifiable divider evidence after that committed view maps to the one public
+`divider_unavailable` result; storage-specific evidence stays internal.
 
 **7.4 Admit input, then activate.** Input custody is taken **before** the target
 runtime is started, matching this tree's `sendSessionMessage` invariant:
@@ -184,11 +184,25 @@ implementation. Only a request that *also* expected the target is a genuine
 handle in scope is the only source of result arms.
 
 - `rejected` is used **only** where the source is provably still running — its
-  `sourceEffect: 'none'` is a promise the UI turns into a keep-editing action.
+  `sourceEffect: 'none'` is a promise the banner can state without offering a
+  recovery action.
 - Everything reachable after the confirmed stop rides `partially_applied`
-  (`source_stopped` / `cutover_committed` depths) or `outcome_unknown`.
+  (`source_stopped` / `current_view_committed` depths) or `outcome_unknown`.
 - `accepted` means the current view and divider committed and the exact
   submitted input was admitted.
+
+## Recovery presentation
+
+The client automatically reconciles canonical Session and input-custody facts,
+then presents the outcome through the existing composer
+`SessionWarningActionBanner`. It has no *Check status*, *Resume source*, or
+*Resume target* control, no recovery panel, polling, status RPC, or second
+recovery state machine. `rejected` and `source_stopped` show no action;
+`outcome_unknown` is a neutral notice while that one reconciliation runs; and
+`current_view_committed` may offer the existing **Resume session** action only
+when the Session is already the target and inactive. For `target_start_failed`,
+the exact message is already queued and will be delivered when the Session
+resumes, so the banner must never tell the reader to send it again.
 
 ### Correlation and idempotency
 
@@ -261,12 +275,14 @@ When a target with such a record is chosen again on that machine:
   departure, and the frame states the boundary instead of restating history the
   resumed conversation already holds.
 
-**Open contract gap.** The plan's `REQ-STATE-03` requires the recorded boundary
-to advance **only** after the provider accepts the resumed identity, and an
-identity whose resume failed not to be recapturable as valid. Neither holds
-today in either tree: the record is written before the source stop,
-unconditionally, its result discarded, with no rollback on a failed resume. The
-description above is of current behavior, not of a satisfied requirement.
+**Strict native-identity acceptance.** The recorded boundary advances only once
+the provider accepts the requested resumed identity, including an activation
+with no replay seed. Prompt transport and replay-seed retirement are separate
+facts: neither alone proves that the requested native identity was accepted. A
+failed strict return leaves the earlier boundary unchanged and invalidates that
+identity so it cannot be recaptured as valid for this Session and Agent. This
+adds no proof file, `stat()`, read-back, polling, TTL, or second native-session
+registry.
 
 There is deliberately **no** continuity proof, `stat()`, or liveness probe on
 the recorded id. A stale or dead vendor session fails loudly at the first turn —
@@ -382,21 +398,14 @@ seed pass, so they also affect forking and source-context spawns:
 
 ## Compatibility
 
-- The cutover response is one shape across trees: `200 { success, dividerSeq,
-  dividerVerificationRequired? }`, `409`/`500` carrying the `effect` /`error`
-  partial-effect discriminator, and `400`/`403`/`404` for the refusals that wrote
-  nothing. A cutover the server refuses at any of those depths surfaces as
-  `partially_applied` with `cutover_conflict` — the source is already stopped, so
-  never as a no-effect rejection.
+- The public transition union names a committed view whose divider is missing,
+  conflicting, unreadable, or unverifiable as
+  `partially_applied / current_view_committed / divider_unavailable`. Exact
+  storage evidence remains internal because it does not change recovery.
 - A lost cutover CAS is retried EXACTLY once, after refetching the row and
   re-proving that it is unarchived and still on the source Agent. The target view
   is re-projected from the refetched bytes, so the retry cannot revert the write
   that moved the version. A second loss is a conflict, not a loop.
-- `dividerVerificationRequired` is a demand this tree's own server never makes:
-  it seals dividers deterministically by localId, so its byte comparison always
-  settles authorship. A server that seals with a random nonce has to defer, and
-  this daemon — which has no decrypt-and-compare path — reports that
-  unattributable boundary as `divider_conflict` rather than activating on it.
 - A daemon that predates the operation cannot answer
   `session.continuation.inspect`; the client presents that by machine presence
   rather than asserting a cause.

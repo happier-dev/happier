@@ -56,17 +56,15 @@ describe('commitSessionAgentTransitionCutover wire contract', () => {
     });
   });
 
-  it('carries the divider-verification demand instead of dropping it into a plain success', async () => {
+  it('fails closed on the retired divider-verification field instead of treating it as a plain success', async () => {
     const commit = await importClient();
     vi.spyOn(axios, 'post').mockResolvedValueOnce({
       status: 200,
       data: { success: true, dividerSeq: 101, dividerVerificationRequired: true },
     } as never);
 
-    await expect(commit({ token: 't', sessionId: 's1', currentView: currentView(), divider })).resolves.toEqual({
-      status: 'settled',
-      response: { ok: true, dividerSeq: 101, dividerVerificationRequired: true },
-    });
+    await expect(commit({ token: 't', sessionId: 's1', currentView: currentView(), divider }))
+      .resolves.toEqual({ status: 'unknown', reason: 'Unexpected cutover response shape' });
   });
 
   it('reads the 409 no-effect discriminator, so a recoverable CAS loss is not an unknown outcome', async () => {

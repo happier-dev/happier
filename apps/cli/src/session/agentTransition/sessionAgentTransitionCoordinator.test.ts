@@ -352,6 +352,23 @@ describe('runSessionAgentTransition', () => {
       expect(mocks.requestSessionStop).not.toHaveBeenCalled();
     });
 
+    it('rejects deterministic native target facts before idle, stop, cutover, admission, or activation', async () => {
+      primeHappyPath();
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request({ selection: { v: 1, agentId: 'gemini', acpSessionModeId: 'plan' } }),
+      });
+
+      expect(result).toEqual({ type: 'rejected', code: 'target_unavailable', sourceEffect: 'none' });
+      expect(mocks.callOrder).toEqual([]);
+      expect(mocks.waitForSessionIdle).not.toHaveBeenCalled();
+      expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+      expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
+      expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+      expect(mocks.requestInactiveSessionResume).not.toHaveBeenCalled();
+    });
+
     it('rejects when the client believed a different current Agent', async () => {
       primeHappyPath();
 
@@ -384,21 +401,16 @@ describe('runSessionAgentTransition', () => {
       expect(mocks.requestSessionStop).not.toHaveBeenCalled();
     });
 
-    // A stop request that never dispatched is a FAILED STOP, not an
-    // unsupported capability. All four `requestSessionStop` refusal codes are
-    // raised while resolving the Session id, before any signal, so the source
-    // is provably untouched — the exact state this result union's own doc
-    // comment reserves `source_stop_failed` for. Reporting
-    // `unsupported_operation` instead rendered "Switching Agents isn't
-    // supported for this Session", a permanent-sounding capability claim, for
-    // what is a transient stop-dispatch failure.
+    // Every `ok: false` return is produced by the stop owner's identity
+    // resolver, before it can address a runner. It therefore proves the source
+    // remains untouched; a thrown/lost answer still remains outcome-unknown.
     it.each([
       ['session_not_found'],
       ['session_id_ambiguous'],
       ['session_lookup_timeout'],
       ['unsupported'],
     ] as const)(
-      'reports an undispatched stop (%s) as source_stop_failed, not as unsupported',
+      'reports a refused stop lookup (%s) as source_stop_failed',
       async (code) => {
         primeHappyPath();
         mocks.requestSessionStop.mockResolvedValue({ ok: false, code });
@@ -909,9 +921,9 @@ describe('runSessionAgentTransition', () => {
       expect(mocks.commitSessionAgentTransitionCutover).toHaveBeenCalledTimes(1);
     });
 
-    it('reports a conflicting divider row as divider_conflict, not divider_missing', async () => {
+    it('reports a conflicting divider row as divider_unavailable', async () => {
       // The divider is PRESENT but names a different transition. Collapsing it
-      // into `divider_missing` would send the client down the "resume and send
+      // into an available boundary would send the client down the "resume and send
       // normally" recovery and let a later context pass trust a boundary that
       // names the wrong target.
       primeHappyPath();
@@ -930,11 +942,11 @@ describe('runSessionAgentTransition', () => {
         type: 'partially_applied',
         localId: LOCAL_ID,
         applied: 'current_view_committed',
-        code: 'divider_conflict',
+        code: 'divider_unavailable',
       });
     });
 
-    it('reports a divider the owner refused for any other reason as divider_missing', async () => {
+    it('reports a divider the owner refused as divider_unavailable', async () => {
       primeHappyPath();
       mocks.commitSessionAgentTransitionCutover.mockResolvedValue({
         status: 'settled',
@@ -951,7 +963,7 @@ describe('runSessionAgentTransition', () => {
         type: 'partially_applied',
         localId: LOCAL_ID,
         applied: 'current_view_committed',
-        code: 'divider_missing',
+        code: 'divider_unavailable',
       });
     });
 
@@ -1273,7 +1285,7 @@ describe('runSessionAgentTransition', () => {
       expect(mocks.requestInactiveSessionResume).not.toHaveBeenCalled();
     });
 
-    it('reports the committed depth with divider_missing when no divider row exists', async () => {
+    it('reports the committed depth with divider_unavailable when no divider row exists', async () => {
       primeAlreadyTargeted();
       mocks.findTranscriptEncryptedMessageByLocalIdV2.mockResolvedValue(dividerLookup(null));
 
@@ -1283,12 +1295,12 @@ describe('runSessionAgentTransition', () => {
         type: 'partially_applied',
         localId: LOCAL_ID,
         applied: 'current_view_committed',
-        code: 'divider_missing',
+        code: 'divider_unavailable',
       });
       expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
     });
 
-    it('reports divider_conflict for a row carrying a different transition, and never overwrites it', async () => {
+    it('reports divider_unavailable for a row carrying a different transition, and never overwrites it', async () => {
       primeAlreadyTargeted();
       mocks.findTranscriptEncryptedMessageByLocalIdV2.mockResolvedValue(
         dividerLookup({
@@ -1309,7 +1321,7 @@ describe('runSessionAgentTransition', () => {
         type: 'partially_applied',
         localId: LOCAL_ID,
         applied: 'current_view_committed',
-        code: 'divider_conflict',
+        code: 'divider_unavailable',
       });
       expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
     });
@@ -1335,7 +1347,7 @@ describe('runSessionAgentTransition', () => {
           type: 'partially_applied',
           localId: LOCAL_ID,
           applied: 'current_view_committed',
-          code: 'divider_unknown',
+          code: 'divider_unavailable',
         });
         expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
       }
@@ -1360,7 +1372,7 @@ describe('runSessionAgentTransition', () => {
         type: 'partially_applied',
         localId: LOCAL_ID,
         applied: 'current_view_committed',
-        code: 'divider_unknown',
+        code: 'divider_unavailable',
       });
     });
 

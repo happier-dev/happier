@@ -208,8 +208,9 @@ function buildDividerContent(params: Readonly<{
   }
   return {
     t: 'encrypted',
-    // Deterministic by localId so a retry re-derives byte-identical content and
-    // the message owner reconciles it as the same row instead of overwriting it.
+    // The canonical sealer binds the encryption variant, stable localId, and
+    // canonical full payload. An exact retry therefore re-derives byte-identical
+    // content, while a changed payload cannot reuse the same ciphertext.
     c: encryptSessionPayload({ ctx: params.ctx, payload, idempotencyKey: params.dividerLocalId }),
   };
 }
@@ -367,7 +368,10 @@ async function readDividerEvidence(params: Readonly<{
   dividerLocalId: string;
   mode: SessionStoredContentEncryptionMode;
   ctx: Parameters<typeof encryptSessionPayload>[0]['ctx'];
-  expected: Readonly<{ fromAgentId: string; toAgentId: string }>;
+  expected: Readonly<{
+    fromAgentId: string;
+    toAgentId: string;
+  }>;
 }>): Promise<DividerEvidence> {
   const outcome = await findTranscriptEncryptedMessageByLocalIdV2({
     token: params.token,
@@ -397,6 +401,16 @@ async function readDividerEvidence(params: Readonly<{
     status: 'present',
     matches: matchesSessionAgentTransitionDividerAgentsV1(divider, params.expected),
   };
+}
+
+function projectDividerEvidenceArm(
+  evidence: DividerEvidence,
+  committed: SessionAgentTransitionCurrentViewCommitted,
+): SessionAgentTransitionResultV1 | null {
+  if (evidence.status !== 'present' || !evidence.matches) {
+    return committed.committed('divider_unavailable');
+  }
+  return null;
 }
 
 /**
@@ -439,20 +453,8 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
     },
   });
 
-  if (divider.status === 'absent') return committed.committed('divider_missing');
-  // A row that EXISTS but carries a different transition payload is a known
-  // state, not an indeterminate one: the view is committed and the reserved
-  // localId is occupied by a stale or conflicting operation. It must never be
-  // overwritten and never retried as a switch.
-  if (divider.status === 'present' && !divider.matches) {
-    return committed.committed('divider_conflict');
-  }
-  // The row could not be read or decoded at all: nothing can be established.
-  // The row could not be read or decoded at all. That is a fact about the
-  // BOUNDARY, not about the switch: the Session observably IS the target, so
-  // reporting the codeless indeterminate arm here would deny a cutover we can
-  // see and leave the client's armed switch alive in front of it.
-  if (divider.status === 'unknown') return committed.committed('divider_unknown');
+  const dividerArm = projectDividerEvidenceArm(divider, committed);
+  if (dividerArm) return dividerArm;
 
   const trustedLocalImagePaths = await resolveTrustedSessionAttachmentLocalImagePaths({
     cwd: params.workspacePath,
@@ -637,14 +639,12 @@ export async function runSessionAgentTransition(params: Readonly<{
   const stop = await requestSessionStop({
     credentials: params.credentials,
     idOrPrefix: request.sessionId,
-  });
-  // Resolution failed BEFORE any stop attempt (`session_not_found`,
-  // `session_id_ambiguous`, `session_lookup_timeout`, `unsupported`), so the
-  // source is provably still running — the one stop outcome whose
-  // `sourceEffect: 'none'` promise is truthful, and the state this union's own
-  // doc comment reserves `source_stop_failed` for. Reporting
-  // `unsupported_operation` here told the user "Switching Agents isn't
-  // supported for this Session" for what is a failed stop request.
+  }).catch(() => null);
+  // A lost stop answer may have followed an accepted stop, so it remains
+  // indeterminate. By contrast, the owner's `ok: false` arm is produced only
+  // by identity resolution before it can address a runner. That pre-attempt
+  // refusal proves the source remains untouched and still running.
+  if (stop === null) return effects.outcomeUnknown();
   if (!stop.ok) return effects.rejected('source_stop_failed');
   // Section 7.2 step 6: only the fully confirmed stopped outcome permits
   // proceeding, and every unconfirmed one surfaces as `outcome_unknown` — the
@@ -898,29 +898,8 @@ export async function runSessionAgentTransition(params: Readonly<{
     return stopped.sourceStopped('cutover_conflict');
   }
   if (!cutover.response.ok) {
-    // A refused divider and an ABSENT divider are different recoveries and must
-    // not be collapsed. `divider-conflict` means a row already exists at the
-    // reserved localId carrying a different transition payload: retrying the
-    // switch would re-derive the same conflict forever, and a later context
-    // pass must not trust that row as this transition's boundary.
-    return stopped.cutoverCommitted().committed(
-      cutover.response.error === 'divider-conflict' ? 'divider_conflict' : 'divider_missing',
-    );
+    return stopped.cutoverCommitted().committed('divider_unavailable');
   }
-  if (cutover.response.dividerVerificationRequired) {
-    // The server committed the current view but found a row it cannot read
-    // already occupying the reserved localId, so it could not establish that
-    // this operation wrote it. This tree's own server never asks: it seals
-    // dividers deterministically by localId, so a re-derivation is byte-identical
-    // and the byte comparison always answers. The demand can therefore only come
-    // from a server whose dividers carry a random nonce — and this daemon has no
-    // decrypt-and-compare path of its own to answer it with. An unattributable
-    // row at the boundary is exactly the untrusted-divider state the arm above
-    // already names, so it takes that arm instead of activating the target on a
-    // boundary it cannot vouch for.
-    return stopped.cutoverCommitted().committed('divider_conflict');
-  }
-
   /* ---------------------------------------------------------------- 7.4 */
 
   return await admitInputAndActivateTarget({

@@ -113,6 +113,15 @@ export function encryptSessionPayload(params: Readonly<{
   return encodeBase64(ciphertext, 'base64');
 }
 
+/**
+ * Keep these exact bytes for the existing idempotent Session-payload namespace.
+ * The `session-pending` wording is historical: this shared primitive also
+ * supports transition dividers. Retain it to preserve durable Pending retry
+ * ciphertext; changing it would change a predecessor-created row on retry.
+ */
+const IDEMPOTENT_SESSION_PAYLOAD_NONCE_DOMAIN_V1 =
+  'happier.session-pending.idempotent-content.v1';
+
 function deriveIdempotentSessionPayloadNonce(params: Readonly<{
   ctx: SessionEncryptionContext;
   idempotencyKey: string;
@@ -121,7 +130,7 @@ function deriveIdempotentSessionPayloadNonce(params: Readonly<{
   // A keyed synthetic nonce makes same-ID/same-content retries byte-identical
   // without reusing a nonce when either the identity or plaintext changes.
   const fields = [
-    'happier.session-pending.idempotent-content.v1',
+    IDEMPOTENT_SESSION_PAYLOAD_NONCE_DOMAIN_V1,
     params.ctx.encryptionVariant,
     params.idempotencyKey,
     stringifySerializedJsonValue(params.payload),
