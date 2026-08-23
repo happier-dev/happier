@@ -13,7 +13,7 @@ describe('vendorHandoffPolicy', () => {
     expect(AGENTS_CORE.claude.sessionStorage).toEqual({ direct: true, persisted: true });
     expect(AGENTS_CORE.opencode.sessionStorage).toEqual({ direct: true, persisted: true });
     expect(AGENTS_CORE.codex.sessionStorage).toEqual({ direct: true, persisted: true });
-    expect(AGENTS_CORE.pi.sessionStorage).toEqual({ direct: false, persisted: true });
+    expect(AGENTS_CORE.pi.sessionStorage).toEqual({ direct: true, persisted: true });
   });
 
   it('resolves vendor handoff ids from metadata using the vendor resume field', () => {
@@ -35,9 +35,9 @@ describe('vendorHandoffPolicy', () => {
   it('rejects unsupported direct handoff when the provider does not support direct session storage', () => {
     expect(
       evaluateVendorHandoffEligibility({
-        agentId: 'pi',
+        agentId: 'gemini',
         storageMode: 'direct',
-        metadata: { piSessionId: 'p1' },
+        metadata: {},
       }),
     ).toEqual({ eligible: false, reasonCode: 'storage_mode_unsupported' });
   });
