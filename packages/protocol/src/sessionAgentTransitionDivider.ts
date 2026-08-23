@@ -45,14 +45,16 @@ export const SessionAgentTransitionDividerV1Schema = z
      * UPPER bound: the source transcript cutoff the activation brief was built
      * from — the `upToSeqInclusive` the bounded context pass actually used.
      *
-     * It is here because nothing else records it once the cutover lands. `replaySeedV1.seedText` is blanked the instant the target Agent
-     * accepts it, and the metadata record holds one seed per Session, so a
-     * Session switched twice keeps only the newest. Without a per-boundary
-     * cutoff, "what was this Agent actually handed?" is unanswerable after the
-     * fact, and a reader that guessed from the divider's own seq would be wrong
-     * for every row admitted between the confirmed stop and the divider write.
+     * It is here because nothing else records it. `replaySeedV1.seedText` is
+     * blanked the instant the target Agent accepts it, and the metadata record
+     * holds one seed per Session, so a Session switched twice keeps only the
+     * newest. Without a per-boundary cutoff, "what was this Agent actually
+     * handed?" is unanswerable after the fact, and a reader that guessed from
+     * the divider's own seq would be wrong for every row admitted between the
+     * confirmed stop and the divider write.
      *
-     * `0` means the pass carried nothing over — a recorded fact, not an absence.
+     * `0` means the observed transcript head itself was zero. A pass that
+     * produces no dialog still records its non-zero observed upper bound.
      *
      * REQUIRED. The only writer that ever omitted it is an unreleased
      * intermediate build of this feature, so accepting a cutoff-less sidecar
@@ -139,10 +141,21 @@ export function isSessionAgentTransitionDividerLocalId(localId: unknown): boolea
 /**
  * The single canonical "is this row a transition divider?" reader.
  *
- * It requires both halves of the divider identity: a reserved outer localId
- * and a strictly valid sidecar in the agent-event payload. The sidecar alone is
- * writable by generic event senders, so it cannot silence attention or create
- * an attribution boundary.
+ * It requires BOTH halves of the divider's identity:
+ *
+ *   - `localId` — the row's OUTER local id, which must be in the reserved
+ *     namespace. Every generic message ingress refuses that prefix, so only the
+ *     owner-only cutover service can produce a row there. This is the half that
+ *     makes the answer trustworthy.
+ *   - `event` — the agent-event payload (the `data` of a `type:'event'`
+ *     transcript record), which must carry a strictly valid sidecar.
+ *
+ * The sidecar alone is NOT proof and must never be read as one: its key name is
+ * writable by anyone who can post an agent event to the Session, so trusting it
+ * on an ordinary row would let an authorized writer silence their own message
+ * and manufacture an attribution boundary the transition never made. Attention
+ * resolvers, the separator renderer, historical attribution, and the bounded
+ * context pass all use THIS function — none of them re-implement either check.
  */
 export function readSessionAgentTransitionDividerV1(
   row: Readonly<{ localId: unknown; event: unknown }>,
@@ -162,11 +175,12 @@ export function readSessionAgentTransitionDividerV1(
  * The stored-record shape a row MUST have before any process calls it a
  * transition divider.
  *
- * {@link readSessionAgentTransitionDividerV1} reads the agent-event PAYLOAD; on
- * its own it says nothing about the record carrying that payload. The divider is
- * always written as a `role:'agent'` / `content.type:'event'` record, so a
- * user-role (or non-event) row planted at the reserved localId with a matching
- * sidecar must never be read as one. The server's cutover owner and the daemon's
+ * {@link readSessionAgentTransitionDividerV1} answers for the reserved localId
+ * and the agent-event PAYLOAD; on its own it says nothing about the record
+ * WRAPPER carrying that payload. The divider is always written as a
+ * `role:'agent'` / `content.type:'event'` record, so a user-role (or non-event)
+ * row planted at the reserved localId with a matching sidecar must never be read
+ * as one. The server's cutover owner and the daemon's
  * divider-evidence reader both answer that question — about the same rows, in
  * different processes — so they answer it HERE rather than each re-deriving the
  * wrapper checks.
