@@ -528,5 +528,5 @@ if (isEntrypoint) {
     console.error(`\ncontent checks failed: ${failures} problem${failures === 1 ? '' : 's'}\n`);
     process.exit(1);
   }
-  console.log('content checks passed: links resolve, documented UI labels exist');
+  console.log('content checks passed: links, UI labels, navigation, hubs, code-derived lists');
 }
