@@ -97,6 +97,11 @@ import {
 } from '@/ui/remoteControl/remoteModeControl';
 import { dirname, join } from 'node:path';
 import { configuration } from '@/configuration';
+import {
+    createLocalAgentNativeResumeRecordStore,
+    isAgentNativeResumeIdentityMismatchError,
+    prepareAgentNativeReturnStrictResume,
+} from '@/session/agentTransition/agentNativeReturn';
 import { getProjectPath } from './utils/path';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
@@ -2015,7 +2020,24 @@ export async function claudeRemoteLauncher(
                             logPrefix: '[remote]',
                             logDebug: (message, error) => logger.debug(message, error),
                         });
+                        // The local native-return record is the only authority that
+                        // distinguishes a cross-agent return from an ordinary
+                        // Claude resume. Clear only its exact durable projection
+                        // until the provider's SessionStart republishes the verified
+                        // id/path pair; a typed mismatch invalidates that same record.
+                        const trackedNativeReturn = startupLifecycleIntent.kind === 'resume_native'
+                            ? await prepareAgentNativeReturnStrictResume({
+                                store: createLocalAgentNativeResumeRecordStore(),
+                                sessionId: session.client.sessionId,
+                                targetAgentId: 'claude',
+                                vendorResumeId: startupLifecycleIntent.providerSessionId,
+                                updateMetadata: async (updater) => await session.client.updateMetadata((metadata) =>
+                                    updater(metadata as Record<string, unknown>) as typeof metadata,
+                                ),
+                            })
+                            : null;
                         try {
+                        await trackedNativeReturn?.clearBeforeProviderOpen();
                         return await runClaudeUnifiedTerminalSession({
                             ...unifiedDispatchOpts,
                             happySessionId: session.client.sessionId,
@@ -2104,6 +2126,11 @@ export async function claudeRemoteLauncher(
                                 };
                             },
                         });
+                        } catch (error) {
+                            if (isAgentNativeResumeIdentityMismatchError(error)) {
+                                await trackedNativeReturn?.invalidateOnMismatch();
+                            }
+                            throw error;
                         } finally {
                             refreshInFlightSteerAvailability = null;
                             inFlightSteerAvailabilitySnapshot = { available: false, reason: 'unsafe_window' };
