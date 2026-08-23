@@ -69,6 +69,7 @@ import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWi
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { installWebFontFaces } from '@/platform/installWebFontFaces';
+import { ActionOperationRuntime } from '@/sync/domains/actionOperations/actionOperationRuntime';
 
 initializeSentryOnce();
 installTauriMcpBridgeOnce();
@@ -806,6 +807,7 @@ function RootAppShell(props: Readonly<{
 
     const shellContent = (
         <View style={{ flex: 1, position: 'relative' }}>
+            <ActionOperationRuntime enabled={auth.isAuthenticated && !props.isDesktopPetOverlayWindow} />
             {!props.isDesktopPetOverlayWindow ? <OnboardingShowcaseAutoShowMount /> : null}
             {appShellChromeHost === 'narrow-desktop-fallback' || appShellChromeHost === 'unauth-shell' ? (
                 <DesktopFallbackShellChrome safeArea={props.safeArea} />

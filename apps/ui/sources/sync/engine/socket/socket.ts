@@ -2,6 +2,7 @@ import type { ApiEphemeralActivityUpdate, ApiMessage, ApiUpdateContainer } from 
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
+import type { ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isSessionVisible } from '@/sync/domains/session/activeViewingSession';
@@ -2152,6 +2153,7 @@ export function handleEphemeralSocketUpdate(params: {
     getSession: (sessionId: string) => Session | undefined;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     updateDirectSessionTranscript?: (update: DirectSessionTranscriptUpdatedEphemeralUpdate) => Promise<void> | void;
+    applyActionOperationRevision?: (update: ActionOperationRevisionEphemeralV1) => Promise<void> | void;
 }): Promise<void> {
     const {
         update,
@@ -2163,6 +2165,7 @@ export function handleEphemeralSocketUpdate(params: {
         getSession,
         applyMessages,
         updateDirectSessionTranscript,
+        applyActionOperationRevision,
     } = params;
 
     const updateData = parseEphemeralUpdate(update);
@@ -2170,7 +2173,10 @@ export function handleEphemeralSocketUpdate(params: {
     if (!shouldContinue()) return Promise.resolve();
 
     // Process activity updates through smart debounce accumulator
-    if (updateData.type === 'activity') {
+    if (updateData.type === 'action-operation-updated') {
+        if (!shouldContinue()) return Promise.resolve();
+        return Promise.resolve(applyActionOperationRevision?.(updateData));
+    } else if (updateData.type === 'activity') {
         if (!shouldContinue()) return Promise.resolve();
         addActivityUpdate(updateData);
     } else if (updateData.type === 'machine-activity') {

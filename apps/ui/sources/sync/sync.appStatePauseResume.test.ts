@@ -464,6 +464,92 @@ describe('sync AppState pause/resume', () => {
         }
     });
 
+    it('defers routine hidden teardown only until every in-flight user request lease is released', async () => {
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const handlers = new Map<string, Set<() => void>>();
+        const documentStub = {
+            visibilityState: 'visible',
+            addEventListener: (event: string, listener: () => void) => {
+                const set = handlers.get(event) ?? new Set<() => void>();
+                set.add(listener);
+                handlers.set(event, set);
+            },
+            removeEventListener: (event: string, listener: () => void) => {
+                handlers.get(event)?.delete(listener);
+            },
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+
+        try {
+            const { sync } = await import('./sync');
+            const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+            const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
+            const releaseFirst = sync.acquireUserRequestLease();
+            const releaseSecond = sync.acquireUserRequestLease();
+
+            documentStub.visibilityState = 'hidden';
+            for (const handler of handlers.get('visibilitychange') ?? []) handler();
+
+            expect(apiSocketDisconnect).not.toHaveBeenCalled();
+            expect(isServerReachabilityNetworkAllowed()).toBe(true);
+            expect(pauseController.isPaused()).toBe(false);
+
+            releaseFirst();
+            expect(apiSocketDisconnect).not.toHaveBeenCalled();
+
+            releaseSecond();
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+            expect(isServerReachabilityNetworkAllowed()).toBe(false);
+            expect(pauseController.isPaused()).toBe(true);
+        } finally {
+            globalWithDocument.document = originalDocument;
+        }
+    });
+
+    it.each(['pagehide', 'freeze'] as const)('keeps %s as a hard boundary while a user request lease exists', async (eventName) => {
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const originalAddEventListener = globalThis.addEventListener;
+        const originalRemoveEventListener = globalThis.removeEventListener;
+        const windowHandlers = new Map<string, Set<() => void>>();
+        const documentStub = {
+            visibilityState: 'visible',
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+        globalThis.addEventListener = ((event: string, listener: () => void) => {
+            const set = windowHandlers.get(event) ?? new Set<() => void>();
+            set.add(listener);
+            windowHandlers.set(event, set);
+        }) as typeof globalThis.addEventListener;
+        globalThis.removeEventListener = ((event: string, listener: () => void) => {
+            windowHandlers.get(event)?.delete(listener);
+        }) as typeof globalThis.removeEventListener;
+
+        try {
+            const { sync } = await import('./sync');
+            const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+            const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
+            const release = sync.acquireUserRequestLease();
+
+            for (const handler of windowHandlers.get(eventName) ?? []) handler();
+
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+            expect(isServerReachabilityNetworkAllowed()).toBe(false);
+            expect(pauseController.isPaused()).toBe(true);
+            release();
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+        } finally {
+            globalWithDocument.document = originalDocument;
+            globalThis.addEventListener = originalAddEventListener;
+            globalThis.removeEventListener = originalRemoveEventListener;
+        }
+    });
+
     it('resumes on BFCache pageshow even when visibility did not change', async () => {
         const globalWithDocument = globalThis as unknown as { document?: unknown };
         const originalDocument = globalWithDocument.document;

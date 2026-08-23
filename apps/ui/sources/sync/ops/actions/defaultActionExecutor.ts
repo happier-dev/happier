@@ -24,7 +24,7 @@ import {
     rollbackSessionConversation as rollbackSessionConversationOp,
     sessionStopWithServerScope,
 } from '@/sync/ops/sessions';
-import { completeSessionHandoff as completeSessionHandoffOp } from '@/sync/ops/sessionHandoffs';
+import { delegateSessionHandoffToSourceDaemon } from '@/sync/ops/delegatedSessionHandoff';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -60,6 +60,7 @@ import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featur
 import { resolveSessionForkStrategyAvailability } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveSessionForkReplayOptions } from '@/sync/domains/sessionFork/resolveSessionForkReplayOptions';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { randomUUID } from '@/platform/randomUUID';
 import {
   isRequestedSessionModeSupported,
   isSessionModeActionAvailable,
@@ -140,7 +141,15 @@ export function createDefaultActionExecutor(opts?: Readonly<{
           resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
         }),
 
-    sessionFork: async ({ sessionId, serverId }) => {
+    sessionFork: async ({
+      sessionId,
+      serverId,
+      forkPoint: requestedForkPoint,
+      strategy: requestedStrategy,
+      replaySummaryRunner: requestedReplaySummaryRunner,
+      replayMaxSeedChars: requestedReplayMaxSeedChars,
+      requestId: requestedRequestId,
+    }) => {
       const sid = String(sessionId ?? '').trim();
       if (!sid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
       const stateAny: any = storage.getState();
@@ -148,7 +157,7 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       const machineId = resolveSessionMachineId(sid, session?.metadata ?? null);
 
       const settings = stateAny?.settings ?? null;
-      const forkPoint = { type: 'latest' } as const;
+      const forkPoint = requestedForkPoint ?? ({ type: 'latest' } as const);
       // One fork policy for every surface. This executor has no strategy modal
       // to show, so it reads the same availability the modal renders and asks
       // for the exact route that modal would have offered. An unqualified
@@ -170,17 +179,29 @@ export function createDefaultActionExecutor(opts?: Readonly<{
         settings,
         executionRunsEnabled: resolveLocalFeaturePolicyEnabled('execution.runs', settings ?? {}),
       });
-
-      const result = await forkSessionOp({
+      const strategy = requestedStrategy ?? (availability.replay ? undefined : 'native' as const);
+      const replaySummaryRunner = requestedReplaySummaryRunner ?? replayOptions.replaySummaryRunner;
+      const replayMaxSeedChars = requestedReplayMaxSeedChars ?? replayOptions.replayMaxSeedChars;
+      const requestId = requestedRequestId ?? randomUUID();
+      const forkOptions = {
         ...(machineId ? { machineId } : {}),
         serverId,
         parentSessionId: sid,
         forkPoint,
         // `auto` is the only value that can fall through to Replay, so it stays
         // the request exactly while Replay is a route the account allows.
-        ...(availability.replay ? {} : { strategy: 'native' as const }),
-        ...replayOptions,
-      } as any);
+        ...(strategy ? { strategy } : {}),
+        ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
+        ...(replayMaxSeedChars !== undefined ? { replayMaxSeedChars } : {}),
+        requestId,
+      } as const;
+      const releaseUserRequestLease = sync.acquireUserRequestLease();
+      let result: Awaited<ReturnType<typeof forkSessionOp>>;
+      try {
+        result = await forkSessionOp(forkOptions as any);
+      } finally {
+        releaseUserRequestLease();
+      }
       if ((result as any)?.ok !== true) return result as any;
 
       const childSessionId = String((result as any).childSessionId ?? '').trim();
@@ -211,7 +232,15 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       });
     },
 
-    sessionHandoffStart: async ({ sessionId, targetMachineId, targetSessionStorageMode, workspaceTransfer, serverId }) => {
+    sessionHandoffStart: async ({
+      sessionId,
+      targetMachineId,
+      requestId: requestedRequestId,
+      targetSessionStorageMode,
+      workspaceTransfer,
+      serverId,
+      signal,
+    }) => {
       const sid = String(sessionId ?? '').trim();
       const tid = String(targetMachineId ?? '').trim();
       if (!sid || !tid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
@@ -220,28 +249,32 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       const session = stateAny?.sessions?.[sid] ?? null;
       const metadata = session?.metadata ?? null;
       const sourceMachineId = resolveSessionMachineId(sid, metadata);
+      if (!sourceMachineId) {
+        return { ok: false, errorCode: 'machine_not_found', errorMessage: 'No reachable source machine target found for session handoff' };
+      }
       const sessionStorageMode = metadata?.directSessionV1 ? 'direct' : 'persisted';
+      const requestId = String(requestedRequestId ?? '').trim() || randomUUID();
+      const accountId = String(sync.serverID ?? '').trim();
+      if (!accountId) {
+        return { ok: false, errorCode: 'account_unavailable', errorMessage: 'No active account for session handoff' };
+      }
 
-      return await completeSessionHandoffOp({
+      return await delegateSessionHandoffToSourceDaemon({
+        accountId,
         sessionId: sid,
-        sourceMachineId: sourceMachineId || undefined,
+        sourceMachineId,
         targetMachineId: tid,
         sessionStorageMode,
+        requestId,
         ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
-        preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
-        ...(workspaceTransfer ? {
-          workspaceTransfer: {
-            ...workspaceTransfer,
-            ignoredIncludeGlobs: [...workspaceTransfer.ignoredIncludeGlobs],
-          },
-        } : {}),
-        sourceMetadata: metadata ?? {},
+        ...(workspaceTransfer ? { workspaceTransfer } : {}),
         serverId,
+        ...(signal ? { signal } : {}),
       });
     },
 
-    sessionSpawnNew: async ({ tag, agentId, modelId, path, host, initialMessage }) =>
-      await spawnSessionForVoiceTool({ tag, agentId, modelId, path, host, initialMessage }),
+    sessionSpawnNew: async (input) =>
+      await spawnSessionForVoiceTool(input),
 
     sessionSpawnPicker: async ({ tag, agentId, modelId, initialMessage }) =>
       await spawnSessionWithPickerForVoiceTool({ tag, agentId, modelId, initialMessage }),
@@ -575,6 +608,7 @@ export function createDefaultActionExecutor(opts?: Readonly<{
   const executor = createActionExecutor(deps);
 
   return {
+    prepare: async (actionId, input, context) => await executor.prepare(actionId, input, context),
     execute: async (actionId, input, context) => await executor.execute(actionId, input, context),
   };
 }

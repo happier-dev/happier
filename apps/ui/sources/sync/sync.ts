@@ -469,6 +469,8 @@ import {
     handleSocketUpdate,
     parseUpdateContainer,
 } from './engine/socket/socket';
+import { actionOperationStore } from './domains/actionOperations/actionOperationStore';
+import { openActionOperationRevisionEphemeral } from './domains/actionOperations/actionOperationEphemeral';
 
 const SESSION_LIST_BACKGROUND_HYDRATION_SCROLL_SETTLE_MS = 180;
 
@@ -1019,6 +1021,8 @@ class Sync {
         private webSyncClientIdentityHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
         private webLifecycleHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
         private webLifecycleHeartbeatLastNowMs: number | null = null;
+        private userRequestLeases = new Set<symbol>();
+        private deferredWebVisibilityTeardown: (() => void) | null = null;
 		      private lastSocketDisconnectedAtMs: number | null = null;
 		      private lastSocketOfflineDurationMs: number | null = null;
               private socketOfflineCatchUpConsumedSessionIds = new Set<string>();
@@ -1260,7 +1264,14 @@ class Sync {
           if (Platform.OS === 'web' && !this.usesPersistentDesktopSync) {
               const doc = (globalThis as unknown as { document?: any }).document;
               if (doc && typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
-                  const pauseForWebBackground = (tag: string) => {
+                  const pauseForWebBackground = (tag: string, hardBoundary = false) => {
+                      if (hardBoundary) {
+                          this.userRequestLeases.clear();
+                          this.deferredWebVisibilityTeardown = null;
+                      } else if (this.userRequestLeases.size > 0) {
+                          this.deferredWebVisibilityTeardown = () => pauseForWebBackground(tag);
+                          return;
+                      }
                       this.isForeground = false;
                       this.markNativeCryptoWorkerBackgroundQuiescent();
                       setServerReachabilityNetworkAllowed(false);
@@ -1274,6 +1285,7 @@ class Sync {
                       this.flushBackgroundSyncCheckpointsNow();
                   };
                   const resumeForWebForeground = (tag: string) => {
+                      this.deferredWebVisibilityTeardown = null;
                       this.isForeground = true;
                       this.resumeNativeCryptoWorkerDispatchAfterForeground(`${tag}.nativeCryptoWorkerQueue`);
                       setServerReachabilityNetworkAllowed(true);
@@ -1288,6 +1300,9 @@ class Sync {
                   };
                   const onVisibilityChange = () => {
                       const state = String(doc.visibilityState ?? '').trim().toLowerCase();
+                      if (state === 'visible') {
+                          this.deferredWebVisibilityTeardown = null;
+                      }
                       if (state === 'hidden' || state === 'visible') {
                           const nextIsForeground = state === 'visible';
                           if (this.isForeground === nextIsForeground) {
@@ -1303,7 +1318,7 @@ class Sync {
                       }
                   };
                   const onPageHide = () => {
-                      pauseForWebBackground('Sync.stopServerReachabilitySupervisors.pagehide');
+                      pauseForWebBackground('Sync.stopServerReachabilitySupervisors.pagehide', true);
                   };
                   const onPageShow = (event?: { persisted?: boolean }) => {
                       const state = String(doc.visibilityState ?? '').trim().toLowerCase();
@@ -1312,7 +1327,7 @@ class Sync {
                       }
                   };
                   const onFreeze = () => {
-                      pauseForWebBackground('Sync.stopServerReachabilitySupervisors.freeze');
+                      pauseForWebBackground('Sync.stopServerReachabilitySupervisors.freeze', true);
                   };
                   const onResume = () => {
                       resumeForWebForeground('Sync.resumeSync.page-lifecycle-resume');
@@ -1378,6 +1393,21 @@ class Sync {
 
       public getSyncTuning(): SyncTuning {
           return this.syncTuning;
+      }
+
+      public acquireUserRequestLease(): () => void {
+          const lease = Symbol('user-request');
+          this.userRequestLeases.add(lease);
+          let released = false;
+          return () => {
+              if (released) return;
+              released = true;
+              this.userRequestLeases.delete(lease);
+              if (this.userRequestLeases.size !== 0) return;
+              const teardown = this.deferredWebVisibilityTeardown;
+              this.deferredWebVisibilityTeardown = null;
+              teardown?.();
+          };
       }
 
       private resolveSessionListScrollIdleWaiters(): void {
@@ -1797,6 +1827,8 @@ class Sync {
     }
 
     private resetServerScopedRuntimeState = () => {
+        this.userRequestLeases.clear();
+        this.deferredWebVisibilityTeardown = null;
         this.stopJsThreadLagTelemetryRuntime();
         this.serverScopeGeneration += 1;
         this.flushPendingSettingsForCurrentScopeNow();
@@ -4493,7 +4525,10 @@ class Sync {
         return this.machinesRefreshInFlight;
     }
 
-    public refreshSessions = async () => {
+    public refreshSessions = async (options?: Readonly<{ awaitSessionListHydration?: boolean }>) => {
+        if (options?.awaitSessionListHydration === true) {
+            return await this.fetchSessions({ awaitSessionListHydration: true });
+        }
         return this.sessionsSync.invalidateAndAwait();
     }
 
@@ -7133,6 +7168,15 @@ class Sync {
             getSession: (sessionId) => storage.getState().sessions[sessionId],
             applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages, { notifyVoice: false, notifyActivity: true }),
             updateDirectSessionTranscript: (ephemeralUpdate) => this.handleDirectSessionTranscriptEphemeralUpdate(ephemeralUpdate),
+            applyActionOperationRevision: (ephemeralUpdate) => {
+                if (!this.encryption || !shouldContinue()) return;
+                const snapshot = openActionOperationRevisionEphemeral({
+                    update: ephemeralUpdate,
+                    machineKey: this.encryption.getContentPrivateKey(),
+                });
+                if (!snapshot || !shouldContinue()) return;
+                actionOperationStore.merge(snapshot);
+            },
         }), { tag: 'Sync.handleEphemeralUpdate' });
     }
 

@@ -6,6 +6,7 @@ const forkSessionOpMock = vi.hoisted(() => vi.fn());
 const rollbackSessionConversationOpMock = vi.hoisted(() => vi.fn());
 const startSessionHandoffOpMock = vi.hoisted(() => vi.fn());
 const openSessionForVoiceToolMock = vi.hoisted(() => vi.fn());
+const spawnSessionForVoiceToolMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/ops/sessions', () => ({
@@ -18,6 +19,10 @@ vi.mock('@/sync/ops/sessionHandoffs', () => ({
   completeSessionHandoff: startSessionHandoffOpMock,
 }));
 
+vi.mock('@/sync/ops/delegatedSessionHandoff', () => ({
+  delegateSessionHandoffToSourceDaemon: startSessionHandoffOpMock,
+}));
+
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: readMachineTargetForSessionMock,
   readMachineControlTargetForSession: readMachineTargetForSessionMock,
@@ -28,7 +33,7 @@ vi.mock('@/voice/tools/actionImpl/openSession', () => ({
 }));
 
 vi.mock('@/voice/tools/actionImpl/spawnSession', () => ({
-  spawnSessionForVoiceTool: vi.fn(),
+  spawnSessionForVoiceTool: spawnSessionForVoiceToolMock,
 }));
 
 vi.mock('@/voice/tools/actionImpl/spawnSessionPicker', () => ({
@@ -53,7 +58,9 @@ vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
 
 vi.mock('@/sync/sync', () => ({
   sync: {
+    serverID: 'account-1',
     patchSessionMetadataWithRetry: vi.fn(),
+    acquireUserRequestLease: () => () => {},
   },
 }));
 
@@ -122,9 +129,11 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
 
 vi.mock('@/sync/sync', () => ({
   sync: {
+    serverID: 'account-1',
     createArtifactWithHeader: vi.fn(),
     fetchArtifactWithBody: vi.fn(),
     updateArtifactWithHeader: vi.fn(),
+    acquireUserRequestLease: () => () => {},
   },
 }));
 
@@ -144,9 +153,27 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     rollbackSessionConversationOpMock.mockReset();
     startSessionHandoffOpMock.mockReset();
     openSessionForVoiceToolMock.mockReset();
+    spawnSessionForVoiceToolMock.mockReset();
+    spawnSessionForVoiceToolMock.mockResolvedValue({ type: 'success', sessionId: 'sess_child' });
     readMachineTargetForSessionMock.mockReset();
     readMachineTargetForSessionMock.mockReturnValue(null);
     storageGetStateMock.mockReset();
+  });
+
+  it('forwards prepared Action admission without executing before the invocation runs', async () => {
+    const executor = createDefaultActionExecutor();
+
+    const prepared = await executor.prepare(
+      'session.spawn_new' as any,
+      { agentId: 'claude', directory: '/repo' },
+      { surface: 'ui_button' } as any,
+    );
+
+    expect(prepared.kind).toBe('ready');
+    expect(spawnSessionForVoiceToolMock).not.toHaveBeenCalled();
+    if (prepared.kind !== 'ready') throw new Error('Expected prepared invocation');
+    await prepared.invocation.run();
+    expect(spawnSessionForVoiceToolMock).toHaveBeenCalledTimes(1);
   });
 
   it('calls the provided openSession callback after a successful fork', async () => {
@@ -189,6 +216,35 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     expect(openSession).toHaveBeenCalledTimes(1);
     expect(openSession).toHaveBeenCalledWith('sess_child');
   }, 10_000);
+
+  it('forwards the complete source-context action request to the canonical spawn bridge', async () => {
+    const executor = createDefaultActionExecutor();
+    const sourceContext = {
+      v: 1,
+      kind: 'session_replay',
+      sourceSessionId: 'sess_source',
+      forkPoint: { type: 'latest' },
+    } as const;
+
+    const result = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        agentId: 'claude',
+        directory: '/repo',
+        sourceContext,
+      },
+      { surface: 'voice_tool', actionRequestId: 'action-attempt-1' } as any,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(spawnSessionForVoiceToolMock).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'claude',
+      directory: '/repo',
+      sourceContext,
+      actionRequestId: 'action-attempt-1',
+      surface: 'voice_tool',
+    }));
+  });
 
   it('passes replaySummaryRunner when session replay strategy is summary_plus_recent and a runner is configured', async () => {
     forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
@@ -465,7 +521,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     }));
   });
 
-  it('delegates session handoff to the session handoff op with the current machine id', async () => {
+  it('delegates session handoff to the source daemon with current scope and correlation', async () => {
     startSessionHandoffOpMock.mockResolvedValueOnce({
       ok: true,
       handoffId: 'handoff_1',
@@ -500,18 +556,17 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     const res = await executor.execute(
       'session.handoff' as any,
       { sessionId: 'sess_parent', targetMachineId: 'machine_2' },
-      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+      { surface: 'ui_button', placement: 'session_action_menu', actionRequestId: 'request-handoff-1' } as any,
     );
 
     expect(res.ok).toBe(true);
     expect(startSessionHandoffOpMock).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess_parent',
+      accountId: 'account-1',
       sourceMachineId: 'machine_1',
       targetMachineId: 'machine_2',
       sessionStorageMode: 'persisted',
-      sourceMetadata: {
-        machineId: 'machine_1',
-      },
+      requestId: 'request-handoff-1',
     }));
   });
 
@@ -563,9 +618,6 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       sessionId: 'sess_parent',
       sourceMachineId: 'machine_rebound',
       targetMachineId: 'machine_2',
-      sourceMetadata: {
-        machineId: 'machine_stale',
-      },
     }));
   });
 

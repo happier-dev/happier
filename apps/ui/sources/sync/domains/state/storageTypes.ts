@@ -272,6 +272,7 @@ const MetadataObjectSchema = z.object({
         parentCutoffSeqInclusive: z.number(),
         createdAtMs: z.number(),
         strategy: z.string(),
+        requestId: z.string().optional(),
         providerHint: z.object({
             providerId: z.string().optional(),
             backendMode: z.string().optional(),
