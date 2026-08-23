@@ -359,7 +359,7 @@ export async function getOrCreateSessionByTag(params: Readonly<{
   tag: string;
   metadata: Record<string, unknown>;
   agentState: Record<string, unknown> | null;
-}>): Promise<{ session: RawSessionRecord }> {
+}>): Promise<{ session: RawSessionRecord; created: boolean }> {
   const serverUrl = resolveServerHttpBaseUrl();
 
   const { desiredSessionEncryptionMode, serverSupportsFeatureSnapshot } = await resolveSessionCreateEncryptionMode({
@@ -415,7 +415,13 @@ export async function getOrCreateSessionByTag(params: Readonly<{
   if (!parsed || !parsed.session || typeof parsed.session !== 'object') {
     throw new Error('Unexpected /v1/sessions response shape');
   }
-  return { session: parsed.session };
+  // The current server marks whether this atomic create-or-load call created
+  // the row. Older responses omit the additive field; treat that as unknown
+  // rather than claiming ownership of a row that might predate this attempt.
+  return {
+    session: parsed.session,
+    created: (parsed as Readonly<{ resolution?: unknown }>).resolution === 'created',
+  };
 }
 
 async function postArchiveMutation(params: Readonly<{
