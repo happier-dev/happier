@@ -2,6 +2,10 @@ import { LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH, type LocalServiceProcessFact }
 import type { LocalServiceInventoryDiagnostic, LocalServiceListenerFact } from '../scanner';
 import { collectLocalServiceProcessLineageFacts } from './processLineage';
 import {
+    probeWindowsProcessOwnership,
+    type LocalServiceProcessOwnership,
+} from './processOwnership';
+import {
     parseWindowsProcessInventoryJson,
     readWindowsProcessInventory,
     type WindowsProcessInventoryFact,
@@ -29,22 +33,41 @@ function parsePort(value: string): number | null {
     return Number.isInteger(parsed) && parsed > 0 && parsed <= 65_535 ? parsed : null;
 }
 
-function parseWindowsLocalAddress(value: string): Readonly<{ address: string; port: number }> | null {
+function splitHostPort(value: string): Readonly<{ host: string; port: number }> | null {
     const trimmed = value.trim();
     const bracketMatch = /^\[([^\]]+)\]:(\d+)$/u.exec(trimmed);
     if (bracketMatch?.[1] && bracketMatch[2]) {
-        const port = parsePort(bracketMatch[2]);
-        if (port == null) return null;
-        return { address: bracketMatch[1], port };
+        return { host: bracketMatch[1], port: Number(bracketMatch[2]) };
     }
-
     const separator = trimmed.lastIndexOf(':');
     if (separator <= 0) return null;
-    const port = parsePort(trimmed.slice(separator + 1));
+    const port = Number(trimmed.slice(separator + 1));
+    if (!Number.isInteger(port) || port < 0 || port > 65_535) return null;
+    return { host: trimmed.slice(0, separator), port };
+}
+
+function parseWindowsLocalAddress(value: string): Readonly<{ address: string; port: number }> | null {
+    const split = splitHostPort(value);
+    if (!split) return null;
+    const port = parsePort(String(split.port));
     if (port == null) return null;
-    const address = trimmed.slice(0, separator);
-    if (!address || address === '*') return null;
-    return { address, port };
+    if (!split.host || split.host === '*') return null;
+    return { address: split.host, port };
+}
+
+/**
+ * `netstat -ano` prints a **localized** State column on a non-English Windows, so matching the
+ * literal `LISTENING` is not by itself a safe listening test — a localized host would produce a
+ * silently empty inventory. Whether Windows localizes that column is not established here (no
+ * non-English host and no vendor citation was available), so instead of asserting an answer the
+ * dependency is removed: a listening TCP socket always reports the wildcard Foreign Address with
+ * port `0`, which is locale-independent. Either signal is accepted, so an English host behaves
+ * exactly as before and a localized one still resolves its listeners.
+ */
+function isNetstatListeningRow(state: string | undefined, foreignAddress: string | undefined): boolean {
+    if (state?.toUpperCase() === 'LISTENING') return true;
+    const foreign = foreignAddress ? splitHostPort(foreignAddress) : null;
+    return foreign?.port === 0;
 }
 
 export function parseWindowsNetstatTcpListeners(output: string): LocalServiceListenerFact[] {
@@ -53,9 +76,10 @@ export function parseWindowsNetstatTcpListeners(output: string): LocalServiceLis
         const columns = line.trim().split(/\s+/u);
         if (columns.length < 5 || columns[0]?.toUpperCase() !== 'TCP') continue;
         const localAddress = columns[1];
+        const foreignAddress = columns[2];
         const state = columns[3];
         const rawPid = columns[4];
-        if (!localAddress || state?.toUpperCase() !== 'LISTENING') continue;
+        if (!localAddress || !isNetstatListeningRow(state, foreignAddress)) continue;
         const parsedAddress = parseWindowsLocalAddress(localAddress);
         if (!parsedAddress) continue;
         const pid = parsePositiveInteger(rawPid);
@@ -80,8 +104,6 @@ function projectWindowsProcessFacts(
 ): ReadonlyMap<number, LocalServiceProcessFact> {
     const processes = new Map<number, LocalServiceProcessFact>();
     for (const fact of raw.values()) {
-        const executablePath =
-            fact.executablePath?.slice(0, 1_000) ?? '';
         processes.set(fact.pid, {
             pid: fact.pid,
             ...(fact.ppid ? { ppid: fact.ppid } : {}),
@@ -90,9 +112,8 @@ function projectWindowsProcessFacts(
                 : {}),
             command:
                 fact.command?.slice(0, 1_000)
-                || executablePath
+                || fact.executablePath?.slice(0, 1_000)
                 || 'unknown',
-            ...(executablePath ? { executablePath } : {}),
         });
     }
     return processes;
@@ -114,9 +135,36 @@ function stdoutToString(stdout: string | Buffer): string {
     return typeof stdout === 'string' ? stdout : stdout.toString('utf8');
 }
 
+/**
+ * Stamp ownership onto the listener pids only. Windows has no uid to compare, and a per-process
+ * `Invoke-CimMethod GetOwner` on every ten-second scan is not worth its cost; the question the
+ * terminate gate actually asks — may this daemon terminate this process? — is answered in-process
+ * by opening the target for termination.
+ */
+function withListenerOwnership(input: Readonly<{
+    processes: ReadonlyMap<number, LocalServiceProcessFact>;
+    listenerPids: readonly number[];
+    probeOwnership: (pid: number) => LocalServiceProcessOwnership | undefined;
+}>): ReadonlyMap<number, LocalServiceProcessFact> {
+    const processes = new Map(input.processes);
+    for (const pid of input.listenerPids) {
+        const processOwnership = input.probeOwnership(pid);
+        if (!processOwnership) continue;
+        const existing = processes.get(pid);
+        processes.set(pid, {
+            ...(existing ?? { pid, command: 'unknown' }),
+            processOwnership,
+        });
+    }
+    return processes;
+}
+
 export async function readWindowsLocalServiceListeners(input: Readonly<{
     execFile: WindowsExecFileBoundary;
+    probeProcessOwnership?: (pid: number) => LocalServiceProcessOwnership | undefined;
 }>): Promise<WindowsLocalServiceScanResult> {
+    const probeOwnership = input.probeProcessOwnership
+        ?? ((pid: number) => probeWindowsProcessOwnership(pid));
     let listeners: readonly LocalServiceListenerFact[];
     try {
         const result = await input.execFile('netstat.exe', ['-ano', '-p', 'tcp'], {
@@ -164,17 +212,9 @@ export async function readWindowsLocalServiceListeners(input: Readonly<{
         },
     });
 
-    if (diagnostics.length > 0) {
-        return {
-            listeners,
-            processes,
-            diagnostics,
-        };
-    }
-
     return {
         listeners,
-        processes,
-        diagnostics: [],
+        processes: withListenerOwnership({ processes, listenerPids: pids, probeOwnership }),
+        diagnostics,
     };
 }

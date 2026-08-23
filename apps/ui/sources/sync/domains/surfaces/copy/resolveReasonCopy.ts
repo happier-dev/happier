@@ -151,13 +151,13 @@ function resolvePluginSurfacePresentationCopy(input: Readonly<{
  */
 const BROWSER_REASON_KEYS = {
     desktop_engine_unavailable: 'browserShell.unavailable.desktopEngineUnavailable',
-    desktop_webview_child_view_unimplemented: 'browserShell.unavailable.desktopWebView',
+    desktop_webview_child_view_unverified: 'browserShell.unavailable.desktopWebView',
     desktop_webview_linux_display_unavailable: 'browserShell.unavailable.desktopWebView',
     desktop_webview_native_command_unavailable: 'browserShell.unavailable.desktopWebView',
     desktop_webview_native_contract_invalid: 'browserShell.unavailable.desktopWebView',
     desktop_webview_unsupported_platform: 'browserShell.unavailable.desktopWebViewUnsupportedPlatform',
     desktop_webview_wayland_gtk_unimplemented: 'browserShell.unavailable.desktopWebView',
-    desktop_webview_x11_child_unimplemented: 'browserShell.unavailable.desktopWebView',
+    desktop_webview_x11_child_unverified: 'browserShell.unavailable.desktopWebView',
     electron_engine_unavailable: 'browserShell.unavailable.desktopEngineUnavailable',
     external_url_policy_denied: 'browserShell.unavailable.externalUrlPolicyDenied',
     external_url_unavailable: 'browserShell.unavailable.externalUrlUnavailable',

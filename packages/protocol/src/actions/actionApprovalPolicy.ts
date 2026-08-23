@@ -136,6 +136,38 @@ function resolveApprovalSurface(
 }
 
 /**
+ * The single fail-closed surface test shared by every agent trust-boundary decision: the caller
+ * is the agent, or the surface could not be resolved and is therefore treated as the agent.
+ * Only an explicitly recognised non-agent surface (`ui`/`voice`/`mcp`/`cli`/`rpc`/`api`/`plugin`)
+ * escapes it.
+ */
+function isAgentOrUnresolvedSurface(
+  ctx?: Pick<ActionExecutorContext, 'surface'> | null,
+): boolean {
+  const surface = resolveApprovalSurface(ctx);
+  return surface.kind === 'agent' || surface.kind === 'ambiguous';
+}
+
+/**
+ * True when an Action result leaving the host on this surface must be redacted before it can
+ * egress to an agent turn — the canonical owner of the egress-surface question (INV-1 / DEC-2).
+ *
+ * This is deliberately the SAME resolution as the agent approval floor above: consent and egress
+ * are two halves of one agent trust boundary and must not disagree. It replaced two hand-rolled
+ * `context.surface === 'agent'` allowlists (the local-services runtime-action executors in the
+ * daemon and in the UI sync domain) which failed OPEN — every surface value other than the exact
+ * string `'agent'`, including `undefined`, received the unredacted payload.
+ *
+ * This predicate answers *whether* to redact. *What* to redact stays with the payload owner (for
+ * public-preview URLs: `local/services/public/v1.ts`); do not add redaction rules here.
+ */
+export function requiresAgentEgressRedaction(
+  ctx?: Pick<ActionExecutorContext, 'surface'> | null,
+): boolean {
+  return isAgentOrUnresolvedSurface(ctx);
+}
+
+/**
  * True when `actionId` is in the dangerous agent-initiated subset that requires human approval
  * by default. Exported so the action-settings UI (Phase 3.3) can surface the default and let a
  * user ADD further approval-required surfaces (it must never remove the agent default).
@@ -149,8 +181,7 @@ function requiresAgentApprovalFloor(
   ctx?: Pick<ActionExecutorContext, 'surface'> | null,
 ): boolean {
   if (!isAgentInitiatedApprovalRequiredByDefault(actionId)) return false;
-  const surface = resolveApprovalSurface(ctx);
-  return surface.kind === 'agent' || surface.kind === 'ambiguous';
+  return isAgentOrUnresolvedSurface(ctx);
 }
 
 /**

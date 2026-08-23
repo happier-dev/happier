@@ -5,13 +5,13 @@ import type {
 
 export type BrowserAdapterUnavailableReasonCode =
     | 'desktop_engine_unavailable'
-    | 'desktop_webview_child_view_unimplemented'
+    | 'desktop_webview_child_view_unverified'
     | 'desktop_webview_linux_display_unavailable'
     | 'desktop_webview_native_command_unavailable'
     | 'desktop_webview_native_contract_invalid'
     | 'desktop_webview_unsupported_platform'
     | 'desktop_webview_wayland_gtk_unimplemented'
-    | 'desktop_webview_x11_child_unimplemented'
+    | 'desktop_webview_x11_child_unverified'
     | 'electron_engine_unavailable'
     | 'external_url_policy_denied'
     | 'external_url_unavailable'

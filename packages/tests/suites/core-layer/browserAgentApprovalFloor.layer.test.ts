@@ -5,6 +5,7 @@ import {
   DEFAULT_ACTIONS_SETTINGS_V1,
   getActionSpec,
   isApprovalRequiredByActionsSettings,
+  isInternalActionId,
   RUNTIME_ACTION_IDS_V1,
   type ActionExecutorContext,
   type ActionExecutorDeps,
@@ -57,9 +58,18 @@ function isFlooredVerbId(id: ActionId): boolean {
 const FLOORED_DANGER_AGENT_VERBS: readonly ActionId[] = RUNTIME_ACTION_IDS_V1.filter(isFlooredVerbId);
 
 /**
- * A guard set: the headline verbs that MUST be present in the derived floor. If a future edit
+ * A guard set: the headline verbs that must not lose the floor by accident. If a future edit
  * silently flips one of these to `safe` or drops its `agent` surface, the consent hole
  * re-opens — this list fails loudly rather than letting the derivation go quietly empty.
+ *
+ * The ONE accepted way off the floor is the canonical internal-action registry
+ * (`INTERNAL_ACTION_REASONS` in `actionSpecs.ts`, read here through `isInternalActionId`): an id
+ * recorded there is deliberately unreachable from every public surface with a written reason, so it
+ * cannot be agent-floored and must not be. Anything else losing `danger`+`agent` is a regression.
+ * `browser.session.create` / `browser.session.close` took that route ("No browser session
+ * creator is wired through the ActionExecutor; the runtime owner keeps this fail-closed"), which is
+ * why the assertion below is a branch on the registry rather than a shortened hand list — deleting
+ * an id from this array would have silently retired its guard.
  */
 const REQUIRED_FLOORED_VERBS: readonly ActionId[] = [
   'browser.navigate',
@@ -153,10 +163,29 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
     expect(FLOORED_DANGER_AGENT_VERBS.length).toBeGreaterThan(0);
     const flooredSet = new Set<ActionId>(FLOORED_DANGER_AGENT_VERBS);
     for (const id of REQUIRED_FLOORED_VERBS) {
+      // Still `danger` regardless of reachability — the safety classification is what the floor
+      // derives from, and downgrading it is always a regression.
       expect(getActionSpec(id).safety).toBe('danger');
+      if (isInternalActionId(id)) {
+        // Deliberately unreachable with a recorded reason: it must be off EVERY public surface, not
+        // merely off `agent`. A "internal" id that is still agent-dispatchable would be the actual
+        // hole, so this branch is an assertion, not an exemption.
+        expect(getActionSpec(id).surfaces.agent).toBe(false);
+        expect(getActionSpec(id).surfaces.api).toBe(false);
+        expect(flooredSet.has(id)).toBe(false);
+        continue;
+      }
       expect(getActionSpec(id).surfaces.agent).toBe(true);
       expect(flooredSet.has(id)).toBe(true);
     }
+  });
+
+  it('keeps the headline floor overwhelmingly reachable (an internal-registry escape cannot empty it)', () => {
+    // Guards the branch above: if a future edit routed most headline verbs through
+    // `INTERNAL_ACTION_REASONS`, every per-id assertion would still pass while the floor it exists
+    // to protect had quietly disappeared.
+    const reachable = REQUIRED_FLOORED_VERBS.filter((id) => !isInternalActionId(id));
+    expect(reachable.length).toBeGreaterThanOrEqual(REQUIRED_FLOORED_VERBS.length - 2);
   });
 
   it('floors EVERY danger+agent verb on agent and NEVER on ui (policy contract the executor consults)', () => {

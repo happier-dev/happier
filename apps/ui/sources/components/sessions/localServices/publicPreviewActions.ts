@@ -8,6 +8,7 @@ import {
     type DaemonLocalServicePublicPreviewCreateRequestV1,
     type DaemonLocalServicePublicPreviewRevokeRequestV1,
     type LocalServiceLaunchTargetV1,
+    type LocalServicePublicExposureModeV1,
     type LocalServicePublicExposureV1,
     type RuntimeActionExecute,
 } from '@happier-dev/protocol';
@@ -21,11 +22,29 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 type CopyToClipboard = (value: string) => Promise<boolean>;
 
+/**
+ * Exposure shape chosen by the user at create time (UB-4).
+ *
+ * The server policy has always carried `allowedModes` and `maxTtlMs`; the UI hard-coded
+ * `secret_link` + 10 minutes and offered no choice, which is what made G15's silent expiry
+ * unavoidable. Both stay optional so a caller with no preference still gets a working default.
+ */
+export type LocalServicePublicPreviewCreateOptions = Readonly<{
+    mode?: LocalServicePublicExposureModeV1;
+    ttlMs?: number;
+}>;
+
 export type LocalServicePublicPreviewActions = Readonly<{
-    create: (target: LocalServiceLaunchTargetV1) => Promise<unknown>;
+    create: (
+        target: LocalServiceLaunchTargetV1,
+        options?: LocalServicePublicPreviewCreateOptions,
+    ) => Promise<unknown>;
     copyUrl: (exposure: LocalServicePublicExposureV1) => Promise<boolean>;
     revoke: (exposure: LocalServicePublicExposureV1) => Promise<unknown>;
 }>;
+
+/** Fallback lifetime when neither the caller nor the policy names one. */
+export const DEFAULT_LOCAL_SERVICE_PUBLIC_PREVIEW_TTL_MS = 600_000;
 
 type CreateLocalServicePublicPreviewActionsInput = Readonly<{
     runtimeActionExecute?: RuntimeActionExecute | null;
@@ -73,6 +92,7 @@ function context(input: CreateLocalServicePublicPreviewActionsInput) {
 function defaultCreateRequest(
     target: LocalServiceLaunchTargetV1,
     input: CreateLocalServicePublicPreviewActionsInput,
+    options?: LocalServicePublicPreviewCreateOptions,
 ): DaemonLocalServicePublicPreviewCreateRequestV1 | null {
     const preview = readPreviewTarget(target);
     const machineId = preview?.machineId ?? normalizeNonEmptyString(input.machineId);
@@ -83,8 +103,8 @@ function defaultCreateRequest(
             machineId,
             sessionId,
             previewId,
-            mode: 'secret_link',
-            ttlMs: 600_000,
+            mode: options?.mode ?? 'secret_link',
+            ttlMs: options?.ttlMs ?? DEFAULT_LOCAL_SERVICE_PUBLIC_PREVIEW_TTL_MS,
             // UX-5: the create control is gated behind a `Modal.confirm` in
             // `LocalServicePublicPreviewControls`, so reaching this builder means the user
             // acknowledged the public-exposure consent. The daemon `publicPreview.create`
@@ -112,8 +132,8 @@ export function createLocalServicePublicPreviewActions(
     const copyToClipboard = input.copyToClipboard ?? setClipboardStringSafe;
 
     return {
-        async create(target) {
-            const request = defaultCreateRequest(target, input);
+        async create(target, options) {
+            const request = defaultCreateRequest(target, input, options);
             if (!runtimeActionExecute || !request) {
                 return undefined;
             }

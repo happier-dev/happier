@@ -9353,8 +9353,25 @@ export function actionAcceptsContextualSessionId(action: ActionId | string | Act
   return actionInputSchemaHasSessionId(spec) || actionInputHintsDeclareSessionId(spec);
 }
 
+/**
+ * Is `spec` reachable from `surface`? This is the enablement gate for the whole Action catalog:
+ * it backs `createActionExecutor`'s `isActionEnabledBySurface` and both MCP tool bridges.
+ *
+ * It fails CLOSED on a nullish or unknown surface (INV-1). An unattributed caller is not a
+ * wildcard — surface attribution is owned by the host that constructs the executor
+ * (`createCliActionExecutor` stamps `'cli'`, `createDefaultActionExecutor` stamps `'ui'`, the
+ * MCP servers stamp `'agent'`/`'mcp'`, the RPC adapter stamps `'rpc'`, external ingress stamps
+ * `'api'`), so a missing surface means the host forgot, not that every surface is permitted.
+ * This resolves the same direction as the consent layer, which already treats an unresolvable
+ * surface as `ambiguous` and applies the agent approval floor
+ * (`actionApprovalPolicy.ts#resolveApprovalSurface`).
+ *
+ * Callers that mean "no surface filter requested" must short-circuit before calling this
+ * (see `actionCatalog.ts`, which guards every use with `params.surface && …`). That is a
+ * different question from "may an unknown caller reach this Action".
+ */
 export function isActionSpecSurfacedOn(spec: ActionSpec, surface: keyof ActionSurfaces | null | undefined): boolean {
-  if (!surface) return true;
+  if (!surface) return false;
   return spec.surfaces[surface] === true;
 }
 
