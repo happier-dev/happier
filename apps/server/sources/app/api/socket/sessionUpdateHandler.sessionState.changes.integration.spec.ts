@@ -55,11 +55,13 @@ const txSessionUpdate = vi.hoisted(() => vi.fn(async () => ({ id: "s1" })));
 const markSessionInactive = vi.hoisted(() => vi.fn());
 const { db, reset: resetDbMocks } = createDbMocks({
     session: ["findMany", "findUnique", "update"],
+    sessionMessage: ["findMany"],
     accountPushToken: ["findMany"],
 } as const);
 const sessionFindMany = db.session.findMany;
 const directSessionFindUnique = db.session.findUnique;
 const directSessionUpdate = db.session.update;
+const sessionMessageFindMany = db.sessionMessage.findMany;
 const accountPushTokenFindMany = db.accountPushToken.findMany;
 const sessionFindUnique = vi.hoisted(() => vi.fn(async (args: any) => {
     if (args?.select?.metadataVersion === true) {
@@ -143,10 +145,8 @@ installDbModuleMock(() => ({
 
 /**
  * `mark-unread` resolves the newest unread-affecting main-transcript message before it decides where
- * to put the cursor, so the transaction it runs in must expose `sessionMessage` too. While it did
- * not, every `mark-unread` case threw a TypeError that `applySessionReadCursorOperation`'s own catch
- * turned into `{ ok: false, error: "internal" }` — the tests below reached their assertions with the
- * write never issued.
+ * to put the cursor, so both the direct database reader and transaction harness must expose
+ * `sessionMessage`.
  */
 const txSessionMessageFindMany = vi.hoisted(() => vi.fn(async (): Promise<unknown[]> => []));
 
@@ -183,6 +183,7 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         sessionFindMany.mockResolvedValue([]);
         directSessionFindUnique.mockResolvedValue(null);
         directSessionUpdate.mockResolvedValue({ id: "s1" });
+        sessionMessageFindMany.mockResolvedValue([]);
         accountPushTokenFindMany.mockResolvedValue([]);
     });
 

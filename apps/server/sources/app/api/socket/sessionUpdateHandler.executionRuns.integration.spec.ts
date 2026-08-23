@@ -55,7 +55,20 @@ vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds,
 }));
 
-const accessKeyFindUnique = vi.hoisted(() => vi.fn(async (): Promise<{ machineId: string } | null> => ({ machineId: "m1" })));
+type CurrentAccessKey = Readonly<{
+    machine: Readonly<{ revokedAt: null; replacedByMachineId: null }>;
+    session: Readonly<{ accountId: "u1" }>;
+}>;
+const { currentAccessKey, accessKeyFindUnique } = vi.hoisted(() => {
+    const value: CurrentAccessKey = {
+        machine: { revokedAt: null, replacedByMachineId: null },
+        session: { accountId: "u1" },
+    };
+    return {
+        currentAccessKey: value,
+        accessKeyFindUnique: vi.fn<() => Promise<CurrentAccessKey | null>>(async () => value),
+    };
+});
 vi.mock("@/storage/db", () => ({
     db: {
         accessKey: {
@@ -104,7 +117,7 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
         requireAccessLevel.mockReset();
         getSessionParticipantUserIds.mockReset();
         accessKeyFindUnique.mockReset();
-        accessKeyFindUnique.mockResolvedValue({ machineId: "m1" });
+        accessKeyFindUnique.mockResolvedValue(currentAccessKey);
         checkSessionAccess.mockImplementation(async (userId, sessionId) => ({
             userId,
             sessionId,
@@ -245,7 +258,14 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
                     sessionId: "s1",
                 },
             },
-            select: { machineId: true },
+            select: {
+                machine: {
+                    select: { revokedAt: true, replacedByMachineId: true },
+                },
+                session: {
+                    select: { accountId: true },
+                },
+            },
         });
         expect(checkSessionAccess).not.toHaveBeenCalled();
         expect(getSessionParticipantUserIds).not.toHaveBeenCalled();
@@ -524,7 +544,7 @@ describe("sessionUpdateHandler (transcript-stream-segment)", () => {
         requireAccessLevel.mockReset();
         getSessionParticipantUserIds.mockReset();
         accessKeyFindUnique.mockReset();
-        accessKeyFindUnique.mockResolvedValue({ machineId: "m1" });
+        accessKeyFindUnique.mockResolvedValue(currentAccessKey);
         checkSessionAccess.mockResolvedValue({
             userId: "u1",
             sessionId: "s1",
