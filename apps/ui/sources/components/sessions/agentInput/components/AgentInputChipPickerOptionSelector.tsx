@@ -9,6 +9,7 @@ import { AgentInputChipPickerTopSelector } from "./AgentInputChipPickerTopSelect
 import {
   AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
   createAgentInputChipPickerOptionTransientStyles,
+  resolveAgentInputChipPickerOptionInteractiveTargetSize,
   type AgentInputChipPickerOptionTransientStyles,
 } from "./agentInputChipPickerOptionStyles";
 import { normalizeAgentInputChipPickerOptionIcon } from "./agentInputChipPickerOptionIcon";
@@ -21,6 +22,7 @@ import type {
 } from "./AgentInputChipPickerTypes";
 
 const RAIL_ACTION_SIZE = 20;
+const PICKER_OPTION_TOUCH_TARGET_SIZE = resolveAgentInputChipPickerOptionInteractiveTargetSize(Platform.OS);
 
 type WebHoverablePressableState = Readonly<{
   pressed: boolean;
@@ -67,7 +69,7 @@ export function AgentInputChipPickerOptionSelector(
   const transientStyles = React.useMemo(() => ({
     ...createAgentInputChipPickerOptionTransientStyles(theme),
     optionRowCompact: {
-      minHeight: 44,
+      minHeight: PICKER_OPTION_TOUCH_TARGET_SIZE,
       paddingVertical: 6,
     },
   }), [theme]);
@@ -308,7 +310,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: 6,
   },
   optionRow: {
-    minHeight: 36,
+    minHeight: PICKER_OPTION_TOUCH_TARGET_SIZE,
     borderRadius: AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
     borderWidth: 0,
     paddingHorizontal: 8,

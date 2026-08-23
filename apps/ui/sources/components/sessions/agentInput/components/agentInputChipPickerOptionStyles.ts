@@ -5,6 +5,11 @@ import { shadowLevelStyle, type ShadowElevationToken } from "@/shadowElevation";
 export const AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE = 16;
 export const AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS = 12;
 
+/** The picker family shares one platform minimum for every interactive option. */
+export function resolveAgentInputChipPickerOptionInteractiveTargetSize(platform: string): 44 | 48 {
+    return platform === 'android' ? 48 : 44;
+}
+
 type AgentInputChipPickerOptionStyleTheme = Readonly<{
     colors: Readonly<{
         shadowLevels: Readonly<Record<1, ShadowElevationToken>>;

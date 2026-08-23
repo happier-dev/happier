@@ -12,6 +12,7 @@ import type {
 import {
     AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
     createAgentInputChipPickerOptionTransientStyles,
+    resolveAgentInputChipPickerOptionInteractiveTargetSize,
 } from './agentInputChipPickerOptionStyles';
 import { normalizeAgentInputChipPickerOptionIcon } from './agentInputChipPickerOptionIcon';
 
@@ -23,10 +24,7 @@ export type AgentInputChipPickerTopSelectorProps = Readonly<{
 }>;
 
 const PICKER_OPTION_SIZE = 36;
-// This predecessor surface has not yet adopted dev's shared target-size owner;
-// keep its existing platform policy explicit at the leaf rather than inventing
-// another compatibility layer for one control.
-const PICKER_OPTION_TOUCH_TARGET_SIZE = Platform.OS === 'android' ? 48 : 44;
+const PICKER_OPTION_TOUCH_TARGET_SIZE = resolveAgentInputChipPickerOptionInteractiveTargetSize(Platform.OS);
 
 type WebHoverablePressableState = Readonly<{
     pressed: boolean;
