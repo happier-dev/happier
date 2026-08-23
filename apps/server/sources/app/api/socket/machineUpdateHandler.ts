@@ -10,6 +10,7 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
 import {
     EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1,
+    ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1,
     EXTERNAL_SESSION_TRANSCRIPT_INVALIDATION_EVENT_V1,
     ExternalSessionTranscriptInvalidationV1Schema,
     MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
@@ -28,6 +29,7 @@ import {
     type MachineUpdateMetadataResponse,
     type SessionServerStartIngressResponseV1,
 } from "@happier-dev/protocol";
+import { projectActionOperationSnapshotPush } from './actionOperationSnapshotPush';
 import { enqueuePendingMessageByAuthenticatedMachine } from "@/app/session/pending/pendingMessageService";
 import { executeExternalSessionHistoricalImportCommand } from "@/app/session/externalSessionHistoricalImportCommand";
 import type { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
@@ -379,6 +381,16 @@ export function machineUpdateHandler(
                 reason: "internal_error",
             });
         }
+    });
+
+    socket.on(ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1, (raw: unknown) => {
+        const payload = projectActionOperationSnapshotPush(raw, readAuthenticatedMachineId(socket));
+        if (!payload) return;
+        eventRouter.emitEphemeral({
+            userId,
+            payload,
+            recipientFilter: { type: 'user-scoped-only' },
+        });
     });
 
     socket.on(EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1, async (

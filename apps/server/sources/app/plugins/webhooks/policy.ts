@@ -1,7 +1,4 @@
 import {
-    PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
-} from "@happier-dev/protocol";
-import {
     readPluginsFeatureEnv,
     type WebhookIngressPolicyV1,
 } from "@/app/features/catalog/readFeatureEnv";
@@ -14,23 +11,6 @@ export const PLUGIN_WEBHOOK_INGRESS_DEADLINE_MS_V1 = 8_000;
 /** The feature/config owner is the sole source of adjustable ingress limits. */
 export function resolvePluginWebhookIngressPolicyV1(env: NodeJS.ProcessEnv): WebhookIngressPolicyV1 {
     return readPluginsFeatureEnv(env).webhookIngressPolicy;
-}
-
-/**
- * The process admission owner reserves the fixed-size raw `Uint8Array` that
- * `readWebhookRawBodyV1` allocates before ingress can authenticate or route a
- * request. Later content/envelope representations have their own protocol
- * ceilings; this policy does not invent a V8 peak from those unrelated limits.
- */
-export function resolvePluginWebhookIngressWorkingBytesV1(declaredRawBytes: number): number {
-    if (
-        !Number.isSafeInteger(declaredRawBytes)
-        || declaredRawBytes < 0
-        || declaredRawBytes > PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1
-    ) {
-        throw new TypeError("Plugin webhook working-byte charge requires a bounded declared raw body length");
-    }
-    return declaredRawBytes;
 }
 
 export const PLUGIN_WEBHOOK_ENDPOINT_PAYLOAD_ROWS_V1 = 10_000;

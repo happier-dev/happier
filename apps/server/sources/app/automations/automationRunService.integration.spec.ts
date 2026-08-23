@@ -12,6 +12,7 @@ import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 import {
     cancelAutomationRun,
@@ -1015,6 +1016,8 @@ describe("automationRunService (integration)", () => {
             executionDispatchState: "dispatchPermitted",
             executionAttempt: 1,
         });
+        // S: the exact witness the worker holds from its start response.
+        const startWitness = await readAutomationAccountCurrentness(seeded.account.id);
 
         // The user cancels while `execution.run.start` is already in flight.
         // Nothing durably establishes that the external execution stopped, so
@@ -1057,13 +1060,18 @@ describe("automationRunService (integration)", () => {
         // dispatch settlement owner remains the only writer of dispatch truth:
         // it retains that identity so the uncertainty stays resolvable, and it
         // does not rewrite the terminality cancellation already published.
+        //
+        // The worker echoes the exact post-start witness S it captured before
+        // the effect. Cancellation itself published an Account change, so S is
+        // necessarily behind the current Account version by the time the
+        // dispatch result arrives; settlement must still retain the identity.
         const settle = readExecutionDispatchSettlementOwner();
         const settled = await settle({
             accountId: seeded.account.id,
             runId: seeded.run.id,
             machineId: seeded.machine.id,
             attempt: 1,
-            accountCurrentness: await readAutomationAccountCurrentness(seeded.account.id),
+            accountCurrentness: startWitness,
             outcome: {
                 kind: "started",
                 runId: "native-run-cancel-race",
@@ -1092,6 +1100,105 @@ describe("automationRunService (integration)", () => {
             executionNativeCallId: "native-call-cancel-race",
             executionNativeSidechainId: "native-sidechain-cancel-race",
             errorCode: "execution_run_cancelled_outcome_unknown",
+        });
+    });
+
+    it("persists the returned native execution identity when an unrelated Account write moves the global sequence", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-unrelated-seq",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+        // S: the exact witness the worker holds from its start response.
+        const startWitness = await readAutomationAccountCurrentness(seeded.account.id);
+
+        // Any unrelated Account-scoped write advances Account.seq. It changes
+        // no Automation fact and no encryption identity, so it must not cost
+        // the Run the only pointer back to a real running external execution.
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.account.id,
+                kind: "kv",
+                entityId: "unrelated-key",
+            });
+        });
+        const movedWitness = await readAutomationAccountCurrentness(seeded.account.id);
+        expect(movedWitness.version).toBeGreaterThan(startWitness.version);
+        expect(movedWitness.mode).toBe(startWitness.mode);
+        expect(movedWitness.contentKeyFingerprint).toBe(startWitness.contentKeyFingerprint);
+
+        const settle = readExecutionDispatchSettlementOwner();
+        const settled = await settle({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+            machineId: seeded.machine.id,
+            attempt: 1,
+            accountCurrentness: startWitness,
+            outcome: {
+                kind: "started",
+                runId: "native-run-unrelated-seq",
+                callId: "native-call-unrelated-seq",
+                sidechainId: "native-sidechain-unrelated-seq",
+                wait: { ok: false, code: "timeout" },
+            },
+        });
+        expect(settled).not.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: {
+                state: true,
+                executionDispatchState: true,
+                executionAttempt: true,
+                executionNativeRunId: true,
+                executionNativeCallId: true,
+                executionNativeSidechainId: true,
+            },
+        })).resolves.toEqual({
+            state: "outcome_uncertain",
+            executionDispatchState: "started",
+            executionAttempt: 1,
+            executionNativeRunId: "native-run-unrelated-seq",
+            executionNativeCallId: "native-call-unrelated-seq",
+            executionNativeSidechainId: "native-sidechain-unrelated-seq",
+        });
+    });
+
+    it("still refuses a noRunCreated redispatch permission after an unrelated Account write", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-unrelated-seq-retry",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+        const startWitness = await readAutomationAccountCurrentness(seeded.account.id);
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.account.id,
+                kind: "kv",
+                entityId: "unrelated-key",
+            });
+        });
+
+        // Redispatch permission is a pre-effect decision. It keeps the exact
+        // witness: nothing external has run, so a stale claimant may not
+        // re-authorize a new attempt.
+        const settle = readExecutionDispatchSettlementOwner();
+        await expect(settle({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+            machineId: seeded.machine.id,
+            attempt: 1,
+            accountCurrentness: startWitness,
+            outcome: { kind: "noRunCreated", errorCode: "execution_run_not_created" },
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: { state: true, executionDispatchState: true, executionAttempt: true },
+        })).resolves.toEqual({
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
         });
     });
 
@@ -1188,6 +1295,75 @@ describe("automationRunService (integration)", () => {
             ]);
         } finally {
             eventRouter.removeConnection(seeded.accountId, observer);
+        }
+    });
+
+    it("names the authoritative cancellation cause on the machine lifecycle carrier when a permitted dispatch is cancelled", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-cancel-cause",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+        const updates: UpdatePayload[] = [];
+        const observer = createMachineConnection({
+            accountId: seeded.account.id,
+            machineId: seeded.machine.id,
+            updates,
+        });
+        eventRouter.addConnection(seeded.account.id, observer);
+        try {
+            const cancelled = await cancelAutomationRun({
+                accountId: seeded.account.id,
+                runId: seeded.run.id,
+            });
+            expect(cancelled?.state).toBe("outcome_uncertain");
+            // The published state is uncertain, so the observing machine can
+            // only distinguish "the user cancelled this" from "your attempt
+            // went stale" through the explicit cause.
+            expect(updates.map((update) => update.body)).toContainEqual(
+                expect.objectContaining({
+                    t: "automation-run-state-changed",
+                    runId: seeded.run.id,
+                    currentState: "outcome_uncertain",
+                    cause: "cancelledAfterDispatchPermitted",
+                }),
+            );
+        } finally {
+            eventRouter.removeConnection(seeded.account.id, observer);
+        }
+    });
+
+    it("publishes no cancellation cause when the Run had not been permitted to dispatch", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-cancel-no-cause",
+            state: "running",
+            executionDispatchState: "notStarted",
+            executionAttempt: 0,
+        });
+        const updates: UpdatePayload[] = [];
+        const observer = createMachineConnection({
+            accountId: seeded.account.id,
+            machineId: seeded.machine.id,
+            updates,
+        });
+        eventRouter.addConnection(seeded.account.id, observer);
+        try {
+            const cancelled = await cancelAutomationRun({
+                accountId: seeded.account.id,
+                runId: seeded.run.id,
+            });
+            expect(cancelled?.state).toBe("cancelled");
+            const cancelledTransition = updates
+                .map((update) => update.body as Record<string, unknown>)
+                .find((body) => body.t === "automation-run-state-changed"
+                    && body.runId === seeded.run.id);
+            expect(cancelledTransition).toEqual(expect.objectContaining({
+                currentState: "cancelled",
+            }));
+            expect(cancelledTransition).not.toHaveProperty("cause");
+        } finally {
+            eventRouter.removeConnection(seeded.account.id, observer);
         }
     });
 

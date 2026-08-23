@@ -140,7 +140,7 @@ describe('deleteOwnedSession', () => {
         }));
     });
 
-    it('returns false when the final guarded delete no longer matches and does not emit updates', async () => {
+    it('reports a lost delete condition as a conflict, not as an absent session, and emits nothing', async () => {
         const { log } = await import('@/utils/logging/log');
         findFirst.mockResolvedValueOnce({
             id: 's1',
@@ -160,7 +160,7 @@ describe('deleteOwnedSession', () => {
             },
         });
 
-        expect(ok).toEqual({ ok: false, error: 'not-found' });
+        expect(ok).toEqual({ ok: false, error: 'conflict' });
         expect(deleteSession).toHaveBeenCalledWith({
             where: {
                 AND: [
@@ -176,6 +176,34 @@ describe('deleteOwnedSession', () => {
             expect.objectContaining({ module: 'session-delete', sessionId: 's1' }),
             'Session deleted successfully',
         );
+        expect(emitUpdate).not.toHaveBeenCalled();
+    });
+
+    it('separates a session that is absent or not owned from one whose delete condition was lost', async () => {
+        findFirst.mockResolvedValueOnce(null);
+        const { deleteOwnedSession } = await import('./deleteOwnedSession');
+        const absent = await deleteOwnedSession({
+            sessionId: 's1',
+            ownerAccountId: 'owner',
+            reason: 'user_request',
+        });
+
+        findFirst.mockResolvedValueOnce({
+            id: 's1',
+            accountId: 'owner',
+            metadataLayoutVersion: 1,
+            shares: [],
+        });
+        claimSession.mockResolvedValueOnce({ count: 0 });
+        const conflicted = await deleteOwnedSession({
+            sessionId: 's1',
+            ownerAccountId: 'owner',
+            reason: 'user_request',
+        });
+
+        expect(absent).toEqual({ ok: false, error: 'not-found' });
+        expect(conflicted).toEqual({ ok: false, error: 'conflict' });
+        expect(deleteSession).not.toHaveBeenCalled();
         expect(emitUpdate).not.toHaveBeenCalled();
     });
 

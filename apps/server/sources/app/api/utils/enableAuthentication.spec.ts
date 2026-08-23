@@ -69,7 +69,7 @@ describe("enableAuthentication (defensive error handling)", () => {
         await app.close();
     });
 
-    it("returns 401 invalid-token code when bearer token verification fails", async () => {
+    it("returns opaque invalid_token when bearer token verification fails", async () => {
         verifyToken.mockResolvedValueOnce(null);
 
         const { enableAuthentication } = await import("./enableAuthentication");
@@ -85,12 +85,12 @@ describe("enableAuthentication (defensive error handling)", () => {
         });
 
         expect(res.statusCode).toBe(401);
-        expect(res.json()).toEqual({ error: "Invalid token", code: "invalid-token" });
+        expect(res.json()).toEqual({ error: "invalid_token" });
 
         await app.close();
     });
 
-    it("returns 401 account-not-found code when token is valid but account cannot be found", async () => {
+    it("returns opaque invalid_token when a token's account cannot be found", async () => {
         verifyToken.mockResolvedValueOnce({ userId: "missing-account" });
         enforceLoginEligibility.mockResolvedValueOnce({ ok: false, statusCode: 401, error: "invalid-token" } as any);
 
@@ -107,7 +107,7 @@ describe("enableAuthentication (defensive error handling)", () => {
         });
 
         expect(res.statusCode).toBe(401);
-        expect(res.json()).toEqual({ error: "Invalid token", code: "account-not-found" });
+        expect(res.json()).toEqual({ error: "invalid_token" });
 
         await app.close();
     });

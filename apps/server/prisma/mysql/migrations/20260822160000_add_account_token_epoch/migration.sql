@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Account` ADD COLUMN `tokenEpoch` INTEGER NOT NULL DEFAULT 0;

@@ -4,6 +4,7 @@ import { IncomingMessage, Server, ServerResponse } from "http";
 import type { PeerTcpTunnelRelayTransportFactory } from "@/app/local/services/preview/tunnel";
 import type { PeerMediationObservabilityEmitter } from "@/app/api/socket/peer/mediation/observability/events";
 import type { PeerMediationViewerSocketOwnershipVerifier } from "@/app/api/socket/viewerSocketOwnership";
+import type { ExternalActionDaemonDispatcher } from "@/app/api/socket/externalActionDispatcher";
 import type { AccountStoredContentCompatibilityEvaluation } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import type {
     AutomationReplyHandoffDispatchResultV1,
@@ -19,10 +20,18 @@ export type Fastify = FastifyInstance<
 >;
 
 declare module 'fastify' {
+    interface FastifyContextConfig {
+        /** API tokens are denied unless an HTTP route explicitly opts in. */
+        allowApiToken?: true;
+        /** Public bearer-only routes can opt out of the global CORS hook. */
+        cors?: false;
+    }
     interface FastifyRequest {
         userId: string;
         /** Verified credential provenance; missing is never present-user authority. */
-        authTokenKind?: "account" | "terminal";
+        authTokenKind?: "account" | "terminal" | "api_token";
+        /** Server-stamped authority for Action ingress; never caller-provided input. */
+        authAuthority?: "present_user" | "account_automation";
         startTime?: number;
         accountStoredContentCompatibility?: AccountStoredContentCompatibilityEvaluation;
     }
@@ -44,6 +53,7 @@ declare module 'fastify' {
             params: unknown,
             options?: Readonly<{ signal?: AbortSignal }>,
         ) => Promise<SessionServerStartDispatchResultV1>;
+        forwardExternalActionToMachine: ExternalActionDaemonDispatcher;
         createPeerTcpTunnelRelayTransport?: PeerTcpTunnelRelayTransportFactory;
         peerMediationObservability?: PeerMediationObservabilityEmitter;
         verifyPeerMediationViewerSocketOwnership?: PeerMediationViewerSocketOwnershipVerifier;

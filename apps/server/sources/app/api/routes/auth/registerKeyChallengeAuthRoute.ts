@@ -1,5 +1,6 @@
 import * as privacyKit from "privacy-kit";
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
@@ -7,8 +8,13 @@ import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { type Fastify } from "../../types";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
+    canonicalizeKeyChallengeV2AudienceOrigin,
+    createKeyChallengeV2SigningInput,
     KeyChallengeAuthRequestSchema,
+    KeyChallengeV2IssueRequestSchema,
+    KeyChallengeV2IssueResponseSchema,
     createExpectedAccountKeyChallengeSigningInputV1,
+    isKeyChallengeV2AuthRequest,
     resolveEffectiveDefaultAccountEncryptionMode,
 } from "@happier-dev/protocol";
 import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
@@ -18,6 +24,14 @@ import {
     verifyAccountContentKeyBinding,
     type VerifiedAccountContentKeyBinding,
 } from "@/app/encryption/accountContentKeyAdmission";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import { resolveConfiguredCanonicalServerUrl } from "@/app/serverUrls/effectiveServerUrls";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+
+const KEY_CHALLENGE_V2_TTL_MS = 5 * 60_000;
+const KeyChallengeV2UnavailableResponseSchema = z.object({
+    error: z.literal("key_challenge_v2_unavailable"),
+});
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
     return left.byteLength === right.byteLength
@@ -36,33 +50,93 @@ function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 export function registerKeyChallengeAuthRoute(app: Fastify): void {
+    app.post('/v1/auth/challenge', {
+        config: {
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "auth.keyChallenge.issue"),
+        },
+        schema: {
+            body: KeyChallengeV2IssueRequestSchema,
+            response: {
+                200: KeyChallengeV2IssueResponseSchema,
+                503: KeyChallengeV2UnavailableResponseSchema,
+            },
+        },
+    }, async (request, reply) => {
+        const audienceOrigin = canonicalizeKeyChallengeV2AudienceOrigin(
+            resolveConfiguredCanonicalServerUrl(process.env),
+        );
+        if (!audienceOrigin) {
+            return reply.code(503).send({ error: "key_challenge_v2_unavailable" });
+        }
+
+        const issuedAt = new Date();
+        await db.keyChallengeV2.deleteMany({
+            where: { expiresAt: { lte: issuedAt } },
+        }).catch(() => {
+            // Expiry reclamation is opportunistic; issuance remains available when it loses a cleanup race.
+        });
+        const expiresAt = new Date(issuedAt.getTime() + KEY_CHALLENGE_V2_TTL_MS);
+        const audienceServerIdentityId = await getOrCreateServerIdentityId(process.env);
+        const challenge = await db.keyChallengeV2.create({
+            data: {
+                nonce: privacyKit.encodeBase64(new Uint8Array(randomBytes(32))),
+                issuedAt,
+                expiresAt,
+                audienceOrigin,
+                audienceServerIdentityId,
+                ...(request.body.expectedAccountId
+                    ? { expectedAccountId: request.body.expectedAccountId }
+                    : {}),
+            },
+            select: {
+                id: true,
+                nonce: true,
+                issuedAt: true,
+                expiresAt: true,
+                audienceOrigin: true,
+                audienceServerIdentityId: true,
+            },
+        });
+        if (!challenge.audienceServerIdentityId) {
+            return reply.code(503).send({ error: "key_challenge_v2_unavailable" });
+        }
+        return reply.send({
+            challengeId: challenge.id,
+            nonce: challenge.nonce,
+            issuedAt: challenge.issuedAt.toISOString(),
+            expiresAt: challenge.expiresAt.toISOString(),
+            audience: {
+                origin: challenge.audienceOrigin,
+                serverIdentityId: challenge.audienceServerIdentityId,
+            },
+        });
+    });
+
     app.post('/v1/auth', {
+        config: {
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "auth.keyChallenge.redeem"),
+        },
         schema: {
             body: KeyChallengeAuthRequestSchema,
         }
     }, async (request, reply) => {
+        const authRequest = request.body;
         const tweetnacl = (await import("tweetnacl")).default;
-        if (String(request.body.publicKey).length > 512) {
+        if (String(authRequest.publicKey).length > 512) {
             return reply.code(401).send({ error: 'Invalid public key' });
         }
         let publicKey: ReturnType<typeof privacyKit.decodeBase64>;
         try {
-            publicKey = privacyKit.decodeBase64(request.body.publicKey);
+            publicKey = privacyKit.decodeBase64(authRequest.publicKey);
         } catch {
             return reply.code(401).send({ error: 'Invalid public key' });
         }
-        if (String(request.body.signature).length > 4096 || String(request.body.challenge).length > 4096) {
-            return reply.code(401).send({ error: 'Invalid signature' });
-        }
-        let challenge: Uint8Array;
-        try {
-            challenge = privacyKit.decodeBase64(request.body.challenge);
-        } catch {
+        if (String(authRequest.signature).length > 4096) {
             return reply.code(401).send({ error: 'Invalid signature' });
         }
         let signature: Uint8Array;
         try {
-            signature = privacyKit.decodeBase64(request.body.signature);
+            signature = privacyKit.decodeBase64(authRequest.signature);
         } catch {
             return reply.code(401).send({ error: 'Invalid signature' });
         }
@@ -72,14 +146,84 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
         if (signature.length !== tweetnacl.sign.signatureLength) {
             return reply.code(401).send({ error: 'Invalid signature' });
         }
-        const signingInput =
-            request.body.expectedAccountId
+
+        let signingInput: Uint8Array;
+        let v2ChallengeId: string | null = null;
+        if (isKeyChallengeV2AuthRequest(authRequest)) {
+            const challenge = await db.keyChallengeV2.findUnique({
+                where: { id: authRequest.challengeId },
+                select: {
+                    id: true,
+                    nonce: true,
+                    issuedAt: true,
+                    expiresAt: true,
+                    audienceOrigin: true,
+                    audienceServerIdentityId: true,
+                    expectedAccountId: true,
+                    consumedAt: true,
+                },
+            });
+            const now = new Date();
+            const configuredAudienceOrigin = canonicalizeKeyChallengeV2AudienceOrigin(
+                resolveConfiguredCanonicalServerUrl(process.env),
+            );
+            const currentServerIdentityId = configuredAudienceOrigin
+                ? await getOrCreateServerIdentityId(process.env)
+                : null;
+            if (
+                !challenge
+                || challenge.consumedAt
+                || challenge.expiresAt.getTime() <= now.getTime()
+                || !configuredAudienceOrigin
+                || challenge.audienceOrigin !== configuredAudienceOrigin
+                || !currentServerIdentityId
+                || (
+                    challenge.audienceServerIdentityId
+                    && challenge.audienceServerIdentityId !== currentServerIdentityId
+                )
+                || (challenge.expectedAccountId ?? undefined)
+                    !== (authRequest.expectedAccountId ?? undefined)
+            ) {
+                return reply.code(401).send({ error: 'Invalid signature' });
+            }
+            signingInput = createKeyChallengeV2SigningInput({
+                challengeId: challenge.id,
+                nonce: challenge.nonce,
+                issuedAt: challenge.issuedAt.toISOString(),
+                expiresAt: challenge.expiresAt.toISOString(),
+                audience: {
+                    origin: challenge.audienceOrigin,
+                    ...(challenge.audienceServerIdentityId
+                        ? { serverIdentityId: challenge.audienceServerIdentityId }
+                        : {}),
+                },
+                ...(challenge.expectedAccountId
+                    ? { expectedAccountId: challenge.expectedAccountId }
+                    : {}),
+            });
+            v2ChallengeId = challenge.id;
+        } else {
+            // COMPAT(key-challenge-v1): retain the released raw assertion only while the
+            // minimum supported authenticating frontier includes ui-web-v0.2.10-dev.290 /
+            // server-v0.2.10-dev.74 (04b48d57cd9717cbf42170448bf15ff59a795fc4).
+            // Remove once that frontier is later and every supported authenticating client
+            // advertises challenge v2; then return the typed update requirement at this seam.
+            if (String(authRequest.challenge).length > 4096) {
+                return reply.code(401).send({ error: 'Invalid signature' });
+            }
+            let challenge: Uint8Array;
+            try {
+                challenge = privacyKit.decodeBase64(authRequest.challenge);
+            } catch {
+                return reply.code(401).send({ error: 'Invalid signature' });
+            }
+            signingInput = authRequest.expectedAccountId
                 ? createExpectedAccountKeyChallengeSigningInputV1({
                     challenge,
-                    expectedAccountId:
-                        request.body.expectedAccountId,
+                    expectedAccountId: authRequest.expectedAccountId,
                 })
                 : challenge;
+        }
         const isValid = tweetnacl.sign.detached.verify(
             signingInput,
             signature,
@@ -87,6 +231,19 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
         );
         if (!isValid) {
             return reply.code(401).send({ error: 'Invalid signature' });
+        }
+        if (v2ChallengeId) {
+            const consumed = await db.keyChallengeV2.updateMany({
+                where: {
+                    id: v2ChallengeId,
+                    consumedAt: null,
+                    expiresAt: { gt: new Date() },
+                },
+                data: { consumedAt: new Date() },
+            });
+            if (consumed.count !== 1) {
+                return reply.code(401).send({ error: 'Invalid signature' });
+            }
         }
 
         // Defensive: /v1/auth is often the first route hit on a fresh server, and some

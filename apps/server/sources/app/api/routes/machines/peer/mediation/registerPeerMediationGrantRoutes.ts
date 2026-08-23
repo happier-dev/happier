@@ -12,6 +12,7 @@ import {
     PEER_TCP_TUNNEL_RELAY_SOCKET_ID_MAX_LENGTH,
     TcpTunnelGrantScopeV1Schema,
     clampDirectRouteGrantTtlMs,
+    resolvePeerRouteFeatureId,
     DAEMON_VOICE_AUDIO_RELAY_CAP_PROFILE_ID,
     type FeatureId,
     type DirectRouteGrantScopeV1,
@@ -147,28 +148,13 @@ const PeerMediationGrantRequestSchema = z.union([
     VoiceMediaServerRelayAuthorizationRequestSchema,
 ]);
 
-function resolveDirectPeerFeatureId(flowKind: PeerFlowKindV1): FeatureId {
-    switch (flowKind) {
-        case "bounded_transfer":
-            return "machines.transfer.directPeer";
-        case "tcp_tunnel":
-            return "machines.tunnel.directPeer";
-        case "voice_media":
-            return "machines.liveStream.directPeer";
-        case "live_stream":
-            return "machines.liveStream.directPeer";
-        case "machine_rpc":
-            return "machines.rpc.directPeer";
-    }
-}
-
+/**
+ * The mint gate must consult the same feature bit the client uses to attempt the route and the
+ * daemon uses to register the flow it accepts; `resolvePeerRouteFeatureId` in the protocol is the
+ * single owner of that mapping.
+ */
 function resolveRouteGrantFeatureId(input: z.infer<typeof PeerMediationGrantRequestSchema>): FeatureId {
-    if (input.routeKind === "server_relay") {
-        return input.flowKind === "tcp_tunnel"
-            ? "machines.tunnel.serverRouted"
-            : "machines.liveStream.serverRouted";
-    }
-    return resolveDirectPeerFeatureId(input.flowKind);
+    return resolvePeerRouteFeatureId({ flowKind: input.flowKind, routeKind: input.routeKind });
 }
 
 function createPeerMediationGrantFeatureGatePreHandler(

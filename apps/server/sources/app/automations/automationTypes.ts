@@ -307,6 +307,22 @@ export type AutomationRunItem = Readonly<{
     updatedAt: Date;
 }>;
 
+/** One committed Run transition as persisted by the lifecycle owners. */
+export type AutomationRunEventRow = Readonly<{
+    ts: Date;
+    type: string;
+    payload: unknown;
+}>;
+
+/**
+ * The authenticated detail read adds the Run's committed transition history to
+ * the canonical Run row. Newest-first as selected; the detail projection is the
+ * owner that presents it in ascending order.
+ */
+export type AutomationRunDetailItem = AutomationRunItem & Readonly<{
+    events: readonly AutomationRunEventRow[];
+}>;
+
 export type AutomationRunWithAutomation = AutomationRunItem & Readonly<{
     automation: {
         id: string;

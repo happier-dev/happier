@@ -5,6 +5,7 @@ import {
     computeAccountEncryptionMigrateKeyFingerprintV1,
     decodeBase64,
     encodeBase64,
+    pluginJsonValuesEqual,
     type AccountEncryptionMigrateCollectionInventoryItem,
     type AccountEncryptionMigrateCollectionStageItem,
     type AccountEncryptionMigrateTransitionPrepareRequest,
@@ -396,30 +397,6 @@ export async function finalizeAccountEncryptionTransitionCoordinatorInTx(
 
 function isTransitionMode(value: unknown): value is AccountEncryptionTransitionMode {
     return value === "plain" || value === "e2ee";
-}
-
-function jsonEqual(left: unknown, right: unknown): boolean {
-    if (left === right) return true;
-    if (
-        left === null
-        || right === null
-        || typeof left !== "object"
-        || typeof right !== "object"
-        || Array.isArray(left)
-        || Array.isArray(right)
-    ) {
-        if (!Array.isArray(left) || !Array.isArray(right)) return false;
-        return left.length === right.length
-            && left.every((value, index) => jsonEqual(value, right[index]));
-    }
-    const leftRecord = left as Record<string, unknown>;
-    const rightRecord = right as Record<string, unknown>;
-    const leftKeys = Object.keys(leftRecord).sort();
-    const rightKeys = Object.keys(rightRecord).sort();
-    return leftKeys.length === rightKeys.length
-        && leftKeys.every((key, index) => (
-            key === rightKeys[index] && jsonEqual(leftRecord[key], rightRecord[key])
-        ));
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
@@ -960,7 +937,7 @@ function stageMatchesInventoryItem(
             === measurePluginCollectionAccountEncryptionTransitionContentBytes(
                 item.sourceEnvelope,
             )
-        && jsonEqual(stage.sourceEnvelope, item.sourceEnvelope);
+        && pluginJsonValuesEqual(stage.sourceEnvelope, item.sourceEnvelope);
 }
 
 function inventoryItemsFromStages(
@@ -1452,7 +1429,7 @@ async function validateCurrentAutomationTransitionCensusInTx(
                 && stagedSource !== null
                 && stage.sourceEncodedBytes
                     === measureAccountEncryptionTransitionAutomationSourceItemBytes(item)
-                && jsonEqual(stagedSource, item);
+                && pluginJsonValuesEqual(stagedSource, item);
         })) {
             return { status: "migration_incomplete" };
         }
@@ -2260,7 +2237,7 @@ export async function stageAccountEncryptionTransitionCollectionsCoordinatorInTx
             || item.expectedRevision !== stage.sourceRevision
             || item.schemaVersion !== stage.schemaVersion
             || item.contractDigest !== stage.contractDigest
-            || !jsonEqual(item.sourceEnvelope, stage.sourceEnvelope)
+            || !pluginJsonValuesEqual(item.sourceEnvelope, stage.sourceEnvelope)
         ) {
             await abandonAccountEncryptionTransitionInTx(params.tx, transition.id, now);
             return { status: "migration_incomplete" };
@@ -2297,7 +2274,7 @@ export async function stageAccountEncryptionTransitionCollectionsCoordinatorInTx
         if (stage.targetEnvelope !== null) {
             if (
                 stage.targetEncodedBytes !== candidate.targetEncodedBytes
-                || !jsonEqual(stage.targetEnvelope, candidate.item.targetEnvelope)
+                || !pluginJsonValuesEqual(stage.targetEnvelope, candidate.item.targetEnvelope)
             ) {
                 return { status: "stage_conflict" };
             }
@@ -2383,7 +2360,7 @@ function automationStageMatchesRequestedSource(
         return source.kind === "definition"
             && source.automationId === item.automationId
             && source.revision === item.expectedRevision
-            && jsonEqual(source.source, item.source);
+            && pluginJsonValuesEqual(source.source, item.source);
     }
     return source.kind === "run"
         && source.runId === item.runId
@@ -2391,7 +2368,7 @@ function automationStageMatchesRequestedSource(
         && source.revision === item.expectedRevision
         && source.originKind === item.originKind
         && source.occurrenceKey === item.occurrenceKey
-        && jsonEqual(source.source, item.source);
+        && pluginJsonValuesEqual(source.source, item.source);
 }
 
 /**
@@ -2498,7 +2475,7 @@ export async function stageAccountEncryptionTransitionAutomationsCoordinatorInTx
             return { status: "migration_incomplete" };
         }
         const existing = targetItemFromAccountEncryptionTransitionAutomationStage(stage);
-        if (existing && !jsonEqual(existing, item)) return { status: "stage_conflict" };
+        if (existing && !pluginJsonValuesEqual(existing, item)) return { status: "stage_conflict" };
         if (
             !existing
             && (stage.targetContent !== null || stage.targetEncodedBytes !== null)

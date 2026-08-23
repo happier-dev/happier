@@ -31,6 +31,21 @@ const HISTORICAL_IMPORT_NAMESPACE = "external_sessions";
 const HISTORICAL_IMPORT_KIND = "historical_import";
 const TAKEOVER_ADMISSION_KIND = "takeover_admission";
 
+/**
+ * A durable authority row is either ABSENT or PRESENT. A present row this server cannot
+ * interpret is NOT absent: collapsing the two into `null` let a caller mint fresh
+ * authority and overwrite the record it failed to read. Readers of durable authority
+ * return this three-way result so `missing` can initialize while `invalid_present`
+ * fails closed.
+ */
+type DurableAuthorityRead<TRecord> =
+    | Readonly<{ kind: "missing" }>
+    | Readonly<{ kind: "valid"; record: TRecord }>
+    | Readonly<{ kind: "invalid_present" }>;
+
+const DURABLE_AUTHORITY_UNREADABLE_MESSAGE =
+    "Historical import durable authority is present but unreadable by this server.";
+
 class HistoricalImportDiscardConflictError extends Error {
     constructor() {
         super("Historical import discard row ownership no longer matches.");
@@ -145,6 +160,37 @@ function errorResponse(
     message: string,
 ): Extract<ExternalSessionOperationSocketResponseV1, { kind: "error" }> {
     return { v: 1, kind: "error", errorCode, message };
+}
+
+type HistoricalImportBatchWriteError = Extract<
+    Awaited<ReturnType<typeof writeHistoricalSessionMessageBatchInTx>>,
+    { ok: false }
+>["error"];
+
+/**
+ * Project the canonical historical-batch writer's rejection onto the external-Session
+ * operation wire vocabulary. A storage-authority or storage-policy rejection is a
+ * storage-mode conflict on the wire, not a generic invalid state: the CLI importer
+ * distinguishes the two, and collapsing them hides a re-inspect-and-retry condition
+ * behind a terminal-looking error.
+ */
+function historicalImportBatchWriteErrorCode(
+    error: HistoricalImportBatchWriteError,
+): Extract<ExternalSessionOperationSocketResponseV1, { kind: "error" }>["errorCode"] {
+    switch (error) {
+        case "stable-item-conflict":
+            return "batch_conflict";
+        case "storage-mode-conflict":
+            return "storage_mode_conflict";
+        case "session-not-found":
+        case "invalid-item":
+        case "reserved-local-id":
+            return "invalid_state";
+        default: {
+            const exhaustive: never = error;
+            return exhaustive;
+        }
+    }
 }
 
 function readInsertedSequenceSpans(
@@ -310,9 +356,15 @@ export function createRecoverableExternalSessionHistoricalImportMessageWhere(
             continue;
         }
         const job = readJob(record.content);
+        if (!job) {
+            // A present historical-import row this server cannot parse may still own
+            // inserted rows we can no longer enumerate. Retention must fail CLOSED:
+            // protect the whole Session rather than sweep messages that only a
+            // recoverable import could put back.
+            return { sessionId: params.sessionId };
+        }
         if (
-            !job
-            || job.state !== "importing"
+            job.state !== "importing"
             || job.claim.sessionId !== params.sessionId
         ) {
             continue;
@@ -479,7 +531,7 @@ async function readExternalLinkedTakeoverAdmissionInTx(
     tx: Tx,
     actorUserId: string,
     command: ExternalLinkedTakeoverAdmissionCommand,
-): Promise<ExternalLinkedTakeoverAdmissionRecord | null> {
+): Promise<DurableAuthorityRead<ExternalLinkedTakeoverAdmissionRecord>> {
     const lookup = await findExactHostSessionSystemRecordInTx(tx, {
         accountId: actorUserId,
         sessionId: command.claim.sessionId,
@@ -487,12 +539,12 @@ async function readExternalLinkedTakeoverAdmissionInTx(
         localId: localIdForTakeoverAdmission(command.claim.operationId),
     });
     if (!lookup.ok) throw new HistoricalImportSystemRecordAddressCollisionError();
-    if (lookup.row && lookup.row.kind !== TAKEOVER_ADMISSION_KIND) {
+    if (!lookup.row) return { kind: "missing" };
+    if (lookup.row.kind !== TAKEOVER_ADMISSION_KIND) {
         throw new HistoricalImportSystemRecordKindConflictError();
     }
-    return lookup.row
-        ? readExternalLinkedTakeoverAdmissionRecord(lookup.row.content, command)
-        : null;
+    const record = readExternalLinkedTakeoverAdmissionRecord(lookup.row.content, command);
+    return record ? { kind: "valid", record } : { kind: "invalid_present" };
 }
 
 async function writeExternalLinkedTakeoverAdmissionInTx(
@@ -642,12 +694,16 @@ async function admitExternalLinkedTakeoverInTx(input: Readonly<{
             "External-linked takeover publisher authority was superseded.",
         );
     }
-    const existing = await readExternalLinkedTakeoverAdmissionInTx(
+    const existingRead = await readExternalLinkedTakeoverAdmissionInTx(
         input.tx,
         input.actorUserId,
         command,
     );
-    if (existing) {
+    if (existingRead.kind === "invalid_present") {
+        return errorResponse("upgrade_required", DURABLE_AUTHORITY_UNREADABLE_MESSAGE);
+    }
+    if (existingRead.kind === "valid") {
+        const existing = existingRead.record;
         if (
             existing.machineId !== input.transportMachineId
             || !externalLinkedAdmissionFencesMatch(input.session, command)
@@ -680,7 +736,7 @@ async function readJobInTx(
     tx: Tx,
     actorUserId: string,
     command: ExternalSessionOperationSocketCommandV1,
-): Promise<HistoricalImportJob | null> {
+): Promise<DurableAuthorityRead<HistoricalImportJob>> {
     const lookup = await findExactHostSessionSystemRecordInTx(tx, {
         accountId: actorUserId,
         sessionId: command.claim.sessionId,
@@ -688,10 +744,12 @@ async function readJobInTx(
         localId: localIdForOperation(command.claim.operationId),
     });
     if (!lookup.ok) throw new HistoricalImportSystemRecordAddressCollisionError();
-    if (lookup.row && lookup.row.kind !== HISTORICAL_IMPORT_KIND) {
+    if (!lookup.row) return { kind: "missing" };
+    if (lookup.row.kind !== HISTORICAL_IMPORT_KIND) {
         throw new HistoricalImportSystemRecordKindConflictError();
     }
-    return lookup.row ? readJob(lookup.row.content) : null;
+    const record = readJob(lookup.row.content);
+    return record ? { kind: "valid", record } : { kind: "invalid_present" };
 }
 
 async function writeJobInTx(
@@ -1059,7 +1117,11 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                 command,
             });
         }
-        let job = await readJobInTx(tx, params.actorUserId, command);
+        const jobRead = await readJobInTx(tx, params.actorUserId, command);
+        if (jobRead.kind === "invalid_present") {
+            return errorResponse("upgrade_required", DURABLE_AUTHORITY_UNREADABLE_MESSAGE);
+        }
+        let job: HistoricalImportJob | null = jobRead.kind === "valid" ? jobRead.record : null;
         if (command.kind === "inspect") {
             if (job) {
                 const rejection = authorizeResumeJob(
@@ -1427,7 +1489,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
             });
             if (!written.ok) {
                 return errorResponse(
-                    written.error === "stable-item-conflict" ? "batch_conflict" : "invalid_state",
+                    historicalImportBatchWriteErrorCode(written.error),
                     `Historical import batch rejected: ${written.error}.`,
                 );
             }

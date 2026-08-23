@@ -1,3 +1,4 @@
+import { StoredJsonContentEnvelopeSchema } from "@happier-dev/protocol";
 import { z } from "zod";
 import type { FastifyReply } from "fastify";
 
@@ -21,8 +22,29 @@ const TransactionParamsSchema = z.object({
         .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u),
 }).strict();
 
+const MAX_TRANSACTION_CONTENT_UTF8_BYTES = 524_288;
+
+/**
+ * One explicit Account stored-content envelope, bounded by its serialized size. The
+ * kind is never inferred: a plain Account sends `{ t: 'plain', v }` and an E2EE
+ * Account `{ t: 'encrypted', c }`, and the store admits it against the persisted
+ * Account mode.
+ */
+const TransactionEnvelopeSchema = StoredJsonContentEnvelopeSchema
+    .superRefine((value, context) => {
+        if (
+            new TextEncoder().encode(JSON.stringify(value)).byteLength
+            > MAX_TRANSACTION_CONTENT_UTF8_BYTES
+        ) {
+            context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Connected-account attempt transaction content exceeds its byte limit",
+            });
+        }
+    });
+
 const TransactionContentSchema = z.object({
-    ciphertext: z.string().min(1).max(524_288),
+    content: TransactionEnvelopeSchema,
     expiresAtMs: z.number().int().positive(),
 }).strict();
 
@@ -36,7 +58,7 @@ const TransactionDeleteSchema = z.object({
 
 const TransactionRecordSchema = z.object({
     revision: z.number().int().min(1),
-    ciphertext: z.string().min(1).max(524_288),
+    content: TransactionEnvelopeSchema,
     expiresAtMs: z.number().int().positive(),
 }).strict();
 
@@ -45,6 +67,7 @@ const TransactionErrorSchema = z.object({
         "connected_account_attempt_transaction_not_found",
         "connected_account_attempt_transaction_conflict",
         "connected_account_attempt_transaction_expiry_invalid",
+        "connected_account_attempt_transaction_storage_mode_mismatch",
     ]),
 }).strict();
 
@@ -55,15 +78,20 @@ function expiryIsValid(expiresAtMs: number, nowMs: number): boolean {
 
 function sendMutationError(
     reply: FastifyReply,
-    status: "not_found" | "conflict",
+    status: "not_found" | "conflict" | "storage_mode_mismatch",
 ): FastifyReply {
-    return status === "not_found"
-        ? reply.code(404).send({
+    if (status === "not_found") {
+        return reply.code(404).send({
             error: "connected_account_attempt_transaction_not_found",
-        })
-        : reply.code(409).send({
-            error: "connected_account_attempt_transaction_conflict",
         });
+    }
+    // A representation that disagrees with the persisted Account mode is an
+    // inconsistent write, not a lost race: it is refused without storing anything.
+    return reply.code(409).send({
+        error: status === "storage_mode_mismatch"
+            ? "connected_account_attempt_transaction_storage_mode_mismatch"
+            : "connected_account_attempt_transaction_conflict",
+    });
 }
 
 export function registerConnectedAccountAttemptTransactionRoutes(

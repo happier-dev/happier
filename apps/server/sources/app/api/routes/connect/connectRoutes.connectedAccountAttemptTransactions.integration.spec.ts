@@ -7,6 +7,7 @@ import {
 } from "fastify-type-provider-zod";
 
 import { db } from "@/storage/db";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import {
     createLightSqliteHarness,
     type LightSqliteHarness,
@@ -18,6 +19,20 @@ import {
 } from "./connectedAccountAttemptTransactions/registerConnectedAccountAttemptTransactionRoutes";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
+
+async function createE2eeAccount(): Promise<Readonly<{ id: string }>> {
+    return await db.account.create({
+        data: { ...createSignedAccountContentBinding(), encryptionMode: "e2ee" },
+        select: { id: true },
+    });
+}
+
+async function createPlainAccount(): Promise<Readonly<{ id: string }>> {
+    return await db.account.create({
+        data: { publicKey: null, encryptionMode: "plain" },
+        select: { id: true },
+    });
+}
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -55,15 +70,16 @@ describe("Connected Account attempt transaction routes", () => {
 
     afterAll(async () => await harness.close());
 
-    it("stores only opaque ciphertext and isolates exact attempts by account", async () => {
+    it("stores only the opaque E2EE envelope and isolates exact attempts by account", async () => {
         const [accountA, accountB] = await Promise.all([
-            db.account.create({ data: { publicKey: "account-a" }, select: { id: true } }),
-            db.account.create({ data: { publicKey: "account-b" }, select: { id: true } }),
+            createE2eeAccount(),
+            createE2eeAccount(),
         ]);
         const app = createTestApp();
         await app.ready();
         const expiresAtMs = Date.now() + 15 * 60_000;
         const ciphertext = "opaque-ciphertext-without-readable-provider-state";
+        const content = { t: "encrypted", c: ciphertext } as const;
         const url = "/v2/connect/connected-account-attempt-transactions/oauth/attempt_01HZX4T3Q7";
 
         const created = await app.inject({
@@ -73,12 +89,12 @@ describe("Connected Account attempt transaction routes", () => {
                 "content-type": "application/json",
                 "x-test-user-id": accountA.id,
             },
-            payload: { ciphertext, expiresAtMs },
+            payload: { content, expiresAtMs },
         });
         expect(created.statusCode).toBe(200);
         expect(created.json()).toEqual({
             revision: 1,
-            ciphertext,
+            content,
             expiresAtMs,
         });
 
@@ -110,10 +126,7 @@ describe("Connected Account attempt transaction routes", () => {
     });
 
     it("replaces and deletes only the exact current revision", async () => {
-        const account = await db.account.create({
-            data: { publicKey: "account-cas" },
-            select: { id: true },
-        });
+        const account = await createE2eeAccount();
         const app = createTestApp();
         await app.ready();
         const url = "/v2/connect/connected-account-attempt-transactions/device/device-attempt-1";
@@ -126,7 +139,10 @@ describe("Connected Account attempt transaction routes", () => {
                 "content-type": "application/json",
                 "x-test-user-id": account.id,
             },
-            payload: { ciphertext: "opaque-first", expiresAtMs: firstExpiry },
+            payload: {
+                content: { t: "encrypted", c: "opaque-first" },
+                expiresAtMs: firstExpiry,
+            },
         });
 
         const replaced = await app.inject({
@@ -138,14 +154,14 @@ describe("Connected Account attempt transaction routes", () => {
             },
             payload: {
                 expectedRevision: 1,
-                ciphertext: "opaque-second",
+                content: { t: "encrypted", c: "opaque-second" },
                 expiresAtMs: secondExpiry,
             },
         });
         expect(replaced.statusCode).toBe(200);
         expect(replaced.json()).toEqual({
             revision: 2,
-            ciphertext: "opaque-second",
+            content: { t: "encrypted", c: "opaque-second" },
             expiresAtMs: secondExpiry,
         });
 
@@ -158,7 +174,7 @@ describe("Connected Account attempt transaction routes", () => {
             },
             payload: {
                 expectedRevision: 1,
-                ciphertext: "opaque-stale",
+                content: { t: "encrypted", c: "opaque-stale" },
                 expiresAtMs: secondExpiry,
             },
         });
@@ -197,10 +213,7 @@ describe("Connected Account attempt transaction routes", () => {
     });
 
     it("rejects traversal, oversized opaque payloads, and plaintext-bearing bodies", async () => {
-        const account = await db.account.create({
-            data: { publicKey: "account-invalid" },
-            select: { id: true },
-        });
+        const account = await createE2eeAccount();
         const app = createTestApp();
         await app.ready();
         const headers = {
@@ -212,7 +225,7 @@ describe("Connected Account attempt transaction routes", () => {
             url: "/v2/connect/connected-account-attempt-transactions/oauth/%2E%2E%2Fall",
             headers,
             payload: {
-                ciphertext: "opaque",
+                content: { t: "encrypted", c: "opaque" },
                 expiresAtMs: Date.now() + 60_000,
             },
         });
@@ -223,7 +236,7 @@ describe("Connected Account attempt transaction routes", () => {
             url: "/v2/connect/connected-account-attempt-transactions/oauth/attempt-1",
             headers,
             payload: {
-                ciphertext: "opaque",
+                content: { t: "encrypted", c: "opaque" },
                 expiresAtMs: Date.now() + 60_000,
                 stagedCredentials: { token: "plaintext-secret" },
             },
@@ -235,11 +248,74 @@ describe("Connected Account attempt transaction routes", () => {
             url: "/v2/connect/connected-account-attempt-transactions/oauth/attempt-2",
             headers,
             payload: {
-                ciphertext: "x".repeat(524_289),
+                content: { t: "encrypted", c: "x".repeat(524_289) },
                 expiresAtMs: Date.now() + 60_000,
             },
         });
         expect(oversized.statusCode).toBe(400);
         expect(await db.repeatKey.count()).toBe(0);
+    });
+
+    it("admits each envelope kind against the persisted Account mode and refuses the other", async () => {
+        const [plainAccount, e2eeAccount] = await Promise.all([
+            createPlainAccount(),
+            createE2eeAccount(),
+        ]);
+        const app = createTestApp();
+        await app.ready();
+        const expiresAtMs = Date.now() + 15 * 60_000;
+        const plainUrl = "/v2/connect/connected-account-attempt-transactions/device/plain-attempt";
+        const plainContent = { t: "plain", v: { version: 1, kind: "device" } } as const;
+
+        const storedPlain = await app.inject({
+            method: "POST",
+            url: plainUrl,
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": plainAccount.id,
+            },
+            payload: { content: plainContent, expiresAtMs },
+        });
+        expect(storedPlain.statusCode).toBe(200);
+        expect(storedPlain.json()).toEqual({
+            revision: 1,
+            content: plainContent,
+            expiresAtMs,
+        });
+
+        const plainAccountEncrypted = await app.inject({
+            method: "POST",
+            url: "/v2/connect/connected-account-attempt-transactions/device/plain-mismatch",
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": plainAccount.id,
+            },
+            payload: {
+                content: { t: "encrypted", c: "opaque" },
+                expiresAtMs,
+            },
+        });
+        expect(plainAccountEncrypted.statusCode).toBe(409);
+        expect(plainAccountEncrypted.json()).toEqual({
+            error: "connected_account_attempt_transaction_storage_mode_mismatch",
+        });
+
+        const e2eeAccountPlain = await app.inject({
+            method: "POST",
+            url: "/v2/connect/connected-account-attempt-transactions/device/e2ee-mismatch",
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": e2eeAccount.id,
+            },
+            payload: { content: plainContent, expiresAtMs },
+        });
+        expect(e2eeAccountPlain.statusCode).toBe(409);
+        expect(e2eeAccountPlain.json()).toEqual({
+            error: "connected_account_attempt_transaction_storage_mode_mismatch",
+        });
+
+        // Only the mode-matching write is stored; neither refusal left a row behind.
+        const rows = await db.repeatKey.findMany();
+        expect(rows).toHaveLength(1);
     });
 });

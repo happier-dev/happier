@@ -1,10 +1,11 @@
 import Fastify from "fastify";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
 import crypto from "node:crypto";
 import {
+    createKeyChallengeV2SigningInput,
     createExpectedAccountKeyChallengeSigningInputV1,
 } from "@happier-dev/protocol";
 
@@ -83,6 +84,35 @@ function createExpectedAccountLoginPayload(params: Readonly<{
     };
 }
 
+type KeyChallengeV2IssueResponse = Readonly<{
+    challengeId: string;
+    nonce: string;
+    issuedAt: string;
+    expiresAt: string;
+    audience: Readonly<{
+        origin: string;
+        serverIdentityId?: string;
+    }>;
+}>;
+
+function createKeyChallengeV2LoginPayload(params: Readonly<{
+    challenge: KeyChallengeV2IssueResponse;
+    signing: tweetnacl.SignKeyPair;
+}>): Readonly<Record<string, string>> {
+    return {
+        challengeId: params.challenge.challengeId,
+        publicKey: privacyKit.encodeBase64(ownedBytes(params.signing.publicKey)),
+        signature: privacyKit.encodeBase64(
+            ownedBytes(
+                tweetnacl.sign.detached(
+                createKeyChallengeV2SigningInput(params.challenge),
+                ownedBytes(params.signing.secretKey),
+                ),
+            ),
+        ),
+    };
+}
+
 describe("registerKeyChallengeAuthRoute (lazy auth init) (integration)", () => {
     let harness: LightSqliteHarness;
 
@@ -94,6 +124,10 @@ describe("registerKeyChallengeAuthRoute (lazy auth init) (integration)", () => {
             initFiles: false,
         });
     }, 120_000);
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
     afterAll(async () => {
         await harness.close();
@@ -846,6 +880,218 @@ describe("registerKeyChallengeAuthRoute (lazy auth init) (integration)", () => {
                     ),
             },
         })).resolves.toBeNull();
+
+        await app.close();
+        harness.resetEnv();
+    });
+
+    it("refuses v2 challenge issuance rather than deriving its audience from Host", async () => {
+        harness.resetEnv({
+            HAPPIER_PUBLIC_SERVER_URL: "",
+        });
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const response = await app.inject({
+            method: "POST",
+            url: "/v1/auth/challenge",
+            headers: { host: "attacker.example.test" },
+            payload: {},
+        });
+
+        expect(response.statusCode).toBe(503);
+        expect(response.json()).toEqual({
+            error: "key_challenge_v2_unavailable",
+        });
+
+        await app.close();
+        harness.resetEnv();
+    });
+
+    it("issues a canonical origin-bound challenge and rejects its same-server replay", async () => {
+        harness.resetEnv({
+            HAPPIER_PUBLIC_SERVER_URL: "https://server-a.example.test/api",
+            HAPPIER_SERVER_IDENTITY_ID: "srv_challenge_a",
+        });
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        await db.account.create({
+            data: {
+                publicKey: privacyKit.encodeHex(ownedBytes(signing.publicKey)),
+                encryptionMode: "plain",
+            },
+        });
+        const issued = await app.inject({
+            method: "POST",
+            url: "/v1/auth/challenge",
+            payload: {},
+        });
+        expect(issued.statusCode).toBe(200);
+        const challenge = issued.json() as KeyChallengeV2IssueResponse;
+        expect(challenge).toMatchObject({
+            challengeId: expect.any(String),
+            nonce: expect.any(String),
+            issuedAt: expect.any(String),
+            expiresAt: expect.any(String),
+            audience: {
+                origin: "https://server-a.example.test",
+                serverIdentityId: "srv_challenge_a",
+            },
+        });
+        const payload = createKeyChallengeV2LoginPayload({
+            challenge,
+            signing,
+        });
+
+        const first = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload,
+        });
+        const replay = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload,
+        });
+
+        expect(first.statusCode).toBe(200);
+        expect(replay.statusCode).toBe(401);
+
+        await app.close();
+        harness.resetEnv();
+    });
+
+    it("rejects a v2 assertion relayed from the issuing public origin to another server", async () => {
+        harness.resetEnv({
+            HAPPIER_PUBLIC_SERVER_URL: "https://server-a.example.test/api",
+            HAPPIER_SERVER_IDENTITY_ID: "srv_challenge_a",
+        });
+        const issuingApp = createTestApp();
+        registerKeyChallengeAuthRoute(issuingApp);
+        await issuingApp.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        await db.account.create({
+            data: {
+                publicKey: privacyKit.encodeHex(ownedBytes(signing.publicKey)),
+                encryptionMode: "plain",
+            },
+        });
+        const issued = await issuingApp.inject({
+            method: "POST",
+            url: "/v1/auth/challenge",
+            payload: {},
+        });
+        expect(issued.statusCode).toBe(200);
+
+        harness.resetEnv({
+            HAPPIER_PUBLIC_SERVER_URL: "https://server-b.example.test/api",
+            HAPPIER_SERVER_IDENTITY_ID: "srv_challenge_b",
+        });
+        const receivingApp = createTestApp();
+        registerKeyChallengeAuthRoute(receivingApp);
+        await receivingApp.ready();
+
+        const response = await receivingApp.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: createKeyChallengeV2LoginPayload({
+                challenge: issued.json() as KeyChallengeV2IssueResponse,
+                signing,
+            }),
+        });
+
+        expect(response.statusCode).toBe(401);
+
+        await issuingApp.close();
+        await receivingApp.close();
+        harness.resetEnv();
+    });
+
+    it("rejects a v2 assertion after the issued challenge expires", async () => {
+        harness.resetEnv({
+            HAPPIER_PUBLIC_SERVER_URL: "https://server-a.example.test/api",
+            HAPPIER_SERVER_IDENTITY_ID: "srv_challenge_a",
+        });
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        await db.account.create({
+            data: {
+                publicKey: privacyKit.encodeHex(ownedBytes(signing.publicKey)),
+                encryptionMode: "plain",
+            },
+        });
+        const issued = await app.inject({
+            method: "POST",
+            url: "/v1/auth/challenge",
+            payload: {},
+        });
+        expect(issued.statusCode).toBe(200);
+        const challenge = issued.json() as KeyChallengeV2IssueResponse;
+        const expiresAt = new Date(Date.now() - 1_000);
+        await db.keyChallengeV2.update({
+            where: { id: challenge.challengeId },
+            data: { expiresAt },
+        });
+
+        const response = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: createKeyChallengeV2LoginPayload({
+                challenge: {
+                    ...challenge,
+                    expiresAt: expiresAt.toISOString(),
+                },
+                signing,
+            }),
+        });
+
+        expect(response.statusCode).toBe(401);
+
+        await app.close();
+        harness.resetEnv();
+    });
+
+    it("allows only one concurrent v2 redemption", async () => {
+        harness.resetEnv({
+            HAPPIER_PUBLIC_SERVER_URL: "https://server-a.example.test/api",
+            HAPPIER_SERVER_IDENTITY_ID: "srv_challenge_a",
+        });
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        await db.account.create({
+            data: {
+                publicKey: privacyKit.encodeHex(ownedBytes(signing.publicKey)),
+                encryptionMode: "plain",
+            },
+        });
+        const issued = await app.inject({
+            method: "POST",
+            url: "/v1/auth/challenge",
+            payload: {},
+        });
+        expect(issued.statusCode).toBe(200);
+        const payload = createKeyChallengeV2LoginPayload({
+            challenge: issued.json() as KeyChallengeV2IssueResponse,
+            signing,
+        });
+
+        const responses = await Promise.all([
+            app.inject({ method: "POST", url: "/v1/auth", payload }),
+            app.inject({ method: "POST", url: "/v1/auth", payload }),
+        ]);
+
+        expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 401]);
 
         await app.close();
         harness.resetEnv();

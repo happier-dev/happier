@@ -14,6 +14,8 @@ describe("resolveAuthFeature (auth.methods)", () => {
         const feature = resolveAuthFeature({
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
+            HAPPIER_PUBLIC_SERVER_URL: "https://server.example.test/api",
+            HAPPIER_SERVER_IDENTITY_ID: "srv_featureIdentity123",
             HAPPIER_FEATURE_AUTH_MTLS__ENABLED: "1",
             HAPPIER_FEATURE_AUTH_MTLS__MODE: "forwarded",
             HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "1",
@@ -29,12 +31,35 @@ describe("resolveAuthFeature (auth.methods)", () => {
                 { id: "provision", enabled: true, mode: "keyed" },
             ]),
         );
+        expect(feature?.capabilities?.auth?.keyChallenge?.v2).toBe(true);
 
         const mtls = getMethod(feature, "mtls");
         expect(mtls).toMatchObject({ id: "mtls" });
         expect(mtls.actions).toEqual(
             expect.arrayContaining([{ id: "login", enabled: true, mode: "keyless" }]),
         );
+    });
+
+    it("advertises key-challenge v2 only when a canonical public origin is configured", () => {
+        const feature = resolveAuthFeature({
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
+            HAPPIER_SERVER_IDENTITY_ID: "srv_featureIdentity123",
+        } as NodeJS.ProcessEnv);
+
+        expect(feature?.features?.auth?.login?.keyChallenge?.enabled).toBe(true);
+        expect(feature?.capabilities?.auth?.keyChallenge?.v2).toBe(false);
+    });
+
+    it("advertises key-challenge v2 only when a server identity is available", () => {
+        const feature = resolveAuthFeature({
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
+            HAPPIER_PUBLIC_SERVER_URL: "https://server.example.test/api",
+        } as NodeJS.ProcessEnv);
+
+        expect(feature?.features?.auth?.login?.keyChallenge?.enabled).toBe(true);
+        expect(feature?.capabilities?.auth?.keyChallenge?.v2).toBe(false);
     });
 
     it("disables key_challenge provisioning when key-challenge login is disabled", () => {
@@ -51,6 +76,7 @@ describe("resolveAuthFeature (auth.methods)", () => {
         const signupMethods = feature?.capabilities?.auth?.signup?.methods ?? [];
         const anonymous = signupMethods.find((m: any) => String(m?.id ?? "").toLowerCase() === "anonymous") ?? null;
         expect(anonymous?.enabled).toBe(false);
+        expect(feature?.capabilities?.auth?.keyChallenge?.v2).toBe(false);
     });
 
     it("disables mTLS provisioning when keyless auto-provision eligibility is not satisfied", () => {

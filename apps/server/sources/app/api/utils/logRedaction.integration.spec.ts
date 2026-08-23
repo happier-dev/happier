@@ -42,11 +42,13 @@ describe('log redaction', () => {
     });
 
     it(
-        'enableAuthentication never logs bearer tokens',
+        'enableAuthentication never logs API-token bearer values',
         async () => {
         const { enableAuthentication } = await import('./enableAuthentication');
         await withApp(async (app) => {
             enableAuthentication(app as any);
+
+            const apiToken = `hap_v1_550e8400-e29b-41d4-a716-446655440000_${"A".repeat(43)}`;
 
             const reply = {
                 code: vi.fn(() => reply),
@@ -54,12 +56,12 @@ describe('log redaction', () => {
             };
 
             await (app as any).authenticate(
-                { headers: { authorization: 'Bearer SUPER_SECRET_TOKEN' }, url: '/v1/account/profile' },
+                { headers: { authorization: `Bearer ${apiToken}` }, url: '/v1/account/profile' },
                 reply
             );
 
-            expectNoSecretLeak('SUPER_SECRET_TOKEN');
-            expectNoSecretLeak('Bearer SUPER_SECRET_TOKEN');
+            expectNoSecretLeak(apiToken);
+            expectNoSecretLeak(`Bearer ${apiToken}`);
         });
         },
         20_000,

@@ -45,6 +45,7 @@ import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
 import { createAutomationReplyHandoffDaemonDispatcher } from "./socket/automationReplyHandoffDispatcher";
+import { createExternalActionDaemonDispatcher } from "./socket/externalActionDispatcher";
 import {
     createSessionServerStartAutomationIngress,
     createSessionServerStartDaemonDispatcher,
@@ -272,6 +273,10 @@ export function startSocket(app: Fastify) {
     });
     app.forwardAutomationReplyHandoffToMachine =
         createAutomationReplyHandoffDaemonDispatcher({ io });
+    app.forwardExternalActionToMachine = createExternalActionDaemonDispatcher({
+        io,
+        sessionPublisherPresence,
+    });
     app.forwardSessionServerStartToMachine =
         createSessionServerStartDaemonDispatcher({ io });
     const sessionServerStartAutomationIngress = createSessionServerStartAutomationIngress({

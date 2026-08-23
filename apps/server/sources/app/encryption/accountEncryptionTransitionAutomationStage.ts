@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS } from "@happier-dev/protocol";
+import {
+    ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS,
+    pluginJsonValuesEqual,
+} from "@happier-dev/protocol";
 import { z } from "zod";
 
 import {
@@ -294,30 +297,6 @@ export function measureAccountEncryptionTransitionAutomationStageItemBytes(
     return BigInt(new TextEncoder().encode(stageItemContent(item)).byteLength);
 }
 
-function jsonEqual(left: unknown, right: unknown): boolean {
-    if (left === right) return true;
-    if (
-        left === null
-        || right === null
-        || typeof left !== "object"
-        || typeof right !== "object"
-        || Array.isArray(left)
-        || Array.isArray(right)
-    ) {
-        if (!Array.isArray(left) || !Array.isArray(right)) return false;
-        return left.length === right.length
-            && left.every((value, index) => jsonEqual(value, right[index]));
-    }
-    const leftRecord = left as Record<string, unknown>;
-    const rightRecord = right as Record<string, unknown>;
-    const leftKeys = Object.keys(leftRecord).sort();
-    const rightKeys = Object.keys(rightRecord).sort();
-    return leftKeys.length === rightKeys.length
-        && leftKeys.every((key, index) => (
-            key === rightKeys[index] && jsonEqual(leftRecord[key], rightRecord[key])
-        ));
-}
-
 function parseJson(value: string): unknown | null {
     try {
         return JSON.parse(value) as unknown;
@@ -377,7 +356,7 @@ export function targetItemFromAccountEncryptionTransitionAutomationStage(
         return source.kind === "definition"
             && parsed.data.automationId === source.automationId
             && parsed.data.expectedRevision === source.revision
-            && jsonEqual(parsed.data.source, source.source)
+            && pluginJsonValuesEqual(parsed.data.source, source.source)
             ? parsed.data as AutomationAccountEncryptionTransitionStageItem
             : null;
     }
@@ -387,7 +366,7 @@ export function targetItemFromAccountEncryptionTransitionAutomationStage(
         && parsed.data.expectedRevision === source.revision
         && parsed.data.originKind === source.originKind
         && parsed.data.occurrenceKey === source.occurrenceKey
-        && jsonEqual(parsed.data.source, source.source)
+        && pluginJsonValuesEqual(parsed.data.source, source.source)
         ? parsed.data as AutomationAccountEncryptionTransitionStageItem
         : null;
 }
@@ -700,7 +679,7 @@ export async function writeAccountEncryptionTransitionAutomationStageTargetsInTx
             candidate.stage,
         );
         if (existing) {
-            if (!jsonEqual(existing, candidate.item)) return { status: "stage_conflict" };
+            if (!pluginJsonValuesEqual(existing, candidate.item)) return { status: "stage_conflict" };
             continue;
         }
         if (

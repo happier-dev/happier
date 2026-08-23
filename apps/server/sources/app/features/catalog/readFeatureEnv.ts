@@ -28,6 +28,7 @@ import {
   LocalServicePublicExposureModeV1Schema,
   PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
   PLUGIN_COLLECTION_LIMITS_V1,
+  PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
   PluginDataCollectionsCapabilitiesSchema,
   normalizeMachineTunnelAllowedPorts,
   normalizeMachineTunnelPreferredEncoding,
@@ -203,7 +204,14 @@ export type WebhookIngressPolicyV1 = Readonly<{
   version: 1;
   process: Readonly<{
     maxRequests: number;
-    maxWorkingBytes: number;
+    /**
+     * Aggregate ceiling on the raw request bodies this process has buffered
+     * concurrently. Its default is the exact worst case the request ceiling
+     * already permits (`maxRequests` x the protocol raw-body limit), so the
+     * count is what binds by default and this stays a real lever only for an
+     * operator who wants a tighter memory bound than that.
+     */
+    maxRawBodyBytes: number;
   }>;
   route: Readonly<{
     ratePerMinute: number;
@@ -777,14 +785,19 @@ function readLoweredWebhookIngressLimit(
 }
 
 function readWebhookIngressPolicyV1(env: NodeJS.ProcessEnv): WebhookIngressPolicyV1 {
+  const maxRequests = readLoweredWebhookIngressLimit(
+    env,
+    FEATURE_ENV_KEYS.pluginsWebhooksProcessMaxRequests,
+    4,
+  );
   return Object.freeze({
     version: 1,
     process: Object.freeze({
-      maxRequests: readLoweredWebhookIngressLimit(env, FEATURE_ENV_KEYS.pluginsWebhooksProcessMaxRequests, 4),
-      maxWorkingBytes: readLoweredWebhookIngressLimit(
+      maxRequests,
+      maxRawBodyBytes: readLoweredWebhookIngressLimit(
         env,
-        FEATURE_ENV_KEYS.pluginsWebhooksProcessMaxWorkingBytes,
-        512 * 1_024 * 1_024,
+        FEATURE_ENV_KEYS.pluginsWebhooksProcessMaxRawBodyBytes,
+        maxRequests * PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
       ),
     }),
     route: Object.freeze({

@@ -544,6 +544,105 @@ describe("Automation API projections", () => {
             .toThrow("Automation stored content mode does not match the Account");
     });
 
+    it("exposes the native execution identity and ordered transition history an uncertain Run needs", () => {
+        const uncertain = {
+            ...eventRun(),
+            executionInputEnvelope: strictEventExecutionRecipe(),
+            state: "outcome_uncertain" as const,
+            executionDispatchState: "outcomeUnknown" as const,
+            executionAttempt: 2,
+            executionNativeRunId: "native-run-1",
+            executionNativeCallId: "native-call-1",
+            executionNativeSidechainId: "native-sidechain-1",
+            errorCode: "execution_run_cancelled_outcome_unknown",
+            // Persisted newest-first exactly as the detail read selects it.
+            events: [
+                {
+                    ts: new Date(3_000),
+                    type: "run_outcome_uncertain",
+                    payload: { reason: "cancelled_after_dispatch_permitted" },
+                },
+                {
+                    ts: new Date(2_000),
+                    type: "execution_dispatch_retry_scheduled",
+                    payload: { machineId: "machine-1", executionAttempt: 1, outcome: "noRunCreated" },
+                },
+                {
+                    ts: new Date(1_000),
+                    type: "run_started",
+                    payload: { machineId: "machine-1" },
+                },
+            ],
+        };
+
+        const detail = toAutomationRunV3DetailApiDto(uncertain, "plain");
+
+        expect(detail).toEqual(expect.objectContaining({
+            executionNativeRunId: "native-run-1",
+            executionNativeCallId: "native-call-1",
+            executionNativeSidechainId: "native-sidechain-1",
+        }));
+        // The user reads the history in the order it happened.
+        expect(detail.events).toEqual([
+            {
+                at: 1_000,
+                type: "run_started",
+                machineId: "machine-1",
+                errorCode: null,
+                executionAttempt: null,
+                outcome: null,
+                reason: null,
+            },
+            {
+                at: 2_000,
+                type: "execution_dispatch_retry_scheduled",
+                machineId: "machine-1",
+                errorCode: null,
+                executionAttempt: 1,
+                outcome: "noRunCreated",
+                reason: null,
+            },
+            {
+                at: 3_000,
+                type: "run_outcome_uncertain",
+                machineId: null,
+                errorCode: null,
+                executionAttempt: null,
+                outcome: null,
+                reason: "cancelled_after_dispatch_permitted",
+            },
+        ]);
+    });
+
+    it("never projects an unnamed persisted transition field into the user-facing history", () => {
+        const detail = toAutomationRunV3DetailApiDto({
+            ...eventRun(),
+            executionInputEnvelope: strictEventExecutionRecipe(),
+            events: [
+                {
+                    ts: new Date(1_000),
+                    type: "run_failed",
+                    payload: {
+                        machineId: "machine-1",
+                        errorCode: "invalid_template",
+                        decryptedPrompt: "secret prompt text",
+                    },
+                },
+            ],
+        }, "plain");
+
+        expect(JSON.stringify(detail.events)).not.toContain("secret prompt text");
+        expect(detail.events[0]).toEqual({
+            at: 1_000,
+            type: "run_failed",
+            machineId: "machine-1",
+            errorCode: "invalid_template",
+            executionAttempt: null,
+            outcome: null,
+            reason: null,
+        });
+    });
+
     it("projects every Run origin from its immutable timestamp without changing V2 scheduledAt", () => {
         const manual = {
             ...manualRun(),

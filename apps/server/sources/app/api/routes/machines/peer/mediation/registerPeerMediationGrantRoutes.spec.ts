@@ -13,6 +13,7 @@ import { RPC_METHODS } from "@happier-dev/protocol/rpc";
 
 import { registerPeerMediationGrantRoutes } from "./registerPeerMediationGrantRoutes";
 import { registerPeerTcpTunnelRelaySocketHandler } from "@/app/api/socket/peer/mediation/tunnel/registerRelay";
+import { createRelayTestCoordinator } from "@/app/api/socket/peer/mediation/tunnel/relayCoordinator.testkit";
 
 function toBase64Url(bytes: Uint8Array): string {
     return Buffer.from(bytes).toString("base64url");
@@ -474,21 +475,23 @@ describe("registerPeerMediationGrantRoutes", () => {
             },
             emit: () => undefined,
         };
-        registerPeerTcpTunnelRelaySocketHandler("account_1", socket, {
-            io: {
+        const relayIo = {
+            to: () => ({
+                emit: (event: string, payload: unknown) => {
+                    if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) forwarded.push(payload);
+                },
+            }),
+            local: {
                 to: () => ({
                     emit: (event: string, payload: unknown) => {
                         if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) forwarded.push(payload);
                     },
                 }),
-                local: {
-                    to: () => ({
-                        emit: (event: string, payload: unknown) => {
-                            if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) forwarded.push(payload);
-                        },
-                    }),
-                },
             },
+        };
+        registerPeerTcpTunnelRelaySocketHandler("account_1", socket, {
+            io: relayIo,
+            coordinator: createRelayTestCoordinator(relayIo, "account_1"),
             nowMs: () => 1_000,
             serverRoutedEnabled: true,
             allowedPorts: [3000],
@@ -770,5 +773,74 @@ describe("registerPeerMediationGrantRoutes", () => {
         await route.invoke({ userId: "account_1" });
 
         expect(seen).toEqual([{ accountId: "account_1", machineId: "machine_1" }]);
+    });
+});
+
+describe("direct voice_media peer mediation grant gating", () => {
+    const directVoiceMediaBody = {
+        machineId: "machine_1",
+        flowKind: "voice_media",
+        routeKind: "loopback_direct",
+        endpointFingerprint: "loopback_endpoint_1",
+        ttlMs: 300_000,
+        scope: {
+            kind: "voice_media",
+            tunnelId: "voice-media:machine_1:request_1",
+            applicationKind: "speech_transcription",
+            applicationAttemptId: "request_1",
+            applicationAuthorityDigest: `sha256:${"ab".repeat(32)}`,
+            maxIdleMs: 30_000,
+            maxDurationMs: 60_000,
+        },
+    } as const;
+
+    function createDirectVoiceMediaRoute(env: Readonly<Record<string, string>>) {
+        const keyPair = tweetnacl.sign.keyPair();
+        return createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/machines/peer/mediation/route-grants",
+            defaultRequest: { body: directVoiceMediaBody },
+            registerRoutes: (app) => registerPeerMediationGrantRoutes(app, {
+                env: {
+                    ...env,
+                    [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningKeyId]: "grant-key-1",
+                    [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
+                },
+                nowMs: () => 1_000,
+                readMachineOwnershipState: async () => "available",
+            }),
+        });
+    }
+
+    // The daemon only registers the `voice_media` loopback flow when
+    // `machines.tunnel.directPeer` is enabled (startLoopback.ts), and the client only attempts
+    // the direct route under the same bit. The mint gate must agree with them, otherwise the
+    // grant this route signs authorizes a route the daemon will never accept.
+    it("mints a direct voice_media grant on the tunnel direct-peer bit with live-stream direct peer disabled", async () => {
+        const route = createDirectVoiceMediaRoute({
+            [FEATURE_ENV_KEYS.machinesTunnelDirectPeerEnabled]: "true",
+            [FEATURE_ENV_KEYS.machinesLiveStreamDirectPeerEnabled]: "false",
+        });
+
+        const { response } = await route.invoke({ userId: "account_1" });
+
+        expect(response).toMatchObject({
+            ok: true,
+            receipt: "peer.route_grant.minted",
+            grant: { payload: { flowKind: "voice_media", routeKind: "loopback_direct" } },
+        });
+    });
+
+    it("refuses a direct voice_media grant when the tunnel direct-peer bit is disabled", async () => {
+        const route = createDirectVoiceMediaRoute({
+            [FEATURE_ENV_KEYS.machinesTunnelDirectPeerEnabled]: "false",
+            [FEATURE_ENV_KEYS.machinesLiveStreamDirectPeerEnabled]: "true",
+        });
+
+        const { response, reply } = await route.invoke({ userId: "account_1" });
+
+        expect(response).toBeUndefined();
+        expect(reply.code).toHaveBeenCalledWith(404);
+        expect(reply.send).toHaveBeenCalledWith({ error: "not_found" });
     });
 });

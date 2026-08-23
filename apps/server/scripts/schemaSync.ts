@@ -114,6 +114,8 @@ function generateProviderSchemaFromPostgres(
 
         body = annotateMySqlQualifiedConnectedAccountFields(body);
 
+        body = annotateMySqlAccountApiTokenFields(body);
+
 	        // MySQL defaults `String` to VARCHAR(191), which is too small for our encrypted state blobs.
 	        body = body.replace(/^(\s*metadata\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*ownerMetadata\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
@@ -529,6 +531,13 @@ function annotateMySqlQualifiedConnectedAccountFields(schemaBody: string): strin
             .replace(/^(\s*qualifiedIdentityDigest\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
             .replace(/^(\s*qualifiedGroupDigest\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
             .replace(/^(\s*activeConnectedAccountId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
+    );
+}
+
+function annotateMySqlAccountApiTokenFields(schemaBody: string): string {
+    return schemaBody.replace(
+        /^model\s+AccountApiToken\s+\{[\s\S]*?^\}\s*$/gm,
+        (model) => model.replace(/^\s*(label\s+String)(?![^\n]*@db\.)/m, "    $1 @db.VarChar(256)"),
     );
 }
 

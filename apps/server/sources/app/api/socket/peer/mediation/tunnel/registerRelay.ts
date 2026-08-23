@@ -52,7 +52,6 @@ const registeredSockets = new WeakSet<object>();
 const activeTunnelKeysBySocket = new WeakMap<object, Set<TunnelKey>>();
 const socketSetsByTunnelKey = new Map<TunnelKey, Set<Set<TunnelKey>>>();
 const authorizedTunnelKeys = new Set<TunnelKey>();
-const consumedRelayAuthorizationExpByGrantId = new Map<string, number>();
 const bytesByTunnelKey = new Map<TunnelKey, Readonly<{ in: number; out: number }>>();
 const encodingByTunnelKey = new Map<TunnelKey, PeerTcpTunnelEncoding>();
 const flowKindByTunnelKey = new Map<TunnelKey, PeerTcpTunnelRelayAuthorizationPayloadV2['flowKind']>();
@@ -80,14 +79,6 @@ const tunnelTimersByKey = new Map<TunnelKey, Readonly<{
     durationTimer?: ReturnType<typeof setTimeout>;
 }>>();
 const coordinatorByTunnelKey = new Map<TunnelKey, PeerTcpTunnelRelayCoordinator>();
-const localMachineSocketByAccountAndMachine = new Map<string, Readonly<{
-    socket: TunnelRelaySocket;
-    tunnelKeys: Set<TunnelKey>;
-}>>();
-
-function localMachineSocketKey(accountId: string, machineId: string): string {
-    return `${accountId}\u0000${machineId}`;
-}
 
 function getFrameTunnelId(frame: PeerTcpTunnelFrameV1): string {
     return frame.kind === 'open' ? frame.open.tunnelId : frame.tunnelId;
@@ -301,6 +292,11 @@ function readInvalidRelayAuthorizationOpenAbortEnvelope(raw: unknown, userId: st
     };
 }
 
+/**
+ * Machine delivery is owned by the cluster coordinator: it holds the exact
+ * attached machine socket, which may live on another replica. User delivery
+ * stays local because the owner socket is, by construction, on this replica.
+ */
 function emitEnvelopeToParticipant(input: Readonly<{
     io: TunnelRelayIo;
     userId: string;
@@ -308,10 +304,9 @@ function emitEnvelopeToParticipant(input: Readonly<{
     envelope: PeerTcpTunnelRelayEnvelope;
     tunnelKey?: TunnelKey;
     boundUserSocketId?: string;
-    coordinatorBacked: boolean;
     notifyAttachedMachine: boolean;
 }>): void {
-    if (input.participant.kind === 'machine' && input.coordinatorBacked) {
+    if (input.participant.kind === 'machine') {
         if (input.notifyAttachedMachine && input.tunnelKey) {
             coordinatorByTunnelKey.get(input.tunnelKey)?.routeOwnerEnvelope({
                 tunnelKey: input.tunnelKey,
@@ -326,10 +321,7 @@ function emitEnvelopeToParticipant(input: Readonly<{
         tunnelKey: input.tunnelKey,
         boundUserSocketId: input.boundUserSocketId,
     });
-    const target = input.participant.kind === 'user' && input.coordinatorBacked
-        ? input.io.local.to(room)
-        : input.io.to(room);
-    target.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, input.envelope);
+    input.io.local.to(room).emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, input.envelope);
 }
 
 function emitAbortToRelayParticipants(input: Readonly<{
@@ -340,7 +332,6 @@ function emitAbortToRelayParticipants(input: Readonly<{
     reasonCode: string;
     tunnelKey?: TunnelKey;
     senderSocketId?: string;
-    coordinatorBacked: boolean;
     notifyAttachedMachine: boolean;
 }>): void {
     const tunnelId = input.tunnelId ?? getEnvelopeTunnelId(input.envelope);
@@ -363,7 +354,6 @@ function emitAbortToRelayParticipants(input: Readonly<{
         participant: input.envelope.recipient,
         tunnelKey: input.tunnelKey,
         envelope: payload,
-        coordinatorBacked: input.coordinatorBacked,
         notifyAttachedMachine: input.notifyAttachedMachine,
     });
     emitEnvelopeToParticipant({
@@ -373,7 +363,6 @@ function emitAbortToRelayParticipants(input: Readonly<{
         tunnelKey: input.tunnelKey,
         boundUserSocketId: input.envelope.sender.kind === 'user' ? input.senderSocketId : undefined,
         envelope: payload,
-        coordinatorBacked: input.coordinatorBacked,
         notifyAttachedMachine: input.notifyAttachedMachine,
     });
 }
@@ -387,7 +376,6 @@ function emitBinarySubstreamAbortToRelayParticipants(input: Readonly<{
     reasonCode: string;
     tunnelKey?: TunnelKey;
     senderSocketId?: string;
-    coordinatorBacked: boolean;
     notifyAttachedMachine: boolean;
 }>): void {
     const payload: PeerTcpTunnelRelayBinaryEnvelopeV2 = {
@@ -413,7 +401,6 @@ function emitBinarySubstreamAbortToRelayParticipants(input: Readonly<{
         participant: input.envelope.recipient,
         tunnelKey: input.tunnelKey,
         envelope: payload,
-        coordinatorBacked: input.coordinatorBacked,
         notifyAttachedMachine: input.notifyAttachedMachine,
     });
     emitEnvelopeToParticipant({
@@ -423,7 +410,6 @@ function emitBinarySubstreamAbortToRelayParticipants(input: Readonly<{
         tunnelKey: input.tunnelKey,
         boundUserSocketId: input.envelope.sender.kind === 'user' ? input.senderSocketId : undefined,
         envelope: payload,
-        coordinatorBacked: input.coordinatorBacked,
         notifyAttachedMachine: input.notifyAttachedMachine,
     });
 }
@@ -539,21 +525,6 @@ function clearTunnelState(tunnelKey: TunnelKey): void {
     observabilityIdentityByTunnelKey.delete(tunnelKey);
     userSocketIdByTunnelKey.delete(tunnelKey);
     substreamsByTunnelKey.delete(tunnelKey);
-}
-
-function cleanupConsumedRelayAuthorizations(nowMs: number): void {
-    for (const [grantId, expiresAt] of consumedRelayAuthorizationExpByGrantId) {
-        if (expiresAt <= nowMs) consumedRelayAuthorizationExpByGrantId.delete(grantId);
-    }
-}
-
-function consumeRelayAuthorizationGrant(input: Readonly<{ grantId: string; expiresAt: number; nowMs: number }>): boolean {
-    cleanupConsumedRelayAuthorizations(input.nowMs);
-    if (consumedRelayAuthorizationExpByGrantId.has(input.grantId)) {
-        return false;
-    }
-    consumedRelayAuthorizationExpByGrantId.set(input.grantId, input.expiresAt);
-    return true;
 }
 
 function substreamStateForTunnel(tunnelKey: TunnelKey): {
@@ -702,7 +673,11 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         relayAuthorizationTrustRoots?: readonly PeerTcpTunnelRelayAuthorizationTrustRootV1[];
         nowMs?: () => number;
         observability?: PeerMediationObservabilityEmitter;
-        coordinator?: PeerTcpTunnelRelayCoordinator;
+        /**
+         * Cluster admission owner. Required: it is the ONE decision-maker for
+         * single-use relay-grant consumption and exact-machine attachment.
+         */
+        coordinator: PeerTcpTunnelRelayCoordinator;
     } & Partial<PeerTcpTunnelRelayCaps>>,
 ): void {
     const socketObject = socket as object;
@@ -714,36 +689,24 @@ export function registerPeerTcpTunnelRelaySocketHandler(
     const caps = resolvePeerTcpTunnelRelayCaps(ctx);
     function emitAbort(input: Omit<
         Parameters<typeof emitAbortToRelayParticipants>[0],
-        "coordinatorBacked" | "notifyAttachedMachine"
+        "notifyAttachedMachine"
     > & Readonly<{ notifyAttachedMachine?: boolean }>): void {
         emitAbortToRelayParticipants({
             ...input,
-            coordinatorBacked: ctx.coordinator !== undefined,
             notifyAttachedMachine: input.notifyAttachedMachine === true,
         });
     }
     function emitBinarySubstreamAbort(input: Omit<
         Parameters<typeof emitBinarySubstreamAbortToRelayParticipants>[0],
-        "coordinatorBacked" | "notifyAttachedMachine"
+        "notifyAttachedMachine"
     > & Readonly<{ notifyAttachedMachine?: boolean }>): void {
         emitBinarySubstreamAbortToRelayParticipants({
             ...input,
-            coordinatorBacked: ctx.coordinator !== undefined,
             notifyAttachedMachine: input.notifyAttachedMachine === true,
         });
     }
     const socketTunnelKeys = new Set<TunnelKey>();
     activeTunnelKeysBySocket.set(socketObject, socketTunnelKeys);
-    const localMachineKey =
-        socket.data?.clientType === 'machine-scoped' && typeof socket.data.machineId === 'string'
-            ? localMachineSocketKey(userId, socket.data.machineId)
-            : null;
-    if (localMachineKey) {
-        localMachineSocketByAccountAndMachine.set(localMachineKey, {
-            socket,
-            tunnelKeys: socketTunnelKeys,
-        });
-    }
 
     function scheduleTunnelTimers(
         tunnelKey: TunnelKey,
@@ -941,7 +904,6 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             envelope: abortEnvelope,
             tunnelKey: input.tunnelKey,
             boundUserSocketId: input.ownerSocketId,
-            coordinatorBacked: ctx.coordinator !== undefined,
             notifyAttachedMachine: false,
         });
     }
@@ -1014,7 +976,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                     && !decodedBinary.header.substreamId
                     && (decodedBinary.header.kind === 'close' || decodedBinary.header.kind === 'abort');
 
-        if (envelope.sender.kind === 'machine' && socket.id && ctx.coordinator && ingress === "socket") {
+        if (envelope.sender.kind === 'machine' && socket.id && ingress === "socket") {
             const routeResult = ctx.coordinator.routeMachineEnvelope({
                 tunnelKey,
                 machineSocketId: socket.id,
@@ -1173,90 +1135,71 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 emitSocketError(socket, 'Server-routed peer tunnel relay authorization is missing');
                 return;
             }
-            if (ctx.coordinator) {
-                let resolveReady!: () => void;
-                const ready = new Promise<void>((resolve) => {
-                    resolveReady = resolve;
-                });
-                const pending: PendingOpen = {
-                    ready,
-                    resolveReady,
-                    cancelledReason: null,
-                    queuedFrames: 0,
-                    queuedBytes: 0,
-                };
-                pendingOpenByTunnelKey.set(tunnelKey, pending);
-                const admissionPromise = ctx.coordinator.admit({
-                    accountId: userId,
-                    tunnelKey,
-                    grantId: payload.grantId,
-                    grantExpiresAt: payload.exp,
-                    machineId: payload.targetMachineId,
-                    maxDurationMs: Math.min(caps.maxDurationMs, payload.maxDurationMs),
-                    nowMs: now,
-                    onMachineEnvelope: (machineEnvelope, machineSocketId) => handleRelayPayload(
-                        machineEnvelope,
-                        {
-                            id: machineSocketId,
-                            data: {
-                                clientType: 'machine-scoped',
-                                machineId: payload.targetMachineId,
-                            },
-                            on: () => undefined,
-                            emit: (event, value) => ctx.io.to(machineSocketId).emit(event, value),
-                        },
-                        "coordinator_exact",
-                    ),
-                    onMachineDisconnect: () => {
-                        settleMachineDisconnect({
-                            tunnelKey,
-                            tunnelId,
-                            machineId: payload.targetMachineId,
-                            ownerSocketId: socket.id,
-                        });
-                    },
-                });
-                const admission = await admissionPromise;
-                if (admission.status !== 'attached') {
-                    pendingOpenByTunnelKey.delete(tunnelKey);
-                    pending.resolveReady();
-                    const reasonCode = admission.reason === 'grant_already_consumed'
-                        ? 'relay_authorization_invalid'
-                        : 'route_unavailable';
-                    emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode });
-                    emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode, tunnelKey, senderSocketId: socket.id });
-                    emitSocketError(socket, 'Server-routed peer tunnel cluster admission failed');
-                    return;
-                }
-                if (ownerSocketDisconnected || pending.cancelledReason) {
-                    pendingOpenByTunnelKey.delete(tunnelKey);
-                    pending.resolveReady();
-                    ctx.coordinator.release(tunnelKey);
-                    if (!ownerSocketDisconnected) {
-                        const reasonCode = pending.cancelledReason ?? 'route_unavailable';
-                        emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode, tunnelKey, senderSocketId: socket.id });
-                    }
-                    return;
-                }
-                coordinatorByTunnelKey.set(tunnelKey, ctx.coordinator);
-            } else if (!consumeRelayAuthorizationGrant({
+            let resolveReady!: () => void;
+            const ready = new Promise<void>((resolve) => {
+                resolveReady = resolve;
+            });
+            const pending: PendingOpen = {
+                ready,
+                resolveReady,
+                cancelledReason: null,
+                queuedFrames: 0,
+                queuedBytes: 0,
+            };
+            pendingOpenByTunnelKey.set(tunnelKey, pending);
+            const admissionPromise = ctx.coordinator.admit({
+                accountId: userId,
+                tunnelKey,
                 grantId: payload.grantId,
-                expiresAt: payload.exp,
+                grantExpiresAt: payload.exp,
+                machineId: payload.targetMachineId,
+                maxDurationMs: Math.min(caps.maxDurationMs, payload.maxDurationMs),
                 nowMs: now,
-            })) {
-                emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode: 'relay_authorization_invalid' });
-                emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode: 'relay_authorization_invalid', tunnelKey, senderSocketId: socket.id });
-                emitSocketError(socket, 'Server-routed peer tunnel relay authorization has already been consumed');
+                onMachineEnvelope: (machineEnvelope, machineSocketId) => handleRelayPayload(
+                    machineEnvelope,
+                    {
+                        id: machineSocketId,
+                        data: {
+                            clientType: 'machine-scoped',
+                            machineId: payload.targetMachineId,
+                        },
+                        on: () => undefined,
+                        emit: (event, value) => ctx.io.to(machineSocketId).emit(event, value),
+                    },
+                    "coordinator_exact",
+                ),
+                onMachineDisconnect: () => {
+                    settleMachineDisconnect({
+                        tunnelKey,
+                        tunnelId,
+                        machineId: payload.targetMachineId,
+                        ownerSocketId: socket.id,
+                    });
+                },
+            });
+            const admission = await admissionPromise;
+            if (admission.status !== 'attached') {
+                pendingOpenByTunnelKey.delete(tunnelKey);
+                pending.resolveReady();
+                const reasonCode = admission.reason === 'grant_already_consumed'
+                    ? 'relay_authorization_invalid'
+                    : 'route_unavailable';
+                emitObservability({ envelope, tunnelId, kind: 'flow.denied', reasonCode });
+                emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode, tunnelKey, senderSocketId: socket.id });
+                emitSocketError(socket, 'Server-routed peer tunnel cluster admission failed');
                 return;
-            } else {
-                const localMachine = localMachineSocketByAccountAndMachine.get(localMachineSocketKey(
-                    userId,
-                    payload.targetMachineId,
-                ));
-                if (localMachine) {
-                    trackTunnelKeyForSocket(localMachine.tunnelKeys, tunnelKey);
-                }
             }
+            if (ownerSocketDisconnected || pending.cancelledReason) {
+                pendingOpenByTunnelKey.delete(tunnelKey);
+                pending.resolveReady();
+                ctx.coordinator.release(tunnelKey);
+                if (!ownerSocketDisconnected) {
+                    const reasonCode = pending.cancelledReason ?? 'route_unavailable';
+                    emitAbort({ io: ctx.io, userId, envelope, tunnelId, reasonCode, tunnelKey, senderSocketId: socket.id });
+                }
+                return;
+            }
+            coordinatorByTunnelKey.set(tunnelKey, ctx.coordinator);
         }
 
         const lastActivityAt = tunnelLastActivityAtByKey.get(tunnelKey) ?? now;
@@ -1464,7 +1407,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 },
             });
         }
-        if (envelope.recipient.kind === 'machine' && ctx.coordinator) {
+        if (envelope.recipient.kind === 'machine') {
             ctx.coordinator.routeOwnerEnvelope({
                 tunnelKey,
                 envelope,
@@ -1476,7 +1419,6 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 participant: envelope.recipient,
                 envelope,
                 tunnelKey,
-                coordinatorBacked: ctx.coordinator !== undefined,
                 notifyAttachedMachine: false,
             });
         }
@@ -1495,9 +1437,13 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         }
     }
 
-    socket.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (raw: unknown) => {
-        void handleRelayPayload(raw, socket);
-    });
+    // Frame handling is asynchronous because cluster admission is. Socket.IO
+    // ignores the returned promise, but returning it gives callers that drive
+    // the handler directly a settlement to join instead of a timing guess.
+    socket.on(
+        PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+        (raw: unknown) => handleRelayPayload(raw, socket),
+    );
 
     socket.on('disconnect', () => {
         ownerSocketDisconnected = true;
@@ -1516,7 +1462,6 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                     boundUserSocketId: abortEnvelope.recipient.kind === 'user'
                         ? abortEnvelope.recipient.socketId
                         : undefined,
-                    coordinatorBacked: ctx.coordinator !== undefined,
                     notifyAttachedMachine: true,
                 });
             }
@@ -1526,11 +1471,5 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             });
         }
         socketTunnelKeys.clear();
-        if (localMachineKey) {
-            const registered = localMachineSocketByAccountAndMachine.get(localMachineKey);
-            if (registered?.socket === socket) {
-                localMachineSocketByAccountAndMachine.delete(localMachineKey);
-            }
-        }
     });
 }

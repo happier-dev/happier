@@ -854,106 +854,119 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         }));
     });
 
-    it("POST /v1/sessions safely repairs a predecessor external-linked row before returning it", async () => {
-        const now = new Date(1);
-        txSessionCreate.mockRejectedValueOnce(Object.assign(new Error("duplicate"), { code: "P2002" }));
-        sessionFindUnique.mockResolvedValue({
-            id: "external-session",
-            seq: 0,
-            createdAt: now,
-            updatedAt: now,
-            metadata: "encrypted-link",
-            metadataVersion: 1,
-            metadataLayoutVersion: 0,
-            ownerMetadata: null,
-            agentState: null,
-            agentStateVersion: 0,
-            dataEncryptionKey: null,
-            currentStorageState: "hosted",
-            acceptedThroughServerSeq: null,
-            materializationPublicationId: null,
-            materializedThroughSourceAt: null,
-            publishedThroughServerSeq: null,
-            pendingCount: 0,
-            pendingBlockedCount: 0,
-            pendingVersion: 0,
-            active: false,
-            lastActiveAt: now,
-            encryptionMode: "e2ee",
-        });
-        sessionUpdateMany.mockResolvedValue({ count: 1 });
-
-        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
-        await route.invoke({
-            body: legacyCreateBody({
-                tag: "external-link",
-                metadata: "encrypted-link",
-                agentState: null,
-                dataEncryptionKey: null,
-                currentStorageState: "machine_only",
-            }),
-        });
-
-        expect(sessionUpdateMany).toHaveBeenCalledWith({
-            where: {
+    // `legacy_external_unknown` is the state the publication-authority migration
+    // backfills onto predecessor `direct:v1:*` rows. Owner-machine relink is the
+    // only transition out of it, so it must reach the same fenced repair as an
+    // un-reclassified hosted predecessor row.
+    it.each(["hosted", "legacy_external_unknown"] as const)(
+        "POST /v1/sessions safely repairs a %s predecessor external-linked row before returning it",
+        async (currentStorageState) => {
+            const now = new Date(1);
+            txSessionCreate.mockRejectedValueOnce(Object.assign(new Error("duplicate"), { code: "P2002" }));
+            sessionFindUnique.mockResolvedValue({
                 id: "external-session",
-                currentStorageState: "hosted",
                 seq: 0,
+                createdAt: now,
+                updatedAt: now,
+                metadata: "encrypted-link",
+                metadataVersion: 1,
+                metadataLayoutVersion: 0,
+                ownerMetadata: null,
+                agentState: null,
+                agentStateVersion: 0,
+                dataEncryptionKey: null,
+                currentStorageState,
                 acceptedThroughServerSeq: null,
                 materializationPublicationId: null,
                 materializedThroughSourceAt: null,
                 publishedThroughServerSeq: null,
-            },
-            data: { currentStorageState: "machine_only" },
-        });
-    });
+                pendingCount: 0,
+                pendingBlockedCount: 0,
+                pendingVersion: 0,
+                active: false,
+                lastActiveAt: now,
+                encryptionMode: "e2ee",
+            });
+            sessionUpdateMany.mockResolvedValue({ count: 1 });
 
-    it("POST /v1/sessions rejects unsafe predecessor storage repair without changing authority", async () => {
-        const now = new Date(1);
-        txSessionCreate.mockRejectedValueOnce(Object.assign(new Error("duplicate"), { code: "P2002" }));
-        sessionFindUnique.mockResolvedValue({
-            id: "external-session",
-            seq: 1,
-            createdAt: now,
-            updatedAt: now,
-            metadata: "encrypted-link",
-            metadataVersion: 1,
-            metadataLayoutVersion: 0,
-            ownerMetadata: null,
-            agentState: null,
-            agentStateVersion: 0,
-            dataEncryptionKey: null,
-            currentStorageState: "hosted",
-            acceptedThroughServerSeq: null,
-            materializationPublicationId: null,
-            materializedThroughSourceAt: null,
-            publishedThroughServerSeq: null,
-            pendingCount: 0,
-            pendingBlockedCount: 0,
-            pendingVersion: 0,
-            active: false,
-            lastActiveAt: now,
-            encryptionMode: "e2ee",
-        });
+            const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+            await route.invoke({
+                body: legacyCreateBody({
+                    tag: "external-link",
+                    metadata: "encrypted-link",
+                    agentState: null,
+                    dataEncryptionKey: null,
+                    currentStorageState: "machine_only",
+                }),
+            });
 
-        const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
-        const { reply } = await route.invoke({
-            body: legacyCreateBody({
-                tag: "external-link",
+            expect(sessionUpdateMany).toHaveBeenCalledWith({
+                where: {
+                    id: "external-session",
+                    currentStorageState: { in: ["hosted", "legacy_external_unknown"] },
+                    seq: 0,
+                    acceptedThroughServerSeq: null,
+                    materializationPublicationId: null,
+                    materializedThroughSourceAt: null,
+                    publishedThroughServerSeq: null,
+                },
+                data: { currentStorageState: "machine_only" },
+            });
+        },
+    );
+
+    // A predecessor row that already owns server transcript sequence is not
+    // reclassifiable in either direction: message presence must never be read
+    // as proof that the row is a complete hosted conversation.
+    it.each(["hosted", "legacy_external_unknown"] as const)(
+        "POST /v1/sessions rejects unsafe %s predecessor storage repair without changing authority",
+        async (currentStorageState) => {
+            const now = new Date(1);
+            txSessionCreate.mockRejectedValueOnce(Object.assign(new Error("duplicate"), { code: "P2002" }));
+            sessionFindUnique.mockResolvedValue({
+                id: "external-session",
+                seq: 1,
+                createdAt: now,
+                updatedAt: now,
                 metadata: "encrypted-link",
+                metadataVersion: 1,
+                metadataLayoutVersion: 0,
+                ownerMetadata: null,
                 agentState: null,
+                agentStateVersion: 0,
                 dataEncryptionKey: null,
-                currentStorageState: "machine_only",
-            }),
-        });
+                currentStorageState,
+                acceptedThroughServerSeq: null,
+                materializationPublicationId: null,
+                materializedThroughSourceAt: null,
+                publishedThroughServerSeq: null,
+                pendingCount: 0,
+                pendingBlockedCount: 0,
+                pendingVersion: 0,
+                active: false,
+                lastActiveAt: now,
+                encryptionMode: "e2ee",
+            });
 
-        expect(sessionUpdateMany).not.toHaveBeenCalled();
-        expect(reply.code).toHaveBeenCalledWith(409);
-        expect(reply.send).toHaveBeenCalledWith({
-            error: "storage-state-conflict",
-            code: "session_storage_state_conflict",
-        });
-    });
+            const route = await createSessionRouteTestBuilder("POST", "/v1/sessions");
+            const { reply } = await route.invoke({
+                body: legacyCreateBody({
+                    tag: "external-link",
+                    metadata: "encrypted-link",
+                    agentState: null,
+                    dataEncryptionKey: null,
+                    currentStorageState: "machine_only",
+                }),
+            });
+
+            expect(sessionUpdateMany).not.toHaveBeenCalled();
+            expect(reply.code).toHaveBeenCalledWith(409);
+            expect(reply.send).toHaveBeenCalledWith({
+                error: "storage-state-conflict",
+                code: "session_storage_state_conflict",
+            });
+        },
+    );
 
     it("POST /v1/sessions refuses a plain layout-zero create when plaintext storage is optional", async () => {
         resetStoragePolicyEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });

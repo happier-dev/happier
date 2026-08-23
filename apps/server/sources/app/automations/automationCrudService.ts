@@ -26,6 +26,7 @@ import {
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
     compilePluginJsonSchema,
+    createCanonicalJsonSigningInput,
     isValidPluginJsonSchemaValue,
     validateAutomationEventFilterAgainstPayloadSchemaV1,
     validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
@@ -47,15 +48,22 @@ import { cancelQueuedAutomationRunsTx } from "./automationRunService";
 import { validateExistingSessionAutomationTargetTx } from "./automationExistingSessionValidation";
 import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
 import { isAutomationDefinitionRepresentableInV2 } from "./automationApiProjection";
-import { automationListItemSelect, automationRunItemSelect } from "./automationPersistenceSelect";
+import {
+    automationListItemSelect,
+    automationRunDetailSelect,
+    automationRunItemSelect,
+} from "./automationPersistenceSelect";
 import {
     findAutomationOccurrenceTx,
     rejoinAutomationOccurrenceInsertRace,
 } from "./automationOccurrencePersistence";
 import {
     AutomationEventCurrentnessError,
+    readCurrentAutomationEventDurablePushWebhookContributionV1,
     resolveCurrentAutomationEventContributionTx,
 } from "./automationEventCurrentness";
+import { checkCurrentPluginWebhookEndpointCorrespondenceTxV1 } from "@/app/plugins/webhooks/endpointCorrespondence";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
@@ -83,6 +91,7 @@ import type {
     AutomationListItem,
     AutomationPatchInput,
     AutomationCurrentUpsertInput,
+    AutomationRunDetailItem,
     AutomationRunItem,
     AutomationRunOriginKind,
     AutomationScheduleKind,
@@ -230,7 +239,7 @@ type AutomationPluginEventWriteInput = NonNullable<
     AutomationCurrentUpsertInput["pluginEvent"]
 >;
 
-type NormalizedAutomationPluginEventWrite = Readonly<{
+type NormalizedAutomationPluginEventWriteBase = Readonly<{
     eventRef: AutomationPluginEventWriteInput["eventRef"];
     sourceInstanceId: string;
     sourceContractVersion: number;
@@ -238,23 +247,64 @@ type NormalizedAutomationPluginEventWrite = Readonly<{
     displayLabel: string;
     filter: AutomationPluginEventWriteInput["filter"];
     maximumObservationAgeMs: number | null;
-    watcherMachineId: string;
-    watcherMachineInstallationId: string;
-    watcherPluginId: string;
-    watcherMaterializationId: string;
 }>;
+
+/**
+ * AUTO-19: exactly one selected observation transport per enabled Event
+ * trigger. The pull arm owns the four watcher columns; the push arm owns the
+ * canonical endpoint scalar and leaves every watcher column null.
+ */
+type NormalizedAutomationPluginEventWrite =
+    | (NormalizedAutomationPluginEventWriteBase & Readonly<{
+        observationTransport: "checkpointedPull";
+        watcherMachineId: string;
+        watcherMachineInstallationId: string;
+        watcherPluginId: string;
+        watcherMaterializationId: string;
+    }>)
+    | (NormalizedAutomationPluginEventWriteBase & Readonly<{
+        observationTransport: "durablePush";
+        webhookEndpointId: string;
+        webhookRoutingSourceInstanceId: string;
+    }>);
+
+/**
+ * The exact facts that decide which deliveries a durable-push trigger may
+ * observe. AUTO-19 resets the delivery-time observation boundary when any of
+ * them changes or when push is re-enabled, and deliberately preserves it for
+ * prompt/target/execution-recipe edits and cosmetic label changes.
+ */
+function durablePushObservationEligibilityFingerprint(
+    event: Extract<NormalizedAutomationPluginEventWrite, { observationTransport: "durablePush" }>,
+): string {
+    return createCanonicalJsonSigningInput({
+        eventRef: event.eventRef,
+        sourceInstanceId: event.sourceInstanceId,
+        sourceContractVersion: event.sourceContractVersion,
+        sourceConfig: event.sourceConfig,
+        filter: event.filter,
+        maximumObservationAgeMs: event.maximumObservationAgeMs,
+        webhookEndpointId: event.webhookEndpointId,
+        webhookRoutingSourceInstanceId: event.webhookRoutingSourceInstanceId,
+    });
+}
 
 async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
     tx: Tx;
     accountId: string;
+    serverIdentityId: string | null;
     input: AutomationPluginEventWriteInput;
 }>): Promise<NormalizedAutomationPluginEventWrite> {
-    const watcher = params.input.observationTransport.watcherMaterializationRef;
-    if (watcher.pluginId !== params.input.eventRef.pluginId) {
+    const transport = params.input.observationTransport;
+    const observationTarget = transport.kind === "checkpointedPull"
+        ? transport.watcherMaterializationRef
+        : transport.endpointMaterializationRef;
+    if (observationTarget.pluginId !== params.input.eventRef.pluginId) {
         throw new AutomationValidationError(
             "Automation Event watcher must use the Event's declaring plugin",
         );
     }
+    const watcher = observationTarget;
     const [materialization, machine] = await Promise.all([
         params.tx.pluginMachineMaterialization.findUnique({
             where: {
@@ -316,9 +366,11 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         }
         throw error;
     }
-    if (!contribution.automation.source.supportedObservationTransports.includes("checkpointedPull")) {
+    if (!contribution.automation.source.supportedObservationTransports.includes(transport.kind)) {
         throw new AutomationValidationError(
-            "Automation Event declaration does not support checkpointed pull",
+            transport.kind === "checkpointedPull"
+                ? "Automation Event declaration does not support checkpointed pull"
+                : "Automation Event declaration does not support durable push",
         );
     }
     let validatesSourceConfig: ReturnType<typeof compilePluginJsonSchema>;
@@ -343,7 +395,7 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
     if (filterValidation.kind !== "valid") {
         throw new AutomationEventFilterValidationError(filterValidation.issue);
     }
-    return {
+    const base = {
         eventRef: params.input.eventRef,
         sourceInstanceId: params.input.sourceInstanceId,
         sourceContractVersion: params.input.sourceContractVersion,
@@ -351,10 +403,99 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         displayLabel: params.input.displayLabel,
         filter: params.input.filter,
         maximumObservationAgeMs: params.input.maximumObservationAgeMs,
-        watcherMachineId: watcher.machineId,
-        watcherMachineInstallationId: machine.installationId,
-        watcherPluginId: watcher.pluginId,
-        watcherMaterializationId: watcher.materializationId,
+    } as const;
+    if (transport.kind === "checkpointedPull") {
+        return {
+            ...base,
+            observationTransport: "checkpointedPull",
+            watcherMachineId: watcher.machineId,
+            watcherMachineInstallationId: machine.installationId,
+            watcherPluginId: watcher.pluginId,
+            watcherMaterializationId: watcher.materializationId,
+        };
+    }
+    const webhookContribution = readCurrentAutomationEventDurablePushWebhookContributionV1(
+        contribution,
+    );
+    if (!webhookContribution || params.serverIdentityId === null) {
+        throw new AutomationValidationError(
+            "Automation Event declaration does not support durable push",
+        );
+    }
+    // AUTO-19: the endpoint is persisted only after the single canonical
+    // webhook correspondence owner returns `ready` inside this transaction.
+    // The declared webhook contribution comes from the current Event
+    // declaration, never from authoring input.
+    const correspondence = await checkCurrentPluginWebhookEndpointCorrespondenceTxV1({
+        tx: params.tx,
+        serverIdentityId: params.serverIdentityId,
+        accountId: params.accountId,
+        input: {
+            webhookEndpointId: transport.webhookEndpointId,
+            webhookContribution,
+            targetMaterialization: transport.endpointMaterializationRef,
+            sourceInstanceId: transport.webhookRoutingSourceInstanceId,
+            setup: transport.setup,
+        },
+    });
+    if (correspondence.kind !== "ready") {
+        throw new AutomationValidationError(
+            "Automation Event durable-push endpoint is not in correspondence",
+        );
+    }
+    return {
+        ...base,
+        observationTransport: "durablePush",
+        webhookEndpointId: correspondence.webhookEndpointId,
+        webhookRoutingSourceInstanceId: transport.webhookRoutingSourceInstanceId,
+    };
+}
+
+/**
+ * Sole owner of the transport-discriminated Automation trigger columns. The
+ * four watcher columns and the endpoint columns are mutually exclusive, so
+ * every writer sets the whole group here rather than patching one arm.
+ */
+async function resolveAutomationDurablePushServerIdentityId(
+    input: Readonly<{ pluginEvent?: AutomationPluginEventWriteInput | undefined }>,
+): Promise<string | null> {
+    return input.pluginEvent?.observationTransport.kind === "durablePush"
+        ? await getOrCreateServerIdentityId()
+        : null;
+}
+
+function automationPluginEventTransportColumns(
+    event: NormalizedAutomationPluginEventWrite,
+    now: Date,
+    retainedObservationStartsAt: Date | null = null,
+): Readonly<{
+    triggerObservationTransport: "checkpointedPull" | "durablePush";
+    triggerWebhookEndpointId: string | null;
+    triggerObservationStartsAt: Date | null;
+    watcherMachineId: string | null;
+    watcherMachineInstallationId: string | null;
+    watcherPluginId: string | null;
+    watcherMaterializationId: string | null;
+}> {
+    if (event.observationTransport === "checkpointedPull") {
+        return {
+            triggerObservationTransport: "checkpointedPull",
+            triggerWebhookEndpointId: null,
+            triggerObservationStartsAt: null,
+            watcherMachineId: event.watcherMachineId,
+            watcherMachineInstallationId: event.watcherMachineInstallationId,
+            watcherPluginId: event.watcherPluginId,
+            watcherMaterializationId: event.watcherMaterializationId,
+        };
+    }
+    return {
+        triggerObservationTransport: "durablePush",
+        triggerWebhookEndpointId: event.webhookEndpointId,
+        triggerObservationStartsAt: retainedObservationStartsAt ?? now,
+        watcherMachineId: null,
+        watcherMachineInstallationId: null,
+        watcherPluginId: null,
+        watcherMaterializationId: null,
     };
 }
 
@@ -370,6 +511,11 @@ function sealPlainAutomationPluginEventDefinition(params: Readonly<{
     const definition = AutomationEventTriggerDefinitionStoredPayloadV1Schema.parse({
         v: 1,
         sourceInstanceId: params.event.sourceInstanceId,
+        // The generic endpoint-routing source instance is retained privately
+        // and stays separate from the provider's canonical source identity.
+        ...(params.event.observationTransport === "durablePush"
+            ? { webhookRoutingSourceInstanceId: params.event.webhookRoutingSourceInstanceId }
+            : {}),
         sourceConfig: params.event.sourceConfig,
         displayLabel: params.event.displayLabel,
         filter: params.event.filter,
@@ -1337,7 +1483,10 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
                 templateCiphertext: candidate.item.target.templateCiphertext,
                 triggerDefinitionEnvelope: candidate.targetTriggerDefinitionEnvelope,
                 templateVersion: { increment: 1 },
-                nextRunAt: null,
+                // Re-sealing Account content preserves the plaintext template,
+                // so the scheduling projection is unchanged. Clearing it here
+                // would drop an unrelated next-run wake this write never
+                // recomputes.
                 updatedAt: new Date(),
             },
         });
@@ -2375,7 +2524,8 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
                 templateCiphertext: item.templateCiphertext,
                 triggerDefinitionEnvelope: targetTriggerDefinitionsById.get(row.id)!,
                 templateVersion: { increment: 1 },
-                nextRunAt: null,
+                // Same scheduling semantics as the staged transition path: the
+                // re-seal changes bytes, never the next-run projection.
                 updatedAt: new Date(),
             },
         });
@@ -2690,6 +2840,9 @@ export async function createAutomation(params: {
     input: AutomationUpsertInput;
     requireV2DefinitionRepresentability?: boolean;
 }): Promise<AutomationListItem> {
+    // Durable-push correspondence is resolved against this host's server
+    // identity; acquiring it must not nest inside the definition transaction.
+    const serverIdentityId = await resolveAutomationDurablePushServerIdentityId(params.input);
     return await inTx(async (tx) => {
         let currentDefinition: CurrentAutomationDefinitionWrite | null = null;
         let legacyDefinition: Readonly<{
@@ -2766,6 +2919,7 @@ export async function createAutomation(params: {
             ? await normalizeAutomationPluginEventWriteTx({
                 tx,
                 accountId: params.accountId,
+                serverIdentityId,
                 input: params.input.pluginEvent,
             })
             : null;
@@ -2809,13 +2963,7 @@ export async function createAutomation(params: {
                         triggerEventLocalId: pluginEvent.eventRef.localId,
                         triggerSourceSelectorId: sourceSelectorId,
                         triggerSourceContractVersion: pluginEvent.sourceContractVersion,
-                        triggerObservationTransport: "checkpointedPull" as const,
-                        watcherMachineId: pluginEvent.watcherMachineId,
-                        watcherMachineInstallationId:
-                            pluginEvent.watcherMachineInstallationId,
-                        watcherPluginId: pluginEvent.watcherPluginId,
-                        watcherMaterializationId:
-                            pluginEvent.watcherMaterializationId,
+                        ...automationPluginEventTransportColumns(pluginEvent, now),
                         triggerDefinitionEnvelope,
                     }
                     : {}),
@@ -2885,6 +3033,7 @@ export async function updateAutomation(params: {
     requireV2DefinitionRepresentability?: boolean;
     expectedTemplateVersion?: number;
 }): Promise<AutomationListItem | null> {
+    const serverIdentityId = await resolveAutomationDurablePushServerIdentityId(params.input);
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return null;
@@ -2999,6 +3148,7 @@ export async function updateAutomation(params: {
             ? await normalizeAutomationPluginEventWriteTx({
                 tx,
                 accountId: params.accountId,
+                serverIdentityId,
                 input: params.input.pluginEvent,
             })
             : null;
@@ -3020,8 +3170,10 @@ export async function updateAutomation(params: {
             && effectiveTargetType !== existing.targetType;
         const templateSemanticsWritten =
             inputSuppliesTemplate || targetTypeChanged;
+        const observationBoundaryNow = new Date();
         let nextSourceSelectorId = existing.triggerSourceSelectorId;
         let triggerDefinitionEnvelope: string | null = null;
+        let retainedDurablePushObservationStartsAt: Date | null = null;
         if (pluginEvent) {
             const priorDefinition = readPlainAutomationPluginEventDefinition(existing);
             const identityChanged = existing.triggerEventPluginId
@@ -3033,6 +3185,34 @@ export async function updateAutomation(params: {
                 : AutomationSourceSelectorIdV1Schema.parse(
                     existing.triggerSourceSelectorId,
                 );
+            // AUTO-19: a durable-push edit preserves the delivery-time
+            // observation boundary unless push is (re-)enabled or an
+            // observation-eligibility fact changed.
+            if (
+                pluginEvent.observationTransport === "durablePush"
+                && existing.triggerObservationTransport === "durablePush"
+                && existing.triggerObservationStartsAt !== null
+                && existing.enabled
+                && params.input.enabled !== false
+                && durablePushObservationEligibilityFingerprint(pluginEvent)
+                    === durablePushObservationEligibilityFingerprint({
+                        ...pluginEvent,
+                        eventRef: {
+                            pluginId: existing.triggerEventPluginId ?? "",
+                            localId: existing.triggerEventLocalId ?? "",
+                        },
+                        sourceInstanceId: priorDefinition.sourceInstanceId,
+                        sourceContractVersion: existing.triggerSourceContractVersion ?? 0,
+                        sourceConfig: priorDefinition.sourceConfig,
+                        filter: priorDefinition.filter,
+                        maximumObservationAgeMs: priorDefinition.maximumObservationAgeMs,
+                        webhookEndpointId: existing.triggerWebhookEndpointId ?? "",
+                        webhookRoutingSourceInstanceId:
+                            priorDefinition.webhookRoutingSourceInstanceId ?? "",
+                    })
+            ) {
+                retainedDurablePushObservationStartsAt = existing.triggerObservationStartsAt;
+            }
             triggerDefinitionEnvelope = sealPlainAutomationPluginEventDefinition({
                 automationId: existing.id,
                 templateVersion: existing.templateVersion + 1,
@@ -3079,15 +3259,11 @@ export async function updateAutomation(params: {
                     triggerEventLocalId: pluginEvent.eventRef.localId,
                     triggerSourceSelectorId: nextSourceSelectorId,
                     triggerSourceContractVersion: pluginEvent.sourceContractVersion,
-                    triggerObservationTransport: "checkpointedPull" as const,
-                    triggerWebhookEndpointId: null,
-                    triggerObservationStartsAt: null,
-                    watcherMachineId: pluginEvent.watcherMachineId,
-                    watcherMachineInstallationId:
-                        pluginEvent.watcherMachineInstallationId,
-                    watcherPluginId: pluginEvent.watcherPluginId,
-                    watcherMaterializationId:
-                        pluginEvent.watcherMaterializationId,
+                    ...automationPluginEventTransportColumns(
+                        pluginEvent,
+                        observationBoundaryNow,
+                        retainedDurablePushObservationStartsAt,
+                    ),
                     triggerDefinitionEnvelope,
                 }
                 : {}),
@@ -3695,15 +3871,15 @@ export async function getAutomationRun(params: {
     accountId: string;
     automationId: string;
     runId: string;
-}): Promise<AutomationRunItem | null> {
+}): Promise<AutomationRunDetailItem | null> {
     const row = await db.automationRun.findFirst({
         where: {
             id: params.runId,
             accountId: params.accountId,
             automationId: params.automationId,
         },
-        select: automationRunItemSelect,
+        select: automationRunDetailSelect,
     });
-    return row as AutomationRunItem | null;
+    return row as AutomationRunDetailItem | null;
 }
 import { randomUUID } from "node:crypto";

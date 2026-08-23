@@ -25,6 +25,10 @@ import {
     AccountSettingsStorageUnavailableResponseSchema,
     resolveAccountSettingsStorageUnavailableRouteError,
 } from "./accountSettingsStorageUnavailableRouteError";
+import {
+    PresentUserRequiredResponseSchema,
+    requirePresentUser,
+} from "@/app/api/utils/requirePresentUser";
 
 export function registerAccountSettingsRoutes(app: Fastify): void {
     // Get Account Settings API
@@ -103,6 +107,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                     currentSettings: z.string().nullable()
                 })]),
                 400: z.object({ error: z.literal("plain_account_requires_settings_v2") }),
+                403: PresentUserRequiredResponseSchema,
                 503: AccountSettingsStorageUnavailableResponseSchema,
                 500: z.object({
                     success: z.literal(false),
@@ -110,7 +115,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 })
             }
         },
-        preHandler: app.authenticate
+        preHandler: [app.authenticate, requirePresentUser]
     }, async (request, reply) => {
         const userId = request.userId;
         const { settings, expectedVersion } = request.body;
@@ -304,12 +309,13 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
 
     app.post("/v2/account/settings", {
         bodyLimit: ACCOUNT_SETTINGS_V2_UPDATE_REQUEST_MAX_UTF8_BYTES,
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             body: AccountSettingsV2UpdateRequestAdmissionSchema,
             response: {
                 200: AccountSettingsV2UpdateResponseSchema,
                 400: z.object({ error: z.literal("invalid-params") }),
+                403: PresentUserRequiredResponseSchema,
                 503: AccountSettingsStorageUnavailableResponseSchema,
                 500: z.object({ error: z.literal("internal") }),
             },

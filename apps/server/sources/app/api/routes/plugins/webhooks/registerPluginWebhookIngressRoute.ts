@@ -18,7 +18,6 @@ import {
 import {
     PLUGIN_WEBHOOK_INGRESS_DEADLINE_MS_V1,
     resolvePluginWebhookIngressPolicyV1,
-    resolvePluginWebhookIngressWorkingBytesV1,
     type WebhookIngressPolicyV1,
 } from "@/app/plugins/webhooks/policy";
 import {
@@ -92,7 +91,13 @@ type RequestReservationV1 = {
     distributedReleases: Array<() => void | Promise<void>>;
     deadlineController: AbortController;
     deadlineTimer: ReturnType<typeof setTimeout>;
-    released: boolean;
+    /**
+     * The post-buffer operation this request started, while it is still
+     * running. It owns the raw body plus its database/envelope work, so the
+     * request keeps its admission until this settles.
+     */
+    custody: Promise<unknown> | null;
+    releasing: boolean;
 };
 
 function publicEmpty(reply: any, statusCode: number, retryAfterSeconds?: number) {
@@ -173,10 +178,25 @@ function resolveDistributedAdmissionV1(
         : null;
 }
 
+/**
+ * Admission bounds the work this process is doing, so it is returned when that
+ * work settles rather than when the public response is written. The ingress
+ * deadline answers the caller with a bounded 503; the ingestion it abandoned
+ * still holds the raw body and its database/envelope work, and handing that
+ * capacity to another request while it runs would defeat the very concurrency
+ * bound this admission exists to enforce.
+ */
 async function releaseReservationV1(reservation: RequestReservationV1 | undefined): Promise<void> {
-    if (!reservation || reservation.released) return;
-    reservation.released = true;
+    if (!reservation || reservation.releasing) return;
+    reservation.releasing = true;
     clearTimeout(reservation.deadlineTimer);
+    if (reservation.custody) {
+        try {
+            await reservation.custody;
+        } catch {
+            // Custody ends when the operation settles, however it settles.
+        }
+    }
     reservation.localRelease();
     await Promise.all(reservation.distributedReleases.splice(0).map(async (release) => {
         try {
@@ -210,7 +230,7 @@ export function registerPluginWebhookIngressRoute(
     const policy = resolvePluginWebhookIngressPolicyV1(env);
     const processAdmission = options.processAdmission ?? createPluginWebhookProcessAdmissionV1({
         maxRequests: policy.process.maxRequests,
-        maxBytes: policy.process.maxWorkingBytes,
+        maxRawBodyBytes: policy.process.maxRawBodyBytes,
     });
     const prepareRoute = options.prepareRoute ?? defaultPrepareRouteV1;
     const distributedAdmission = resolveDistributedAdmissionV1(env, options.distributedAdmission);
@@ -263,7 +283,8 @@ export function registerPluginWebhookIngressRoute(
                     return publicEmpty(reply, declared.code === "tooLarge" ? 413 : 411);
                 }
                 const deadlineAtMs = Date.now() + PLUGIN_WEBHOOK_INGRESS_DEADLINE_MS_V1;
-                const local = processAdmission.acquire(resolvePluginWebhookIngressWorkingBytesV1(declared.bytes));
+                // `declared.bytes` is already bounded to the protocol raw-body ceiling above.
+                const local = processAdmission.acquire(declared.bytes);
                 if (!local) return publicEmpty(reply, 503, 5);
                 const deadlineController = new AbortController();
                 let localReleased = false;
@@ -298,7 +319,8 @@ export function registerPluginWebhookIngressRoute(
                     distributedReleases: [],
                     deadlineController,
                     deadlineTimer,
-                    released: false,
+                    custody: null,
+                    releasing: false,
                 };
                 reservation = requestReservation;
                 reservations.set(request, requestReservation);
@@ -470,6 +492,7 @@ export function registerPluginWebhookIngressRoute(
                         ...(options.onCommittedWake ? { onCommittedWake: options.onCommittedWake } : {}),
                         ...(reserveResolvedEndpoint ? { reserveResolvedEndpoint } : {}),
                     });
+                reservation.custody = ingestPromise;
                 const result = await awaitUntilAbortedV1(ingestPromise, reservation.deadlineController.signal);
                 if (result.kind === "accepted") return publicEmpty(reply, 202);
                 if (resolvedAdmissionFailure.current) {

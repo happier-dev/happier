@@ -2056,6 +2056,7 @@ describe("automationCrudService (integration)", () => {
                 targetType: "new_session",
                 templateCiphertext: buildTemplateEnvelope(),
                 templateVersion: 4,
+                nextRunAt: new Date("2026-02-12T10:01:00.000Z"),
             },
             select: { id: true, templateVersion: true },
         });
@@ -2086,10 +2087,14 @@ describe("automationCrudService (integration)", () => {
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
+                nextRunAt: true,
             },
         })).resolves.toEqual({
             templateCiphertext: replacementTemplate,
             templateVersion: automation.templateVersion + 1,
+            // Re-sealing Account content changes no scheduling semantics, so
+            // the retained next-run projection survives the migration.
+            nextRunAt: new Date("2026-02-12T10:01:00.000Z"),
         });
         expect(emit).toHaveBeenCalledWith(
             "update",

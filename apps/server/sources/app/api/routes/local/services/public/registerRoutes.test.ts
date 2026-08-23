@@ -10,6 +10,15 @@ import { createPeerMediationWebSocketEvent } from "@/app/api/socket/peer/mediati
 import { describe, expect, it, vi } from "vitest";
 import type { RegisterLocalServicePublicRoutesOptions } from "./registerRoutes";
 
+const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
+vi.mock("@/storage/db", () => ({
+    db: {
+        account: {
+            findUnique: (...args: unknown[]) => dbAccountFindUniqueMock(...args),
+        },
+    },
+}));
+
 type PublicRoutesModule = typeof import("./registerRoutes");
 
 async function loadPublicRoutesModule(): Promise<PublicRoutesModule | null> {
@@ -1012,6 +1021,7 @@ describe("local service public exposure routes", () => {
 
         const previousMasterSecret = process.env.HANDY_MASTER_SECRET;
         process.env.HANDY_MASTER_SECRET = "public-preview-route-auth-secret";
+        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0 });
         await auth.init();
         const token = await auth.createToken("user_1");
         const app = createFakeRouteApp();
@@ -1353,5 +1363,103 @@ describe("local service public exposure routes", () => {
         expect(serialized).not.toContain('"kind":"preview"');
         expect(serialized).not.toContain('"id":"preview_1"');
         expect(serialized).not.toContain("secret");
+    });
+
+    // S-1 (lane C1). Fastify's router percent-decodes the proxy wildcard, so a client path of
+    // `foo%0d%0a…` reaches the handler as a REAL CRLF inside `params['*']`. Both public-preview
+    // sinks are CRLF-terminated: the raw HTTP/1.1 request line written to the upstream tunnel,
+    // and the `Location` header of the public-token exchange redirect.
+    const ROUTER_DECODED_CRLF_PATH = "foo\r\nX-Injected: yes\r\n\r\nGET /admin HTTP/1.1";
+    const CANONICAL_ENCODED_CRLF_PATH = "/foo%0D%0AX-Injected:%20yes%0D%0A%0D%0AGET%20/admin%20HTTP/1.1";
+
+    function upstreamRequestLines(upstream: string): readonly string[] {
+        return upstream.split("\r\n").filter((line) => /\sHTTP\/1\.1$/u.test(line));
+    }
+
+    function createRecordingTunnelOpener(writes: string[]) {
+        return async () => ({
+            tunnelId: "public_tunnel_test",
+            substreamId: "public_substream_test",
+            write: (bytes: Uint8Array) => {
+                writes.push(new TextDecoder().decode(bytes));
+            },
+            endWrite: vi.fn(),
+            read: async function* (): AsyncIterableIterator<Uint8Array> {
+                yield new TextEncoder().encode("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+            },
+            close: vi.fn(),
+            abort: vi.fn(),
+        });
+    }
+
+    it("never writes a second upstream request line for a router-decoded CRLF proxy path", async () => {
+        const mod = await loadPublicRoutesModule();
+        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServicePublicRoutes) return;
+
+        const writes: string[] = [];
+        const app = createFakeRouteApp();
+        mod.registerLocalServicePublicRoutes(app as never, {
+            resolvePreview: vi.fn(() => preview),
+            resolveExposure: vi.fn(() => exposure),
+            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
+            revokeExposure: vi.fn(() => ({ ok: true as const })),
+            validateAccess: vi.fn(() => ({ ok: true as const, preview })),
+            authorizeSessionAccess: allowSessionAccess(),
+            openTunnel: createRecordingTunnelOpener(writes) as never,
+        });
+
+        const handler = getRouteHandler(app, "GET", "/v1/local-services/public/:exposureId/*");
+        const reply = createReplyStub();
+        await handler({
+            method: "GET",
+            params: { exposureId: "public_preview_1", "*": ROUTER_DECODED_CRLF_PATH },
+            query: {},
+            headers: { host: "preview.happier.test", cookie: "happier_public_token=token_1" },
+        }, reply);
+
+        const upstream = writes.join("");
+        expect(upstream.split("\r\n\r\n")).toHaveLength(2);
+        expect(upstreamRequestLines(upstream)).toHaveLength(1);
+        expect(upstream).not.toMatch(/\r\nX-Injected:/u);
+        expect(upstream.split("\r\n")[0]).toBe(`GET ${CANONICAL_ENCODED_CRLF_PATH} HTTP/1.1`);
+    });
+
+    it("never emits a CRLF Location header when exchanging a public token on a decoded CRLF path", async () => {
+        const mod = await loadPublicRoutesModule();
+        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServicePublicRoutes) return;
+
+        const app = createFakeRouteApp();
+        mod.registerLocalServicePublicRoutes(app as never, {
+            resolvePreview: vi.fn(() => preview),
+            resolveExposure: vi.fn(() => exposure),
+            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
+            revokeExposure: vi.fn(() => ({ ok: true as const })),
+            validateAccess: vi.fn(() => ({ ok: true as const, preview })),
+            exchangeAccessToken: vi.fn(() => ({
+                ok: true as const,
+                exposureId: "public_preview_1",
+                rawToken: "rotated_token_1",
+                expiresAt: 61_000,
+            })),
+            authorizeSessionAccess: allowSessionAccess(),
+            proxyHttp: vi.fn(async () => ({ ok: true as const })),
+        });
+
+        const handler = getRouteHandler(app, "GET", "/v1/local-services/public/:exposureId/*");
+        const reply = createReplyStub();
+        await handler({
+            method: "GET",
+            params: { exposureId: "public_preview_1", "*": ROUTER_DECODED_CRLF_PATH },
+            query: { publicToken: "token_1" },
+            headers: { host: "preview.happier.test" },
+        }, reply);
+
+        expect(reply.statusCode).toBe(303);
+        expect(reply.headers.Location).not.toMatch(/[\r\n]/u);
+        expect(reply.headers.Location).toBe(
+            `/v1/local-services/public/public_preview_1${CANONICAL_ENCODED_CRLF_PATH}`,
+        );
     });
 });

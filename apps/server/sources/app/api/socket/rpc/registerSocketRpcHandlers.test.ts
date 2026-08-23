@@ -18,6 +18,7 @@ import type {
 } from "@/app/presence/sessionPublisherPresence";
 
 import { createFakeSocket, triggerSocketHandler } from "../../testkit/socketHarness";
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from "../externalActionDispatcher";
 
 type RpcTargetEmitWithAck = (
     event: string,
@@ -242,6 +243,77 @@ describe("registerSocketRpcHandlers", () => {
         const machineSocket = createFakeSocket({
             id: "machine-socket",
             data: { clientType: "machine-scoped", machineId: "machine-1" },
+            join: machineJoin,
+            leave: vi.fn().mockResolvedValue(undefined),
+        } as any);
+        registerSocketRpcHandlers({
+            userId: "user-1",
+            socket: machineSocket as any,
+            io: {} as Server,
+        });
+        await triggerSocketHandler(machineSocket, SOCKET_RPC_EVENTS.REGISTER, { method });
+        expect(machineJoin).toHaveBeenCalledWith(`rpc:user-1:${method}`);
+    });
+
+    it("reserves the external Action relay method for an exact machine daemon and rejects client calls", async () => {
+        const method = `machine-1:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
+        const userJoin = vi.fn().mockResolvedValue(undefined);
+        const userSocket = createFakeSocket({
+            id: "user-socket",
+            data: { clientType: "user-scoped" },
+            join: userJoin,
+            leave: vi.fn().mockResolvedValue(undefined),
+        } as any);
+
+        registerSocketRpcHandlers({
+            userId: "user-1",
+            socket: userSocket as any,
+            io: {} as Server,
+        });
+
+        await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.REGISTER, { method });
+        const callback = vi.fn();
+        await triggerSocketHandler(userSocket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
+
+        expect(userJoin).not.toHaveBeenCalled();
+        expect(userSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+            type: "register",
+            error: "Forbidden",
+        });
+        expect(callback).toHaveBeenCalledWith({
+            ok: false,
+            error: "Forbidden",
+            errorCode: RPC_ERROR_CODES.FORBIDDEN,
+        });
+        expect(resolveRpcCallTargetMock).not.toHaveBeenCalled();
+
+        const unverifiedMachineJoin = vi.fn().mockResolvedValue(undefined);
+        const unverifiedMachineSocket = createFakeSocket({
+            id: "unverified-machine-socket",
+            data: { clientType: "machine-scoped", machineId: "machine-1" },
+            join: unverifiedMachineJoin,
+            leave: vi.fn().mockResolvedValue(undefined),
+        } as any);
+        registerSocketRpcHandlers({
+            userId: "user-1",
+            socket: unverifiedMachineSocket as any,
+            io: {} as Server,
+        });
+        await triggerSocketHandler(unverifiedMachineSocket, SOCKET_RPC_EVENTS.REGISTER, { method });
+        expect(unverifiedMachineJoin).not.toHaveBeenCalled();
+        expect(unverifiedMachineSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+            type: "register",
+            error: "Forbidden",
+        });
+
+        const machineJoin = vi.fn().mockResolvedValue(undefined);
+        const machineSocket = createFakeSocket({
+            id: "machine-socket",
+            data: {
+                clientType: "machine-scoped",
+                machineId: "machine-1",
+                verifiedMachineInstallationId: "installation-1",
+            },
             join: machineJoin,
             leave: vi.fn().mockResolvedValue(undefined),
         } as any);

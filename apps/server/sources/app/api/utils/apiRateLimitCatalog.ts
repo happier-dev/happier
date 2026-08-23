@@ -37,6 +37,8 @@ const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     "auth.pairing.status": { defaultMax: 240, defaultWindow: "1 minute", keyMode: "user" },
     "auth.pairing.consume": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "user" },
     "auth.pairing.request": { defaultMax: 30, defaultWindow: "1 minute", keyMode: "ip" },
+    "auth.keyChallenge.issue": { defaultMax: 30, defaultWindow: "1 minute", keyMode: "ip" },
+    "auth.keyChallenge.redeem": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "ip" },
     "oauthExternal.authParams": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "ip" },
     "oauthExternal.connectParams": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "user" },
     "oauthExternal.callback": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "ip" },

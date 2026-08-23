@@ -10,13 +10,13 @@ import {
     type PluginWebhookEndpointCredentialRotateResultV1,
     type PluginWebhookDeliveryMovePendingInputV1,
     type PluginWebhookEndpointCheckCorrespondenceInputV1,
+    type PluginWebhookEndpointCheckCorrespondenceResultV1,
     type PluginWebhookEndpointEnsureInputV1,
     type PluginWebhookEndpointReadInputV1,
     type PluginWebhookEndpointRetargetInputV1,
     type PluginWebhookEndpointRevokeInputV1,
 } from "@happier-dev/protocol";
 
-import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { resolveConfiguredCanonicalServerUrl } from "@/app/serverUrls/effectiveServerUrls";
 import { db } from "@/storage/db";
@@ -30,6 +30,8 @@ import {
 } from "./credentialStore";
 import { createGeneratedPluginWebhookCredentialMaterialV1 } from "./credentialMaterial";
 import { resolveCurrentPluginWebhookContributionTxV1 } from "./currentContribution";
+import { resolveCurrentPluginWebhookTargetTxV1 } from "./currentTarget";
+import { checkCurrentPluginWebhookEndpointCorrespondenceTxV1 } from "./endpointCorrespondence";
 import {
     createPluginWebhookEndpointStoreV1,
     PluginWebhookEndpointStoreError,
@@ -246,45 +248,12 @@ async function resolveCurrentWebhookTargetV1(params: Readonly<{
     target: ResolvedPluginWebhookTargetV1["materialization"];
 }>): Promise<ResolvedPluginWebhookTargetV1 | null> {
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
-    return await inTx(async (tx) => {
-        const row = await tx.pluginMachineMaterialization.findUnique({
-            where: {
-                machineId_materializationId: {
-                    machineId: params.target.machineId,
-                    materializationId: params.target.materializationId,
-                },
-            },
-            select: {
-                accountId: true,
-                pluginId: true,
-                version: true,
-                machine: { select: { installationId: true } },
-            },
-        });
-        if (
-            !row
-            || row.accountId !== params.accountId
-            || row.pluginId !== params.target.pluginId
-            || row.machine.installationId === null
-        ) return null;
-        const current = await resolveCurrentClaimablePluginMachineMaterializationTx({
-            tx,
-            accountId: params.accountId,
-            serverIdentityId,
-            machineId: params.target.machineId,
-            machineInstallationId: row.machine.installationId,
-            materializationId: params.target.materializationId,
-            pluginId: params.target.pluginId,
-            version: row.version,
-            requiredMachineOperationCapability: "pluginWebhookClaim",
-        });
-        if (current.kind !== "current") return null;
-        return {
-            materialization: params.target,
-            machineInstallationId: row.machine.installationId,
-            pluginVersion: row.version,
-        };
-    });
+    return await inTx(async (tx) => await resolveCurrentPluginWebhookTargetTxV1({
+        tx,
+        serverIdentityId,
+        accountId: params.accountId,
+        target: params.target,
+    }));
 }
 
 async function resolveCurrentWebhookContributionV1(params: Readonly<{
@@ -343,17 +312,30 @@ export function createPluginWebhookEndpointActionsV1(options: Readonly<{
         configureCredential: configurePluginWebhookEndpointCredentialV1,
         rotateCredential: rotatePluginWebhookEndpointCredentialV1,
         finishCredentialRotation: finishPluginWebhookEndpointCredentialRotationV1,
+        /**
+         * Plugin caller authentication stays here, at the public Action
+         * boundary. The correspondence decision itself belongs to the single
+         * transaction-scoped owner shared with the Automation writer.
+         */
         checkCorrespondence: async (params: Readonly<{
             accountId: string;
             callerPluginId: string;
             input: PluginWebhookEndpointCheckCorrespondenceInputV1;
-        }>) => await isCurrentCallerPluginEnabledV1(params.accountId, params.callerPluginId)
-            ? await store.checkCorrespondence({
+        }>): Promise<PluginWebhookEndpointCheckCorrespondenceResultV1> => {
+            if (
+                params.callerPluginId.length === 0
+                || !await isCurrentCallerPluginEnabledV1(params.accountId, params.callerPluginId)
+            ) {
+                return { kind: "unavailable", code: "endpoint_unavailable" };
+            }
+            const serverIdentityId = await getOrCreateServerIdentityId(process.env);
+            return await inTx(async (tx) => await checkCurrentPluginWebhookEndpointCorrespondenceTxV1({
+                tx,
+                serverIdentityId,
                 accountId: params.accountId,
-                callerPluginId: params.callerPluginId,
-                ...params.input,
-            })
-            : { kind: "unavailable" as const, code: "endpoint_unavailable" },
+                input: params.input,
+            }));
+        },
     };
 }
 

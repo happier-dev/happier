@@ -114,6 +114,7 @@ describe("enableAuthentication (auth policy) (integration)", () => {
         enableAuthentication(app);
         app.get("/credential-kind", { preHandler: app.authenticate }, async (request: any) => ({
             credentialKind: request.authTokenKind,
+            authority: request.authAuthority,
         }));
         await app.ready();
         try {
@@ -123,7 +124,10 @@ describe("enableAuthentication (auth policy) (integration)", () => {
                 headers: { authorization: `Bearer ${accountToken}` },
             });
             expect(accountResponse.statusCode).toBe(200);
-            expect(accountResponse.json()).toEqual({ credentialKind: "account" });
+            expect(accountResponse.json()).toEqual({
+                credentialKind: "account",
+                authority: "present_user",
+            });
 
             const terminalResponse = await app.inject({
                 method: "GET",
@@ -131,7 +135,10 @@ describe("enableAuthentication (auth policy) (integration)", () => {
                 headers: { authorization: `Bearer ${terminalToken}` },
             });
             expect(terminalResponse.statusCode).toBe(200);
-            expect(terminalResponse.json()).toEqual({ credentialKind: "terminal" });
+            expect(terminalResponse.json()).toEqual({
+                credentialKind: "terminal",
+                authority: "account_automation",
+            });
         } finally {
             await app.close();
         }

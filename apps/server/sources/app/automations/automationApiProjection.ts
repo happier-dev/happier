@@ -19,6 +19,8 @@ import {
 import type {
     AutomationLegacyTargetType,
     AutomationListItem,
+    AutomationRunDetailItem,
+    AutomationRunEventRow,
     AutomationRunItem,
     AutomationTargetType,
 } from "./automationTypes";
@@ -497,12 +499,61 @@ function projectStoredFailureDetail(
     return errorMessage;
 }
 
+function readBoundedEventString(
+    payload: Record<string, unknown> | null,
+    key: string,
+    maxChars: number,
+): string | null {
+    const value = payload?.[key];
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed.slice(0, maxChars) : null;
+}
+
+function readEventInteger(
+    payload: Record<string, unknown> | null,
+    key: string,
+): number | null {
+    const value = payload?.[key];
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+        ? value
+        : null;
+}
+
+/**
+ * The Run transition history the lifecycle owners already write, projected as
+ * bounded non-secret facts. Persisted payloads are server-authored, but this
+ * projection still reads only the named keys so a future writer cannot leak an
+ * unexpected field into a user-facing response.
+ */
+function projectRunEvents(
+    events: readonly AutomationRunEventRow[] | undefined,
+): readonly unknown[] {
+    if (!events || events.length === 0) return [];
+    // Selected newest-first so a long-lived Run keeps its decision-relevant
+    // tail; the contract presents transitions in the order they happened.
+    return [...events].reverse().map((event) => {
+        const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+            ? event.payload as Record<string, unknown>
+            : null;
+        return {
+            at: event.ts.getTime(),
+            type: event.type.slice(0, 64),
+            machineId: readBoundedEventString(payload, "machineId", 128),
+            errorCode: readBoundedEventString(payload, "errorCode", 128),
+            executionAttempt: readEventInteger(payload, "executionAttempt"),
+            outcome: readBoundedEventString(payload, "outcome", 64),
+            reason: readBoundedEventString(payload, "reason", 128),
+        };
+    });
+}
+
 /**
  * Exact authenticated detail: direct request/result content is available, but
  * opaque reply routing and delivery receipt bytes never leave their owner.
  */
 export function toAutomationRunV3DetailApiDto(
-    item: AutomationRunItem,
+    item: AutomationRunItem | AutomationRunDetailItem,
     mode: "plain" | "e2ee",
 ) {
     assertAutomationStoredContentEnvelopeOuterForMode({
@@ -518,6 +569,13 @@ export function toAutomationRunV3DetailApiDto(
         ...toAutomationRunV3ListApiDto(item),
         triggerEvidenceEnvelope: item.triggerEvidenceEnvelope,
         executionInputEnvelope: item.executionInputEnvelope,
+        // The native execution identity is what makes an uncertain Run
+        // actionable: without it the user is told the outcome is unknown and
+        // given nothing to inspect or stop.
+        executionNativeRunId: item.executionNativeRunId,
+        executionNativeCallId: item.executionNativeCallId,
+        executionNativeSidechainId: item.executionNativeSidechainId,
+        events: projectRunEvents("events" in item ? item.events : undefined),
         ...projectStoredResultDetail(item.resultEnvelope, mode),
         errorDetailEnvelope: projectStoredFailureDetail(item.errorMessage, mode),
     });

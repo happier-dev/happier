@@ -2,6 +2,9 @@ import { type Fastify } from "../../types";
 import { registerTerminalAuthRequestRoutes } from "./registerTerminalAuthRequestRoutes";
 import { registerAccountAuthRoutes } from "./registerAccountAuthRoutes";
 import { registerPairingAuthRoutes } from "./registerPairingAuthRoutes";
+import { registerApiTokenIntrospectionRoute } from "./registerApiTokenIntrospectionRoute";
+import { registerAccountApiTokenManagementRoutes } from "./registerAccountApiTokenManagementRoutes";
+import { registerAccountSessionsSignOutEverywhereRoute } from "./registerAccountSessionsSignOutEverywhereRoute";
 import { resolveTerminalAuthRequestPolicyFromEnv } from "./terminalAuthRequestPolicy";
 import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveAuthFeature } from "@/app/features/authFeature";
@@ -34,6 +37,10 @@ export function authRoutes(app: Fastify): void {
             return reply.send({ ok: true });
         },
     );
+
+    registerApiTokenIntrospectionRoute(app);
+    registerAccountApiTokenManagementRoutes(app);
+    registerAccountSessionsSignOutEverywhereRoute(app);
 
     const terminalAuthPolicy = resolveTerminalAuthRequestPolicyFromEnv(process.env);
     const isTerminalAuthExpired = (createdAt: Date): boolean => {

@@ -3,7 +3,7 @@ import {
     SessionMetadataInactiveModelIntentOwnerPatchV1Schema,
 } from "@happier-dev/protocol";
 
-import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
+import { buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
 import {
@@ -69,12 +69,6 @@ export function registerSessionAgentTransitionRoute(
                 200: z.object({
                     success: z.literal(true),
                     dividerSeq: z.number().int().min(0),
-                    /**
-                     * An unreadable row already occupied the reserved localId.
-                     * The daemon must verify it before acting on the divider;
-                     * omitted whenever the server wrote or verified the row.
-                     */
-                    dividerVerificationRequired: z.literal(true).optional(),
                 }).strict(),
                 400: z.object({ error: z.literal("Invalid parameters") }).strict(),
                 403: z.object({ error: z.literal("Forbidden") }).strict(),
@@ -201,24 +195,6 @@ export function registerSessionAgentTransitionRoute(
                 sessionId,
                 readyProjection: write.readyProjection,
             });
-        } else if (write?.didUpdate) {
-            // Reached only when a concurrent writer won the reserved localId
-            // between this service's pre-check and its insert, so the message
-            // owner reconciled the row instead of creating it. The row was
-            // mutated and its cursors moved; publishing the update is what stops
-            // clients holding a divider the server has already replaced.
-            await Promise.all(write.participantCursors.map(async ({ accountId, cursor }) => {
-                eventRouter.emitUpdate({
-                    userId: accountId,
-                    payload: buildMessageUpdatedUpdate(
-                        write.message,
-                        sessionId,
-                        cursor,
-                        randomKeyNaked(12),
-                    ),
-                    recipientFilter: { type: "all-interested-in-session", sessionId },
-                });
-            }));
         }
         if (write) {
             await refreshSessionParticipantBadgePushes({
@@ -230,9 +206,6 @@ export function registerSessionAgentTransitionRoute(
         return reply.send({
             success: true as const,
             dividerSeq: result.dividerSeq,
-            ...(result.dividerVerificationRequired
-                ? { dividerVerificationRequired: true as const }
-                : {}),
         });
     });
 }

@@ -857,6 +857,7 @@ export function machinesRoutes(app: Fastify) {
     app.get('/v1/machines', {
         preHandler: app.authenticate,
         config: {
+            allowApiToken: true,
             rateLimit: resolveApiHotEndpointRateLimit(process.env, "machines"),
         },
     }, async (request, reply) => {

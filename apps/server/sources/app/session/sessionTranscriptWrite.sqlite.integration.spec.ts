@@ -431,7 +431,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
             .toEqual({ seq: 0 });
     }, 60_000);
 
-    it("keeps historical, Pending, and ordinary writes gapless, transactional, and idempotent", async () => {
+    it("keeps historical, Pending, and ordinary writes gapless while fencing stale historical retries after storage transfer", async () => {
         const account = await db.account.create({
             data: { publicKey: `c1-${randomUUID()}` },
             select: { id: true },
@@ -489,7 +489,18 @@ describe("canonical transcript sequence writer on SQLite", () => {
             storagePolicy: "optional",
             items: historyItems,
         });
-        expect(retry).toMatchObject({ ok: true, didWrite: false, firstSeq: 1, lastSeq: 1 });
+        // A storage-owner transfer is a fence, not a read capability: an exact
+        // historical local-id retry must be rejected before it can inspect the
+        // hosted transcript. Same-owner retries and finalized import receipts
+        // retain their own canonical idempotency coverage.
+        expect(retry).toEqual({
+            ok: false,
+            error: "storage-mode-conflict",
+            code: "session_storage_authority_mismatch",
+        });
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { seq: true } }))
+            .toEqual({ seq: 3 });
+        expect(await db.sessionMessage.count({ where: { sessionId: session.id } })).toBe(3);
 
         await db.session.update({
             where: { id: session.id },

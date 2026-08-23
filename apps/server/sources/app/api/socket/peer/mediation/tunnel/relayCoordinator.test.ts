@@ -20,12 +20,35 @@ describe("createPeerTcpTunnelRelayCoordinator", () => {
         Object.defineProperty(relayAdmissionRedis, "status", {
             get: () => redisStatus,
         });
+        const accountId = "account-closing";
+        const machineId = "machine-closing";
+        const machineSocketId = "socket-closing";
+        // The machine is reachable, so admission attaches provisionally and reaches the
+        // grant step. Without a reachable machine this test could never observe the
+        // readiness wait it is named for.
+        const machineSocket = {
+            connected: true,
+            id: machineSocketId,
+            data: { userId: accountId, clientType: "machine-scoped", machineId },
+            rooms: new Set(getSocketRooms({
+                userId: accountId,
+                clientType: "machine-scoped",
+                machineId,
+            })),
+            once: vi.fn(),
+            off: vi.fn(),
+        } as unknown as Socket;
         const io = {
             sockets: {
-                sockets: new Map(),
+                sockets: new Map([[machineSocketId, machineSocket]]),
             },
             on: vi.fn(),
             off: vi.fn(),
+            in: vi.fn(() => ({
+                local: { fetchSockets: vi.fn(async () => [machineSocket]) },
+                timeout: vi.fn(() => ({ fetchSockets: vi.fn(async () => [machineSocket]) })),
+            })),
+            to: vi.fn(() => ({ emit: vi.fn() })),
             serverSideEmit: vi.fn(),
             serverSideEmitWithAck: vi.fn(async () => []),
         } as unknown as Server;
@@ -39,20 +62,23 @@ describe("createPeerTcpTunnelRelayCoordinator", () => {
             },
         });
         const nowMs = Date.now();
+        const tunnelKey = "account-closing:machine:machine-closing:user:tunnel-closing";
         const admission = coordinator.admit({
-            accountId: "account-closing",
-            tunnelKey: "account-closing:machine:machine-closing:user:tunnel-closing",
+            accountId,
+            tunnelKey,
             grantId: "grant-closing",
             grantExpiresAt: nowMs + 60_000,
-            machineId: "machine-closing",
+            machineId,
             maxDurationMs: 30_000,
             nowMs,
             onMachineEnvelope: vi.fn(),
             onMachineDisconnect: vi.fn(),
         });
 
-        expect(relayAdmissionRedis.listenerCount("ready")).toBe(1);
-        expect(relayAdmissionRedis.listenerCount("end")).toBe(1);
+        await vi.waitFor(() => {
+            expect(relayAdmissionRedis.listenerCount("ready")).toBe(1);
+            expect(relayAdmissionRedis.listenerCount("end")).toBe(1);
+        });
         const close = coordinator.close();
         redisStatus = "ready";
         relayAdmissionRedis.emit("ready");
@@ -61,6 +87,12 @@ describe("createPeerTcpTunnelRelayCoordinator", () => {
             status: "rejected",
             reason: "cluster_unavailable",
         });
+        // The provisional attachment is unwound synchronously by the losing admission,
+        // so no owner survives the refused grant.
+        expect(coordinator.routeOwnerEnvelope({
+            tunnelKey,
+            envelope: {} as unknown as PeerTcpTunnelRelayEnvelope,
+        })).toBe(false);
         await expect(Promise.race([
             close.then(() => "closed" as const),
             new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1_000)),
@@ -312,6 +344,145 @@ describe("createPeerTcpTunnelRelayCoordinator", () => {
                 machineSocketId,
                 envelope,
             })).toBe("local_exact");
+        } finally {
+            await coordinator.close();
+        }
+    });
+    it("keeps a single-use grant spendable when the exact machine is not attachable", async () => {
+        const accountId = "account-retry";
+        const machineId = "machine-retry";
+        const machineSocketId = "socket-retry";
+        const rooms = new Set(getSocketRooms({
+            userId: accountId,
+            clientType: "machine-scoped",
+            machineId,
+        }));
+        const machineSocket = {
+            connected: true,
+            id: machineSocketId,
+            data: {
+                userId: accountId,
+                clientType: "machine-scoped",
+                machineId,
+            },
+            rooms,
+            once: vi.fn(),
+            off: vi.fn(),
+        } as unknown as Socket;
+        // The machine is briefly absent from the room (reconnecting), then present.
+        let machineAttached = false;
+        const io = {
+            sockets: {
+                sockets: new Map([[machineSocketId, machineSocket]]),
+            },
+            on: vi.fn(),
+            off: vi.fn(),
+            in: vi.fn(() => ({
+                local: {
+                    fetchSockets: vi.fn(async () => (machineAttached ? [machineSocket] : [])),
+                },
+                timeout: vi.fn(() => ({
+                    fetchSockets: vi.fn(async () => (machineAttached ? [machineSocket] : [])),
+                })),
+            })),
+            to: vi.fn(() => ({ emit: vi.fn() })),
+            serverSideEmit: vi.fn(),
+            serverSideEmitWithAck: vi.fn(async () => []),
+        } as unknown as Server;
+        const coordinator = createPeerTcpTunnelRelayCoordinator({
+            io,
+            config: { mode: "memory" },
+        });
+        const admission = {
+            accountId,
+            tunnelKey: `${accountId}:machine:${machineId}:user:tunnel-retry`,
+            grantId: "grant-retry",
+            grantExpiresAt: 60_000,
+            machineId,
+            maxDurationMs: 30_000,
+            nowMs: 1_000,
+        } as const;
+
+        try {
+            await expect(coordinator.admit({
+                ...admission,
+                onMachineEnvelope: vi.fn(),
+                onMachineDisconnect: vi.fn(),
+            })).resolves.toEqual({ status: "rejected", reason: "machine_unavailable" });
+
+            machineAttached = true;
+
+            // The grant was never spent, so the same authorization still admits once the
+            // machine is reachable again.
+            await expect(coordinator.admit({
+                ...admission,
+                onMachineEnvelope: vi.fn(),
+                onMachineDisconnect: vi.fn(),
+            })).resolves.toEqual({ status: "attached" });
+        } finally {
+            await coordinator.close();
+        }
+    });
+
+    it("spends a single-use grant exactly once across concurrent admissions", async () => {
+        const accountId = "account-once";
+        const machineId = "machine-once";
+        const machineSocketId = "socket-once";
+        const rooms = new Set(getSocketRooms({
+            userId: accountId,
+            clientType: "machine-scoped",
+            machineId,
+        }));
+        const machineSocket = {
+            connected: true,
+            id: machineSocketId,
+            data: {
+                userId: accountId,
+                clientType: "machine-scoped",
+                machineId,
+            },
+            rooms,
+            once: vi.fn(),
+            off: vi.fn(),
+        } as unknown as Socket;
+        const io = {
+            sockets: {
+                sockets: new Map([[machineSocketId, machineSocket]]),
+            },
+            on: vi.fn(),
+            off: vi.fn(),
+            in: vi.fn(() => ({
+                local: {
+                    fetchSockets: vi.fn(async () => [machineSocket]),
+                },
+                timeout: vi.fn(() => ({
+                    fetchSockets: vi.fn(async () => [machineSocket]),
+                })),
+            })),
+            to: vi.fn(() => ({ emit: vi.fn() })),
+            serverSideEmit: vi.fn(),
+            serverSideEmitWithAck: vi.fn(async () => []),
+        } as unknown as Server;
+        const coordinator = createPeerTcpTunnelRelayCoordinator({
+            io,
+            config: { mode: "memory" },
+        });
+
+        try {
+            const results = await Promise.all(["a", "b"].map(async (suffix) => await coordinator.admit({
+                accountId,
+                tunnelKey: `${accountId}:machine:${machineId}:user:tunnel-once-${suffix}`,
+                grantId: "grant-once",
+                grantExpiresAt: 60_000,
+                machineId,
+                maxDurationMs: 30_000,
+                nowMs: 1_000,
+                onMachineEnvelope: vi.fn(),
+                onMachineDisconnect: vi.fn(),
+            })));
+
+            expect(results.filter((result) => result.status === "attached")).toHaveLength(1);
+            expect(results).toContainEqual({ status: "rejected", reason: "grant_already_consumed" });
         } finally {
             await coordinator.close();
         }

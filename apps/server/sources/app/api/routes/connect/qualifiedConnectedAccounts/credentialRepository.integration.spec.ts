@@ -13,13 +13,17 @@ import {
     mutateQualifiedConnectedServiceCredentialHealth,
     mutateQualifiedConnectedServiceCredential,
     prepareQualifiedConnectedServiceCredentialCreate,
+    QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT,
     readQualifiedConnectedAccountConfiguration,
     resolveQualifiedConnectedAccountHostReferenceInTx,
     readQualifiedConnectedServiceCredential,
     readQualifiedConnectedServiceCredentialForLegacyProjection,
     settlePreparedQualifiedConnectedServiceCredentialCreate,
 } from "./credentialRepository";
-import { resolveLegacyServiceAccountTokenIdentityFields } from "./identity";
+import {
+    createServiceAccountTokenIdentityFields,
+    resolveLegacyServiceAccountTokenIdentityFields,
+} from "./identity";
 import {
     createProviderAccountUsageRecordKey,
     createUsageSnapshot,
@@ -2092,4 +2096,93 @@ describe("qualified Connected Account credential repository", () => {
             where: { accountId: account.id },
         })).resolves.toBe(0);
     });
+    it("refuses the create that would push an Account past the ceiling its unpaginated reader enforces", async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.serviceAccountToken.createMany({
+            data: Array.from(
+                { length: QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT },
+                (_, index) => ({
+                    accountId: account.id,
+                    ...createServiceAccountTokenIdentityFields({
+                        ref: { service, accountId: `seeded/account/${index}` },
+                        authenticationModeId: "api-key",
+                    }),
+                    token: Buffer.from("opaque-token", "utf8"),
+                }),
+            ),
+        });
+
+        // The reader is exactly at its unpaginated ceiling and still answers.
+        await expect(listQualifiedConnectedAccounts({
+            accountId: account.id,
+            service,
+        })).resolves.toHaveLength(QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT);
+
+        // One more qualified credential is what the writer must refuse. Persisting it
+        // would make every subsequent list throw, which is a total read outage for the
+        // Account rather than a failure of the one write that caused it.
+        await expect(mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref: { service, accountId: "provider/account/overflow" },
+            expectedCredentialRevision: null,
+            authenticationModeId: "api-key",
+            content: { t: "plain", v: { token: "credential" } },
+            metadata,
+        })).resolves.toEqual({ status: "capacity_exhausted" });
+
+        await expect(db.serviceAccountToken.count({
+            where: { accountId: account.id },
+        })).resolves.toBe(QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT);
+        await expect(listQualifiedConnectedAccounts({
+            accountId: account.id,
+            service,
+        })).resolves.toHaveLength(QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT);
+    }, 60_000);
+
+    it("keeps updating an existing credential available at the ceiling", async () => {
+        const account = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const ref = { service, accountId: "provider/account/at-ceiling" };
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: null,
+            authenticationModeId: "api-key",
+            content: { t: "plain", v: { token: "credential" } },
+            metadata,
+        });
+        if (created.status !== "written") {
+            throw new Error("Expected the first credential to be written");
+        }
+        await db.serviceAccountToken.createMany({
+            data: Array.from(
+                { length: QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT - 1 },
+                (_, index) => ({
+                    accountId: account.id,
+                    ...createServiceAccountTokenIdentityFields({
+                        ref: { service, accountId: `seeded/account/${index}` },
+                        authenticationModeId: "api-key",
+                    }),
+                    token: Buffer.from("opaque-token", "utf8"),
+                }),
+            ),
+        });
+
+        // The ceiling bounds how many credentials an Account may hold, not whether the
+        // ones it already holds can be rotated or repaired.
+        await expect(mutateQualifiedConnectedServiceCredential({
+            accountId: account.id,
+            ref,
+            expectedCredentialRevision: created.credentialRevision,
+            expectedConfigurationRevision: null,
+            authenticationModeId: "api-key",
+            content: { t: "plain", v: { token: "rotated" } },
+            metadata,
+        })).resolves.toMatchObject({ status: "written" });
+    }, 60_000);
 });

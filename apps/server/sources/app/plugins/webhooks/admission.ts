@@ -41,36 +41,48 @@ return removed
 
 export type PluginWebhookAdmissionLeaseV1 = Readonly<{ release(): void }>;
 
+/**
+ * Process-wide admission for public webhook ingress.
+ *
+ * The charge is the declared raw body: the fixed-size `Uint8Array` that
+ * `readWebhookRawBodyV1` allocates before ingress can authenticate or route a
+ * request. Later base64/envelope representations have their own protocol
+ * ceilings and are not re-charged here, so this is a raw-body custody bound,
+ * not a model of process working memory.
+ */
 export function createPluginWebhookProcessAdmissionV1(policy: Readonly<{
     maxRequests: number;
-    maxBytes: number;
+    maxRawBodyBytes: number;
 }>) {
     if (!Number.isSafeInteger(policy.maxRequests) || policy.maxRequests < 1) {
         throw new TypeError("Plugin webhook process request ceiling must be a positive integer");
     }
-    if (!Number.isSafeInteger(policy.maxBytes) || policy.maxBytes < 1) {
-        throw new TypeError("Plugin webhook process byte ceiling must be a positive integer");
+    if (!Number.isSafeInteger(policy.maxRawBodyBytes) || policy.maxRawBodyBytes < 1) {
+        throw new TypeError("Plugin webhook process raw-body ceiling must be a positive integer");
     }
     let requests = 0;
-    let bytes = 0;
+    let rawBodyBytes = 0;
     return {
-        acquire(declaredBytes: number): PluginWebhookAdmissionLeaseV1 | null {
-            if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) return null;
-            if (requests + 1 > policy.maxRequests || bytes + declaredBytes > policy.maxBytes) return null;
+        acquire(declaredRawBodyBytes: number): PluginWebhookAdmissionLeaseV1 | null {
+            if (!Number.isSafeInteger(declaredRawBodyBytes) || declaredRawBodyBytes < 0) return null;
+            if (
+                requests + 1 > policy.maxRequests
+                || rawBodyBytes + declaredRawBodyBytes > policy.maxRawBodyBytes
+            ) return null;
             requests += 1;
-            bytes += declaredBytes;
+            rawBodyBytes += declaredRawBodyBytes;
             let released = false;
             return {
                 release() {
                     if (released) return;
                     released = true;
                     requests -= 1;
-                    bytes -= declaredBytes;
+                    rawBodyBytes -= declaredRawBodyBytes;
                 },
             };
         },
-        snapshot(): Readonly<{ requests: number; bytes: number }> {
-            return { requests, bytes };
+        snapshot(): Readonly<{ requests: number; rawBodyBytes: number }> {
+            return { requests, rawBodyBytes };
         },
     };
 }

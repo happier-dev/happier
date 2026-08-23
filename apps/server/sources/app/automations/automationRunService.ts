@@ -1,9 +1,11 @@
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import {
+    AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1,
     AutomationRunResultStoredV1Schema,
     deriveSessionCreationTagV1,
     parseAutomationRunExecutionRecipeV1,
+    sameAutomationAccountCurrentnessWitnessV1,
     validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
     type AutomationAccountCurrentnessWitnessV1,
     type ExecutionRunWaitResult,
@@ -13,10 +15,7 @@ import {
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 
 import { emitAutomationRunTransition } from "./automationChangePublisher";
-import {
-    fetchAutomationAccountCurrentnessWitnessTx,
-    sameAutomationAccountCurrentnessWitness,
-} from "./automationAccountCurrentness";
+import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
 import { enqueueNextScheduledRunIfMissingTx } from "./automationRunQueueService";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import { isFinalAutomationRunStatus } from "./automationSchedulingService";
@@ -55,15 +54,20 @@ async function hasExpectedAutomationAccountCurrentnessTx(params: Readonly<{
 }>): Promise<boolean> {
     if (!params.expected) return true;
     const observed = await fetchAutomationAccountCurrentnessWitnessTx(params.tx, params.accountId);
-    return observed !== null && sameAutomationAccountCurrentnessWitness(observed, params.expected);
+    return observed !== null && sameAutomationAccountCurrentnessWitnessV1(observed, params.expected);
 }
 
 /**
- * Cancellation publishes an Automation Account change, so the worker's
- * start-time witness is necessarily one version behind when it later reports
- * a known Session. The cancelled-only retention path has no content or
- * lifecycle authority; it may therefore ignore that self-caused version bump,
- * but must still refuse an encryption-mode or content-key transition.
+ * Content-identity currentness for a decision taken *after* an external effect
+ * already happened. `Account.seq` advances for every Account-scoped write,
+ * including the cancellation that produced the terminality being reported and
+ * any unrelated Account mutation, so a post-effect report's witness is
+ * routinely behind. Those readers compare the Account's mode and content-key
+ * identity instead: they open no content under a new mode, and their write is
+ * still gated by the exact machine/attempt/revision/lease Run CAS that
+ * authorized the effect. An encryption-mode or content-key transition still
+ * refuses them. Pre-effect and redispatch-permission decisions keep the exact
+ * witness.
  */
 async function hasCompatibleAutomationAccountEncryptionTx(params: Readonly<{
     tx: Tx;
@@ -1175,13 +1179,25 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return null;
-        if (!await hasExpectedAutomationAccountCurrentnessTx({
-            tx,
-            accountId: params.accountId,
-            expected: params.accountCurrentness,
-        })) {
-            return null;
-        }
+        // A strict `started` response reports an external execution that has
+        // already happened. Its identity is the only pointer back to something
+        // that may still be running, so an unrelated Account write that moved
+        // only the global sequence must not discard it; an encryption-mode or
+        // content-key transition still fences the write. Every other outcome
+        // is a pre-effect or redispatch-permission decision and keeps the
+        // exact post-start witness S.
+        const currentnessHolds = params.outcome.kind === "started"
+            ? await hasCompatibleAutomationAccountEncryptionTx({
+                tx,
+                accountId: params.accountId,
+                expected: params.accountCurrentness,
+            })
+            : await hasExpectedAutomationAccountCurrentnessTx({
+                tx,
+                accountId: params.accountId,
+                expected: params.accountCurrentness,
+            });
+        if (!currentnessHolds) return null;
 
         const now = new Date();
         const candidate = await tx.automationRun.findFirst({
@@ -2057,6 +2073,14 @@ export async function cancelAutomationRun(params: {
                 run: run as AutomationRunItem,
                 previousState: previousRun.state,
                 cursor,
+                // A Run cancelled after dispatch permission can only be
+                // published as uncertain, so the machine observer would read a
+                // generic staleness abort and leave the external execution
+                // running. The cause makes the user's cancellation
+                // authoritative for the one machine that can still stop it.
+                ...(dispatchPermitted
+                    ? { cause: AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1 }
+                    : {}),
             });
             if (nextRun) {
                 emitAutomationRunTransition({

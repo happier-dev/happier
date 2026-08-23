@@ -3,6 +3,7 @@ import {
     AutomationReplyHandoffSettlementV1Schema,
     AutomationReplyHandoffTargetV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
+    sameAutomationAccountCurrentnessWitnessV1,
     validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
     type AutomationAccountCurrentnessWitnessV1,
     type AutomationReplyHandoffSettlementV1,
@@ -21,7 +22,6 @@ import {
     automationAccountCurrentnessSelect,
     deriveAutomationAccountCurrentnessWitness,
     fetchAutomationAccountCurrentnessWitnessTx,
-    sameAutomationAccountCurrentnessWitness,
 } from "./automationAccountCurrentness";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import type { AutomationRunItem } from "./automationTypes";
@@ -175,7 +175,7 @@ function isClaimCurrent(
 ): boolean {
     const currentness = deriveAutomationAccountCurrentnessWitness(candidate.account);
     return currentness !== null
-        && sameAutomationAccountCurrentnessWitness(claim.accountCurrentness, currentness)
+        && sameAutomationAccountCurrentnessWitnessV1(claim.accountCurrentness, currentness)
         && hasClaimedFrozenIdentity(candidate, claim);
 }
 
@@ -619,7 +619,7 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
             && (
                 !suppliedCurrentness.success
                 || !currentness
-                || !sameAutomationAccountCurrentnessWitness(suppliedCurrentness.data, currentness)
+                || !sameAutomationAccountCurrentnessWitnessV1(suppliedCurrentness.data, currentness)
             )
         ) {
             return { applied: false };

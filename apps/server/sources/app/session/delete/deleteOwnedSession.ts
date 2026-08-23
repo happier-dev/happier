@@ -6,11 +6,22 @@ import { deleteSessionTree, SessionDeleteConditionLostError } from './deleteSess
 import { emitSessionDeletedUpdate } from './emitSessionDeletedUpdate';
 import { loadSessionDeleteRecipients } from './loadSessionDeleteRecipients';
 
+/**
+ * Deletion outcomes are kept apart because callers act on them differently.
+ *
+ * - `not-found`: the session is absent, or not owned by / not reachable for the
+ *   caller under the supplied guard. The row this caller could delete does not
+ *   exist, so a client may safely retire its own copy of it.
+ * - `conflict`: the session WAS found, but the guarded delete lost its condition
+ *   between the read and the write (a concurrent metadata write, or a retention
+ *   guard that stopped matching). Nothing was deleted and the row still exists,
+ *   so this is retryable and must never be read as "already gone".
+ */
 export type DeleteOwnedSessionResult =
     | Readonly<{ ok: true }>
     | Readonly<{
         ok: false;
-        error: 'not-found';
+        error: 'not-found' | 'conflict';
     }>;
 
 type DeleteOwnedSessionCommonParams = Readonly<{
@@ -109,7 +120,7 @@ export async function deleteOwnedSession(
         });
     } catch (error) {
         if (error instanceof SessionDeleteConditionLostError) {
-            return { ok: false, error: 'not-found' };
+            return { ok: false, error: 'conflict' };
         }
         throw error;
     }

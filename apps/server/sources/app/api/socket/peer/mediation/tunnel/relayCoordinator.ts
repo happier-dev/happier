@@ -353,6 +353,27 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
         current.socket.off("disconnect", membership.onDisconnect);
     }
 
+    /**
+     * The one owner-attachment teardown. Both an admission that loses the grant race and
+     * an ordinary `release` unwind through here so a provisional attachment can never be
+     * left half-registered on this replica or on the replica that owns the machine socket.
+     */
+    function detachOwnerAttachment(tunnelKey: string, attachmentId: string): void {
+        const owner = ownerAttachmentById.get(attachmentId);
+        if (ownerAttachmentsByTunnelKey.get(tunnelKey)?.attachmentId === attachmentId) {
+            ownerAttachmentsByTunnelKey.delete(tunnelKey);
+        }
+        ownerAttachmentById.delete(attachmentId);
+        if (owner?.local === true) {
+            removeMachineAttachment(attachmentId);
+            return;
+        }
+        input.io.serverSideEmit(DETACH_EVENT, {
+            attachmentId,
+            ownerRouteId: owner?.ownerRouteId ?? ownerRouteId,
+        } satisfies DetachRequest);
+    }
+
     function publishDisconnect(request: AttachRequest): void {
         if (request.ownerRouteId === ownerRouteId) {
             const owner = ownerAttachmentsByTunnelKey.get(request.tunnelKey);
@@ -513,16 +534,18 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
         }
     }
 
+    /**
+     * Admission resolves the exact machine and attaches PROVISIONALLY, then spends the
+     * single-use grant immediately before the attachment becomes admitted.
+     *
+     * Spending first would burn the authorization on a machine that turned out to be
+     * unreachable: the owner cannot retry with the same grant and every later attempt is
+     * refused as `grant_already_consumed`. The grant is still spent exactly once — an
+     * ambiguously successful Redis consumption is never rolled back; the loser instead
+     * detaches its own provisional attachment synchronously.
+     */
     async function performAdmission(params: Parameters<PeerTcpTunnelRelayCoordinator["admit"]>[0]) {
-        const consumed = await consumeGrant({
-            grantId: params.grantId,
-            expiresAt: params.grantExpiresAt,
-            nowMs: params.nowMs,
-        });
-        if (consumed === "duplicate") {
-            return { status: "rejected", reason: "grant_already_consumed" } as const;
-        }
-        if (consumed === "unavailable" || closed) {
+        if (closed) {
             return { status: "rejected", reason: "cluster_unavailable" } as const;
         }
 
@@ -586,24 +609,35 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
                 reason: attached.status === "unavailable" ? "cluster_unavailable" : "machine_unavailable",
             } as const;
         }
+        // Record the real locality before the grant step so every unwind path below —
+        // and `close()` — tears the provisional attachment down through one owner.
+        const attachedOwner = {
+            ...ownerAttachment,
+            local: attached.local,
+        };
+        ownerAttachmentsByTunnelKey.set(params.tunnelKey, attachedOwner);
+        ownerAttachmentById.set(attachmentId, attachedOwner);
+
+        const consumed = await consumeGrant({
+            grantId: params.grantId,
+            expiresAt: params.grantExpiresAt,
+            nowMs: params.nowMs,
+        });
+        if (consumed !== "consumed") {
+            detachOwnerAttachment(params.tunnelKey, attachmentId);
+            return {
+                status: "rejected",
+                reason: consumed === "duplicate" ? "grant_already_consumed" : "cluster_unavailable",
+            } as const;
+        }
         if (closed) {
-            const closingOwner = {
-                ...ownerAttachment,
-                local: attached.local,
-            };
-            ownerAttachmentsByTunnelKey.set(params.tunnelKey, closingOwner);
-            ownerAttachmentById.set(attachmentId, closingOwner);
+            // Shutdown raced an already-spent grant. `close()` joins pending admissions
+            // before it drains the maps, so this attachment is torn down there.
             return {
                 status: "rejected",
                 reason: "cluster_unavailable",
             } as const;
         }
-        const admittedOwner = {
-            ...ownerAttachment,
-            local: attached.local,
-        };
-        ownerAttachmentsByTunnelKey.set(params.tunnelKey, admittedOwner);
-        ownerAttachmentById.set(attachmentId, admittedOwner);
         return { status: "attached" } as const;
     }
 
@@ -656,16 +690,7 @@ export function createPeerTcpTunnelRelayCoordinator(input: Readonly<{
     function release(tunnelKey: string): void {
         const owner = ownerAttachmentsByTunnelKey.get(tunnelKey);
         if (!owner) return;
-        ownerAttachmentsByTunnelKey.delete(tunnelKey);
-        ownerAttachmentById.delete(owner.attachmentId);
-        if (owner.local) {
-            removeMachineAttachment(owner.attachmentId);
-            return;
-        }
-        input.io.serverSideEmit(DETACH_EVENT, {
-            attachmentId: owner.attachmentId,
-            ownerRouteId: owner.ownerRouteId,
-        } satisfies DetachRequest);
+        detachOwnerAttachment(tunnelKey, owner.attachmentId);
     }
 
     function close(): Promise<void> {

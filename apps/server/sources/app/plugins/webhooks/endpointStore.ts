@@ -2,7 +2,6 @@ import { createHash, randomBytes as nodeRandomBytes } from "node:crypto";
 
 import {
     PluginWebhookEndpointEnsureResultV1Schema,
-    PluginWebhookEndpointCheckCorrespondenceResultV1Schema,
     PluginWebhookEndpointIdV1Schema,
     PluginWebhookEndpointReadResultV1Schema,
     PluginWebhookEndpointRetargetResultV1Schema,
@@ -10,8 +9,6 @@ import {
     createCanonicalJsonSigningInput,
     formatPluginWebhookEndpointIdV1,
     type PluginWebhookEndpointEnsureInputV1,
-    type PluginWebhookEndpointSetupV1,
-    type PluginWebhookEndpointCheckCorrespondenceResultV1,
     type PluginWebhookEndpointEnsureResultV1,
     type PluginWebhookEndpointReadResultV1,
     type PluginWebhookEndpointRetargetResultV1,
@@ -70,15 +67,6 @@ export type PluginWebhookEndpointStoreV1 = Readonly<{
         targetMaterialization: ResolvedPluginWebhookTargetV1["materialization"];
         idempotencyKey: string;
     }>): Promise<PluginWebhookEndpointRetargetResultV1>;
-    checkCorrespondence(input: Readonly<{
-        accountId: string;
-        callerPluginId: string;
-        webhookEndpointId: string;
-        webhookContribution: Readonly<{ pluginId: string; localId: string }>;
-        targetMaterialization: ResolvedPluginWebhookTargetV1["materialization"];
-        sourceInstanceId: string;
-        setup: PluginWebhookEndpointSetupV1;
-    }>): Promise<PluginWebhookEndpointCheckCorrespondenceResultV1>;
 }>;
 
 function fingerprint(value: unknown): string {
@@ -845,50 +833,6 @@ export function createPluginWebhookEndpointStoreV1(options: Readonly<{
                 idempotencyKey: input.idempotencyKey,
                 target,
             });
-        },
-        checkCorrespondence: async (input) => {
-            try {
-                if (input.callerPluginId.length === 0) {
-                    return { kind: "unavailable", code: "endpoint_unavailable" };
-                }
-                const target = await resolveTarget(input.accountId, input.targetMaterialization);
-                const contribution = await options.resolveContribution({
-                    accountId: input.accountId,
-                    contribution: input.webhookContribution,
-                    target,
-                });
-                if (!contribution) {
-                    return { kind: "unavailable", code: "endpoint_unavailable" };
-                }
-                const endpoint = await db.pluginWebhookEndpoint.findFirst({
-                    where: {
-                        id: input.webhookEndpointId,
-                        accountId: input.accountId,
-                        pluginId: input.webhookContribution.pluginId,
-                        webhookContributionId: input.webhookContribution.localId,
-                        sourceInstanceId: input.sourceInstanceId,
-                        setupKind: input.setup.kind,
-                        providerInstallationId: input.setup.kind === "githubSharedInstallationV1"
-                            ? input.setup.installationId
-                            : null,
-                        targetMachineId: input.targetMaterialization.machineId,
-                        targetMaterializationId: input.targetMaterialization.materializationId,
-                        targetMachineInstallationId: target.machineInstallationId,
-                        targetPluginVersion: target.pluginVersion,
-                        handlerActionId: contribution.handlerActionLocalId,
-                        routingKind: contribution.routingKind,
-                        enabled: true,
-                        revokedAt: null,
-                        route: { enabled: true, revokedAt: null },
-                    },
-                    select: { id: true, revision: true },
-                });
-                return PluginWebhookEndpointCheckCorrespondenceResultV1Schema.parse(endpoint
-                    ? { kind: "ready", webhookEndpointId: endpoint.id, revision: endpoint.revision }
-                    : { kind: "unavailable", code: "endpoint_unavailable" });
-            } catch {
-                return { kind: "unavailable", code: "endpoint_unavailable" };
-            }
         },
     };
 }

@@ -96,6 +96,10 @@ import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import {
+    PresentUserRequiredResponseSchema,
+    requirePresentUser,
+} from "@/app/api/utils/requirePresentUser";
+import {
     matchSessionAccountEncryptionMigrationPostStateInTx,
     migrateSessionAccountEncryptionInTx,
     SessionAccountEncryptionMigrationConflictError,
@@ -536,13 +540,16 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
     app.post(
         "/v1/account/encryption/migrate/transition/prepare",
         {
-            preHandler: app.authenticate,
+            preHandler: [app.authenticate, requirePresentUser],
             schema: {
                 body: AccountEncryptionMigrateTransitionPrepareRequestSchema,
                 response: {
                     200: AccountEncryptionMigrateTransitionPrepareResponseSchema,
                     400: AccountEncryptionMigrateBadRequestResponseSchema,
-                    403: AccountEncryptionMigrateForbiddenResponseSchema,
+                    403: z.union([
+                        AccountEncryptionMigrateForbiddenResponseSchema,
+                        PresentUserRequiredResponseSchema,
+                    ]),
                     404: AccountEncryptionMigrateNotFoundResponseSchema,
                     426: AccountStoredContentUpgradeRequiredV1Schema,
                     500: AccountEncryptionMigrateInternalResponseSchema,
@@ -584,12 +591,13 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
     app.post(
         "/v1/account/encryption/migrate/transition/authorize",
         {
-            preHandler: app.authenticate,
+            preHandler: [app.authenticate, requirePresentUser],
             schema: {
                 body: AccountEncryptionMigrateTransitionAuthorizeRequestSchema,
                 response: {
                     200: AccountEncryptionMigrateTransitionAuthorizeResponseSchema,
                     400: AccountEncryptionMigrateBadRequestResponseSchema,
+                    403: PresentUserRequiredResponseSchema,
                     404: AccountEncryptionMigrateNotFoundResponseSchema,
                     426: AccountStoredContentUpgradeRequiredV1Schema,
                     500: AccountEncryptionMigrateInternalResponseSchema,
@@ -674,12 +682,13 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
     app.post(
         "/v1/account/encryption/migrate/transition/collections/stage",
         {
-            preHandler: app.authenticate,
+            preHandler: [app.authenticate, requirePresentUser],
             schema: {
                 body: AccountEncryptionMigrateCollectionStageBatchRequestSchema,
                 response: {
                     200: AccountEncryptionMigrateCollectionStageBatchResponseSchema,
                     400: AccountEncryptionMigrateBadRequestResponseSchema,
+                    403: PresentUserRequiredResponseSchema,
                     404: AccountEncryptionMigrateNotFoundResponseSchema,
                     426: AccountStoredContentUpgradeRequiredV1Schema,
                     500: AccountEncryptionMigrateInternalResponseSchema,
@@ -721,12 +730,13 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
     app.post(
         "/v1/account/encryption/migrate/transition/cancel",
         {
-            preHandler: app.authenticate,
+            preHandler: [app.authenticate, requirePresentUser],
             schema: {
                 body: AccountEncryptionMigrateTransitionCancelRequestSchema,
                 response: {
                     200: AccountEncryptionMigrateTransitionCancelResponseSchema,
                     400: AccountEncryptionMigrateBadRequestResponseSchema,
+                    403: PresentUserRequiredResponseSchema,
                     404: AccountEncryptionMigrateNotFoundResponseSchema,
                     426: AccountStoredContentUpgradeRequiredV1Schema,
                     500: AccountEncryptionMigrateInternalResponseSchema,
@@ -760,12 +770,13 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
     app.post(
         "/v1/account/encryption/migrate/transition/activate",
         {
-            preHandler: app.authenticate,
+            preHandler: [app.authenticate, requirePresentUser],
             schema: {
                 body: AccountEncryptionMigrateTransitionActivateRequestSchema,
                 response: {
                     200: AccountEncryptionMigrateTransitionActivateResponseSchema,
                     400: AccountEncryptionMigrateBadRequestResponseSchema,
+                    403: PresentUserRequiredResponseSchema,
                     404: AccountEncryptionMigrateNotFoundResponseSchema,
                     426: AccountStoredContentUpgradeRequiredV1Schema,
                     500: AccountEncryptionMigrateInternalResponseSchema,
@@ -804,7 +815,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
     );
 
     app.post("/v1/account/encryption/migrate", {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             body: AccountEncryptionMigrateIngressRequestSchema,
             response: {
@@ -813,7 +824,10 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     AccountEncryptionMigratePredecessorSuccessResponseSchema,
                 ]),
                 400: AccountEncryptionMigrateBadRequestResponseSchema,
-                403: AccountEncryptionMigrateForbiddenResponseSchema,
+                403: z.union([
+                    AccountEncryptionMigrateForbiddenResponseSchema,
+                    PresentUserRequiredResponseSchema,
+                ]),
                 404: AccountEncryptionMigrateNotFoundResponseSchema,
                 409: AccountEncryptionMigrateConflictResponseSchema,
                 426: AccountStoredContentUpgradeRequiredV1Schema,

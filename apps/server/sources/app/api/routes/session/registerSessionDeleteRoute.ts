@@ -15,6 +15,9 @@ export function registerSessionDeleteRoute(app: Fastify) {
                         'Session not found or not owned by user',
                     ),
                 }),
+                409: z.object({
+                    error: z.literal('Session delete condition was lost'),
+                }),
             },
         },
         preHandler: app.authenticate
@@ -27,6 +30,12 @@ export function registerSessionDeleteRoute(app: Fastify) {
         );
 
         if (!result.ok) {
+            // A lost delete condition means the session still exists and nothing was
+            // removed. Answering 404 there told the client the session was gone and
+            // invited it to retire local copies of live data.
+            if (result.error === 'conflict') {
+                return reply.code(409).send({ error: 'Session delete condition was lost' });
+            }
             return reply.code(404).send({ error: 'Session not found or not owned by user' });
         }
 

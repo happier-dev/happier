@@ -38,6 +38,7 @@ model Account {
     updatedAt       DateTime    @updatedAt
     settings        String?
     settingsVersion Int         @default(0)
+    tokenEpoch      Int         @default(0)
     encryptionMode  String      @default("e2ee")
     encryptionModeUpdatedAt DateTime @default(now())
 
@@ -55,6 +56,7 @@ model Account {
     VoiceConversation      VoiceConversation[]
     TerminalAuthRequest    TerminalAuthRequest[]
     AccountAuthRequest     AccountAuthRequest[]
+    AccountApiToken        AccountApiToken[]
     AuthPairingSession     AuthPairingSession[]
     UsageReport            UsageReport[]
     UsageEvent             UsageEvent[]
@@ -130,6 +132,24 @@ model AccountSettingsSnapshot {
     @@unique([accountId, version])
     @@index([accountId, version])
     @@index([createdAt])
+}
+
+/// An Account-owned API token. The bearer secret is never persisted: only its
+/// SHA-256 digest is stored, while the primary id is the indexed selector in
+/// `hap_v1_<tokenId>_<randomSecret>`.
+model AccountApiToken {
+    id            String   @id
+    accountId     String
+    displayPrefix String
+    secretDigest  String
+    label         String
+    createdAt     DateTime @default(now())
+    lastUsedAt    DateTime?
+    expiresAt     DateTime?
+
+    Account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@index([accountId, createdAt])
 }
 
 /// The Account-owned preparation record for a bounded encryption transition. It is not a
@@ -438,6 +458,19 @@ model AuthPairingSession {
     updatedAt           DateTime @updatedAt
 
     @@index([accountId, expiresAt])
+    @@index([expiresAt])
+}
+
+model KeyChallengeV2 {
+    id                        String   @id @default(cuid())
+    nonce                     String
+    issuedAt                  DateTime
+    expiresAt                 DateTime
+    audienceOrigin            String
+    audienceServerIdentityId  String?
+    expectedAccountId         String?
+    consumedAt                DateTime?
+
     @@index([expiresAt])
 }
 

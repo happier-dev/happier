@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import {
     AUTOMATION_INT_COLUMN_MAX,
+    AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS,
     AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
     AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
     AutomationTemplateEnvelopeSchema,
@@ -43,8 +44,6 @@ export class AutomationEventFilterValidationError extends AutomationValidationEr
     }
 }
 
-const MAX_TEMPLATE_CIPHERTEXT_CHARS = 220_000;
-
 const AssignmentSchema = z.object({
     machineId: z.string().trim().min(1),
     enabled: z.boolean().optional(),
@@ -70,7 +69,7 @@ const UpsertSchema = z.object({
     enabled: z.boolean().default(true),
     schedule: ScheduleSchema,
     targetType: z.enum(["new_session", "existing_session"]),
-    templateCiphertext: z.string().trim().min(1).max(MAX_TEMPLATE_CIPHERTEXT_CHARS),
+    templateCiphertext: z.string().trim().min(1).max(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS),
     assignments: z.array(AssignmentSchema).max(50).optional(),
 }).strict();
 
@@ -80,7 +79,7 @@ const PatchSchema = z.object({
     enabled: z.boolean().optional(),
     schedule: ScheduleSchema.optional(),
     targetType: z.enum(["new_session", "existing_session"]).optional(),
-    templateCiphertext: z.string().trim().min(1).max(MAX_TEMPLATE_CIPHERTEXT_CHARS).optional(),
+    templateCiphertext: z.string().trim().min(1).max(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS).optional(),
     assignments: z.array(AssignmentSchema).max(50).optional(),
 }).strict();
 

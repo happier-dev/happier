@@ -629,18 +629,7 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
         }
     }, 60_000);
 
-    /**
-     * The E2EE half of the same reserved-namespace attack.
-     *
-     * For an E2EE Session the stored divider is opaque ciphertext, so the server
-     * cannot tell this operation's own retry from a row somebody else planted —
-     * re-sealing the same payload yields different bytes, so comparing ciphertext
-     * would report a false conflict on every legitimate retry. The server must
-     * therefore not silently classify an existing opaque row as "same operation"
-     * and let activation proceed on it. It reports a distinguishable outcome and
-     * defers the decision to the daemon, which owns the key.
-     */
-    it("flags an existing opaque divider row for daemon verification instead of trusting it", async () => {
+    it("refuses a different opaque divider row without overwriting it", async () => {
         const owner = await db.account.create({
             data: { publicKey: `agent-transition-e2ee-${randomUUID()}`, encryptionMode: "e2ee" },
             select: { id: true },
@@ -691,20 +680,21 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
             divider: { localId, content: { t: "encrypted", c: "Y2FuZGlkYXRlLWRpdmlkZXI=" } },
         });
 
-        expect(result).toMatchObject({ ok: true, dividerVerificationRequired: true });
-        if (!result.ok) return;
+        expect(result).toMatchObject({
+            ok: false,
+            effect: "current_view_committed",
+            error: "divider-conflict",
+        });
         // Still never overwritten, and still no second sequence.
-        expect(result.dividerWrite).toBeNull();
         const rows = await db.sessionMessage.findMany({
             where: { sessionId: session.id },
             select: { seq: true, content: true },
         });
         expect(rows).toHaveLength(1);
         expect(rows[0]?.content).toEqual({ t: "encrypted", c: "cGxhbnRlZC1vcGFxdWUtZGl2aWRlcg==" });
-        expect(result.dividerSeq).toBe(rows[0]?.seq);
     }, 60_000);
 
-    it("does not ask for daemon verification when it wrote the divider itself", async () => {
+    it("replays an exact opaque divider without a verification round trip", async () => {
         const owner = await db.account.create({
             data: { publicKey: `agent-transition-e2ee-${randomUUID()}`, encryptionMode: "e2ee" },
             select: { id: true },
@@ -728,6 +718,7 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
         });
         const localId = buildSessionAgentTransitionDividerLocalId(`submitted-${randomUUID()}`);
 
+        const divider = { localId, content: { t: "encrypted" as const, c: "Y2FuZGlkYXRlLWRpdmlkZXI=" } };
         const result = await applySessionAgentTransitionCutover({
             actorUserId: owner.id,
             sessionId: session.id,
@@ -738,13 +729,36 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
                 expectedAgentStateVersion: session.agentStateVersion,
                 agentStateCiphertext: null,
             },
-            divider: { localId, content: { t: "encrypted", c: "Y2FuZGlkYXRlLWRpdmlkZXI=" } },
+            divider,
         });
 
         expect(result.ok).toBe(true);
         if (!result.ok) return;
-        expect(result.dividerVerificationRequired).toBeUndefined();
         expect(result.dividerWrite?.didWrite).toBe(true);
+
+        const fresh = await db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: { metadataVersion: true, agentStateVersion: true },
+        });
+        const retry = await applySessionAgentTransitionCutover({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            currentView: {
+                kind: "legacy_v0",
+                expectedMetadataVersion: fresh.metadataVersion,
+                metadataCiphertext: "dGFyZ2V0LW1ldGFkYXRh",
+                expectedAgentStateVersion: fresh.agentStateVersion,
+                agentStateCiphertext: null,
+            },
+            divider,
+        });
+
+        expect(retry.ok).toBe(true);
+        if (!retry.ok) return;
+        expect(retry).not.toHaveProperty("dividerVerificationRequired");
+        expect(retry.dividerWrite).toBeNull();
+        expect(retry.dividerSeq).toBe(result.dividerSeq);
+        await expect(db.sessionMessage.count({ where: { sessionId: session.id } })).resolves.toBe(1);
     }, 60_000);
 
     it("refuses a non-owner actor before any effect", async () => {

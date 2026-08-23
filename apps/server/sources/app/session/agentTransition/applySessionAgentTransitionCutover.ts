@@ -1,8 +1,8 @@
+import { isDeepStrictEqual } from "node:util";
+
 import {
     SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
-    isSameSessionAgentTransitionDividerV1,
     isSessionAgentTransitionDividerLocalId,
-    readSessionAgentTransitionDividerFromStoredRecordV1,
 } from "@happier-dev/protocol";
 
 import {
@@ -48,7 +48,7 @@ import {
  *
  * It accepts one narrow crash state — target current view committed, divider
  * absent — which the caller reports as `partially_applied` with
- * `divider_missing`. No transition marker, receipt, phase, or second transaction
+ * `divider_unavailable`. No transition marker, receipt, phase, or second transaction
  * is added to reconstruct the missing presentation event.
  */
 
@@ -94,15 +94,6 @@ export type ApplySessionAgentTransitionCutoverResult =
          * nothing to publish, so the caller emits no update and moves no cursor.
          */
         dividerWrite: SuccessfulCreateSessionMessageResult | null;
-        /**
-         * A row already existed at the reserved localId and the server cannot
-         * read it, so it cannot establish that this operation wrote it. The
-         * current view IS committed, but the divider is unverified: the daemon
-         * must decrypt and compare it through `readDividerEvidence` before
-         * admitting input or activating the target. Absent whenever the server
-         * verified the row itself or wrote it.
-         */
-        dividerVerificationRequired?: true;
       }
     | {
         ok: false;
@@ -125,36 +116,19 @@ export type ApplySessionAgentTransitionCutoverResult =
       };
 
 /**
- * Divider idempotency, stated against ACTUAL owner behavior.
+ * Divider idempotency is owned by `createSessionMessage`.
  *
- * `createSessionMessage` does NOT conflict on differing content at an existing
- * localId — it overwrites the row in place at the current revision, keeping the
- * same sequence. So this service must decide before delegating, and it never
- * issues a write when a row already exists at the reserved localId:
+ * Ordinary local IDs may reconcile a changed payload as a correction. The
+ * reserved transition divider explicitly requests the writer's
+ * `identical-or-conflict` policy instead: an exact stored message replays at
+ * its existing sequence, while any difference is a typed conflict that does
+ * not update the row, its revision, or its publication.
  *
- * - identical transition payload -> success at the existing sequence, with no new
- *   sequence, no cursor movement, and no republication;
- * - a provably DIFFERENT payload -> `divider-conflict`. That is a conflicting or
- *   stale operation, resolved by the caller's recovery projection, not a content
- *   correction.
- *
- * For an E2EE Session the stored content is opaque ciphertext, so "provably
- * different" is not decidable HERE. Re-sealing the same payload yields different
- * bytes, so comparing ciphertext would report a false conflict on every
- * legitimate retry. The server must therefore neither conflict on it nor trust
- * it: uniqueness of the reserved localId is not proof of authorship, because a
- * reserved row can be reached by an ingress the transition does not own. It
- * returns `existing-unverified`, which the caller surfaces as
- * `dividerVerificationRequired` so the DAEMON — the only party holding the key —
- * decides through its existing `readDividerEvidence` decrypt-and-compare owner
- * before admission or activation. No second comparison engine is added here.
- *
- * In both modes the row is still never overwritten.
- *
- * This read is not transactionally fenced against a concurrent writer, and no
- * lock is added: two concurrent calls at the same reserved localId with
- * DIFFERENT payloads would require the current-view CAS to succeed twice with
- * different target views, and the second attempt loses that CAS.
+ * The divider producer derives the E2EE nonce from its stable localId and full
+ * canonical payload, so an exact retry has the same stored bytes in either
+ * mode. A different writer can still commit after this lookup returns absent.
+ * That unique-key race is resolved by the canonical writer policy below, not
+ * by this read or by the current-view CAS.
  */
 async function resolveExistingDividerDisposition(params: Readonly<{
     sessionId: string;
@@ -163,7 +137,6 @@ async function resolveExistingDividerDisposition(params: Readonly<{
 }>): Promise<
     | { kind: "absent" }
     | { kind: "same-operation"; seq: number }
-    | { kind: "existing-unverified"; seq: number }
     | { kind: "conflict" }
 > {
     const existing = await db.sessionMessage.findUnique({
@@ -177,26 +150,7 @@ async function resolveExistingDividerDisposition(params: Readonly<{
     });
     if (!existing) return { kind: "absent" };
 
-    const stored = existing.content as PrismaJson.SessionMessageContent | null;
-    if (!stored || stored.t !== "plain" || params.candidateContent.t !== "plain") {
-        // Opaque to the server: it can neither confirm nor refute authorship.
-        // The daemon verifies before anything acts on this row.
-        return { kind: "existing-unverified", seq: existing.seq };
-    }
-
-    // Both rows are read at the reserved localId this lookup keyed on, so the
-    // canonical reader gets the full divider identity rather than the sidecar
-    // alone.
-    const storedDivider = readSessionAgentTransitionDividerFromStoredRecordV1({
-        localId: params.localId,
-        record: stored.v,
-    });
-    const candidateDivider = readSessionAgentTransitionDividerFromStoredRecordV1({
-        localId: params.localId,
-        record: params.candidateContent.v,
-    });
-    if (!storedDivider || !candidateDivider) return { kind: "conflict" };
-    return isSameSessionAgentTransitionDividerV1(storedDivider, candidateDivider)
+    return isDeepStrictEqual(existing.content, params.candidateContent)
         ? { kind: "same-operation", seq: existing.seq }
         : { kind: "conflict" };
 }
@@ -248,16 +202,13 @@ export async function applySessionAgentTransitionCutover(
         };
     }
 
-    if (disposition.kind === "same-operation" || disposition.kind === "existing-unverified") {
+    if (disposition.kind === "same-operation") {
         // No new sequence, no cursor movement, no republication of the divider.
         return {
             ok: true,
             dividerSeq: disposition.seq,
             currentView: committedCurrentView,
             dividerWrite: null,
-            ...(disposition.kind === "existing-unverified"
-                ? { dividerVerificationRequired: true as const }
-                : {}),
         };
     }
 
@@ -273,6 +224,7 @@ export async function applySessionAgentTransitionCutover(
         sessionId: params.sessionId,
         content: params.divider.content,
         localId: params.divider.localId,
+        localIdConflictPolicy: "identical-or-conflict",
         messageRole: "event",
         trustedAttentionImpact: SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
     });
@@ -280,7 +232,9 @@ export async function applySessionAgentTransitionCutover(
         return {
             ok: false,
             effect: "current_view_committed",
-            error: written.error === "internal" ? "internal" : "divider-rejected",
+            error: written.error === "local-id-conflict"
+                ? "divider-conflict"
+                : written.error === "internal" ? "internal" : "divider-rejected",
             currentView: committedCurrentView,
         };
     }

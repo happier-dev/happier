@@ -327,7 +327,7 @@ type SessionDeleteMockResult =
     | Readonly<{ ok: true }>
     | Readonly<{
         ok: false;
-        error: "not-found" | "client-upgrade-required";
+        error: "not-found" | "conflict" | "client-upgrade-required";
     }>;
 export const sessionDelete = vi.fn<(
     ctx: Readonly<{ uid: string }>,

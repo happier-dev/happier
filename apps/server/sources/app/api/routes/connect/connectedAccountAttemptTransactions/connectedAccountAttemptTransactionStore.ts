@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 
+import {
+    StoredJsonContentEnvelopeSchema,
+    isStoredJsonContentEnvelopeModeCompatible,
+    type StoredJsonContentEnvelope,
+} from "@happier-dev/protocol";
 import { z } from "zod";
 
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 
@@ -9,7 +15,7 @@ export type ConnectedAccountAttemptTransactionKind = "oauth" | "device";
 
 export interface ConnectedAccountAttemptTransactionRecord {
     revision: number;
-    ciphertext: string;
+    content: StoredJsonContentEnvelope;
     expiresAtMs: number;
 }
 
@@ -18,13 +24,44 @@ export type ConnectedAccountAttemptTransactionMutationResult =
         status: "ok";
         record: ConnectedAccountAttemptTransactionRecord;
     }>
-    | Readonly<{ status: "not_found" | "conflict" }>;
+    | Readonly<{ status: "not_found" | "conflict" | "storage_mode_mismatch" }>;
 
 const StoredConnectedAccountAttemptTransactionSchema = z.object({
     version: z.literal(1),
     revision: z.number().int().min(1),
-    ciphertext: z.string().min(1).max(524_288),
+    content: StoredJsonContentEnvelopeSchema,
 }).strict();
+
+/**
+ * Persisted `Account.encryptionMode` is the sole representation authority for this
+ * Account-scoped row. A plain Account writes and reads `{ t: 'plain', v }` and an
+ * E2EE Account `{ t: 'encrypted', c }`; a disagreement fails closed before content is
+ * disclosed or mutated instead of being reinterpreted as the other branch.
+ */
+async function readAccountEnvelopeAdmission(
+    tx: Tx,
+    accountId: string,
+    content: StoredJsonContentEnvelope,
+): Promise<"ok" | "storage_mode_mismatch"> {
+    const account = await tx.account.findUnique({
+        where: { id: accountId },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
+    });
+    if (!account) return "storage_mode_mismatch";
+    const currentness = deriveAccountEncryptionCurrentnessFromRow(account);
+    if (currentness.status === "inconsistent") return "storage_mode_mismatch";
+    return isStoredJsonContentEnvelopeModeCompatible(
+        currentness.currentness.encryptionMode,
+        content,
+    )
+        ? "ok"
+        : "storage_mode_mismatch";
+}
 
 function transactionKey(input: Readonly<{
     accountId: string;
@@ -44,12 +81,12 @@ function transactionKey(input: Readonly<{
 
 function encodeStored(
     revision: number,
-    ciphertext: string,
+    content: StoredJsonContentEnvelope,
 ): string {
     return JSON.stringify({
         version: 1,
         revision,
-        ciphertext,
+        content,
     });
 }
 
@@ -67,7 +104,7 @@ function parseRecord(
     if (!parsed.success) return null;
     return Object.freeze({
         revision: parsed.data.revision,
-        ciphertext: parsed.data.ciphertext,
+        content: parsed.data.content,
         expiresAtMs: expiresAt.getTime(),
     });
 }
@@ -97,13 +134,19 @@ export async function createConnectedAccountAttemptTransaction(input: Readonly<{
     accountId: string;
     kind: ConnectedAccountAttemptTransactionKind;
     attemptId: string;
-    ciphertext: string;
+    content: StoredJsonContentEnvelope;
     expiresAtMs: number;
 }>): Promise<ConnectedAccountAttemptTransactionMutationResult> {
     const key = transactionKey(input);
-    const value = encodeStored(1, input.ciphertext);
+    const value = encodeStored(1, input.content);
     try {
-        await inTx(async (tx) => {
+        const admission = await inTx(async (tx) => {
+            const result = await readAccountEnvelopeAdmission(
+                tx,
+                input.accountId,
+                input.content,
+            );
+            if (result !== "ok") return result;
             await tx.repeatKey.create({
                 data: {
                     key,
@@ -111,7 +154,11 @@ export async function createConnectedAccountAttemptTransaction(input: Readonly<{
                     expiresAt: new Date(input.expiresAtMs),
                 },
             });
+            return "ok" as const;
         });
+        if (admission !== "ok") {
+            return Object.freeze({ status: "storage_mode_mismatch" });
+        }
     } catch (error) {
         if (isPrismaErrorCode(error, "P2002")) {
             return Object.freeze({ status: "conflict" });
@@ -122,7 +169,7 @@ export async function createConnectedAccountAttemptTransaction(input: Readonly<{
         status: "ok",
         record: Object.freeze({
             revision: 1,
-            ciphertext: input.ciphertext,
+            content: input.content,
             expiresAtMs: input.expiresAtMs,
         }),
     });
@@ -151,11 +198,19 @@ export async function replaceConnectedAccountAttemptTransaction(input: Readonly<
     kind: ConnectedAccountAttemptTransactionKind;
     attemptId: string;
     expectedRevision: number;
-    ciphertext: string;
+    content: StoredJsonContentEnvelope;
     expiresAtMs: number;
     nowMs: number;
 }>): Promise<ConnectedAccountAttemptTransactionMutationResult> {
     return await inTx(async (tx) => {
+        const admission = await readAccountEnvelopeAdmission(
+            tx,
+            input.accountId,
+            input.content,
+        );
+        if (admission !== "ok") {
+            return Object.freeze({ status: "storage_mode_mismatch" as const });
+        }
         const key = transactionKey(input);
         const current = await readCurrent(tx, key, input.nowMs);
         if (!current) return Object.freeze({ status: "not_found" as const });
@@ -163,7 +218,7 @@ export async function replaceConnectedAccountAttemptTransaction(input: Readonly<
             return Object.freeze({ status: "conflict" as const });
         }
         const revision = current.record.revision + 1;
-        const value = encodeStored(revision, input.ciphertext);
+        const value = encodeStored(revision, input.content);
         const updated = await tx.repeatKey.updateMany({
             where: {
                 key,
@@ -182,7 +237,7 @@ export async function replaceConnectedAccountAttemptTransaction(input: Readonly<
             status: "ok" as const,
             record: Object.freeze({
                 revision,
-                ciphertext: input.ciphertext,
+                content: input.content,
                 expiresAtMs: input.expiresAtMs,
             }),
         });

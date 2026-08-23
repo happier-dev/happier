@@ -445,6 +445,7 @@ describe("Account encryption transition coordinator Collection participant", () 
                 targetType: "new_session",
                 templateCiphertext: sourceTemplate,
                 templateVersion: 1,
+                nextRunAt: new Date("2026-02-12T10:01:00.000Z"),
             },
         });
         const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints({
@@ -517,11 +518,15 @@ describe("Account encryption transition coordinator Collection participant", () 
                 templateCiphertext: true,
                 templateVersion: true,
                 triggerDefinitionEnvelope: true,
+                nextRunAt: true,
             },
         })).resolves.toEqual({
             templateCiphertext: targetTemplate,
             templateVersion: 2,
             triggerDefinitionEnvelope: null,
+            // Re-sealing Account content changes no scheduling semantics, so
+            // the retained next-run projection survives the transition.
+            nextRunAt: new Date("2026-02-12T10:01:00.000Z"),
         });
         await expect(db.account.findUniqueOrThrow({
             where: { id: ACCOUNT_ID },

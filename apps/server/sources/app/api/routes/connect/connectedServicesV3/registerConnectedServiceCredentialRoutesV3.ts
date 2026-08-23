@@ -130,6 +130,10 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
         if (
             result.status === "storage_mode_mismatch"
             || result.status === "revision_required"
+            // The Account is at the credential ceiling. The precise typed code lives on
+            // the v4 surface; this released legacy shape only carries "will not be
+            // accepted".
+            || result.status === "capacity_exhausted"
         ) {
             return reply.code(400).send({ error: "invalid-params" });
         }

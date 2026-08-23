@@ -212,7 +212,15 @@ describe("external Session historical import create-race settlement", () => {
         const tx = {
             session: {
                 findFirst: vi.fn().mockResolvedValue(session),
-                findUnique: vi.fn().mockResolvedValue({ encryptionMode: "plain" }),
+                // The canonical writer reads this row twice: once for the Session
+                // encryption mode and once for the write-authority storage state.
+                // Omitting `currentStorageState` made the batch short-circuit at the
+                // write-authority gate, so this case never reached the post-write CAS
+                // fence it exists to prove.
+                findUnique: vi.fn().mockResolvedValue({
+                    encryptionMode: "plain",
+                    currentStorageState: "machine_only",
+                }),
                 update: vi.fn().mockResolvedValue({ seq: 1 }),
                 updateMany,
             },
@@ -260,6 +268,182 @@ describe("external Session historical import create-race settlement", () => {
                 acceptedThroughServerSeq: null,
             }),
         }));
+    });
+
+    it("refuses to overwrite a present-but-unparseable historical import job", async () => {
+        // A durable job row that this server cannot interpret is PRESENT authority, not
+        // absent authority. Reading it as `null` let `begin` mint a fresh job and
+        // `writeJobInTx` UPDATE the same row, destroying the only record of which
+        // messages an in-flight import already inserted.
+        const winner = storedWinner();
+        const update = vi.fn();
+        const tx = {
+            session: { findFirst: vi.fn().mockResolvedValue(session) },
+            sessionSystemRecord: {
+                findFirst: vi.fn().mockResolvedValue({
+                    ...winner,
+                    content: { ...winner.content, state: "not-a-known-state" },
+                }),
+                create: vi.fn(),
+                update,
+            },
+        } as unknown as Tx;
+        inTx.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
+            await operation(tx)
+        ));
+
+        await expect(executeExternalSessionHistoricalImportCommand({
+            actorUserId: "account-race",
+            transportMachineId: "machine-race",
+            command,
+            limits,
+        })).resolves.toMatchObject({
+            kind: "error",
+            errorCode: "upgrade_required",
+        });
+        expect(update).not.toHaveBeenCalled();
+        expect(tx.sessionSystemRecord.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses to overwrite a present-but-unparseable external-linked takeover admission", async () => {
+        const admissionCommand = {
+            v: 1 as const,
+            kind: "admit_persisted_takeover" as const,
+            mode: "external_linked" as const,
+            claim,
+            expectedRevision: 4,
+            attemptId: "attempt-external-linked",
+            publisherPrecondition: {
+                machineId: "machine-race",
+                committedFenceMs: 1_700_000_000_000,
+            },
+            expectedSessionMetadataVersion: 0,
+            expectedSessionSeq: 0,
+            expectedPending: { version: 0, count: 0, blockedCount: 0 },
+            expectedPriorStableStorage: { state: "machine_only" as const },
+        };
+        const update = vi.fn();
+        const committedFence = new Date(admissionCommand.publisherPrecondition.committedFenceMs);
+        const admissionAddressKeys = deriveSessionSystemRecordAddressKeys({
+            ownerKind: "host",
+            pluginId: null,
+            namespace: "external_sessions",
+            localId: `takeover-admission:${claim.operationId}`,
+        });
+        const sessionUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+        const tx = {
+            // The publisher-authority fence runs BEFORE the durable admission read, so the
+            // fixture has to let it pass; otherwise the case never reaches the parser gate
+            // it exists to prove.
+            accessKey: {
+                findUnique: vi.fn().mockResolvedValue({
+                    machine: { revokedAt: null, replacedByMachineId: null },
+                    session: { accountId: "account-race" },
+                }),
+            },
+            session: {
+                findFirst: vi.fn().mockResolvedValue({
+                    ...session,
+                    active: true,
+                    thinking: false,
+                }),
+                findUnique: vi.fn().mockResolvedValue({
+                    active: true,
+                    archivedAt: null,
+                    lastActiveAt: committedFence,
+                    updatedAt: new Date("2026-08-05T00:00:00.000Z"),
+                }),
+                updateMany: sessionUpdateMany,
+            },
+            sessionSystemRecord: {
+                findFirst: vi.fn().mockResolvedValue({
+                    ...storedWinner(),
+                    kind: "takeover_admission",
+                    localId: `takeover-admission:${claim.operationId}`,
+                    namespaceAddressKey: admissionAddressKeys.namespaceAddressKey,
+                    recordAddressKey: admissionAddressKeys.recordAddressKey,
+                    // A field this server does not know about: the strict admission parser
+                    // rejects it, which previously read as "no admission recorded".
+                    content: { v: 1, machineId: "machine-race", unknownFutureField: true },
+                }),
+                create: vi.fn(),
+                update,
+            },
+            machineSessionPublisher: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        } as unknown as Tx;
+        inTx.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
+            await operation(tx)
+        ));
+
+        await expect(executeExternalSessionHistoricalImportCommand({
+            actorUserId: "account-race",
+            transportMachineId: "machine-race",
+            command: admissionCommand,
+            limits,
+        })).resolves.toMatchObject({
+            kind: "error",
+            errorCode: "upgrade_required",
+        });
+        // Proves the fence really ran: without it the parser gate below is unreachable.
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+        expect(update).not.toHaveBeenCalled();
+        expect(tx.sessionSystemRecord.create).not.toHaveBeenCalled();
+    });
+
+    it("maps a canonical writer storage-mode rejection onto the storage_mode_conflict wire code", async () => {
+        // A plain historical item under a required-e2ee storage policy is refused by the
+        // canonical transcript writer with `storage-mode-conflict`. On the wire that is a
+        // storage-mode conflict, not a generic invalid state: the importer re-inspects
+        // storage authority for the former and treats the latter as terminal.
+        vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "required_e2ee");
+        const winner = storedWinner();
+        const tx = {
+            session: {
+                findFirst: vi.fn().mockResolvedValue(session),
+                findUnique: vi.fn().mockResolvedValue({
+                    encryptionMode: "plain",
+                    currentStorageState: "machine_only",
+                }),
+                updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            },
+            sessionMessage: {
+                findMany: vi.fn().mockResolvedValue([]),
+                create: vi.fn(),
+            },
+            sessionSystemRecord: {
+                findFirst: vi.fn().mockResolvedValue(winner),
+                update: vi.fn(),
+            },
+        } as unknown as Tx;
+        inTx.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
+            await operation(tx)
+        ));
+
+        await expect(executeExternalSessionHistoricalImportCommand({
+            actorUserId: "account-race",
+            transportMachineId: "machine-race",
+            command: {
+                v: 1,
+                kind: "batch",
+                claim,
+                expectedRevision: 0,
+                batchId: makeExternalSessionHistoricalImportBatchIdV1(["history:plain"]),
+                items: [{
+                    localId: "history:plain",
+                    sidechainId: null,
+                    messageRole: "agent",
+                    content: {
+                        t: "plain",
+                        v: { role: "agent", content: { type: "text", text: "historical" } },
+                    },
+                }],
+            },
+            limits,
+        })).resolves.toMatchObject({
+            kind: "error",
+            errorCode: "storage_mode_conflict",
+        });
+        expect(tx.sessionMessage.create).not.toHaveBeenCalled();
     });
 
     it("returns a typed conflict when the discard storage transition loses its expected-state fence", async () => {

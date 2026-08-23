@@ -9,6 +9,7 @@ import type {
     SessionMessageAttentionImpact,
     SessionRuntimeIssueV1,
     SessionStoredMessageContent,
+    ActionOperationSnapshotEphemeralV1,
     SessionTranscriptObservationProvenanceV1,
 } from "@happier-dev/protocol";
 
@@ -374,7 +375,7 @@ export type EphemeralEvent = {
     tokens: Record<string, number>;
     cost: Record<string, number>;
     timestamp: number;
-} | {
+} | ActionOperationSnapshotEphemeralV1 | {
     type: 'machine-status';
     machineId: string;
     online: boolean;

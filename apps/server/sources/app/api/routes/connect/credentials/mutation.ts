@@ -28,6 +28,7 @@ export type ConnectedServiceCredentialMutationResult =
     | Readonly<{ status: "superseded"; reason: "revision_mismatch" | "refresh_lease_lost"; credentialRevision: string | null }>
     | Readonly<{ status: "provider_identity_mismatch" }>
     | Readonly<{ status: "revision_required" }>
+    | Readonly<{ status: "capacity_exhausted" }>
     | Readonly<{ status: "storage_mode_mismatch" }>;
 
 export type ConnectedServiceCredentialHealthMutationResult =
@@ -219,6 +220,7 @@ async function mutateConnectedServiceCredentialForModeInTx(
     }
     if (result.status === "revision_required") return result;
     if (result.status === "provider_identity_mismatch") return result;
+    if (result.status === "capacity_exhausted") return result;
     if (result.status === "storage_mode_mismatch"
         || result.status === "authentication_mode_mismatch") {
         return { status: "storage_mode_mismatch" };

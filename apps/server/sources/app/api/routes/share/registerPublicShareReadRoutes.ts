@@ -36,15 +36,31 @@ import {
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from "@happier-dev/protocol";
 
+const PublicShareConsentSchema = z.union([
+    z.literal(true),
+    z.literal(false),
+    z.literal("true"),
+    z.literal("false"),
+    z.literal("0"),
+    z.literal(0),
+]).transform((value) => value === true || value === "true").optional();
+
 const PublicShareConsentQuerySchema = z.object({
-    consent: z.union([
-        z.literal(true),
-        z.literal(false),
-        z.literal("true"),
-        z.literal("false"),
-        z.literal("0"),
-        z.literal(0),
-    ]).transform((value) => value === true || value === "true").optional(),
+    consent: PublicShareConsentSchema,
+}).optional();
+
+/**
+ * Public shares page exactly like an ordinary transcript read: newest page first, then
+ * `beforeSeq` walks backwards while `hasMore`/`nextBeforeSeq` describe the remainder.
+ * A single unpaged read silently began a long conversation mid-sentence.
+ */
+const PUBLIC_SHARE_MESSAGES_DEFAULT_PAGE_ROWS = 150;
+const PUBLIC_SHARE_MESSAGES_MAX_PAGE_ROWS = 500;
+
+const PublicShareMessagesQuerySchema = z.object({
+    consent: PublicShareConsentSchema,
+    beforeSeq: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(PUBLIC_SHARE_MESSAGES_MAX_PAGE_ROWS).optional(),
 }).optional();
 
 async function getOptionalAuthenticatedUserId(request: any): Promise<string | null> {
@@ -354,11 +370,12 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
             params: z.object({
                 token: z.string()
             }),
-            querystring: PublicShareConsentQuerySchema,
+            querystring: PublicShareMessagesQuerySchema,
         }
     }, async (request, reply) => {
         const { token } = request.params;
-        const { consent } = request.query || {};
+        const { consent, beforeSeq, limit: requestedLimit } = request.query || {};
+        const limit = requestedLimit ?? PUBLIC_SHARE_MESSAGES_DEFAULT_PAGE_ROWS;
         const tokenHash = createHash('sha256').update(token, 'utf8').digest();
         const tokenHashHex = tokenHash.toString("hex");
         const messageAccessTokenHeader = request.headers[PUBLIC_SHARE_MESSAGES_ACCESS_TOKEN_HEADER];
@@ -446,13 +463,18 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                 }
             }
 
-            const messages = await tx.sessionMessage.findMany({
+            const fetchedMessages = await tx.sessionMessage.findMany({
                 where: buildShareableSessionMessagePublicationWhere({
-                    where: { sessionId: publicShare.sessionId, sidechainId: null },
+                    where: {
+                        sessionId: publicShare.sessionId,
+                        sidechainId: null,
+                        ...(beforeSeq === undefined ? {} : { seq: { lt: beforeSeq } }),
+                    },
                     publication: session,
                 }),
                 orderBy: { seq: 'desc' },
-                take: 150,
+                // One extra row so `hasMore` is observed rather than guessed.
+                take: limit + 1,
                 select: {
                     id: true,
                     seq: true,
@@ -463,10 +485,13 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                     updatedAt: true
                 }
             });
+            const hasMore = fetchedMessages.length > limit;
+            const messages = hasMore ? fetchedMessages.slice(0, limit) : fetchedMessages;
             return {
                 success: true,
                 sessionId: publicShare.sessionId,
                 messages,
+                hasMore,
             };
         });
 
@@ -485,8 +510,9 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
             });
         }
 
+        const pageMessages = accessResult.messages;
         return reply.send({
-            messages: accessResult.messages.map((v) => {
+            messages: pageMessages.map((v) => {
                 const messageRole = parseSessionMessageRole(v.messageRole);
                 return {
                     id: v.id,
@@ -497,7 +523,13 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                     createdAt: v.createdAt.getTime(),
                     updatedAt: v.updatedAt.getTime()
                 };
-            })
+            }),
+            hasMore: accessResult.hasMore,
+            // Descending page: the LAST row is the oldest one served, so the next older
+            // page starts strictly below it.
+            nextBeforeSeq: accessResult.hasMore && pageMessages.length > 0
+                ? pageMessages[pageMessages.length - 1]!.seq
+                : null,
         });
     });
 }

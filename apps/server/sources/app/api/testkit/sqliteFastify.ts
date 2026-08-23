@@ -1,6 +1,10 @@
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import {
+    isApiTokenDeniedForRoute,
+    PRESENT_USER_REQUIRED_ERROR,
+} from "../utils/apiTokenRouteAdmission";
 
 export function createAuthenticatedTestApp() {
     const app = Fastify();
@@ -16,7 +20,15 @@ export function createAuthenticatedTestApp() {
         request.userId = userId;
         request.authTokenKind = request.headers["x-test-auth-token-kind"] === "terminal"
             ? "terminal"
-            : "account";
+            : request.headers["x-test-auth-token-kind"] === "api_token"
+                ? "api_token"
+                : "account";
+        request.authAuthority = request.authTokenKind === "account"
+            ? "present_user"
+            : "account_automation";
+        if (isApiTokenDeniedForRoute(request)) {
+            return reply.code(403).send({ error: PRESENT_USER_REQUIRED_ERROR });
+        }
         captureAccountStoredContentCompatibilityForHttpRequest(request);
     });
 

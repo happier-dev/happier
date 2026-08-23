@@ -2,17 +2,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 
+const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
+vi.mock("@/storage/db", () => ({
+    db: {
+        account: {
+            findUnique: (...args: unknown[]) => dbAccountFindUniqueMock(...args),
+        },
+    },
+}));
+
 describe("auth (oauth state fallback)", () => {
     const envBackup = snapshotEnv();
 
     afterEach(() => {
         restoreEnv(envBackup);
+        dbAccountFindUniqueMock.mockReset();
         vi.restoreAllMocks();
         vi.resetModules();
     });
 
     it("keeps auth token flow available when oauth-state backend init fails", async () => {
         applyEnvValues({ HANDY_MASTER_SECRET: "fallback-seed" });
+        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0 });
 
         vi.doMock("privacy-kit", async (importOriginal) => {
             const actual = await importOriginal<typeof import("privacy-kit")>();

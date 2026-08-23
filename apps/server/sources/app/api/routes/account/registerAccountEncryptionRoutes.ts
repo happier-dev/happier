@@ -14,6 +14,10 @@ import {
 import {
     deriveAccountEncryptionMigrationKeyFingerprints,
 } from "@/app/encryption/accountEncryptionTransition";
+import {
+    PresentUserRequiredResponseSchema,
+    requirePresentUser,
+} from "@/app/api/utils/requirePresentUser";
 
 export function registerAccountEncryptionRoutes(app: Fastify): void {
     app.get(
@@ -118,7 +122,11 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
     app.patch(
         "/v1/account/encryption",
         {
-            preHandler: [createServerFeatureGatePreHandler("encryption.accountOptOut"), app.authenticate],
+            preHandler: [
+                createServerFeatureGatePreHandler("encryption.accountOptOut"),
+                app.authenticate,
+                requirePresentUser,
+            ],
             schema: {
                 body: AccountEncryptionModeUpdateRequestSchema,
                 response: {
@@ -130,6 +138,7 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                             "metadata_privacy_upgrade_required",
                         ]),
                     }),
+                    403: PresentUserRequiredResponseSchema,
                     404: z.object({ error: z.literal("not_found") }),
                     500: z.object({ error: z.literal("internal") }),
                 },

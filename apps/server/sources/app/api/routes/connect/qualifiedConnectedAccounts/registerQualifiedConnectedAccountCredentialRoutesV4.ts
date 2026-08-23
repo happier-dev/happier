@@ -255,6 +255,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_authentication_mode_mismatch",
             });
         }
+        if (result.status === "capacity_exhausted") {
+            return reply.code(409).send({
+                error: "connect_connected_account_capacity_exhausted",
+            });
+        }
         if (result.status === "superseded") {
             return reply.code(409).send({
                 error: "connect_credential_mutation_superseded",

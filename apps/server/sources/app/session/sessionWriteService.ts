@@ -989,12 +989,18 @@ export type CreateSessionMessageResult =
         message: SessionMessageWriteRow;
         participantCursors: [];
       }
-    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: SessionTranscriptWriteRejectionCode };
+    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: SessionTranscriptWriteRejectionCode }
+    | { ok: false; error: "local-id-conflict" };
 
 type CreateSessionMessageParamsBase = Readonly<{
     actorUserId: string;
     sessionId: string;
     localId?: string | null;
+    /**
+     * A reserved local-ID operation may opt out of ordinary content correction:
+     * only an exact stored message is replayable; every difference is refused.
+     */
+    localIdConflictPolicy?: "identical-or-conflict";
     sidechainId?: string | null;
     messageRole?: unknown;
     trustedSessionEventType?: "ready";
@@ -1626,13 +1632,16 @@ async function createSessionMessageAttempt(
                         });
                         return { ok: false as const, error: "internal" as const };
                     }
+                    const requiresIdenticalLocalId = params.localIdConflictPolicy === "identical-or-conflict";
                     if ((existing.sidechainId ?? null) !== sidechainId) {
                         observeCreateSessionMessageStage({
                             stage: "total",
                             durationMs: Date.now() - totalStartedAt,
                             result: "error",
                         });
-                        return { ok: false as const, error: "invalid-params" as const };
+                        return requiresIdenticalLocalId
+                            ? { ok: false as const, error: "local-id-conflict" as const }
+                            : { ok: false as const, error: "invalid-params" as const };
                     }
 
                     const resolvedRole = resolveRoleForStorageMode(access.sessionEncryptionMode);
@@ -1652,6 +1661,29 @@ async function createSessionMessageAttempt(
                         existing,
                         candidate: { content, messageRole: resolvedRole },
                     });
+                    if (requiresIdenticalLocalId) {
+                        if (contentRoleComparison.kind === "match" && !contentRoleComparison.backfillsRole) {
+                            observeCreateSessionMessageStage({
+                                stage: "total",
+                                durationMs: Date.now() - totalStartedAt,
+                                result: "ok",
+                            });
+                            return {
+                                ok: true as const,
+                                didWrite: false as const,
+                                didUpdate: false as const,
+                                badgeAttentionChanged: false as const,
+                                message: toSessionMessageWriteRow(existing),
+                                participantCursors: [],
+                            };
+                        }
+                        observeCreateSessionMessageStage({
+                            stage: "total",
+                            durationMs: Date.now() - totalStartedAt,
+                            result: "error",
+                        });
+                        return { ok: false as const, error: "local-id-conflict" as const };
+                    }
                     if (contentRoleComparison.kind === "role-conflict") {
                         observeCreateSessionMessageStage({
                             stage: "total",

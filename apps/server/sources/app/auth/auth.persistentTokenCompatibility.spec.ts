@@ -2,6 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 
+const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
+vi.mock("@/storage/db", () => ({
+    db: {
+        account: {
+            findUnique: (...args: unknown[]) => dbAccountFindUniqueMock(...args),
+        },
+    },
+}));
+
 const MASTER_SECRET = "compat-probe-0";
 
 // Generated from the immutable privacy-kit@0.0.25 npm artifact under Node 22,
@@ -19,6 +28,7 @@ describe("auth persistent token compatibility", () => {
 
     afterEach(() => {
         restoreEnv(envBackup);
+        dbAccountFindUniqueMock.mockReset();
         vi.resetModules();
     });
 
@@ -29,6 +39,7 @@ describe("auth persistent token compatibility", () => {
             // This retired setting must not be able to disable the read path.
             HAPPIER_AUTH_SEED_COMPAT_ATTEMPTS: "1",
         });
+        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0 });
 
         const [{ auth }, privacyKit] = await Promise.all([
             import("./auth"),

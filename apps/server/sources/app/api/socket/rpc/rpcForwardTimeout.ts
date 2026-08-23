@@ -1,3 +1,4 @@
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from "@happier-dev/protocol/actions";
 import { SESSION_RPC_METHODS } from "@happier-dev/protocol/rpc";
 
 function parsePositiveIntOrDefault(value: string | undefined, fallback: number): number {
@@ -29,6 +30,7 @@ const RPC_FORWARD_MAX_TIMEOUT_MS = parsePositiveIntOrDefault(
 // lifecycle rather than the generic RPC request lifetime.
 const RPC_FORWARD_CALLER_LIFECYCLE_TIMEOUT_MS = 2_147_483_647;
 const RPC_FORWARD_CALLER_LIFECYCLE_METHODS = new Set<string>([
+    EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH,
     SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_NEXT_V1,
 ]);

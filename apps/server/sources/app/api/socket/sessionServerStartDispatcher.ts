@@ -6,6 +6,7 @@ import {
     SessionServerStartDispatchRequestV1Schema,
     SessionServerStartDispatchResultV1Schema,
     parseAutomationRunExecutionRecipeV1,
+    sameAutomationAccountCurrentnessWitnessV1,
     supportsMachineOperationProtocolCapabilityV1,
     validateAutomationSessionStartRequestEnvelopeOuterForModeV1,
     validateAutomationRunExecutionRecipeOuterV1,
@@ -17,10 +18,7 @@ import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from "@happier-dev/protocol/rp
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import type { Server } from "socket.io";
 
-import {
-    fetchAutomationAccountCurrentnessWitnessTx,
-    sameAutomationAccountCurrentnessWitness,
-} from "@/app/automations/automationAccountCurrentness";
+import { fetchAutomationAccountCurrentnessWitnessTx } from "@/app/automations/automationAccountCurrentness";
 import { retainAutomationRunProducedSession } from "@/app/automations/automationRunService";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { inTx } from "@/storage/inTx";
@@ -88,7 +86,7 @@ async function resolveCurrentTargetFromServer(
                 "sessionSpawn",
             )
             && currentness !== null
-            && sameAutomationAccountCurrentnessWitness(
+            && sameAutomationAccountCurrentnessWitnessV1(
                 request.start.accountCurrentness,
                 currentness,
             );

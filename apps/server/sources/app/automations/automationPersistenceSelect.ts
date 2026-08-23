@@ -1,5 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
+import { AUTOMATION_V3_RUN_DETAIL_MAX_EVENTS } from "@happier-dev/protocol";
+
 /**
  * Canonical persistence reads for API, lifecycle, and change publication.
  * Keep these in one place so a new Run/trigger arm cannot be cast away by a
@@ -93,6 +95,22 @@ export const automationRunItemSelect = {
     createdAt: true,
     updatedAt: true,
 } as const;
+
+/**
+ * The authenticated Run detail additionally reads the committed transition
+ * history that lifecycle owners already write. It is the one place a user can
+ * ask why a Run behaved the way it did, so the history has a reader instead of
+ * only a retention policy. Ordered newest-first and reversed by the projection
+ * so a long-lived Run keeps its decision-relevant tail.
+ */
+export const automationRunDetailSelect = {
+    ...automationRunItemSelect,
+    events: {
+        select: { ts: true, type: true, payload: true },
+        orderBy: [{ ts: "desc" }, { id: "desc" }],
+        take: AUTOMATION_V3_RUN_DETAIL_MAX_EVENTS,
+    },
+} satisfies Prisma.AutomationRunSelect;
 
 export const automationRunWithAutomationSelect = {
     ...automationRunItemSelect,

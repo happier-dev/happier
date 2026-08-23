@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import {
     ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS,
     buildPluginDomainAccountChangeEntityId,
+    pluginJsonValuesEqual,
     type AccountEncryptionMigrateCollectionStageItem,
     type PluginCollectionContentEnvelopeV1,
 } from "@happier-dev/protocol";
@@ -155,30 +156,6 @@ export function measurePluginCollectionAccountEncryptionTransitionContentBytes(
     content: PluginCollectionContentEnvelopeV1,
 ): bigint {
     return contentBytes(content);
-}
-
-function jsonEqual(left: unknown, right: unknown): boolean {
-    if (left === right) return true;
-    if (
-        left === null
-        || right === null
-        || typeof left !== "object"
-        || typeof right !== "object"
-        || Array.isArray(left)
-        || Array.isArray(right)
-    ) {
-        if (!Array.isArray(left) || !Array.isArray(right)) return false;
-        return left.length === right.length
-            && left.every((value, index) => jsonEqual(value, right[index]));
-    }
-    const leftRecord = left as Record<string, unknown>;
-    const rightRecord = right as Record<string, unknown>;
-    const leftKeys = Object.keys(leftRecord).sort();
-    const rightKeys = Object.keys(rightRecord).sort();
-    return leftKeys.length === rightKeys.length
-        && leftKeys.every((key, index) => (
-            key === rightKeys[index] && jsonEqual(leftRecord[key], rightRecord[key])
-        ));
 }
 
 function toPrismaJson(value: unknown): Prisma.InputJsonValue {
@@ -455,7 +432,7 @@ export async function validatePluginCollectionAccountEncryptionTransitionStageIn
             requested.expectedRevision !== row.persisted.revision
             || requested.schemaVersion !== row.persisted.schemaVersion
             || requested.contractDigest !== row.persisted.contractDigest
-            || !jsonEqual(requested.sourceEnvelope, row.sourceEnvelope)
+            || !pluginJsonValuesEqual(requested.sourceEnvelope, row.sourceEnvelope)
         ) {
             return { status: "migration_incomplete" };
         }
@@ -604,7 +581,7 @@ export async function applyPluginCollectionAccountEncryptionTransitionInTx(
             item.expectedRevision !== row.persisted.revision
             || item.schemaVersion !== row.persisted.schemaVersion
             || item.contractDigest !== row.persisted.contractDigest
-            || !jsonEqual(item.sourceEnvelope, row.sourceEnvelope)
+            || !pluginJsonValuesEqual(item.sourceEnvelope, row.sourceEnvelope)
         ) {
             return { status: "migration_incomplete" };
         }

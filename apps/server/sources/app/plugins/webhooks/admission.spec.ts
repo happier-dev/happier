@@ -8,35 +8,42 @@ import {
     createPluginWebhookProcessAdmissionV1,
     createPluginWebhookRedisAdmissionV1,
 } from "./admission";
-import { resolvePluginWebhookIngressWorkingBytesV1 } from "./policy";
 
 describe("plugin webhook edge admission", () => {
-    it("reserves aggregate process count and declared bytes atomically before body work", () => {
-        const admission = createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxBytes: 10 });
+    it("reserves aggregate process count and declared raw-body bytes atomically before body work", () => {
+        const admission = createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxRawBodyBytes: 10 });
         const first = admission.acquire(7);
         expect(first).not.toBeNull();
-        expect(admission.snapshot()).toEqual({ requests: 1, bytes: 7 });
+        expect(admission.snapshot()).toEqual({ requests: 1, rawBodyBytes: 7 });
         expect(admission.acquire(4)).toBeNull();
-        expect(admission.snapshot()).toEqual({ requests: 1, bytes: 7 });
+        expect(admission.snapshot()).toEqual({ requests: 1, rawBodyBytes: 7 });
         first?.release();
-        expect(admission.snapshot()).toEqual({ requests: 0, bytes: 0 });
+        expect(admission.snapshot()).toEqual({ requests: 0, rawBodyBytes: 0 });
         first?.release();
-        expect(admission.snapshot()).toEqual({ requests: 0, bytes: 0 });
+        expect(admission.snapshot()).toEqual({ requests: 0, rawBodyBytes: 0 });
     });
 
-    it("reserves the exact raw-body buffer allocated before ingress can authenticate or route", () => {
-        const maxCharge = resolvePluginWebhookIngressWorkingBytesV1(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1);
-        expect(maxCharge).toBe(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1);
-        expect(resolvePluginWebhookIngressWorkingBytesV1(0)).toBe(0);
-        expect(() => resolvePluginWebhookIngressWorkingBytesV1(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1 + 1))
-            .toThrow(/working-byte charge/i);
-
-        const admission = createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxBytes: maxCharge });
-        const first = admission.acquire(maxCharge);
+    it("charges the raw body only, so the request ceiling binds before the derived byte ceiling", () => {
+        // The default byte ceiling is exactly the worst case the request ceiling
+        // permits, so a full-size body per slot must still be admitted and the
+        // count must be what rejects the next one.
+        const admission = createPluginWebhookProcessAdmissionV1({
+            maxRequests: 2,
+            maxRawBodyBytes: 2 * PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
+        });
+        const first = admission.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1);
+        const second = admission.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1);
         expect(first).not.toBeNull();
-        expect(admission.acquire(1)).toBeNull();
-        first?.release();
-        expect(admission.snapshot()).toEqual({ requests: 0, bytes: 0 });
+        expect(second).not.toBeNull();
+        expect(admission.acquire(0)).toBeNull();
+
+        // Lowering only the byte ceiling is the operator lever that makes bytes bind first.
+        const tightened = createPluginWebhookProcessAdmissionV1({
+            maxRequests: 2,
+            maxRawBodyBytes: PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1,
+        });
+        expect(tightened.acquire(PLUGIN_WEBHOOK_MAX_RAW_BODY_BYTES_V1)).not.toBeNull();
+        expect(tightened.acquire(1)).toBeNull();
     });
 
     it("uses one atomic Redis acquisition and one owner-bound release for all tenant scopes", async () => {

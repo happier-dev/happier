@@ -1,5 +1,5 @@
 import {
-    AutomationAccountCurrentnessWitnessV1Schema,
+    projectAutomationAccountCurrentnessWitnessV1,
     type AutomationAccountCurrentnessWitnessV1,
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
@@ -33,12 +33,14 @@ export function deriveAutomationAccountCurrentnessWitness(
     if (currentness.status !== "ready") return null;
 
     const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
-    const witness = AutomationAccountCurrentnessWitnessV1Schema.safeParse({
+    // A supported Account migrated e2ee -> plain retains `contentPublicKey`, so
+    // this row still reports a content-key fingerprint. The shared projection
+    // owner normalizes the keyless plain witness for every reader.
+    return projectAutomationAccountCurrentnessWitnessV1({
         mode: currentness.currentness.encryptionMode,
         version: account.seq,
         contentKeyFingerprint: fingerprints.contentKeyFingerprint,
     });
-    return witness.success ? witness.data : null;
 }
 
 export async function fetchAutomationAccountCurrentnessWitnessTx(
@@ -50,13 +52,4 @@ export async function fetchAutomationAccountCurrentnessWitnessTx(
         select: automationAccountCurrentnessSelect,
     });
     return account ? deriveAutomationAccountCurrentnessWitness(account) : null;
-}
-
-export function sameAutomationAccountCurrentnessWitness(
-    left: AutomationAccountCurrentnessWitnessV1,
-    right: AutomationAccountCurrentnessWitnessV1,
-): boolean {
-    return left.mode === right.mode
-        && left.version === right.version
-        && left.contentKeyFingerprint === right.contentKeyFingerprint;
 }

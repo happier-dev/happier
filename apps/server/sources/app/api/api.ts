@@ -47,6 +47,7 @@ import { emitPluginWebhookDeliveryCommittedWakeV1 } from "@/app/plugins/webhooks
 import { registerLocalServiceRoutes } from "./routes/local/services/registerRoutes";
 import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v2SessionListServerTiming";
 import { startAutomationReplyHandoffWorker } from "@/app/automations/automationReplyHandoffWorker";
+import { registerExternalActionRoutes } from "./routes/actions/registerExternalActionRoutes";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -130,6 +131,7 @@ export function registerApiRoutes(typed: Fastify): void {
     registerPluginWebhookIngressRoute(typed, {
         onCommittedWake: emitPluginWebhookDeliveryCommittedWakeV1,
     });
+    registerExternalActionRoutes(typed);
     registerReviewCommentRoutes(typed);
 }
 

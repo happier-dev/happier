@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import {
     ConnectedServiceCredentialHealthV1Schema,
     StoredJsonContentEnvelopeSchema,
+    isStoredJsonContentEnvelopeModeCompatible,
     QualifiedConnectedAccountConfigurationTargetV4Schema,
     QualifiedConnectedAccountCredentialMetadataV4Schema,
     QualifiedConnectedAccountRefSchema,
@@ -101,6 +102,7 @@ export type QualifiedConnectedServiceCredentialMutationResult =
     | Readonly<{ status: "provider_identity_mismatch" }>
     | Readonly<{ status: "authentication_mode_mismatch" }>
     | Readonly<{ status: "revision_required" }>
+    | Readonly<{ status: "capacity_exhausted" }>
     | Readonly<{ status: "storage_mode_mismatch" }>;
 
 export type QualifiedConnectedAccountConfigurationMutationResult =
@@ -285,14 +287,8 @@ function decodeUtf8(value: Uint8Array): string {
     return new TextDecoder().decode(value);
 }
 
-function isEnvelopeModeCompatible(
-    accountMode: "plain" | "e2ee",
-    envelope: StoredJsonContentEnvelope,
-): boolean {
-    return accountMode === "plain"
-        ? envelope.t === "plain"
-        : envelope.t === "encrypted";
-}
+/** The Account-mode/envelope agreement rule is owned once, in the protocol package. */
+const isEnvelopeModeCompatible = isStoredJsonContentEnvelopeModeCompatible;
 
 type QualifiedConnectedAccountEncryptionModeReadResult =
     | Readonly<{
@@ -834,6 +830,18 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
         });
 
     if (!current) {
+        // Only a create can grow the Account past what the unpaginated reader can
+        // serve. The count runs in this transaction, immediately before the insert,
+        // so the refusal and the row it prevents cannot straddle a concurrent write.
+        // Every row for the Account counts: the list query takes its ceiling from the
+        // raw row set, so a legacy shadow row consumes the same reader budget as a
+        // qualified one.
+        const held = await tx.serviceAccountToken.count({
+            where: { accountId: params.accountId },
+        });
+        if (held >= QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT) {
+            return { status: "capacity_exhausted" };
+        }
         const configurationRevision =
             effectivePreparedCreate?.configurationRevision ?? null;
         await tx.serviceAccountToken.create({
@@ -1453,7 +1461,15 @@ export async function mutateQualifiedConnectedAccountConfiguration(
     });
 }
 
-const QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT = 500;
+/**
+ * How many qualified Connected Account credentials one Account may hold.
+ *
+ * The list wire shape is deliberately unpaginated, so this is simultaneously the
+ * reader's hard ceiling and the writer's capacity. Both must read it from here:
+ * a writer that admits one more row than the reader accepts turns a single write
+ * into a total read outage for the Account.
+ */
+export const QUALIFIED_CONNECTED_ACCOUNT_UNPAGINATED_LIMIT = 500;
 type QualifiedConnectedAccountListStorage = Pick<
     Tx,
     "serviceAccountToken"

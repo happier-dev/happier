@@ -7,6 +7,8 @@ import { resolveAuthMethodRegistry } from "@/app/auth/methods/registry";
 import { resolveKeylessAccountsEnabled } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resolveKeylessAutoProvisionEligibility";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
+import { resolveConfiguredCanonicalServerUrl } from "@/app/serverUrls/effectiveServerUrls";
+import { readCachedServerIdentityIdForHotPath } from "@/app/serverIdentity/serverIdentity";
 
 function uniqueStrings(values: readonly string[]): string[] {
     const seen = new Set<string>();
@@ -37,6 +39,10 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta
         coreAuthMethods.find((m) => String(m?.id ?? "").trim().toLowerCase() === "key_challenge") ?? null;
     const keyChallengeLoginEnabled =
         keyChallengeMethod?.actions?.some((a: any) => a?.id === "login" && a?.enabled === true) === true;
+    const keyChallengeV2Available =
+        keyChallengeLoginEnabled
+        && resolveConfiguredCanonicalServerUrl(env) !== undefined
+        && readCachedServerIdentityIdForHotPath(env) !== null;
     const keyChallengeProvisionEnabled =
         keyChallengeMethod?.actions?.some((a: any) => a?.id === "provision" && a?.enabled === true) === true;
 
@@ -250,6 +256,9 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta
         capabilities: {
             auth: {
                 methods: authMethods,
+                keyChallenge: {
+                    v2: keyChallengeV2Available,
+                },
                 signup: { methods: signupMethods },
                 login: { methods: loginMethods, requiredProviders: requiredLoginProviders },
                 recovery: {

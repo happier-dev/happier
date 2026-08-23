@@ -1,5 +1,6 @@
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter } from "@/app/events/eventRouter";
+import type { AutomationRunStateChangedHostEventV1 } from "@happier-dev/protocol";
 
 import type {
     AutomationListItem,
@@ -91,6 +92,11 @@ export function emitAutomationRunTransition(params: {
     run: AutomationRunItem | AutomationRunWithAutomation;
     previousState: AutomationRunState | null;
     cursor: number;
+    /**
+     * Why the transition happened, when the published state alone cannot say.
+     * Only the lifecycle carrier takes it; the legacy update stays unchanged.
+     */
+    cause?: AutomationRunStateChangedHostEventV1["cause"];
 }): void {
     let legacyFailed = false;
     let legacyError: unknown;
@@ -128,6 +134,7 @@ export function emitAutomationRunTransition(params: {
                     currentState: params.run.state,
                     transitionedAt: params.run.updatedAt.getTime(),
                     claimedByMachineId: params.run.claimedByMachineId,
+                    ...(params.cause === undefined ? {} : { cause: params.cause }),
                 },
                 createdAt: Date.now(),
             },

@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 
+const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
+vi.mock("@/storage/db", () => ({
+    db: {
+        account: {
+            findUnique: (...args: unknown[]) => dbAccountFindUniqueMock(...args),
+        },
+    },
+}));
+
 const envBackup = snapshotEnv();
 
 describe("auth (token cache)", () => {
@@ -9,6 +18,8 @@ describe("auth (token cache)", () => {
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
 
         applyEnvValues({ HANDY_MASTER_SECRET: "test-master-secret" });
+        dbAccountFindUniqueMock.mockReset();
+        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0 });
     });
 
     afterEach(() => {
@@ -26,12 +37,14 @@ describe("auth (token cache)", () => {
         const { auth } = await import("./auth");
         await auth.init();
 
-        await auth.createToken("user-1");
+        const firstToken = await auth.createToken("user-1");
+        await auth.verifyToken(firstToken);
         expect(auth.getCacheStats().size).toBe(1);
 
         vi.advanceTimersByTime(1500);
 
-        await auth.createToken("user-2");
+        const secondToken = await auth.createToken("user-2");
+        await auth.verifyToken(secondToken);
         expect(auth.getCacheStats().size).toBe(1);
     });
 
@@ -44,9 +57,12 @@ describe("auth (token cache)", () => {
         const { auth } = await import("./auth");
         await auth.init();
 
-        await auth.createToken("user-1");
-        await auth.createToken("user-2");
-        await auth.createToken("user-3");
+        const firstToken = await auth.createToken("user-1");
+        const secondToken = await auth.createToken("user-2");
+        const thirdToken = await auth.createToken("user-3");
+        await auth.verifyToken(firstToken);
+        await auth.verifyToken(secondToken);
+        await auth.verifyToken(thirdToken);
 
         expect(auth.getCacheStats().size).toBe(2);
     });

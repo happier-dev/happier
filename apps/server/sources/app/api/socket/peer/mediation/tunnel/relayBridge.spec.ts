@@ -8,6 +8,7 @@ import tweetnacl from "tweetnacl";
 import { mintPeerTcpTunnelRelayAuthorizationV2 } from "@/app/machines/peer/mediation/tunnel";
 import { registerPeerTcpTunnelRelaySocketHandler } from "./registerRelay";
 import { createPeerTcpTunnelRelayBridge } from "./relayBridge";
+import { createRelayTestCoordinator } from "./relayCoordinator.testkit";
 
 type EmitCall = Readonly<{
     room: string;
@@ -140,6 +141,9 @@ describe("createPeerTcpTunnelRelayBridge.createTransport.send", () => {
         const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
         const { io } = createRecordingIo();
         const bridge = createPeerTcpTunnelRelayBridge(io);
+        // Both handlers share one coordinator: it is the single cluster admission
+        // and machine-delivery owner for this account, exactly as in production.
+        const relayCoordinator = createRelayTestCoordinator(bridge.io, "user-1");
         const transport = bridge.createTransport({ accountId: "user-1" });
         const otherAccountTransport = bridge.createTransport({ accountId: "user-2" });
         const received = vi.fn();
@@ -155,6 +159,7 @@ describe("createPeerTcpTunnelRelayBridge.createTransport.send", () => {
             emit: () => undefined,
         }, {
             io: bridge.io,
+            coordinator: relayCoordinator,
             nowMs: () => 1_000,
             serverRoutedEnabled: true,
             allowedPorts: [5173],
@@ -172,6 +177,7 @@ describe("createPeerTcpTunnelRelayBridge.createTransport.send", () => {
             emit: () => undefined,
         }, {
             io: bridge.io,
+            coordinator: relayCoordinator,
             nowMs: () => 1_000,
             serverRoutedEnabled: true,
             allowedPorts: [5173],

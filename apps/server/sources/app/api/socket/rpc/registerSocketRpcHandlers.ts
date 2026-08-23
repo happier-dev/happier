@@ -34,6 +34,7 @@ import { publishSessionPublisherClose } from "@/app/presence/publishSessionPubli
 
 import { canCallSessionScopedRpcMethod, canRegisterSessionScopedRpcMethod } from "../sessionScopedBinding";
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from "../machineSocketInstallationProof";
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from "../externalActionDispatcher";
 import { forwardRpcCall } from "./forwardRpcCall";
 import type { RpcForwardTargetGuard } from "./_types";
 import { buildRpcMethodRoom } from "./rpcMethodRoom";
@@ -222,6 +223,7 @@ function readMachineIdPrefix(method: string): string | null {
 
 const RESERVED_SERVER_ORIGIN_DAEMON_RPC_METHODS = new Set<string>([
     AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
+    EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
 ]);
 
@@ -245,6 +247,11 @@ function isSessionServerStartReservedRpcMethod(method: string): boolean {
         || method.endsWith(`:${SESSION_SERVER_START_DAEMON_RPC_METHOD_V1}`);
 }
 
+function isExternalActionReservedRpcMethod(method: string): boolean {
+    return method === EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1
+        || method.endsWith(`:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`);
+}
+
 function canRegisterReservedServerOriginRpcMethod(params: Readonly<{
     socket: SocketDataCarrier;
     method: string;
@@ -256,7 +263,10 @@ function canRegisterReservedServerOriginRpcMethod(params: Readonly<{
     ) {
         return false;
     }
-    return !isSessionServerStartReservedRpcMethod(params.method)
+    return !(
+        isSessionServerStartReservedRpcMethod(params.method)
+        || isExternalActionReservedRpcMethod(params.method)
+    )
         || readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(params.socket)) !== null;
 }
 

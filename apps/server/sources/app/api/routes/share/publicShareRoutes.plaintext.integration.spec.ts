@@ -632,6 +632,105 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
         })).resolves.toEqual({ useCount: 1 });
     });
 
+    it("walks a capped plaintext public share past one page on the already-authorized grant", async () => {
+        // A share longer than one page used to be served as a single descending read with no
+        // cursor, so the viewer silently began MID-CONVERSATION. Paging must reach the oldest
+        // row, and every page must ride the ONE grant the viewer already consumed.
+        const owner = await createCurrentE2eeAccount();
+        const session = await db.session.create({
+            data: {
+                accountId: owner.id,
+                tag: "s_plain_paged_share",
+                encryptionMode: "plain",
+                metadataLayoutVersion: 1,
+                ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
+                metadata: STORED_SHARED_METADATA_V1,
+                agentState: null,
+                dataEncryptionKey: null,
+            },
+            select: { id: true },
+        });
+        const totalMessages = 5;
+        for (let seq = 1; seq <= totalMessages; seq += 1) {
+            await db.sessionMessage.create({
+                data: {
+                    sessionId: session.id,
+                    seq,
+                    content: {
+                        t: "plain",
+                        v: { role: "user", content: { type: "text", text: `m${seq}` } },
+                    },
+                },
+            });
+        }
+
+        const token = "tok_plain_paged_share";
+        const tokenHash = createHash("sha256").update(token, "utf8").digest();
+        const share = await db.publicSessionShare.create({
+            data: {
+                sessionId: session.id,
+                createdByUserId: owner.id,
+                tokenHash,
+                encryptedDataKey: null,
+                isConsentRequired: false,
+                maxUses: 1,
+                useCount: 0,
+            },
+            select: { id: true },
+        });
+
+        const app = createCurrentClientTestApp();
+        publicShareRoutes(app as any);
+        await app.ready();
+        try {
+            const metadata = await app.inject({
+                method: "GET",
+                url: `/v1/public-share/${encodeURIComponent(token)}`,
+            });
+            expect(metadata.statusCode).toBe(200);
+            const grant = metadata.json().messagesAccessToken;
+
+            const collected: number[] = [];
+            let beforeSeq: number | null = null;
+            let pages = 0;
+            let sawHasMore = false;
+            for (;;) {
+                const page: Awaited<ReturnType<typeof app.inject>> = await app.inject({
+                    method: "GET",
+                    url: `/v1/public-share/${encodeURIComponent(token)}/messages?limit=2`
+                        + (beforeSeq === null ? "" : `&beforeSeq=${beforeSeq}`),
+                    headers: { "x-public-share-messages-access-token": grant },
+                });
+                expect(page.statusCode).toBe(200);
+                const body = page.json();
+                collected.push(...body.messages.map((m: { seq: number }) => m.seq));
+                pages += 1;
+                if (body.hasMore !== true) {
+                    expect(body.nextBeforeSeq).toBeNull();
+                    break;
+                }
+                sawHasMore = true;
+                expect(body.nextBeforeSeq).toBe(
+                    body.messages[body.messages.length - 1].seq,
+                );
+                beforeSeq = body.nextBeforeSeq;
+                expect(pages).toBeLessThan(10);
+            }
+
+            expect(sawHasMore).toBe(true);
+            expect(pages).toBeGreaterThan(1);
+            // The FULL history, oldest row included — the truncation this walk exists to refute.
+            expect([...collected].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+        } finally {
+            await app.close();
+        }
+
+        await expect(db.publicSessionShare.findUnique({
+            where: { id: share.id },
+            select: { useCount: true },
+        })).resolves.toEqual({ useCount: 1 });
+    });
+
     it("rejects capped plaintext public share message reads without a metadata access grant", async () => {
         const owner = await createCurrentE2eeAccount();
         const session = await db.session.create({

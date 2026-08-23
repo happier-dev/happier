@@ -971,4 +971,86 @@ describe("local service preview routes", () => {
         expect(new TextDecoder().decode(socket.write.mock.calls[0]?.[0])).toContain("400 Bad Request");
         expect(socket.destroy).toHaveBeenCalled();
     });
+
+    // S-1 (lane C1). The same decoded-CRLF sink is reachable from the PRIVATE preview, whose
+    // required session access level is only `view`, so a read-only guest could otherwise smuggle
+    // writes into the host's localhost service.
+    const ROUTER_DECODED_CRLF_PATH = "foo\r\nX-Injected: yes\r\n\r\nGET /admin HTTP/1.1";
+    const CANONICAL_ENCODED_CRLF_PATH = "/foo%0D%0AX-Injected:%20yes%0D%0A%0D%0AGET%20/admin%20HTTP/1.1";
+
+    it("never writes a second upstream request line for a router-decoded CRLF private preview path", async () => {
+        const mod = await loadPreviewRoutesModule();
+        expect(mod?.registerLocalServicePreviewRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServicePreviewRoutes) return;
+
+        const writes: string[] = [];
+        const app = createFakeRouteApp();
+        mod.registerLocalServicePreviewRoutes(app as never, {
+            resolvePreview: vi.fn(() => preview),
+            validateAccess: vi.fn(() => ({ ok: true as const })),
+            authorizeSessionAccess: allowSessionAccess(),
+            openTunnel: (async () => ({
+                tunnelId: "preview_tunnel_test",
+                substreamId: "preview_substream_test",
+                write: (bytes: Uint8Array) => {
+                    writes.push(new TextDecoder().decode(bytes));
+                },
+                endWrite: vi.fn(),
+                read: async function* (): AsyncIterableIterator<Uint8Array> {
+                    yield new TextEncoder().encode("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                },
+                close: vi.fn(),
+                abort: vi.fn(),
+            })) as never,
+        });
+
+        const handler = getRouteHandler(app, "GET", "/v1/local-services/preview/:previewId/*");
+        const reply = createReplyStub();
+        await handler({
+            method: "GET",
+            params: { previewId: "preview_1", "*": ROUTER_DECODED_CRLF_PATH },
+            query: {},
+            headers: { host: "app.happier.test", cookie: "happier_preview_token=token_1" },
+        }, reply);
+
+        const upstream = writes.join("");
+        expect(upstream.split("\r\n\r\n")).toHaveLength(2);
+        expect(upstream.split("\r\n").filter((line) => /\sHTTP\/1\.1$/u.test(line))).toHaveLength(1);
+        expect(upstream).not.toMatch(/\r\nX-Injected:/u);
+        expect(upstream.split("\r\n")[0]).toBe(`GET ${CANONICAL_ENCODED_CRLF_PATH} HTTP/1.1`);
+    });
+
+    it("never emits a CRLF Location header when exchanging a preview token on a decoded CRLF path", async () => {
+        const mod = await loadPreviewRoutesModule();
+        expect(mod?.registerLocalServicePreviewRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServicePreviewRoutes) return;
+
+        const app = createFakeRouteApp();
+        mod.registerLocalServicePreviewRoutes(app as never, {
+            resolvePreview: vi.fn(() => preview),
+            validateAccess: vi.fn(() => ({ ok: true as const })),
+            exchangeAccessToken: vi.fn(() => ({
+                ok: true as const,
+                rawToken: "cookie_token_1",
+                expiresAt: 61_000,
+            })),
+            authorizeSessionAccess: allowSessionAccess(),
+            proxyHttp: vi.fn(async () => ({ ok: true as const })),
+        });
+
+        const handler = getRouteHandler(app, "GET", "/v1/local-services/preview/:previewId/*");
+        const reply = createReplyStub();
+        await handler({
+            method: "GET",
+            params: { previewId: "preview_1", "*": ROUTER_DECODED_CRLF_PATH },
+            query: { previewToken: "token_1" },
+            headers: {},
+        }, reply);
+
+        expect(reply.statusCode).toBe(303);
+        expect(reply.headers.Location).not.toMatch(/[\r\n]/u);
+        expect(reply.headers.Location).toBe(
+            `/v1/local-services/preview/preview_1/${CANONICAL_ENCODED_CRLF_PATH.slice(1)}`,
+        );
+    });
 });
