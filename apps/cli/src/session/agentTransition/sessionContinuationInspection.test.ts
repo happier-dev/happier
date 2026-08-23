@@ -62,6 +62,24 @@ describe('evaluateSessionContinuationTargetSupport', () => {
     })).toEqual({ type: 'unsupported', code: 'target_unavailable' });
   });
 
+  it.each([
+    ['a static-only native model outside its catalog', { v: 1, agentId: 'qwen', modelId: 'not-a-qwen' }],
+    ['a mode for an Agent with no mode surface', { v: 1, agentId: 'gemini', acpSessionModeId: 'plan' }],
+    ['a malformed config-option override shape', { v: 1, agentId: 'codex', sessionConfigOptionOverrides: { v: 0 } }],
+  ] as const)('rejects %s before a transition can stop its source', (_label, selection) => {
+    expect(evaluateSessionContinuationTargetSupport({
+      selection: selection as never,
+      sourceAgentId: 'claude',
+    })).toEqual({ type: 'unsupported', code: 'target_unavailable' });
+  });
+
+  it('defers an unknown dynamic native model to the ordinary launch owner', () => {
+    expect(evaluateSessionContinuationTargetSupport({
+      selection: { v: 1, agentId: 'codex', modelId: 'future-model' },
+      sourceAgentId: 'claude',
+    })).toEqual({ type: 'supported', targetAgentId: 'codex' });
+  });
+
   it('reports the current Agent as same_target', () => {
     expect(evaluateSessionContinuationTargetSupport({
       selection: { v: 1, agentId: 'claude' },

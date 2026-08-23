@@ -129,6 +129,11 @@ export {
   type AgentModelOptionValueId,
 } from './models.js';
 export {
+  resolveAgentNativeSpawnDefinitiveRejection,
+  type AgentNativeSpawnDefinitiveRejection,
+  type AgentNativeSpawnSelectionInput,
+} from './nativeLaunchSelection.js';
+export {
   AGENT_LOCAL_CLI_CONFIG,
   getAgentLocalCliConfig,
   type AgentCliAuthSupport,

@@ -4,7 +4,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { spawn as spawnChildProcess } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
-import { AGENT_IDS, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import {
+  AGENT_IDS,
+  resolveAgentIdFromSessionMetadata,
+  resolveAgentNativeSpawnDefinitiveRejection,
+} from '@happier-dev/agents';
 
 import { ApiClient, isMachineContentPublicKeyMismatchError } from '@/api/api';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
@@ -3239,6 +3243,22 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 modelId = normalizedOptions.modelId;
                 modelUpdatedAt = normalizedOptions.modelUpdatedAt;
                 effectiveResume = typeof resume === 'string' ? resume.trim() : '';
+              }
+
+              const nativeSpawnSelection = resolveAgentNativeSpawnDefinitiveRejection({
+                agentId: catalogAgentId,
+                selection: {
+                  modelId: normalizedOptions.modelId,
+                  acpSessionModeId: normalizedOptions.agentModeId,
+                  sessionConfigOptionOverrides: normalizedOptions.sessionConfigOptionOverrides,
+                },
+              });
+              if (!nativeSpawnSelection.ok) {
+                return {
+                  type: 'error',
+                  errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                  errorMessage: 'Agent-native selection is invalid.',
+                };
               }
 
               if (

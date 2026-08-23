@@ -3,7 +3,11 @@ import {
   type SessionContinuationInspectionRequestV1,
   type SessionContinuationInspectionV1,
 } from '@happier-dev/protocol';
-import { resolveAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
+import {
+  resolveAgentNativeSpawnDefinitiveRejection,
+  resolveAgentIdFromSessionMetadata,
+  type AgentId,
+} from '@happier-dev/agents';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
@@ -88,7 +92,14 @@ export function resolveSessionContinuationTargetAgent(
     // in-place switching to one is excluded in V1.
     return { type: 'unavailable' };
   }
-  return { type: 'resolved', targetAgentId: agentId as AgentId };
+  const targetAgentId = agentId as AgentId;
+  if (!resolveAgentNativeSpawnDefinitiveRejection({
+    agentId: targetAgentId,
+    selection,
+  }).ok) {
+    return { type: 'unavailable' };
+  }
+  return { type: 'resolved', targetAgentId };
 }
 
 /**
