@@ -71,9 +71,8 @@ describe('Expo native Artifact registrar', () => {
         expect(registrar.unregister(registration.token)).toBe(false);
     });
 
-    it('accepts the incumbent legacy true acknowledgement only from the iOS module', async () => {
-        platformState.os = 'ios';
-        const registerArtifact = vi.fn(async () => true);
+    it('admits the one strict registration result and its synchronous tombstone acknowledgement', async () => {
+        const registerArtifact = vi.fn(async () => ({ kind: 'registered' }));
         const unregisterArtifact = vi.fn(() => true);
         nativeModuleMock.requireNativeModule.mockReturnValueOnce({ registerArtifact, unregisterArtifact });
         const { createExpoPluginNativeArtifactResourceRegistrar } = await import('./nativeArtifactResourceRegistrar.native');
@@ -85,7 +84,8 @@ describe('Expo native Artifact registrar', () => {
         expect(unregisterArtifact).toHaveBeenCalledExactlyOnceWith(registration.token);
     });
 
-    it('rejects a legacy true acknowledgement from Android', async () => {
+    it.each(['ios', 'android'] as const)('rejects a bare boolean acknowledgement on %s', async (os) => {
+        platformState.os = os;
         nativeModuleMock.requireNativeModule.mockReturnValueOnce({
             registerArtifact: async () => true,
             unregisterArtifact: () => true,

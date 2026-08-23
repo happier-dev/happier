@@ -10,9 +10,11 @@ import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCred
 import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 /**
  * Chinese (Traditional) translations for the Happier app
@@ -837,6 +839,15 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             event: {
                 watcherTitle: '事件觀察器',
                 watcherUnwatched: '未設定觀察器',
+                endpointTitle: 'Webhook 端點',
+                endpointObservingSince: ({ time }: { time: string }) => `自 ${time} 起接收投遞`,
+                sourceStatusUnreported: '等待首次回報',
+                sourceCatalogStatusUnavailable: '來源時效性無法取得',
+                watcherMachineUnknown: '這台機器已不在你的帳戶中，因此這個觀察器無法觀察事件。',
+                watcherMachineRevoked: '這台機器已被撤銷，因此這個觀察器無法觀察事件。',
+                watcherMachineReplaced: '這台機器已被取代，因此這個觀察器無法觀察事件。',
+                watcherInstallationReplaced: '這台機器已重新安裝，重新設定之前這個觀察器無法觀察事件。',
+                watcherMachineOffline: '這台機器目前離線，因此這個觀察器現在沒有在觀察事件。',
             },
             runMeta: {
                 originTitle: '來源',
@@ -864,6 +875,24 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 admitted: ({ time }: { time: string }) => `已接納：${time}`,
                 occurrenceTitle: '事件識別碼',
                 sourceTitle: '觀察來源',
+                nativeExecutionTitle: '原生執行',
+                nativeExecutionCall: ({ callId }: { callId: string }) => `呼叫 ${callId}`,
+                nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+                historyTitle: '發生了什麼',
+                historyEvent: {
+                    run_started: '已開始',
+                    run_succeeded: '已成功',
+                    run_failed: '已失敗',
+                    run_cancelled: '已取消',
+                    run_outcome_uncertain: '結果變為不確定',
+                    execution_dispatch_retry_scheduled: '已排定重新派發',
+                    unknown: '生命週期變更',
+                },
+                historyReason: {
+                    cancelled_after_dispatch_permitted: '在外部執行已獲准之後被取消',
+                    dispatch_result_missing_after_lease_expiry: '認領該執行的機器從未回報派發結果',
+                    automation_retired_after_lease_expiry: '自動化在其認領租約到期時被停用',
+                },
             },
             runDetail: {
                 title: '已接納詳細資料',
@@ -995,6 +1024,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
 
 
     inbox: {
+        ...actionOperationInboxTranslations,
         openSession: ({ session }: { session: string }) => `開啟工作階段：${session}`,
         // Inbox screen
         emptyTitle: '都處理完了',
@@ -1566,6 +1596,33 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         quota: {
             loading: '載入中…',
             error: ({ message }: { message: string }) => `錯誤：${message}`,
+            attemptTitle: '嘗試',
+            attempt: ({ attempt }: { attempt: number }) => `第 ${attempt} 次嘗試`,
+            claimedByTitle: '認領機器',
+            claimedAt: ({ time }: { time: string }) => `認領時間：${time}`,
+            leaseExpires: ({ time }: { time: string }) => `認領租約到期：${time}`,
+            dispatchTitle: '執行派發',
+            dispatchAttempt: ({ attempt }: { attempt: number }) => `第 ${attempt} 次派發`,
+            dispatchState: {
+                notStarted: '未開始',
+                dispatchPermitted: '允許派發',
+                retryWaiting: '等待重試',
+                started: '已開始',
+                settled: '已結算',
+                outcomeUnknown: '結果未知',
+            },
+            replyHandoffTitle: '回覆移交',
+            replyHandoffAttempt: ({ attempt }: { attempt: number }) => `第 ${attempt} 次移交`,
+            replyHandoffDue: ({ time }: { time: string }) => `下次移交時間：${time}`,
+            replyHandoffState: {
+                none: '無',
+                awaitingResult: '等待結果',
+                ready: '就緒',
+                handingOff: '移交中',
+                accepted: '已接受',
+                suppressed: '已抑制',
+                blocked: '已阻擋',
+            },
             lastUpdated: ({ time }: { time: string }) => `上次更新：${time}`,
             lastUpdatedStale: ({ time }: { time: string }) => `上次更新：${time} • 已過期`,
             noData: '尚無配額資料',
@@ -2004,6 +2061,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
       common: {
           // Simple string constants
           cancel: '取消',
+          decline: '拒絕',
           submit: '提交',
           close: '關閉',
           open: '開啟',
@@ -6749,18 +6807,26 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             disabledLimitSubtitle: '已達公開預覽數量上限。請先撤銷現有連結再建立新連結。',
             disabledNoPreviewSubtitle: '請先開啟本機預覽，再建立公開連結。',
             disabledReason: {
+                auditRequirementDisabled: '公開預覽稽核記錄為必要項目，但伺服器已將其關閉。',
                 auditUnavailable: '公開預覽稽核記錄不可用。',
                 dnsTlsUnavailable: '公開預覽正在等待 DNS/TLS 就緒。',
                 expired: '此公開預覽連結已過期。',
+                linkLifetimeUnconfigured: '伺服器未設定公開預覽連結的有效期限。',
+                modeUnconfigured: '伺服器未設定任何公開預覽模式。',
                 policyInvalid: '公開預覽政策不完整。',
                 previewNotEligible: '此本機預覽不符合公開連結條件。',
+                previewServerDisabled: '伺服器已關閉本機服務預覽。',
                 publicBaseUrlUnavailable: '公開預覽基礎 URL 未設定。',
+                rateLimitProfileUnconfigured: '伺服器未設定公開預覽的速率限制設定檔。',
                 rateLimitUnavailable: '公開預覽速率限制不可用。',
                 rateLimited: '此公開預覽連結已被速率限制。',
                 relayUnavailable: '公開預覽中繼不可用。',
                 revoked: '此公開預覽連結已撤銷。',
                 secretLinkUnavailable: '秘密連結公開預覽未設定。',
+                serverDisabled: '伺服器已關閉公開預覽。',
                 sessionNotAuthorized: '你無權為此工作階段建立公開連結。',
+                tunnelPortsUnconfigured: '伺服器未允許任何通道連接埠。',
+                tunnelRelayDisabled: '伺服器的機器通道轉送已關閉。',
             },
             createActionA11y: '建立公開預覽連結',
             revokeActionA11y: '撤銷公開預覽連結',
@@ -7345,6 +7411,13 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         configureActionAccessibilityLabel: '設定操作',
         approvalHelpTitle: '核准模式',
         approvalHelpBody: '「先詢問」會在此操作從該介面執行前顯示確認。「允許」則讓此操作從該介面執行，而不需要核准提示。',
+        contributed: {
+            machineSelectionTitle: '為貢獻操作選擇機器',
+            machineSelectionBody: '選擇一台機器，以檢視和設定其已安裝外掛宣告的操作。',
+            removedDescription: '此貢獻操作已無法從所選機器取得。其已儲存的設定會被保留。',
+            removedTargetsTitle: '貢獻操作無法使用',
+            removedTargetsBody: '所選機器目前未宣告此操作。其已儲存的設定仍可在這裡使用。',
+        },
         toolExposure: {
             title: '工具公開',
             footer: '控制符合條件的動作是顯示為直接工具，還是只可透過動作探索使用。',
@@ -7514,6 +7587,14 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             cli: {
                 title: '工作階段控制 CLI',
                 subtitle: '可透過工作階段控制 CLI 介面使用。',
+            },
+            api: {
+                title: 'API',
+                subtitle: '可透過外部操作 API 使用。',
+            },
+            plugin: {
+                title: '受信任的外掛',
+                subtitle: '受信任的外掛可將其作為操作使用。',
             },
             contextual_ui: {
                 title: '情境式 UI',
@@ -8185,7 +8266,7 @@ settingsSession: {
             loadingOlder: '正在載入更早的訊息…',
             loadOlderFailed: '無法載入更早的語音歷史。',
             exportTitle: '匯出語音歷史',
-            exportSubtitle: '在限制範圍內載入其餘歷史並儲存為 JSON。',
+            exportSubtitle: '載入其餘歷史並儲存為 JSON。',
             exporting: '正在準備匯出…',
             exportSucceeded: '語音歷史匯出已準備好。',
             exportFailed: '無法匯出語音歷史。',
@@ -8701,7 +8782,7 @@ settingsSession: {
                 onDemandTitle: '依需求',
                 onDemandSubtitle: '在您要求時，語音可以讀取此 App 視窗或瀏覽器分頁提供的有限語意情境。情境指令仍須通過個別檢查。',
                 automaticTitle: '自動',
-                automaticSubtitle: '語音也會自動接收基本的導覽中繼資料。詳細內容仍依需求讀取，情境指令仍須通過個別檢查。',
+                automaticSubtitle: '語音也會自動接收基本的導覽中繼資料；開啟工作階段時，會依照上方的分享設定分享該工作階段的內容。情境指令仍須通過個別檢查。',
             },
         },
         languageTitle: '語言',
@@ -10110,7 +10191,8 @@ settingsSession: {
             },
         },
     },
- settingsPlugins: {
+  ...apiTokenSettingsTranslations['zh-Hant'],
+  settingsPlugins: {
     ...pluginWebhookAdministrationTranslations['zh-Hant'],
     ...pluginAccountDataEraseTranslations['zh-Hant'],
     ...pluginAccountReleaseSelectionTranslations['zh-Hant'],

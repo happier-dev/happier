@@ -17,11 +17,12 @@ import {
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useAutomationRuns } from '@/sync/domains/state/storage';
+import { useAllMachines, useAutomationRuns } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
+import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import {
     formatAutomationRunStateLabel,
     getAutomationRunOriginTranslationKey,
@@ -30,6 +31,7 @@ import type {
     AutomationRunDetailPrivateContentInspection,
     AutomationRunDetailRouteInspection,
 } from '@/sync/domains/automations/automationRunDetailInspection';
+import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -337,6 +339,72 @@ function AutomationRunDetailFailureDetailItems(props: Readonly<{
     }
 }
 
+/**
+ * The Run row already carries its assignment, attempt, dispatch and
+ * reply-handoff facts; the detail screen is the one place a user can ask why a
+ * Run behaved the way it did, so it names them instead of dropping them.
+ * Product language only — a raw state token is never painted at the user.
+ */
+const automationRunDispatchStateLabels = {
+    notStarted: () => t('automations.detail.runMeta.dispatchState.notStarted'),
+    dispatchPermitted: () => t('automations.detail.runMeta.dispatchState.dispatchPermitted'),
+    retryWaiting: () => t('automations.detail.runMeta.dispatchState.retryWaiting'),
+    started: () => t('automations.detail.runMeta.dispatchState.started'),
+    settled: () => t('automations.detail.runMeta.dispatchState.settled'),
+    outcomeUnknown: () => t('automations.detail.runMeta.dispatchState.outcomeUnknown'),
+} satisfies Record<NonNullable<AutomationDefinitionRun['executionDispatchState']>, () => string>;
+
+const automationRunReplyHandoffStateLabels = {
+    none: () => t('automations.detail.runMeta.replyHandoffState.none'),
+    awaitingResult: () => t('automations.detail.runMeta.replyHandoffState.awaitingResult'),
+    ready: () => t('automations.detail.runMeta.replyHandoffState.ready'),
+    handingOff: () => t('automations.detail.runMeta.replyHandoffState.handingOff'),
+    accepted: () => t('automations.detail.runMeta.replyHandoffState.accepted'),
+    suppressed: () => t('automations.detail.runMeta.replyHandoffState.suppressed'),
+    blocked: () => t('automations.detail.runMeta.replyHandoffState.blocked'),
+} satisfies Record<AutomationDefinitionRun['replyHandoffState'], () => string>;
+
+const automationRunHistoryEventLabels: Readonly<Record<string, () => string>> = {
+    run_started: () => t('automations.detail.runMeta.historyEvent.run_started'),
+    run_succeeded: () => t('automations.detail.runMeta.historyEvent.run_succeeded'),
+    run_failed: () => t('automations.detail.runMeta.historyEvent.run_failed'),
+    run_cancelled: () => t('automations.detail.runMeta.historyEvent.run_cancelled'),
+    run_outcome_uncertain: () => t('automations.detail.runMeta.historyEvent.run_outcome_uncertain'),
+    execution_dispatch_retry_scheduled: () =>
+        t('automations.detail.runMeta.historyEvent.execution_dispatch_retry_scheduled'),
+};
+
+const automationRunHistoryReasonLabels: Readonly<Record<string, () => string>> = {
+    cancelled_after_dispatch_permitted: () =>
+        t('automations.detail.runMeta.historyReason.cancelled_after_dispatch_permitted'),
+    dispatch_result_missing_after_lease_expiry: () =>
+        t('automations.detail.runMeta.historyReason.dispatch_result_missing_after_lease_expiry'),
+    automation_retired_after_lease_expiry: () =>
+        t('automations.detail.runMeta.historyReason.automation_retired_after_lease_expiry'),
+};
+
+/**
+ * A transition type or reason is a server-authored token, not product
+ * language, so an unrecognized one falls back to the generic lifecycle label
+ * rather than being painted at the user.
+ */
+function formatAutomationRunHistoryEventLabel(type: string): string {
+    return (automationRunHistoryEventLabels[type] ?? (
+        () => t('automations.detail.runMeta.historyEvent.unknown')
+    ))();
+}
+
+function formatAutomationRunHistoryReasonLabel(reason: string | null): string | null {
+    if (reason === null) return null;
+    const label = automationRunHistoryReasonLabels[reason];
+    return label ? label() : null;
+}
+
+function joinRunFactLines(lines: readonly (string | null)[]): string | undefined {
+    const present = lines.filter((line): line is string => line !== null);
+    return present.length > 0 ? present.join('\n') : undefined;
+}
+
 function AutomationRunDetailPrivateContent(props: Readonly<{
     content: AutomationRunDetailPrivateContentInspection;
 }>): React.ReactElement {
@@ -372,6 +440,7 @@ export function AutomationRunDetailScreen(): React.ReactElement {
     const automationId = normalizeParam(params.id);
     const runId = normalizeParam(params.runId);
     const runs = useAutomationRuns(automationId ?? '');
+    const machines = useAllMachines();
     const cachedRun = runs.find((candidate) => candidate.id === runId) ?? null;
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const routeCurrentRef = React.useRef({
@@ -565,6 +634,22 @@ export function AutomationRunDetailScreen(): React.ReactElement {
     // work it started, so the detail keeps that reachable rather than leaving
     // the identifier in the transport projection.
     const producedSessionId = run?.producedSessionId ?? null;
+    // Only the direct detail response carries the native execution identity
+    // and committed transition history; the cached list projection does not.
+    const nativeExecutionRunId = directDetailIsCurrent
+        ? directDetail.detail.executionNativeRunId
+        : null;
+    const nativeExecutionCallId = directDetailIsCurrent
+        ? directDetail.detail.executionNativeCallId
+        : null;
+    const nativeExecutionSidechainId = directDetailIsCurrent
+        ? directDetail.detail.executionNativeSidechainId
+        : null;
+    const runHistory = directDetailIsCurrent ? directDetail.detail.events : [];
+    const claimedByMachine = run?.claimedByMachineId
+        ? machines.find((candidate) => candidate.id === run.claimedByMachineId)
+        : undefined;
+    const claimedByLabel = claimedByMachine ? getMachineDisplayName(claimedByMachine) : null;
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -660,6 +745,93 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                 showChevron={false}
                                 mode="info"
                             />
+                            {run.attempt > 1 ? (
+                                <Item
+                                    title={t('automations.detail.runMeta.attemptTitle')}
+                                    detail={t('automations.detail.runMeta.attempt', { attempt: run.attempt })}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {run.claimedByMachineId ? (
+                                <Item
+                                    title={t('automations.detail.runMeta.claimedByTitle')}
+                                    detail={claimedByLabel ?? run.claimedByMachineId}
+                                    subtitle={joinRunFactLines([
+                                        run.claimedAt === null
+                                            ? null
+                                            : t('automations.detail.runMeta.claimedAt', {
+                                                time: formatDate(run.claimedAt, unknownDate),
+                                            }),
+                                        run.leaseExpiresAt === null
+                                            ? null
+                                            : t('automations.detail.runMeta.leaseExpires', {
+                                                time: formatDate(run.leaseExpiresAt, unknownDate),
+                                            }),
+                                    ])}
+                                    subtitleLines={0}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {run.executionDispatchState !== null ? (
+                                <Item
+                                    title={t('automations.detail.runMeta.dispatchTitle')}
+                                    detail={automationRunDispatchStateLabels[run.executionDispatchState]()}
+                                    subtitle={run.executionAttempt > 0
+                                        ? t('automations.detail.runMeta.dispatchAttempt', {
+                                            attempt: run.executionAttempt,
+                                        })
+                                        : undefined}
+                                    subtitleLines={0}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {run.replyHandoffState !== 'none' ? (
+                                <Item
+                                    title={t('automations.detail.runMeta.replyHandoffTitle')}
+                                    detail={automationRunReplyHandoffStateLabels[run.replyHandoffState]()}
+                                    subtitle={joinRunFactLines([
+                                        run.replyHandoffAttempt > 0
+                                            ? t('automations.detail.runMeta.replyHandoffAttempt', {
+                                                attempt: run.replyHandoffAttempt,
+                                            })
+                                            : null,
+                                        run.replyHandoffDueAt === null
+                                            ? null
+                                            : t('automations.detail.runMeta.replyHandoffDue', {
+                                                time: formatDate(run.replyHandoffDueAt, unknownDate),
+                                            }),
+                                    ])}
+                                    subtitleLines={0}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
+                            {nativeExecutionRunId ? (
+                                <Item
+                                    testID="automation-run-detail-native-execution"
+                                    title={t('automations.detail.runMeta.nativeExecutionTitle')}
+                                    subtitle={joinRunFactLines([
+                                        nativeExecutionRunId,
+                                        nativeExecutionCallId === null
+                                            ? null
+                                            : t('automations.detail.runMeta.nativeExecutionCall', {
+                                                callId: nativeExecutionCallId,
+                                            }),
+                                        nativeExecutionSidechainId === null
+                                            ? null
+                                            : t('automations.detail.runMeta.nativeExecutionSidechain', {
+                                                sidechainId: nativeExecutionSidechainId,
+                                            }),
+                                    ])}
+                                    subtitleLines={0}
+                                    copy={nativeExecutionRunId}
+                                    showChevron={false}
+                                    mode="info"
+                                />
+                            ) : null}
                             {producedSessionId ? (
                                 <Item
                                     testID="automation-run-detail-produced-session"
@@ -703,6 +875,33 @@ export function AutomationRunDetailScreen(): React.ReactElement {
                                 />
                             ) : null}
                         </ItemGroup>
+                        {runHistory.length > 0 ? (
+                            <ItemGroup title={t('automations.detail.runMeta.historyTitle')}>
+                                {runHistory.map((event, index) => (
+                                    <Item
+                                        key={`${event.at}-${event.type}-${index}`}
+                                        title={formatAutomationRunHistoryEventLabel(event.type)}
+                                        detail={formatDate(event.at, unknownDate)}
+                                        subtitle={joinRunFactLines([
+                                            formatAutomationRunHistoryReasonLabel(event.reason),
+                                            event.errorCode === null
+                                                ? null
+                                                : t('automations.detail.runMeta.error', {
+                                                    message: event.errorCode,
+                                                }),
+                                            event.executionAttempt === null
+                                                ? null
+                                                : t('automations.detail.runMeta.dispatchAttempt', {
+                                                    attempt: event.executionAttempt,
+                                                }),
+                                        ])}
+                                        subtitleLines={0}
+                                        showChevron={false}
+                                        mode="info"
+                                    />
+                                ))}
+                            </ItemGroup>
+                        ) : null}
                         {privateContent ? (
                             <AutomationRunDetailPrivateContent content={privateContent} />
                         ) : null}

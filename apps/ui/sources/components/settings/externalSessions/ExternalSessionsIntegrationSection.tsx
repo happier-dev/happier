@@ -13,6 +13,7 @@ import { t } from '@/text';
 import type { PluginDiagnosticDataV1 } from '@happier-dev/protocol';
 import type { PluginSessionHookInstallPreviewV1 } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 
 import {
     filterExternalSessionsAutoLinkSources,
@@ -71,6 +72,12 @@ function autoLinkSourceKey(source: ExternalSessionsAutoLinkSourceDescriptor): st
         source.agent.localId,
         source.sourcePolicyId,
     ].join('\u0000');
+}
+
+function integrationAgentIdentity(
+    integration: ExternalSessionsIntegrationDescriptor,
+): string {
+    return [integration.machineId, integration.agent.pluginId, integration.agent.localId].join('\u0000');
 }
 
 function resolveStatusTitle(state: ExternalSessionsIntegrationDescriptor['state']): string {
@@ -220,6 +227,15 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
         [props.agent, props.autoLinkSources, props.machineId],
     );
     const pendingKeysRef = React.useRef(new Set<string>());
+    /**
+     * A successful management action rewrites the row it was pressed on — Enable becomes
+     * Disable, Review and Install becomes the installed actions — so the control the user
+     * activated is gone by the time the result lands and nothing tells a screen-reader
+     * user what happened. Remember the state each acted integration was in, keyed by its
+     * stable Agent identity (its row key changes when an installation id appears), and
+     * announce the new stable status once the mutation is actually reflected.
+     */
+    const announcedStateByAgentIdentityRef = React.useRef(new Map<string, ExternalSessionsIntegrationDescriptor['state']>());
     const [pendingKeys, setPendingKeys] = React.useState<ReadonlySet<string>>(() => new Set());
     const operations = props.operations;
     const inventoryActionsDisabled = Boolean(
@@ -240,6 +256,10 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
 
         pendingKeysRef.current.add(integration.key);
         setPendingKeys((current) => new Set(current).add(pendingKey));
+        announcedStateByAgentIdentityRef.current.set(
+            integrationAgentIdentity(integration),
+            integration.state,
+        );
         try {
             if (action === 'review_install') {
                 await operations.reviewAndInstall(
@@ -283,6 +303,20 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
             });
         }
     }, [inventoryActionsDisabled, operations]);
+
+    React.useEffect(() => {
+        const awaited = announcedStateByAgentIdentityRef.current;
+        if (awaited.size === 0 || !integrations) return;
+        for (const integration of integrations) {
+            const identity = integrationAgentIdentity(integration);
+            if (!awaited.has(identity)) continue;
+            if (awaited.get(identity) === integration.state) continue;
+            awaited.delete(identity);
+            announceAccessibilityMessage(
+                `${integration.agentTitle} · ${resolveStatusTitle(integration.state)}`,
+            );
+        }
+    }, [integrations]);
 
     const runAutoLinkChange = React.useCallback(async (
         source: ExternalSessionsAutoLinkSourceDescriptor,

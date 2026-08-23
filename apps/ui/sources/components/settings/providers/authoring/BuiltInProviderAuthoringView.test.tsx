@@ -4,11 +4,18 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 import {
+    createMachineAdministrationTargetSelectionFixture,
     findTestInstanceByTypeContainingText,
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
+}));
 
 installSettingsViewCommonModuleMocks();
 
@@ -34,7 +41,7 @@ describe('BuiltInProviderAuthoringView', () => {
         const { BuiltInProviderAuthoringView } = await import('./BuiltInProviderAuthoringView');
         const screen = await renderScreen(
             <BuiltInProviderAuthoringView
-                targetMachines={[]}
+                targetSelection={createMachineAdministrationTargetSelectionFixture()}
                 machineId="machine-a"
                 currentMachineName="Mac"
                 providerName="Provider"
@@ -50,7 +57,6 @@ describe('BuiltInProviderAuthoringView', () => {
                 error={null}
                 secondaryTextColor="#777"
                 warningColor="#b70"
-                onSelectMachine={vi.fn()}
             onPickSecret={vi.fn()}
             onChooseCandidate={vi.fn()}
             onEndpointChange={vi.fn()}
@@ -81,7 +87,7 @@ describe('BuiltInProviderAuthoringView', () => {
         const { BuiltInProviderAuthoringView } = await import('./BuiltInProviderAuthoringView');
         const screen = await renderScreen(
             <BuiltInProviderAuthoringView
-                targetMachines={[]}
+                targetSelection={createMachineAdministrationTargetSelectionFixture()}
                 machineId="machine-a"
                 currentMachineName="Mac"
                 providerName="Acme"
@@ -100,7 +106,6 @@ describe('BuiltInProviderAuthoringView', () => {
                 error={null}
                 secondaryTextColor="#777"
                 warningColor="#b70"
-                onSelectMachine={vi.fn()}
                 onPickSecret={vi.fn()}
                 onChooseCandidate={vi.fn()}
                 onEndpointChange={vi.fn()}
@@ -124,7 +129,7 @@ describe('BuiltInProviderAuthoringView', () => {
         const { BuiltInProviderAuthoringView } = await import('./BuiltInProviderAuthoringView');
         const screen = await renderScreen(
             <BuiltInProviderAuthoringView
-                targetMachines={[]}
+                targetSelection={createMachineAdministrationTargetSelectionFixture()}
                 machineId="machine-a"
                 currentMachineName="Mac"
                 providerName="Provider"
@@ -162,7 +167,6 @@ describe('BuiltInProviderAuthoringView', () => {
                 error={null}
                 secondaryTextColor="#777"
                 warningColor="#b70"
-                onSelectMachine={vi.fn()}
                 onPickSecret={vi.fn()}
                 onChooseCandidate={onChooseCandidate}
                 onEndpointChange={vi.fn()}

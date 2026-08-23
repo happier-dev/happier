@@ -6,6 +6,7 @@ import {
     AutomationV3PluginEventDefinitionPatchRequestSchema,
     ExecutionRunDetachedStartRequestV1Schema,
     PluginMachineExecutionOriginV1Schema,
+    PluginWebhookEndpointIdV1Schema,
     arePluginMachineExecutionOriginsEqual,
     type AcpConfigOptionOverridesV1,
     type AutomationEventFilterV1,
@@ -14,6 +15,7 @@ import {
     type AutomationV3AssignmentInput,
     type AutomationV3PluginEventDefinitionCreateRequest,
     type AutomationV3PluginEventDefinitionPatchRequest,
+    type AutomationV3PluginEventObservationTransportInput,
     type BackendTargetRefV2,
     type ConnectedServiceBindingsV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
@@ -21,12 +23,25 @@ import {
     type MentionRefV1,
     type PluginEventAutomationSetupResultV1,
     type PluginMachineExecutionOriginV1,
+    type PluginWebhookEndpointIdV1,
     type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 
+import { PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
+
+/**
+ * The one observation transport this draft was authored for. The pull arm
+ * needs nothing beyond the selected origin; the push arm carries only the
+ * endpoint identity returned by the canonical webhook endpoint owner, because
+ * the endpoint materialization and routing source instance are re-derived
+ * from the same origin and setup result the request is built from.
+ */
+export type PluginEventAutomationObservationDraft =
+    | Readonly<{ kind: 'checkpointedPull' }>
+    | Readonly<{ kind: 'durablePush'; webhookEndpointId: PluginWebhookEndpointIdV1 }>;
 
 export type PluginEventAutomationAuthoringDraft = Readonly<{
     eventRef: Readonly<{ pluginId: string; localId: string }>;
@@ -34,7 +49,13 @@ export type PluginEventAutomationAuthoringDraft = Readonly<{
     setupActionRef: Readonly<{ pluginId: string; localId: string }>;
     expectedSetupActionImmutableGenerationId: string;
     source: PluginEventAutomationSetupResultV1;
+    /**
+     * The selected plugin execution origin. It is the checkpointed-pull
+     * watcher and, for durable push, the endpoint target materialization —
+     * one machine selection, never two competing ones.
+     */
     watcherOrigin: PluginMachineExecutionOriginV1;
+    observation: PluginEventAutomationObservationDraft;
     filter: AutomationEventFilterV1 | null;
     maximumObservationAgeMs: number | null;
 }>;
@@ -79,10 +100,18 @@ function sameWatcherOrigin(
     return arePluginMachineExecutionOriginsEqual(left, right);
 }
 
-function supportsCheckpointedPull(
+/**
+ * The declared Event is the only authority on which transports it supports.
+ * Durable push additionally requires the declared webhook contribution, which
+ * the Automation writer resolves server-side from this same declaration.
+ */
+export function supportsPluginEventAutomationObservationTransport(
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
+    kind: PluginEventAutomationObservationDraft['kind'],
 ): boolean {
-    return eligibleEvent.event.automation.source.supportedObservationTransports.includes('checkpointedPull');
+    const source = eligibleEvent.event.automation.source;
+    return source.supportedObservationTransports.includes(kind)
+        && (kind !== 'durablePush' || source.webhookContributionRef !== undefined);
 }
 
 function isExactEligibleEventForDraft(
@@ -90,7 +119,7 @@ function isExactEligibleEventForDraft(
     draft: PluginEventAutomationAuthoringDraft,
 ): boolean {
     const setupActionRef = eligibleEvent.event.automation.source.setupActionRef;
-    return supportsCheckpointedPull(eligibleEvent)
+    return supportsPluginEventAutomationObservationTransport(eligibleEvent, draft.observation.kind)
         && sameContributionIdentity(eligibleEvent.event.identity, draft.eventRef)
         && eligibleEvent.event.immutableGenerationId === draft.expectedEventImmutableGenerationId
         && sameContributionIdentity(eligibleEvent.setupAction.identity, draft.setupActionRef)
@@ -102,6 +131,37 @@ function isExactEligibleEventForDraft(
             eligibleEvent,
             result: draft.source,
         }).kind === 'available';
+}
+
+function normalizeObservationDraft(
+    observation: PluginEventAutomationObservationDraft,
+): PluginEventAutomationObservationDraft | null {
+    if (observation.kind === 'checkpointedPull') return Object.freeze({ kind: 'checkpointedPull' });
+    const webhookEndpointId = PluginWebhookEndpointIdV1Schema.safeParse(observation.webhookEndpointId);
+    return webhookEndpointId.success
+        ? Object.freeze({ kind: 'durablePush', webhookEndpointId: webhookEndpointId.data })
+        : null;
+}
+
+/**
+ * Projects the authored transport into the strict V3 writer input. Both arms
+ * name the same selected origin, and the push arm reuses the setup result's
+ * own source instance as the endpoint routing instance, so the request can
+ * never disagree with the endpoint the composer ensured.
+ */
+function buildObservationTransportInput(
+    draft: PluginEventAutomationAuthoringDraft,
+    origin: PluginMachineExecutionOriginV1,
+): AutomationV3PluginEventObservationTransportInput {
+    return draft.observation.kind === 'checkpointedPull'
+        ? { kind: 'checkpointedPull', watcherMaterializationRef: origin.materializationRef }
+        : {
+            kind: 'durablePush',
+            webhookEndpointId: draft.observation.webhookEndpointId,
+            endpointMaterializationRef: origin.materializationRef,
+            webhookRoutingSourceInstanceId: draft.source.sourceInstanceId,
+            setup: PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1,
+        };
 }
 
 function parseMaximumObservationAgeMs(value: unknown): number | null {
@@ -122,10 +182,17 @@ export function createPluginEventAutomationAuthoringDraft(params: Readonly<{
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
     setupResult: unknown;
     watcherOrigin: PluginMachineExecutionOriginV1;
+    observation: PluginEventAutomationObservationDraft;
     filter: AutomationEventFilterV1 | null;
     maximumObservationAgeMs: number | null;
 }>): PluginEventAutomationAuthoringDraft | null {
-    if (!supportsCheckpointedPull(params.eligibleEvent)) return null;
+    const observation = normalizeObservationDraft(params.observation);
+    if (
+        !observation
+        || !supportsPluginEventAutomationObservationTransport(params.eligibleEvent, observation.kind)
+    ) {
+        return null;
+    }
     const setupActionRef = params.eligibleEvent.event.automation.source.setupActionRef;
     if (
         setupActionRef === undefined
@@ -160,6 +227,7 @@ export function createPluginEventAutomationAuthoringDraft(params: Readonly<{
         expectedSetupActionImmutableGenerationId: params.eligibleEvent.setupAction.immutableGenerationId,
         source: source.result,
         watcherOrigin: watcherOrigin.data,
+        observation,
         filter: filter.data,
         maximumObservationAgeMs,
     });
@@ -298,10 +366,7 @@ export function buildPluginEventAutomationDefinitionCreateRequest(params: Readon
             sourceContractVersion: params.draft.source.sourceContractVersion,
             sourceConfig: params.draft.source.sourceConfig,
             displayLabel: params.draft.source.displayLabel,
-            observationTransport: {
-                kind: 'checkpointedPull',
-                watcherMaterializationRef: watcherOrigin.data.materializationRef,
-            },
+            observationTransport: buildObservationTransportInput(params.draft, watcherOrigin.data),
             filter: params.draft.filter,
             maximumObservationAgeMs: params.draft.maximumObservationAgeMs,
         },

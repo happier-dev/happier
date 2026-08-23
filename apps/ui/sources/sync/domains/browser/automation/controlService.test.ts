@@ -1,3 +1,4 @@
+import { browserViewKey } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 type AutomationRequest = Readonly<{
@@ -24,6 +25,10 @@ type AutomationResult = Readonly<{
     errorCode?: string;
     resultSummary?: Readonly<Record<string, unknown>>;
 }>;
+
+type AutomationCancelActiveResult =
+    | Readonly<{ v: 1; outcome: 'canceled'; canceledCount: number }>
+    | Readonly<{ v: 1; outcome: 'no_active' | 'owner_mismatch'; canceledCount: 0 }>;
 
 type AutomationOwner = Readonly<{
     ownerId: string;
@@ -60,7 +65,7 @@ type BrowserAutomationControlService = Readonly<{
     executeAction: (request: AutomationRequest) => Promise<AutomationResult>;
     cancelActiveAction: (
         input: Readonly<{ browserSessionId: string; viewId: string; reasonCode?: string }>,
-    ) => void;
+    ) => AutomationCancelActiveResult;
     recordHumanInput: (
         input: Readonly<{ browserSessionId: string; viewId: string; inputKind: string; occurredAtMs: number }>,
     ) => void;
@@ -108,7 +113,7 @@ function createOwner(overrides: Partial<AutomationOwner> = {}): AutomationOwner 
 }
 
 function viewKey(browserSessionId: string, viewId: string): string {
-    return `${browserSessionId}:${viewId}`;
+    return browserViewKey({ browserSessionId, viewId });
 }
 
 function createRequest(overrides: Partial<AutomationRequest> = {}): AutomationRequest {
@@ -701,11 +706,12 @@ describe('browser automation control service', () => {
 
         expect(notifications.some((snapshot) => snapshot.includes('automation_request_wait_cancel'))).toBe(true);
 
-        service.cancelActiveAction({
+        const canceled = service.cancelActiveAction({
             browserSessionId: 'browser_session_1',
             viewId: 'browser_view_1',
             reasonCode: 'user_canceled',
         });
+        expect(canceled).toEqual({ v: 1, outcome: 'canceled', canceledCount: 1 });
 
         await expect(action).resolves.toMatchObject({
             status: 'canceled',
@@ -724,10 +730,11 @@ describe('browser automation control service', () => {
         unsubscribe();
         service.registerOwner(createOwner({ ownerId: 'owner_ui_after_unsubscribe' }));
         const notificationCountAfterUnsubscribe = notifications.length;
-        service.cancelActiveAction({
+        const noActive = service.cancelActiveAction({
             browserSessionId: 'browser_session_1',
             viewId: 'browser_view_1',
         });
+        expect(noActive).toEqual({ v: 1, outcome: 'no_active', canceledCount: 0 });
         expect(notifications).toHaveLength(notificationCountAfterUnsubscribe);
     });
 });

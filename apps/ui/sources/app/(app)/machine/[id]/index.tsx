@@ -83,6 +83,7 @@ import {
     resolveSessionSpawnNewResultFailureMessageKey,
 } from '@/sync/ops/actions/sessionSpawnNewAction';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
 import {
     readDisplayMachineIdForSession,
@@ -491,12 +492,7 @@ export default function MachineDetailScreen() {
             try {
                 const result = await machineRevokeWithProviderCleanup(machineId, {
                     revoke: machineRevokeFromAccount,
-                    mutateProviderSettings: async (mutate) => {
-                        await sync.mutateAccountSettings((raw) => {
-                            const current = readProviderSettingsFromAccountSettingsV1(raw).settings;
-                            return { ...raw, providerSettingsV1: mutate(current) };
-                        });
-                    },
+                    mutateAccountSettings: sync.mutateAccountSettings,
                 });
                 if (!result.ok) {
                     if ('machineRevoked' in result && result.machineRevoked) {
@@ -947,17 +943,35 @@ export default function MachineDetailScreen() {
                 return;
             }
 
-            const actionResult = await executeSessionSpawnNewAction({
+            const spawnInput = {
                 creationKey: spawnAttemptRef.current.userAttemptId,
                 executionTarget: {
                     serverId: targetServerId,
                     machineId,
                 },
                 directory: absolutePath,
-                organizationPlacement: { folderId: null, tagIds: [] },
+                organizationPlacement: { folderId: null, tagIds: [] as string[] },
                 agentTarget,
                 ...(terminal ? { terminal } : {}),
-            }, { surface: 'ui' });
+            } as const;
+            const releaseUserRequestLease = sync.acquireUserRequestLease();
+            actionOperationPresentationCoordinator.register({
+                requestId: spawnInput.creationKey,
+                onStart: 'current',
+            });
+            const actionResult = await (async () => {
+                try {
+                    return await executeSessionSpawnNewAction(spawnInput, {
+                        surface: 'ui',
+                        actionRequestId: spawnInput.creationKey,
+                    });
+                } finally {
+                    releaseUserRequestLease();
+                }
+            })();
+            if (!shouldContinue()) {
+                return;
+            }
             if (!actionResult.ok) {
                 // Incompatible/older daemons are a typed Action failure. Never
                 // fall back to the private spawn RPC from an ordinary UI flow.
@@ -1000,13 +1014,18 @@ export default function MachineDetailScreen() {
                     break;
             }
         } catch (error) {
+            if (!shouldContinue()) {
+                return;
+            }
             let errorMessage = t('newSession.failedToStart');
             if (error instanceof Error && !error.message.includes('Failed to spawn session')) {
                 errorMessage = error.message;
             }
             Modal.alert(t('common.error'), errorMessage);
         } finally {
-            setIsSpawning(false);
+            if (shouldContinue()) {
+                setIsSpawning(false);
+            }
         }
     };
 
@@ -1440,10 +1459,10 @@ export default function MachineDetailScreen() {
                                         subtitle={new Date(machine.daemonState.startTime).toLocaleString()}
                                     />
                                 )}
-                                {machine.daemonState.startedWithCliVersion && (
+                                {machine.daemonState.cliVersion && (
                                     <Item
                                         title={t('machine.cliVersion')}
-                                        subtitle={machine.daemonState.startedWithCliVersion}
+                                        subtitle={machine.daemonState.cliVersion}
                                         subtitleStyle={{ fontFamily: 'Menlo', fontSize: 13 }}
                                     />
                                 )}

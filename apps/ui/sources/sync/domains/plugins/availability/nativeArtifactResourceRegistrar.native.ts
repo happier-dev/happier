@@ -1,5 +1,4 @@
 import { requireNativeModule } from 'expo-modules-core';
-import { Platform } from 'react-native';
 
 import type {
     PluginNativeArtifactResourceRegistrar,
@@ -49,10 +48,6 @@ function profileIsolationUnavailable(
 }
 
 function readRegistrationResult(value: unknown): PluginNativeArtifactResourceRegistrationResult {
-    // iOS ships the incumbent Bool acknowledgement. Exact true remains a
-    // successful registration only there during this bridge-result transition;
-    // truthy values and every other legacy shape still fail closed.
-    if (Platform.OS === 'ios' && value === true) return registered;
     if (!isRecord(value)) return registrationFailed;
     if (value.kind === 'registered' && hasExactlyKeys(value, ['kind'])) return registered;
     if (value.kind !== 'unavailable') return registrationFailed;
@@ -80,12 +75,12 @@ function getNativeModule(): NativeArtifactRegistrarModule | null {
 }
 
 /**
- * The only JS adapter for the native token registry. `registerArtifact` has a
- * strict admission result; its exact legacy `true` acknowledgement remains
- * compatible only with iOS. A boolean `true` from `unregisterArtifact` means the
- * native handler has synchronously tombstoned the token. The Artifact owner
- * retains its handle/cache entry on false or a thrown error so it can surface
- * diagnostics and retry at a safe boundary.
+ * The only JS adapter for the native token registry. `registerArtifact` has one
+ * strict admission result on every platform; every other shape fails closed. A
+ * boolean `true` from `unregisterArtifact` means the native handler has
+ * synchronously tombstoned the token. The Artifact owner retains its
+ * handle/cache entry on false or a thrown error so it can surface diagnostics
+ * and retry at a safe boundary.
  */
 export function createExpoPluginNativeArtifactResourceRegistrar(): PluginNativeArtifactResourceRegistrar {
     return Object.freeze({

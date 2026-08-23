@@ -441,19 +441,6 @@ const ConnectedAccountServiceController = React.memo(
         return () => controller.abort();
     }, [refreshDescription]);
 
-    const retryDescription = React.useCallback(async () => {
-        if (retryingDescription) return;
-        setRetryingDescription(true);
-        try {
-            await refreshDescription();
-        } catch {
-            if (activeControllerRef.current) {
-                setErrorCode('connected_account_daemon_unavailable');
-            }
-        } finally {
-            if (activeControllerRef.current) setRetryingDescription(false);
-        }
-    }, [refreshDescription, retryingDescription]);
 
     const readConfiguration = React.useCallback(async (
         target: ConnectedAccountConfigurationTarget,
@@ -483,6 +470,14 @@ const ConnectedAccountServiceController = React.memo(
 
     const acceptAttemptResponse = React.useCallback(async (
         response: ConnectedAccountAttemptResponse,
+        options?: Readonly<{
+            /**
+             * Set by a lost-reply recovery whose exact read proved the attempt neither
+             * advanced nor settled. The outcome of the lost effectful command is still
+             * unknown, so the shown uncertainty must survive this response.
+             */
+            retainUnresolvedError?: boolean;
+        }>,
     ) => {
         if (!activeControllerRef.current) return;
         setAttempt(response);
@@ -511,10 +506,59 @@ const ConnectedAccountServiceController = React.memo(
             || response.status === 'cleanupPending'
         ) {
             setErrorCode(response.code);
-        } else {
+        } else if (!options?.retainUnresolvedError) {
             setErrorCode(null);
         }
     }, [readConfiguration, refreshDescription]);
+
+    const retryDescription = React.useCallback(async () => {
+        if (retryingDescription) return;
+        setRetryingDescription(true);
+        try {
+            // An effectful authentication command can settle in the daemon after
+            // its reply is lost. The daemon owns the attempt outcome, so this
+            // user-driven recovery performs exactly one exact read of that
+            // attempt instead of resubmitting the command or polling; anything
+            // else falls back to refreshing the surrounding description.
+            const recoverableAttemptId = attempt && 'attemptId' in attempt
+                ? attempt.attemptId
+                : null;
+            if (recoverableAttemptId && serverId && machineId) {
+                const response = await runConnectedAccountAuthenticationCommand({
+                    serverId,
+                    machineId,
+                    ...(expectedActiveServer ? { expectedActiveServer } : {}),
+                    command: { operation: 'read', attemptId: recoverableAttemptId },
+                });
+                if (!activeControllerRef.current) return;
+                // Only a materially advanced phase or a terminal outcome resolves the
+                // lost reply. An unchanged non-terminal read proves nothing, so
+                // clearing the error there would re-enable the same effectful action
+                // and let the user submit it twice.
+                await acceptAttemptResponse(response, {
+                    retainUnresolvedError: !isTerminalAttempt(response)
+                        && attempt !== null
+                        && response.status === attempt.status,
+                });
+                return;
+            }
+            await refreshDescription();
+        } catch {
+            if (activeControllerRef.current) {
+                setErrorCode('connected_account_daemon_unavailable');
+            }
+        } finally {
+            if (activeControllerRef.current) setRetryingDescription(false);
+        }
+    }, [
+        acceptAttemptResponse,
+        attempt,
+        expectedActiveServer,
+        machineId,
+        refreshDescription,
+        retryingDescription,
+        serverId,
+    ]);
 
     const runAuthentication = React.useCallback(async (
         command: Parameters<typeof runConnectedAccountAuthenticationCommand>[0]['command'],

@@ -37,7 +37,7 @@ const {
     },
     clearReplacementSpy: vi.fn(async (_machineId: string) => ({ ok: true as const })),
     coordinatorSpy: vi.fn(async (_machineId: string, dependencies: any): Promise<any> => {
-        await dependencies.mutateProviderSettings((settings: unknown) => settings);
+        await dependencies.mutateAccountSettings((raw: Record<string, unknown>) => raw);
         return { ok: true as const, machineAlreadyRevoked: false, providerCleanup: 'complete' as const };
     }),
     alertSpy: vi.fn(),
@@ -188,7 +188,7 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         confirmSpy.mockReset();
         coordinatorSpy.mockClear();
         coordinatorSpy.mockImplementation(async (_machineId: string, dependencies: any) => {
-            await dependencies.mutateProviderSettings((settings: unknown) => settings);
+            await dependencies.mutateAccountSettings((raw: Record<string, unknown>) => raw);
             return { ok: true as const, machineAlreadyRevoked: false, providerCleanup: 'complete' as const };
         });
         alertSpy.mockReset();
@@ -255,7 +255,7 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         expect(confirmSpy).toHaveBeenCalled();
         expect(coordinatorSpy).toHaveBeenCalledWith('machine-1', expect.objectContaining({
             revoke: revokeSpy,
-            mutateProviderSettings: expect.any(Function),
+            mutateAccountSettings: expect.any(Function),
         }));
         expect(mutateAccountSettingsSpy).toHaveBeenCalledTimes(1);
         expect(refreshMachinesThrottledSpy).toHaveBeenCalled();

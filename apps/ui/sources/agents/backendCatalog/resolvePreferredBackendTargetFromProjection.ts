@@ -52,6 +52,23 @@ function buildCanonicalProjectionBackendIdSet(inputs: DaemonMergedProjectionInpu
             backendIds.add(normalizedBackendId);
         }
     }
+    // An Agent the machine's projection names is projection truth too. The
+    // current daemon V2 projection emits no parallel backend registry, so a
+    // standalone installed Session Agent is canonical evidence carried only by
+    // `agentsById`; ignoring it would reject the Agent's own target as if it
+    // were a settings-only leftover.
+    for (const [agentId, providerProjection] of Object.entries(inputs.mergedProviderProjectionById ?? {})) {
+        const normalizedAgentId = String(agentId ?? '').trim();
+        if (normalizedAgentId) {
+            backendIds.add(normalizedAgentId);
+        }
+        const settingsBackendId = typeof providerProjection?.settingsBackendId === 'string'
+            ? providerProjection.settingsBackendId.trim()
+            : '';
+        if (settingsBackendId) {
+            backendIds.add(settingsBackendId);
+        }
+    }
     return backendIds;
 }
 

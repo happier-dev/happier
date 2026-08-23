@@ -1110,7 +1110,7 @@ describe('CurrentUiContextProvider', () => {
         const port = createCurrentUiContextVoiceToolPort({
             reader: currentReader,
             readProjection: () => null,
-            readNavigationBinding: () => ({ openSurface, registerOwner: () => () => undefined }),
+            readNavigationBinding: () => ({ targetKind: 'app' as const, openSurface, registerOwner: () => () => undefined }),
         });
         const invokeCurrentUiCommand = port.invokeCurrentUiCommand;
         if (!invokeCurrentUiCommand) throw new Error('Current UI command invoker was not mounted');

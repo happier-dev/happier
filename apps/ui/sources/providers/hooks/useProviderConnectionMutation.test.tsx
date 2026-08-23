@@ -15,6 +15,14 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 
 import { useProviderConnectionMutation } from './useProviderConnectionMutation';
 
+/**
+ * Stable per-server target resolvers. The hook treats a new resolver identity
+ * as a new scope, so a suite that wants the SAME scope across renders must pass
+ * the same function, exactly like the Provider target owner does.
+ */
+const resolveTargetOnServerA = () => ({ machineId: 'machine-a', serverId: 'server-a' });
+const resolveTargetOnServerB = () => ({ machineId: 'machine-a', serverId: 'server-b' });
+
 function createDeferred<T>() {
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((next) => { resolve = next; });
@@ -42,7 +50,7 @@ describe('useProviderConnectionMutation', () => {
         });
         const refresh = vi.fn(async () => { events.push('refresh'); });
         const hook = await renderHook(() => useProviderConnectionMutation({
-            serverId: 'server-a',
+            resolveTarget: resolveTargetOnServerA,
             refresh,
         }));
 
@@ -76,7 +84,7 @@ describe('useProviderConnectionMutation', () => {
         machineRpcWithServerScope.mockReturnValueOnce(deferred.promise);
         const refresh = vi.fn(async () => undefined);
         const hook = await renderHook(() => useProviderConnectionMutation({
-            serverId: 'server-a',
+            resolveTarget: resolveTargetOnServerA,
             refresh,
         }));
         const request = {
@@ -118,13 +126,15 @@ describe('useProviderConnectionMutation', () => {
         const refreshA = vi.fn(async () => undefined);
         const refreshB = vi.fn(async () => undefined);
         const hook = await renderHook(
-            ({ serverId, refresh }: Readonly<{ serverId: string; refresh: () => Promise<void> }>) =>
-                useProviderConnectionMutation({ serverId, refresh }),
-            { initialProps: { serverId: 'server-a', refresh: refreshA } },
+            ({ resolveTarget, refresh }: Readonly<{
+                resolveTarget: () => Readonly<{ machineId: string; serverId: string }> | null;
+                refresh: () => Promise<void>;
+            }>) => useProviderConnectionMutation({ resolveTarget, refresh }),
+            { initialProps: { resolveTarget: resolveTargetOnServerA, refresh: refreshA } },
         );
         const capturedUnderA = hook.getCurrent().run;
 
-        await hook.rerender({ serverId: 'server-b', refresh: refreshB });
+        await hook.rerender({ resolveTarget: resolveTargetOnServerB, refresh: refreshB });
         const currentRun = hook.getCurrent().run;
 
         const request = {
@@ -153,6 +163,77 @@ describe('useProviderConnectionMutation', () => {
         expect(refreshB).toHaveBeenCalledOnce();
     });
 
+    it('refuses a modal-delayed write once the selection has moved to another machine', async () => {
+        // The user confirmed a destructive action for machine-a, then switched
+        // targets while the confirmation was open. Issuing the captured request
+        // now would either delete on the wrong machine or combine the old
+        // machine id with the new server's routing.
+        const selected = { current: { machineId: 'machine-a', serverId: 'server-a' } };
+        const resolveTarget = () => selected.current;
+        const refresh = vi.fn(async () => undefined);
+        const hook = await renderHook(() => useProviderConnectionMutation({ resolveTarget, refresh }));
+
+        selected.current = { machineId: 'machine-b', serverId: 'server-b' };
+        await act(async () => {
+            await hook.getCurrent().run({
+                action: 'delete',
+                machineId: 'machine-a',
+                connectionId: 'pc_a',
+            });
+        });
+
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+        expect(refresh).not.toHaveBeenCalled();
+        expect(hook.getCurrent().error).toEqual(createProviderErrorV1('provider_authorization_changed', {
+            machineId: 'machine-a',
+            connectionId: 'pc_a',
+        }));
+    });
+
+    it('issues a write through the server the target resolves to at effect time', async () => {
+        // The device-local routing id of the selected server identity can be
+        // replaced while a modal is open. The write must follow the freshly
+        // resolved routing id, not the one captured at render.
+        const selected = { current: { machineId: 'machine-a', serverId: 'server-a' } };
+        const resolveTarget = () => selected.current;
+        const refresh = vi.fn(async () => undefined);
+        machineRpcWithServerScope.mockResolvedValueOnce({
+            status: 'success', action: 'delete', deletedConnectionId: 'pc_a',
+        });
+        const hook = await renderHook(() => useProviderConnectionMutation({ resolveTarget, refresh }));
+
+        selected.current = { machineId: 'machine-a', serverId: 'server-a-reconnected' };
+        await act(async () => {
+            await hook.getCurrent().run({
+                action: 'delete',
+                machineId: 'machine-a',
+                connectionId: 'pc_a',
+            });
+        });
+
+        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server-a-reconnected',
+        }));
+        expect(hook.getCurrent().error).toBeNull();
+    });
+
+    it('refuses a write when the selected machine is no longer reachable', async () => {
+        const resolveTarget = () => null;
+        const refresh = vi.fn(async () => undefined);
+        const hook = await renderHook(() => useProviderConnectionMutation({ resolveTarget, refresh }));
+
+        await act(async () => {
+            await hook.getCurrent().run({
+                action: 'delete',
+                machineId: 'machine-a',
+                connectionId: 'pc_a',
+            });
+        });
+
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+        expect(hook.getCurrent().error?.code).toBe('provider_authorization_changed');
+    });
+
     it('coalesces canonically equal requests but not material differences', async () => {
         const equivalentDeferred = createDeferred<Readonly<{
             status: 'error';
@@ -172,7 +253,7 @@ describe('useProviderConnectionMutation', () => {
             .mockReturnValueOnce(preNormalizationDuplicate.promise);
         const refresh = vi.fn(async () => undefined);
         const hook = await renderHook(() => useProviderConnectionMutation({
-            serverId: 'server-a',
+            resolveTarget: resolveTargetOnServerA,
             refresh,
         }));
         const firstRequest = {
@@ -289,9 +370,11 @@ describe('useProviderConnectionMutation', () => {
         const refreshA = vi.fn(async () => undefined);
         const refreshB = vi.fn(async () => undefined);
         const hook = await renderHook(
-            ({ serverId, refresh }: Readonly<{ serverId: string; refresh: () => Promise<void> }>) =>
-                useProviderConnectionMutation({ serverId, refresh }),
-            { initialProps: { serverId: 'server-a', refresh: refreshA } },
+            ({ resolveTarget, refresh }: Readonly<{
+                resolveTarget: () => Readonly<{ machineId: string; serverId: string }> | null;
+                refresh: () => Promise<void>;
+            }>) => useProviderConnectionMutation({ resolveTarget, refresh }),
+            { initialProps: { resolveTarget: resolveTargetOnServerA, refresh: refreshA } },
         );
         let fromPriorScope!: Promise<unknown>;
         await act(async () => {
@@ -301,7 +384,7 @@ describe('useProviderConnectionMutation', () => {
             await Promise.resolve();
         });
 
-        await hook.rerender({ serverId: 'server-b', refresh: refreshB });
+        await hook.rerender({ resolveTarget: resolveTargetOnServerB, refresh: refreshB });
         let firstCurrentShared!: Promise<unknown>;
         let secondCurrentShared!: Promise<unknown>;
         let currentOtherRequest!: Promise<unknown>;
@@ -378,7 +461,7 @@ describe('useProviderConnectionMutation', () => {
         });
         const refresh = vi.fn(async () => { events.push('refresh'); });
         const hook = await renderHook(() => useProviderConnectionMutation({
-            serverId: 'server-a',
+            resolveTarget: resolveTargetOnServerA,
             refresh,
         }));
 
@@ -411,7 +494,7 @@ describe('useProviderConnectionMutation', () => {
     it('preserves acknowledged create, update, and delete results when only their follow-up read fails', async () => {
         const refresh = vi.fn(async () => { throw new Error('catalog refresh unavailable'); });
         const hook = await renderHook(() => useProviderConnectionMutation({
-            serverId: 'server-a',
+            resolveTarget: resolveTargetOnServerA,
             refresh,
         }));
         const connection = createProviderConnectionViewFixture({ connectionId: 'pc_a' });
@@ -468,9 +551,11 @@ describe('useProviderConnectionMutation', () => {
         const refreshA = vi.fn(async () => undefined);
         const refreshB = vi.fn(async () => undefined);
         const hook = await renderHook(
-            ({ serverId, refresh }: Readonly<{ serverId: string; refresh: () => Promise<void> }>) =>
-                useProviderConnectionMutation({ serverId, refresh }),
-            { initialProps: { serverId: 'server-a', refresh: refreshA } },
+            ({ resolveTarget, refresh }: Readonly<{
+                resolveTarget: () => Readonly<{ machineId: string; serverId: string }> | null;
+                refresh: () => Promise<void>;
+            }>) => useProviderConnectionMutation({ resolveTarget, refresh }),
+            { initialProps: { resolveTarget: resolveTargetOnServerA, refresh: refreshA } },
         );
 
         let resultPromise!: Promise<unknown>;
@@ -481,7 +566,7 @@ describe('useProviderConnectionMutation', () => {
                 connectionId: 'pc_a',
             });
         });
-        await hook.rerender({ serverId: 'server-b', refresh: refreshB });
+        await hook.rerender({ resolveTarget: resolveTargetOnServerB, refresh: refreshB });
         await act(async () => {
             deferred.resolve({ status: 'success', action: 'delete', deletedConnectionId: 'pc_a' });
             await resultPromise;

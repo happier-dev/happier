@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { type BackendTargetRefV2 } from '@happier-dev/protocol';
 
+import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -373,7 +374,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                             title={resolveText(item.title) ?? ''}
                             subtitle={resolveText(item.description)}
                             icon={<Icon name={(item.iconIonName as any) ?? 'sliders-horizontal'} size={29} color={theme.colors.accent.orange} />}
-                            onPress={() => router.push(item.route)}
+                            onPress={() => router.push(createPluginAgentSettingsRoute(agentId) as never)}
                         />
                     ))}
                 </ItemGroup>

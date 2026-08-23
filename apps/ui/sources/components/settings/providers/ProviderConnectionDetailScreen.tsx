@@ -1,6 +1,7 @@
 import * as React from 'react';
 import {
     areProviderContributionKeysEqualV1,
+    type MachineAdministrationTargetV1,
     type ProviderErrorV1,
     type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
@@ -19,13 +20,12 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { StatusPill } from '@/components/ui/status/StatusPill';
-import { ProviderMachineSelector } from '@/components/settings/providers/ProviderMachineSelector';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { ProviderExternalLinkItem } from '@/components/settings/providers/ProviderExternalLinkItem';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
@@ -35,26 +35,30 @@ import {
     PROVIDER_CONNECTION_STATUS_VARIANT,
 } from '@/providers/connection/presentation';
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
-import { listProviderSettingsTargetMachines, resolveProviderSettingsTargetMachine } from '@/providers/hooks/targetMachine';
+import {
+    providerSettingsMachineRowKey,
+    useProviderSettingsTarget,
+} from '@/providers/hooks/targetMachine';
 import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 import { useProviderConnectionMachineViews } from '@/providers/hooks/useProviderConnectionMachineViews';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
 import { probeProviderConnection, providerErrorFromRpcFailure } from '@/providers/rpc/client';
-import { useAllMachines, useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { resolveConnectedAccountPurposeTargetDisplay } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+import {
+    buildConnectedAccountPurposeTargetChoices,
+    connectedAccountPurposeTargetChoiceId,
+    resolveConnectedAccountPurposeTargetDisplay,
+} from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+import { getConnectedAccountAuthenticationMode } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
     ProviderCompatibilitySection,
     ProviderEndpointOverridesSection,
 } from './detail/ProviderConnectionDetailSections';
 import { ProviderFeatureAvailabilityNotice, useProviderFeatureAvailability } from './ProviderFeatureAvailability';
 import { Icon } from '@/components/ui/icons/Icon';
-
-function machineName(machine: ReturnType<typeof useAllMachines>[number]): string {
-    return machine.metadata?.displayName || machine.metadata?.host || machine.id;
-}
 
 type ManagedDeployment = Extract<
     DaemonProviderConnectionViewV1['deployment'],
@@ -86,32 +90,33 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const settings = useSettings();
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
-    const machines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    const activeServer = useActiveServerSnapshot();
-    const serverId = typeof activeServer.serverId === 'string' ? activeServer.serverId : null;
-    const [preferredMachineId, setPreferredMachineId] = React.useState<string | null>(null);
-    const eligibleMachineIds = React.useMemo(() => new Set(listProviderSettingsTargetMachines({
-        serverId, machines, machineListByServerId,
-    }).map((machine) => machine.id)), [machineListByServerId, machines, serverId]);
-    const targetMachines = React.useMemo(
-        () => machines.filter((machine) => eligibleMachineIds.has(machine.id)),
-        [eligibleMachineIds, machines],
+    const providerTarget = useProviderSettingsTarget();
+    const { machineId, machineRows, resolveCurrentTarget, serverId } = providerTarget;
+    // Only machines the canonical presence owner classifies online can return
+    // daemon facts; a read to any other candidate cannot be serviced.
+    const readableMachineRows = React.useMemo(
+        () => machineRows.filter((row) => row.online),
+        [machineRows],
     );
-    const machineId = React.useMemo(() => resolveProviderSettingsTargetMachine({
-        serverId, preferredMachineId, machines, machineListByServerId,
-    }), [machineListByServerId, machines, preferredMachineId, serverId]);
+    // Row presses reach the same Machine Administration selection owner the
+    // shared selector writes, so no Provider route keeps a second preference.
+    const targetSelection = providerTarget.selection;
+    const selectTargetMachine = React.useCallback((target: MachineAdministrationTargetV1) => {
+        targetSelection.selectTarget(target);
+    }, [targetSelection]);
     const query = useProviderConnections({ enabled, machineId, serverId, connectionId: props.connectionId });
     const machineViews = useProviderConnectionMachineViews({
         enabled,
-        serverId,
         connectionId: props.connectionId,
-        machineIds: targetMachines.map((machine) => machine.id),
+        targets: readableMachineRows,
     });
     const refreshConnectionDetail = React.useCallback(async () => {
         await Promise.all([query.refresh(), machineViews.refresh()]);
     }, [machineViews.refresh, query.refresh]);
-    const mutation = useProviderConnectionMutation({ serverId, refresh: refreshConnectionDetail });
+    const mutation = useProviderConnectionMutation({
+        resolveTarget: resolveCurrentTarget,
+        refresh: refreshConnectionDetail,
+    });
     const deleteInFlightRef = React.useRef(false);
     const [deletePending, setDeletePending] = React.useState(false);
     const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'success' | 'notSupported'>('idle');
@@ -126,6 +131,18 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         connection?.managedLocalOption?.targetMachineId === machineId
             ? connection.managedLocalOption
             : null;
+    // Connected Accounts, their labels, and the qualified-account transport are
+    // all read from the ACTIVE server's Account. A Provider target on another
+    // server profile belongs to a different Account, so its bindings must not
+    // be labelled from — or written with — this Account's references.
+    // Both ids are device-local server-profile ids from the same registry: the
+    // Administration resolver returns `profile.id`, and so does the active
+    // snapshot. Comparing them directly needs no alias resolution.
+    const activeServer = useActiveServerSnapshot();
+    const activeServerId = String(activeServer.serverId ?? '').trim();
+    const connectedAccountScopeMatchesTarget = serverId !== null
+        && activeServerId.length > 0
+        && serverId.trim() === activeServerId;
     const probeObservationIdentity = connection?.probeObservationIdentity ?? null;
     // A null identity cannot establish semantic equivalence. Treat the connection
     // snapshot as an opaque fail-closed sentinel instead of reconstructing daemon facts.
@@ -178,13 +195,20 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     }, [invalidateProbe, probeScope]);
 
     const runProbe = React.useCallback(async () => {
-        if (!machineId) return;
+        // Re-resolve immediately before the probe: the rendered target may have
+        // moved to another machine or server profile since this row rendered.
+        const target = resolveCurrentTarget();
+        if (!machineId || !target || target.machineId !== machineId) return;
         const generation = ++probeGenerationRef.current;
         const requestScope = probeScope;
         setProbeState('probing');
         setProbeError(null);
         try {
-            const result = await probeProviderConnection({ machineId, serverId, connectionId: props.connectionId });
+            const result = await probeProviderConnection({
+                machineId: target.machineId,
+                serverId: target.serverId,
+                connectionId: props.connectionId,
+            });
             if (probeGenerationRef.current !== generation || activeProbeScopeRef.current !== requestScope) return;
             if (result.status === 'error') {
                 setProbeState('idle');
@@ -201,7 +225,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 machineId,
             }));
         }
-    }, [machineId, probeScope, props.connectionId, query.refresh, serverId]);
+    }, [machineId, probeScope, props.connectionId, query.refresh, resolveCurrentTarget]);
 
     const bindSecret = React.useCallback((scope: 'account' | 'machine', targetMachineId: string) => {
         Modal.show({
@@ -300,7 +324,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     }, [connection?.contributionKey, invalidateProbe, localInstallation?.managedStartAvailable, machineId, mutation, props.connectionId]);
 
     const beginManagedPurposeConfiguration = React.useCallback(() => {
-        if (!machineId || !connection || !managedLocalOption) return;
+        if (!machineId || !connection || !managedLocalOption || !connectedAccountScopeMatchesTarget) return;
         const currentTargets = new Map(
             managedDeployment?.effects?.connectedAccountPurposes.map(
                 (binding) => [binding.purpose, binding.target] as const,
@@ -316,7 +340,13 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             revision: connection.revision,
             targets,
         });
-    }, [connection, machineId, managedDeployment?.effects?.connectedAccountPurposes, managedLocalOption]);
+    }, [
+        connectedAccountScopeMatchesTarget,
+        connection,
+        machineId,
+        managedDeployment?.effects?.connectedAccountPurposes,
+        managedLocalOption,
+    ]);
 
     const updateManagedPurposeDraftTarget = React.useCallback((purpose: string, target: QualifiedConnectedAccountPurposeBindingTargetV1 | null) => {
         setManagedPurposeDraft((current) => current
@@ -334,10 +364,12 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             managedPurposeDraft.machineId !== machineId
             || managedPurposeDraft.connectionId !== connection.connectionId
             || managedPurposeDraft.revision !== connection.revision
+            || !connectedAccountScopeMatchesTarget
         ) {
-            // A connection refresh replaced the CAS basis while the editor was
-            // open. Drop the draft rather than applying its targets to a newer
-            // deployment snapshot.
+            // A connection refresh replaced the CAS basis, or the target moved
+            // to another server's Account, while the editor was open. Drop the
+            // draft rather than applying its targets to a newer deployment
+            // snapshot or a foreign Account.
             setManagedPurposeDraft(null);
             return;
         }
@@ -351,7 +383,34 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 );
                 return;
             }
-            if (target) purposeBindingDefaults[declaration.purpose] = target;
+            if (target) {
+                // Re-validate against the Account as it stands now: a refresh
+                // while the editor was open can have removed the chosen account
+                // or group, and an unresolvable reference must never be stored.
+                const choices = buildConnectedAccountPurposeTargetChoices({
+                    declaration,
+                    selectedTarget: target,
+                    accounts: profile.connectedAccountsV4 ?? [],
+                    groups: profile.connectedAccountGroupsV4 ?? [],
+                    labelsByKey: settings.connectedServicesProfileLabelByKey,
+                    serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(
+                        connectedServicesRegistry, declaration.service, t,
+                    ),
+                    resolveAuthenticationMode: (account) => getConnectedAccountAuthenticationMode(
+                        account.ref.service,
+                        account.authenticationModeId,
+                    ),
+                });
+                const chosenId = connectedAccountPurposeTargetChoiceId(target);
+                if (!choices.some((choice) => choice.id === chosenId && choice.selectable)) {
+                    await Modal.alert(
+                        t('settingsProviders.local.invalidPurposeTargetTitle'),
+                        t('settingsProviders.local.invalidPurposeTargetDescription'),
+                    );
+                    return;
+                }
+                purposeBindingDefaults[declaration.purpose] = target;
+            }
         }
         invalidateProbe();
         const result = await mutation.run(
@@ -369,13 +428,18 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         );
         if (result?.status === 'success') setManagedPurposeDraft(null);
     }, [
+        connectedAccountScopeMatchesTarget,
+        connectedServicesRegistry,
         connection,
         invalidateProbe,
         machineId,
         managedLocalOption,
         managedPurposeDraft,
         mutation,
+        profile.connectedAccountGroupsV4,
+        profile.connectedAccountsV4,
         props.connectionId,
+        settings.connectedServicesProfileLabelByKey,
     ]);
 
     React.useEffect(() => {
@@ -384,10 +448,17 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             managedPurposeDraft.machineId !== machineId
             || managedPurposeDraft.connectionId !== connection?.connectionId
             || managedPurposeDraft.revision !== connection?.revision
+            || !connectedAccountScopeMatchesTarget
         ) {
             setManagedPurposeDraft(null);
         }
-    }, [connection?.connectionId, connection?.revision, machineId, managedPurposeDraft]);
+    }, [
+        connectedAccountScopeMatchesTarget,
+        connection?.connectionId,
+        connection?.revision,
+        machineId,
+        managedPurposeDraft,
+    ]);
 
     const useExternalDeployment = React.useCallback(async () => {
         if (!machineId || !connection || !managedDeployment) return;
@@ -469,17 +540,16 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const presentation = presentProviderConnection(connection);
     const probeErrorPresentation = presentProviderError(probeError);
     const accountGrantValid = connection.grants.accountState === 'valid';
-    const managedTargetMachine = managedDeployment
-        ? machines.find((machine) => machine.id === managedDeployment.targetMachineId)
+    const managedTargetMachineName = managedDeployment
+        ? machineRows.find((row) => row.target.machineId === managedDeployment.targetMachineId)?.displayName ?? null
         : null;
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
-            {targetMachines.length > 1 ? (
-                <ItemGroup title={t('settingsProviders.detail.targetMachine')}>
-                    <ProviderMachineSelector machines={targetMachines} selectedId={machineId} onSelect={setPreferredMachineId} />
-                </ItemGroup>
-            ) : null}
+            <MachineAdministrationTargetSelector
+                selection={providerTarget.selection}
+                testIDPrefix="settings.providers.administration.target"
+            />
             <ItemGroup title={presentation.title} footer={presentation.subtitle || undefined}>
                 <Item
                     mode="info"
@@ -524,9 +594,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 title={connection.providerName}
                                 subtitle={[
                                     t('settingsProviders.local.startedByHappier'),
-                                    managedTargetMachine
-                                        ? machineName(managedTargetMachine)
-                                        : t('common.unavailable'),
+                                    managedTargetMachineName ?? t('common.unavailable'),
                                 ].join(' · ')}
                                 icon={<Icon name="cpu" size={29} color={theme.colors.text.secondary} />}
                             />
@@ -544,17 +612,21 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                     title={purpose.title ?? resolveQualifiedConnectedServiceRegistryDisplayName(
                                         connectedServicesRegistry, purpose.service, t,
                                     )}
-                                    subtitle={resolveConnectedAccountPurposeTargetDisplay({
-                                        target: purpose.target,
-                                        accounts: profile.connectedAccountsV4 ?? [],
-                                        groups: profile.connectedAccountGroupsV4 ?? [],
-                                        labelsByKey: settings.connectedServicesProfileLabelByKey,
-                                        serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(
-                                            connectedServicesRegistry,
-                                            purpose.service,
-                                            t,
-                                        ),
-                                    })}
+                                    subtitle={connectedAccountScopeMatchesTarget
+                                        ? resolveConnectedAccountPurposeTargetDisplay({
+                                            target: purpose.target,
+                                            accounts: profile.connectedAccountsV4 ?? [],
+                                            groups: profile.connectedAccountGroupsV4 ?? [],
+                                            labelsByKey: settings.connectedServicesProfileLabelByKey,
+                                            serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(
+                                                connectedServicesRegistry,
+                                                purpose.service,
+                                                t,
+                                            ),
+                                        })
+                                        // The binding belongs to another server's Account; this
+                                        // Account's labels would name a different connected account.
+                                        : t('common.unavailable')}
                                 />
                             ))}
                         </>
@@ -568,7 +640,16 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 : t('settingsProviders.status.needsAttention')}
                         />
                     ) : null}
-                    {managedLocalOption && !managedPurposeDraft ? (
+                    {managedLocalOption && !connectedAccountScopeMatchesTarget ? (
+                        <Item
+                            testID="provider-connection-managed-account-scope"
+                            mode="info"
+                            title={t('settingsProviders.local.accountScopeMismatchTitle')}
+                            subtitle={t('settingsProviders.local.accountScopeMismatchDescription')}
+                            icon={<Icon name="info" size={29} color={theme.colors.text.secondary} />}
+                        />
+                    ) : null}
+                    {managedLocalOption && connectedAccountScopeMatchesTarget && !managedPurposeDraft ? (
                         <Item
                             testID="provider-connection-managed-configure"
                             title={managedDeployment
@@ -688,9 +769,11 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             </ItemGroup>
 
             {connection.scope === 'machine' || connection.grants.enabledMachineIds.length > 0 ? <ItemGroup title={t('settingsProviders.detail.machinesTitle')} footer={t('settingsProviders.detail.machinesFooter')}>
-                {targetMachines.map((machine) => {
-                    const selected = machine.id === machineId;
-                    const machineViewState = machineViews.byMachineId[machine.id];
+                {readableMachineRows.map((row) => {
+                    const rowKey = providerSettingsMachineRowKey(row.target);
+                    const rowMachineId = row.target.machineId;
+                    const selected = rowMachineId === machineId;
+                    const machineViewState = machineViews.byTargetKey[rowKey];
                     const machineView = machineViewState?.status === 'success' || machineViewState?.status === 'loading'
                         ? machineViewState.connection
                         : null;
@@ -702,9 +785,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     const machineError = machineViewState?.status === 'error' ? machineViewState.error : null;
                     const machineErrorPresentation = presentProviderError(machineError);
                     return (
-                        <React.Fragment key={machine.id}>
+                        <React.Fragment key={rowKey}>
                             <Item
-                                title={machineName(machine)}
+                                title={row.displayName}
                                 subtitle={machineError
                                     ? t(machineErrorPresentation.descriptionKey)
                                     : machineViewState?.status === 'loading'
@@ -712,24 +795,24 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                         : machineEndpoint || (selected
                                             ? t('settingsProviders.detail.currentMachine')
                                             : t('settingsProviders.detail.selectMachineToManage'))}
-                                rightElement={!selected ? undefined : mutation.isPending(`machine:${machine.id}`)
+                                rightElement={!selected ? undefined : mutation.isPending(`machine:${rowMachineId}`)
                                     || machineViewState?.status === 'loading'
                                     ? <ActivitySpinner size="small" />
                                     : <Switch
-                                        accessibilityLabel={machineName(machine)}
-                                        disabled={!machine.active || machineViewState?.status !== 'success' || machineView === null}
+                                        accessibilityLabel={row.displayName}
+                                        disabled={machineViewState?.status !== 'success' || machineView === null}
                                         value={granted}
-                                        onValueChange={(next) => void setMachineEnabled(machine.id, next)}
+                                        onValueChange={(next) => void setMachineEnabled(rowMachineId, next)}
                                     />}
                                 rightElementOutsidePressable
-                                onPress={!selected ? () => setPreferredMachineId(machine.id) : undefined}
+                                onPress={!selected ? () => selectTargetMachine(row.target) : undefined}
                             />
                             {selected && machineError ? (
                                 <ProviderErrorItems
                                     error={machineError}
                                     retry={machineViews.refresh}
                                     enableOnMachine={machineError.action === 'enable_on_machine'
-                                        ? () => setMachineEnabled(machine.id, true)
+                                        ? () => setMachineEnabled(rowMachineId, true)
                                         : undefined}
                                 />
                             ) : null}

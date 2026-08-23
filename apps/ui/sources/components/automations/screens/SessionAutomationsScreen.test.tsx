@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 import type { StorageState } from '@/sync/store/types';
 
@@ -375,6 +376,43 @@ describe('SessionAutomationsScreen', () => {
         await act(async () => {
             resolveDetail?.();
             await pendingDetail;
+        });
+    });
+
+    it('bounds concurrent private detail reads instead of fanning one request out per undisclosed definition', async () => {
+        const undisclosedCount = 40;
+        let inFlight = 0;
+        let peakInFlight = 0;
+        const gates: (() => void)[] = [];
+        syncSpies.refreshAutomationDefinitionDetail.mockImplementation(async () => {
+            inFlight += 1;
+            peakInFlight = Math.max(peakInFlight, inFlight);
+            await new Promise<void>((resolve) => { gates.push(resolve); });
+            inFlight -= 1;
+        });
+        automationsState.list = Array.from({ length: undisclosedCount }, (_unused, index) => (
+            createScheduleDefinition({
+                id: `u${index}`,
+                name: `Undisclosed ${index}`,
+                targetType: 'existingSession',
+                detail: 'unloaded',
+            })
+        ));
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const limit = loadSyncTuning().automationDefinitionDetailHydrationConcurrencyLimit;
+        expect(peakInFlight).toBeLessThanOrEqual(limit);
+        expect(peakInFlight).toBeGreaterThan(0);
+        expect(syncSpies.refreshAutomationDefinitionDetail.mock.calls.length).toBeLessThanOrEqual(limit);
+
+        await act(async () => {
+            for (const release of [...gates]) release();
+            await Promise.resolve();
         });
     });
 

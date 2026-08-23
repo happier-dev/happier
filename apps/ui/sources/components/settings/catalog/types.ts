@@ -13,6 +13,7 @@ export const SETTINGS_PAGE_IDS = {
     groupSystem: 'groupSystem',
 
     account: 'account',
+    apiTokens: 'apiTokens',
     secrets: 'secrets',
     usage: 'usage',
     machines: 'machines',

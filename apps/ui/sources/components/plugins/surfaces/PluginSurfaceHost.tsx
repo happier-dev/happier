@@ -1094,13 +1094,6 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     /** Host-private binding for watchdog persistence; never part of RenderContext. */
     crashReportScopeKey?: string;
     crashStateDisabled?: boolean;
-    /**
-     * Whether the projection carrying `crashStateDisabled` is the daemon's
-     * current truth rather than a retained offline snapshot. Forwarded intact:
-     * this host is the only path between the mount that computes the fact and
-     * the surface whose quarantine consumes it.
-     */
-    crashStateProjectionCurrent?: boolean;
     reportFailure?: (failure: PluginReactNativePendingFailure) => Promise<ReactNativeCrashReportResult>;
     resetCrashState?: () => Promise<ReactNativeCrashReportResult>;
     /** Composer-only private carrier; never part of the public RenderContext. */
@@ -1396,9 +1389,6 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             {...(props.crashStateToken ? { crashStateToken: props.crashStateToken } : {})}
             {...(props.crashReportScopeKey ? { crashReportScopeKey: props.crashReportScopeKey } : {})}
             {...(props.crashStateDisabled === undefined ? {} : { crashStateDisabled: props.crashStateDisabled })}
-            {...(props.crashStateProjectionCurrent === undefined
-                ? {}
-                : { crashStateProjectionCurrent: props.crashStateProjectionCurrent })}
             {...(props.reportFailure ? { reportFailure: props.reportFailure } : {})}
             {...(props.resetCrashState ? { resetCrashState: props.resetCrashState } : {})}
         />
@@ -2852,12 +2842,25 @@ export function PluginSurfaceHost(props: Readonly<(
                 pluginUiProjection={mountedPluginUiProjection}
                 policyContext={hasEmbeddedMount ? undefined : policyContext}
                 openSurface={controller.openSurface}
-                openSurfaceAvailable={!hasEmbeddedMount && controller.installedMethods.includes('openSurface')}
+                // UI-D02: availability is the FACTUAL installed set, exactly as
+                // the document-source arms above already read it. An embedded
+                // mount whose container supplied no destination binding installs
+                // no handler and is therefore already unavailable here; adding
+                // `hasEmbeddedMount` on top refused a Composer surface whose
+                // scope DID bind the canonical navigation owner, so an enabled
+                // control resolved after doing nothing.
+                openSurfaceAvailable={controller.installedMethods.includes('openSurface')}
                 authorityGeneration={daemonInteraction.daemonStateVersion}
                 accountLifetime={accountLifetime}
                 dataClient={mountedPluginUiDataClient}
                 renderTargetedSurface={hasEmbeddedMount ? undefined : renderTargetedSurface}
-                reportUnsupportedNestedTargetedSurface={targetedBinding
+                // Nesting is structurally unsupported for EVERY embedded mount,
+                // not only the targeted arm: an embedded Composer surface has no
+                // B->C bridge either, and it was committing the same fallback
+                // silently. A destination mount is excluded because it CAN mount
+                // a targeted child, so its fallback means "this child is
+                // unavailable", not "nesting is unsupported here".
+                reportUnsupportedNestedTargetedSurface={hasEmbeddedMount
                     ? reportUnsupportedNestedTargetedSurface
                     : undefined}
                 embeddedPresentation={surfaceMount.kind === 'embedded' ? surfaceMount.presentation : undefined}
@@ -2901,7 +2904,7 @@ export function PluginSurfaceHost(props: Readonly<(
                     pluginUiProjection={mountedPluginUiProjection}
                     policyContext={hasEmbeddedMount ? undefined : policyContext}
                     renderTargetedSurface={hasEmbeddedMount ? undefined : renderTargetedSurface}
-                    reportUnsupportedNestedTargetedSurface={targetedBinding
+                    reportUnsupportedNestedTargetedSurface={hasEmbeddedMount
                         ? reportUnsupportedNestedTargetedSurface
                         : undefined}
                     embeddedPresentation={surfaceMount.kind === 'embedded' ? surfaceMount.presentation : undefined}
@@ -3409,12 +3412,6 @@ export function PluginSurfaceHost(props: Readonly<(
                 {...(exactGeneratedCrashState ? {
                     crashStateToken: exactGeneratedCrashState.token,
                     crashStateDisabled: exactGeneratedCrashState.disabled,
-                    // The same composed projection-currentness fact this mount
-                    // already uses for interaction. A retained offline snapshot
-                    // still carries the daemon's last known crash state, but it
-                    // is not current truth, so it cannot clear a quarantine the
-                    // local store can no longer speak for.
-                    crashStateProjectionCurrent: projectionInteractionEnabled !== false,
                 } : {})}
                 {...(crashReportScopeKey ? { crashReportScopeKey } : {})}
                 {...(reportReactNativeFailure ? { reportFailure: reportReactNativeFailure } : {})}

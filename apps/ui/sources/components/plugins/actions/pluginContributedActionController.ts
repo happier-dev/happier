@@ -32,12 +32,12 @@ import {
     resolvePluginUiClientActionRegistration,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
 import {
-    dispatchPluginSurfaceAction,
     type DispatchPluginSurfaceActionInput,
     type PluginSurfaceActionDispatchOutcome,
     type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceHostPresentedActionInvocation,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import { launchPluginSurfaceAction } from '@/components/plugins/surfaces/launchPluginSurfaceAction';
 import {
     createPluginActionCurrentIntentHandler,
 } from '@/components/plugins/surfaces/pluginSurfaceFeedback';
@@ -707,7 +707,7 @@ export function createPluginContributedActionController(params: Readonly<{
 }>): PluginContributedActionController
     & PluginActionInputSelectionController
     & PluginExactBoundActionInputController {
-    const dispatch = params.dispatch ?? dispatchPluginSurfaceAction;
+    const dispatch = params.dispatch;
     const resolveConnectedAccountOptions = params.resolveConnectedAccountOptions
         ?? machinePluginActionFormConnectedAccountOptionsResolve;
 
@@ -1057,7 +1057,7 @@ export function createPluginContributedActionController(params: Readonly<{
             })
             : undefined;
         try {
-            const outcome = await dispatch({
+            const dispatchInput: DispatchPluginSurfaceActionInput = {
                 // Catalog, Composer, and transcript host presentation never
                 // fabricate a mounted plugin caller. The canonical dispatcher
                 // receives only the current host intent carrier, if required.
@@ -1096,8 +1096,12 @@ export function createPluginContributedActionController(params: Readonly<{
                 ...(invocation.invocation ? { invocation: invocation.invocation } : {}),
                 ...(dispatchSignal ? { signal: dispatchSignal } : {}),
                 isCurrent,
-            });
-            return { kind: 'settled', outcome };
+            };
+            if (dispatch) {
+                return { kind: 'settled', outcome: await dispatch(dispatchInput) };
+            }
+            const launched = await launchPluginSurfaceAction(dispatchInput);
+            return launched;
         } catch {
             return {
                 kind: 'settled',

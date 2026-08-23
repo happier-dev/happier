@@ -42,6 +42,10 @@ import {
 } from '@/components/automations/editor/pluginEventAutomationEditSeed';
 
 import { AutomationHistoryGapRecoveryAction } from './AutomationHistoryGapRecoveryAction';
+import {
+    formatAutomationWatcherImpediment,
+    resolveAutomationWatcherHealth,
+} from './automationWatcherHealth';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -500,13 +504,24 @@ export function AutomationDetailScreen() {
     // The edit route accepts only this current direct-detail seed. Reuse that
     // contract here so detail availability cannot diverge from route admission.
     const supportsEventEditor = readPluginEventAutomationEditSeed(automation) !== null;
-    const eventWatcherLabel = automation.trigger.kind === 'pluginEvent'
+    const eventEndpoint = automation.trigger.kind === 'pluginEvent'
+        && automation.trigger.observation.kind === 'durablePush'
+        ? automation.trigger.observation
+        : null;
+    const eventWatcher = automation.trigger.kind === 'pluginEvent'
         && automation.trigger.observation.kind === 'checkpointedPull'
         ? (() => {
             const watcher = automation.trigger.observation.watcher;
-            if (!watcher) return t('automations.detail.event.watcherUnwatched');
+            if (!watcher) {
+                return { label: t('automations.detail.event.watcherUnwatched'), impediment: undefined };
+            }
             const machine = machines.find((candidate) => candidate.id === watcher.machineId);
-            return machine ? (getMachineDisplayName(machine) ?? machine.id) : watcher.machineId;
+            return {
+                label: machine ? (getMachineDisplayName(machine) ?? machine.id) : watcher.machineId,
+                impediment: formatAutomationWatcherImpediment(
+                    resolveAutomationWatcherHealth({ watcher, machine }),
+                ),
+            };
         })()
         : null;
     const eventSourceStatus = isPluginEventAutomationDefinition(automation)
@@ -560,30 +575,67 @@ export function AutomationDetailScreen() {
                         detail={automation.enabled ? t('automations.detail.status.active') : t('automations.detail.status.paused')}
                         showChevron={false}
                     />
-                    {eventWatcherLabel ? (
+                    {eventWatcher ? (
                         <Item
                             title={t('automations.detail.event.watcherTitle')}
-                            detail={eventWatcherLabel}
+                            detail={eventWatcher.label}
+                            subtitle={eventWatcher.impediment}
+                            subtitleLines={0}
+                            {...(eventWatcher.impediment
+                                ? {
+                                    icon: (
+                                        <Icon
+                                            name="warning"
+                                            size={20}
+                                            color={theme.colors.state.warning.foreground}
+                                        />
+                                    ),
+                                }
+                                : {})}
                             showChevron={false}
                         />
                     ) : null}
-                    {eventSourceStatus ? (
+                    {eventEndpoint ? (
                         <Item
-                            title={t('settingsPlugins.eventAutomationComposer.sourceStatusTitle')}
-                            detail={automationSourceStatusStateLabels[eventSourceStatus.state]()}
-                            subtitle={eventSourceStatusSubtitle}
+                            testID="automation-detail-event-endpoint"
+                            title={t('automations.detail.event.endpointTitle')}
+                            detail={eventEndpoint.webhookEndpointId}
+                            subtitle={t('automations.detail.event.endpointObservingSince', {
+                                time: formatDate(eventEndpoint.observationStartsAt, unknownDate),
+                            })}
                             subtitleLines={0}
                             showChevron={false}
                         />
                     ) : null}
-                    {eventSourceCatalogStatus ? (
-                        <Item
-                            title={t('settingsPlugins.eventAutomationComposer.sourceCatalogStatusTitle')}
-                            detail={automationSourceCatalogStatusStateLabels[eventSourceCatalogStatus.state]()}
-                            subtitle={eventSourceCatalogStatusSubtitle}
-                            subtitleLines={0}
-                            showChevron={false}
-                        />
+                    {/*
+                      * A missing report is a state, not an absence: an Event
+                      * Automation whose source has never reported, or whose
+                      * catalog currentness is unavailable, must read as such
+                      * rather than as a healthy definition with fewer rows.
+                      */}
+                    {isPluginEventAutomationDefinition(automation) ? (
+                        <>
+                            <Item
+                                testID="automation-detail-event-source-status"
+                                title={t('settingsPlugins.eventAutomationComposer.sourceStatusTitle')}
+                                detail={eventSourceStatus
+                                    ? automationSourceStatusStateLabels[eventSourceStatus.state]()
+                                    : t('automations.detail.event.sourceStatusUnreported')}
+                                subtitle={eventSourceStatusSubtitle}
+                                subtitleLines={0}
+                                showChevron={false}
+                            />
+                            <Item
+                                testID="automation-detail-event-source-catalog-status"
+                                title={t('settingsPlugins.eventAutomationComposer.sourceCatalogStatusTitle')}
+                                detail={eventSourceCatalogStatus
+                                    ? automationSourceCatalogStatusStateLabels[eventSourceCatalogStatus.state]()
+                                    : t('automations.detail.event.sourceCatalogStatusUnavailable')}
+                                subtitle={eventSourceCatalogStatusSubtitle}
+                                subtitleLines={0}
+                                showChevron={false}
+                            />
+                        </>
                     ) : null}
                     {eventPrivateDetail ? (
                         <>

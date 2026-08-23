@@ -3,7 +3,11 @@ import { Modal } from '@/modal';
 import { ActionInputFormModal } from './ActionInputFormModal';
 import type { ActionInputForm, ActionInputFormSubmissionResult } from './actionInputForm';
 
-type AnyActionInputForm = ActionInputForm<ActionInputFormSubmissionResult, string, string>;
+type AnyActionInputForm = ActionInputForm<
+    ActionInputFormSubmissionResult,
+    string,
+    string
+>;
 
 /** Presents one transient normalized form; dispatch and persistence stay with its submit owner. */
 export function presentActionInputForm(params: Readonly<{

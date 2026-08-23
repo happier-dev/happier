@@ -93,7 +93,6 @@ function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomati
         editTarget: null,
         targetKind: 'newSession',
         setTargetKind: vi.fn(),
-        targetKindLocked: false,
         existingSessionOptions: [],
         selectedExistingSessionId: null,
         selectExistingSession: vi.fn(),
@@ -119,6 +118,10 @@ function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomati
         sourceStatus: 'idle',
         sourceDisplayLabel: null,
         sourceInstanceId: null,
+        availableObservationTransports: ['checkpointedPull'],
+        observationTransport: 'checkpointedPull',
+        setObservationTransport: vi.fn(),
+        webhookEndpoint: null,
         configureSource: vi.fn(),
         watcherCandidates,
         selectedWatcherOrigin: {

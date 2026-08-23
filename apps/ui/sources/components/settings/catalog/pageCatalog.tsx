@@ -30,6 +30,16 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         route: SETTINGS_ROUTES.account,
                         keywords: ['account', 'profile', 'billing'],
                         icon: ({ theme }) => <Icon name="user-circle" size={16} color={theme.colors.text.secondary} />,
+                        children: [
+                            {
+                                id: 'apiTokens',
+                                titleKey: 'settingsApiTokens.title',
+                                subtitleKey: 'settingsApiTokens.entrySubtitle',
+                                route: SETTINGS_ROUTES.apiTokens,
+                                keywords: ['api token', 'personal access token', 'pat', 'automation', 'cli', 'sdk'],
+                                icon: ({ theme }) => <Icon name="key" size={16} color={theme.colors.text.secondary} />,
+                            },
+                        ],
                     },
                     {
                         id: 'secrets',

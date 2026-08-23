@@ -24,6 +24,8 @@ import { isSessionRouteHydrationAvailable } from '@/sync/domains/session/session
 import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -118,9 +120,17 @@ export function SessionAutomationsScreen(props: {
         let alive = true;
         void (async () => {
             try {
-                await Promise.all(directDetailsToResolve.map((automation) => (
-                    sync.refreshAutomationDefinitionDetail(automation.id)
-                )));
+                // The Account definition ceiling allows thousands of listed
+                // definitions, so this resolution runs through the shared
+                // request-concurrency owner and stops issuing reads the moment
+                // the route retires instead of fanning out one request each.
+                await runTasksWithLimit(
+                    directDetailsToResolve.map((automation) => async () => {
+                        if (!alive) return;
+                        await sync.refreshAutomationDefinitionDetail(automation.id);
+                    }),
+                    loadSyncTuning().automationDefinitionDetailHydrationConcurrencyLimit,
+                );
             } catch (error) {
                 if (!alive) return;
                 await Modal.alert(

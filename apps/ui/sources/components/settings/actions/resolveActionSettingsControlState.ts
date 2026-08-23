@@ -1,4 +1,11 @@
-import { isAgentInitiatedApprovalRequiredByDefault, type ActionId, type ActionSurfaces, type ActionsSettingsV1 } from '@happier-dev/protocol';
+import {
+    ActionIdSchema,
+    isAgentInitiatedApprovalRequiredByDefault,
+    type ActionId,
+    type ActionSettingsActionId,
+    type ActionSurfaces,
+    type ActionsSettingsV1,
+} from '@happier-dev/protocol';
 
 import { getActionSettingsTargetPreferenceSelected, setActionTargetSelected } from './actionSettingsTargetSelection';
 import {
@@ -7,7 +14,7 @@ import {
     resolveActionSettingsApprovalSurface,
     setActionTargetApprovalRequired,
 } from './actionSettingsTargetApproval';
-import type { ActionSettingsTargetId } from './actionSettingsTargetDefinitions';
+import type { ActionSettingsTargetDefinition, ActionSettingsTargetId } from './actionSettingsTargetDefinitions';
 
 export type ActionSettingsApprovalControlValue = 'off' | 'ask_first' | 'allowed';
 export type ActionSettingsBooleanControlValue = 'off' | 'on';
@@ -37,27 +44,34 @@ export type ActionSettingsTargetControlState =
 
 type ResolveActionSettingsTargetControlStateParams = Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
     available?: boolean;
 }>;
 
 type ApplyActionSettingsTargetControlStateParams = Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
     value: ActionSettingsApprovalControlValue | ActionSettingsBooleanControlValue;
 }>;
 
 function resolveApprovalControlSurface(params: Readonly<{
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
     available: boolean;
 }>): keyof ActionSurfaces | null {
     if (!params.available || isActionSettingsApprovalAction(params.actionId)) {
         return null;
     }
-    return resolveActionSettingsApprovalSurface(params.actionId, params.targetId);
+    return resolveActionSettingsApprovalSurface(params.actionId, params.targetId, params.target);
+}
+
+function isHostActionId(actionId: ActionSettingsActionId): actionId is ActionId {
+    return ActionIdSchema.safeParse(actionId).success;
 }
 
 export function resolveActionSettingsTargetControlState(
@@ -72,10 +86,12 @@ export function resolveActionSettingsTargetControlState(
         settings: params.settings,
         actionId: params.actionId,
         targetId: params.targetId,
+        ...(params.target ? { target: params.target } : {}),
     });
     const approvalSurface = resolveApprovalControlSurface({
         actionId: params.actionId,
         targetId: params.targetId,
+        target: params.target,
         available,
     });
 
@@ -90,7 +106,8 @@ export function resolveActionSettingsTargetControlState(
     // run without human consent, so the settings UI must never present it as `allowed`. We clamp to
     // `ask_first` and surface `floored: true` so the control disables the `allowed` option. We reuse
     // the canonical policy predicate (no duplicated floor list).
-    const floored = approvalSurface === 'agent'
+    const floored = isHostActionId(params.actionId)
+        && approvalSurface === 'agent'
         && isAgentInitiatedApprovalRequiredByDefault(params.actionId);
 
     if (!selected) {
@@ -106,6 +123,7 @@ export function resolveActionSettingsTargetControlState(
         settings: params.settings,
         actionId: params.actionId,
         targetId: params.targetId,
+        ...(params.target ? { target: params.target } : {}),
     });
 
     return {
@@ -122,12 +140,14 @@ export function applyActionSettingsTargetControlState(params: ApplyActionSetting
             settings: params.settings,
             actionId: params.actionId,
             targetId: params.targetId,
+            ...(params.target ? { target: params.target } : {}),
             selected: false,
         });
         return setActionTargetApprovalRequired({
             settings: next,
             actionId: params.actionId,
             targetId: params.targetId,
+            ...(params.target ? { target: params.target } : {}),
             approvalRequired: false,
         });
     }
@@ -137,15 +157,21 @@ export function applyActionSettingsTargetControlState(params: ApplyActionSetting
             settings: params.settings,
             actionId: params.actionId,
             targetId: params.targetId,
+            ...(params.target ? { target: params.target } : {}),
             selected: true,
         });
-        if (isActionSettingsApprovalAction(params.actionId) || !resolveActionSettingsApprovalSurface(params.actionId, params.targetId)) {
+        if (isActionSettingsApprovalAction(params.actionId) || !resolveActionSettingsApprovalSurface(
+            params.actionId,
+            params.targetId,
+            params.target,
+        )) {
             return selected;
         }
         return setActionTargetApprovalRequired({
             settings: selected,
             actionId: params.actionId,
             targetId: params.targetId,
+            ...(params.target ? { target: params.target } : {}),
             approvalRequired: true,
         });
     }
@@ -155,18 +181,21 @@ export function applyActionSettingsTargetControlState(params: ApplyActionSetting
             settings: params.settings,
             actionId: params.actionId,
             targetId: params.targetId,
+            ...(params.target ? { target: params.target } : {}),
             selected: true,
         });
         // CON-5: a floored action can never be `allowed` on `agent`. If a caller still
         // attempts to write `allowed` (e.g. a stale control), clamp the persisted state to
         // approval-required rather than silently dropping the floor (fail-closed).
-        const approvalSurface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId);
-        const floored = approvalSurface === 'agent'
+        const approvalSurface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId, params.target);
+        const floored = isHostActionId(params.actionId)
+            && approvalSurface === 'agent'
             && isAgentInitiatedApprovalRequiredByDefault(params.actionId);
         return setActionTargetApprovalRequired({
             settings: selected,
             actionId: params.actionId,
             targetId: params.targetId,
+            ...(params.target ? { target: params.target } : {}),
             approvalRequired: floored,
         });
     }
@@ -175,6 +204,7 @@ export function applyActionSettingsTargetControlState(params: ApplyActionSetting
         settings: params.settings,
         actionId: params.actionId,
         targetId: params.targetId,
+        ...(params.target ? { target: params.target } : {}),
         selected: true,
     });
 }

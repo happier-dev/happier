@@ -12,9 +12,11 @@ import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCred
 import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 /**
  * Chinese (Simplified) translations for the Happier app
@@ -810,6 +812,7 @@ export const zhHans = {
 
 
   inbox: {
+    ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `打开会话：${session}`,
     // Inbox screen
     emptyTitle: "已全部处理完",
@@ -1179,6 +1182,15 @@ export const zhHans = {
       event: {
         watcherTitle: "事件观察器",
         watcherUnwatched: "未设置观察器",
+        endpointTitle: "Webhook 端点",
+        endpointObservingSince: ({ time }: { time: string }) => `自 ${time} 起接收投递`,
+        sourceStatusUnreported: "等待首次上报",
+        sourceCatalogStatusUnavailable: "来源时效性不可用",
+        watcherMachineUnknown: "该机器已不在你的账户中，因此此观察器无法观察事件。",
+        watcherMachineRevoked: "该机器已被吊销，因此此观察器无法观察事件。",
+        watcherMachineReplaced: "该机器已被替换，因此此观察器无法观察事件。",
+        watcherInstallationReplaced: "该机器已重新安装，重新设置之前此观察器无法观察事件。",
+        watcherMachineOffline: "该机器处于离线状态，因此此观察器目前未在观察事件。",
       },
       actionsGroupTitle: "操作",
       runNowTitle: "立即运行",
@@ -1229,6 +1241,51 @@ export const zhHans = {
         scheduled: ({ time }: { time: string }) => `计划：${time}`,
         updated: ({ time }: { time: string }) => `更新：${time}`,
         error: ({ message }: { message: string }) => `错误：${message}`,
+        attemptTitle: "尝试",
+        attempt: ({ attempt }: { attempt: number }) => `第 ${attempt} 次尝试`,
+        claimedByTitle: "认领机器",
+        claimedAt: ({ time }: { time: string }) => `认领时间：${time}`,
+        leaseExpires: ({ time }: { time: string }) => `认领租约到期：${time}`,
+        dispatchTitle: "执行派发",
+        dispatchAttempt: ({ attempt }: { attempt: number }) => `第 ${attempt} 次派发`,
+        dispatchState: {
+            notStarted: "未开始",
+            dispatchPermitted: "允许派发",
+            retryWaiting: "等待重试",
+            started: "已开始",
+            settled: "已结算",
+            outcomeUnknown: "结果未知",
+        },
+        replyHandoffTitle: "回复移交",
+        replyHandoffAttempt: ({ attempt }: { attempt: number }) => `第 ${attempt} 次移交`,
+        replyHandoffDue: ({ time }: { time: string }) => `下次移交时间：${time}`,
+        replyHandoffState: {
+            none: "无",
+            awaitingResult: "等待结果",
+            ready: "就绪",
+            handingOff: "移交中",
+            accepted: "已接受",
+            suppressed: "已抑制",
+            blocked: "已阻止",
+        },
+        nativeExecutionTitle: "原生执行",
+        nativeExecutionCall: ({ callId }: { callId: string }) => `调用 ${callId}`,
+        nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+        historyTitle: "发生了什么",
+        historyEvent: {
+            run_started: "已开始",
+            run_succeeded: "已成功",
+            run_failed: "已失败",
+            run_cancelled: "已取消",
+            run_outcome_uncertain: "结果变为不确定",
+            execution_dispatch_retry_scheduled: "已安排重新派发",
+            unknown: "生命周期变更",
+        },
+        historyReason: {
+            cancelled_after_dispatch_permitted: "在外部执行已获准之后被取消",
+            dispatch_result_missing_after_lease_expiry: "认领该运行的机器从未报告派发结果",
+            automation_retired_after_lease_expiry: "自动化在其认领租约到期时被停用",
+        },
       },
       runDetail: {
         title: "已接纳详情",
@@ -1306,6 +1363,7 @@ export const zhHans = {
     moreActionsHint: "打开包含更多操作的菜单",
     destructiveActionHint: "此操作具有破坏性且无法撤销。",
     cancel: "取消",
+    decline: "拒绝",
     submit: "提交",
     close: "关闭",
     dismissKeyboard: '收起键盘',
@@ -6090,6 +6148,11 @@ export const zhHans = {
           markHandledFailed: "无法将待投递标记为已处理",
         },
       },
+      transcript: {
+          olderLoadFailedTitle: '无法加载较早的消息',
+          olderLoadFailedBody: '这段对话的其余内容仍然在。请再试一次加载较早的消息。',
+      },
+
       sharing: {
         title: "共享",
         directSharing: "直接共享",
@@ -8193,18 +8256,26 @@ export const zhHans = {
       disabledLimitSubtitle: '已达到公开预览数量上限。请先撤销现有链接再创建新链接。',
       disabledNoPreviewSubtitle: '请先打开本地预览，再创建公开链接。',
       disabledReason: {
+        auditRequirementDisabled: '公开预览审计日志为必需项，但服务器已将其关闭。',
         auditUnavailable: '公开预览审计日志不可用。',
         dnsTlsUnavailable: '公开预览正在等待 DNS/TLS 就绪。',
         expired: '此公开预览链接已过期。',
+        linkLifetimeUnconfigured: '服务器未配置公开预览链接的有效期。',
+        modeUnconfigured: '服务器未配置任何公开预览模式。',
         policyInvalid: '公开预览策略不完整。',
         previewNotEligible: '此本地预览不符合公开链接条件。',
+        previewServerDisabled: '服务器已关闭本地服务预览。',
         publicBaseUrlUnavailable: '公开预览基础 URL 未配置。',
+        rateLimitProfileUnconfigured: '服务器未配置公开预览的限流配置。',
         rateLimitUnavailable: '公开预览速率限制不可用。',
         rateLimited: '此公开预览链接已被速率限制。',
         relayUnavailable: '公开预览中继不可用。',
         revoked: '此公开预览链接已撤销。',
         secretLinkUnavailable: '秘密链接公开预览未配置。',
+        serverDisabled: '服务器已关闭公开预览。',
         sessionNotAuthorized: '你无权为此会话创建公开链接。',
+        tunnelPortsUnconfigured: '服务器未允许任何隧道端口。',
+        tunnelRelayDisabled: '服务器的机器隧道中继已关闭。',
       },
       createActionA11y: '创建公开预览链接',
       revokeActionA11y: '撤销公开预览链接',
@@ -8790,6 +8861,13 @@ export const zhHans = {
         configureActionAccessibilityLabel: "配置操作",
         approvalHelpTitle: "批准模式",
         approvalHelpBody: "“先询问”会在此操作从该界面运行前显示确认。“允许”则让此操作从该界面运行，而无需批准提示。",
+        contributed: {
+            machineSelectionTitle: "为贡献操作选择机器",
+            machineSelectionBody: "选择一台机器，以查看和配置其已安装插件声明的操作。",
+            removedDescription: "此贡献操作已无法从所选机器获得。其已保存的设置会保留。",
+            removedTargetsTitle: "贡献操作不可用",
+            removedTargetsBody: "所选机器当前未声明此操作。其已保存的设置仍可在此处使用。",
+        },
         toolExposure: {
             title: "工具公开",
             footer: "控制符合条件的操作是显示为直接工具，还是仅可通过操作发现使用。",
@@ -8959,6 +9037,14 @@ export const zhHans = {
             cli: {
                 title: '会话控制 CLI',
                 subtitle: '可通过会话控制 CLI 界面使用。',
+            },
+            api: {
+                title: "API",
+                subtitle: "可通过外部操作 API 使用。",
+            },
+            plugin: {
+                title: "受信任的插件",
+                subtitle: "受信任插件可将其作为操作使用。",
             },
             contextual_ui: {
                 title: '上下文 UI',
@@ -9665,7 +9751,7 @@ settingsSession: {
       loadingOlder: '正在加载更早的消息…',
       loadOlderFailed: '无法加载更早的语音历史。',
       exportTitle: '导出语音历史',
-      exportSubtitle: '在限制范围内加载剩余历史并保存为 JSON。',
+      exportSubtitle: '加载剩余历史并保存为 JSON。',
       exporting: '正在准备导出…',
       exportSucceeded: '语音历史导出已准备好。',
       exportFailed: '无法导出语音历史。',
@@ -10629,7 +10715,7 @@ settingsSession: {
         onDemandTitle: "按需",
         onDemandSubtitle: "在您要求时，语音可以读取此应用窗口或浏览器标签页提供的有限语义上下文。上下文命令仍需通过单独的检查。",
         automaticTitle: "自动",
-        automaticSubtitle: "语音还会自动接收基本的导航元数据。详细上下文仍按需读取，上下文命令仍需通过单独的检查。",
+        automaticSubtitle: "语音还会自动接收基本的导航元数据；打开会话时，会按照上方的分享设置分享该会话的上下文。上下文命令仍需通过单独的检查。",
       },
     },
     languageTitle: "语言",
@@ -12468,6 +12554,7 @@ settingsSession: {
       },
     },
   },
+   ...apiTokenSettingsTranslations['zh-Hans'],
    settingsPlugins: {
       ...pluginWebhookAdministrationTranslations['zh-Hans'],
       ...pluginAccountDataEraseTranslations['zh-Hans'],

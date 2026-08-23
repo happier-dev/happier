@@ -168,6 +168,16 @@ export type PluginSurfaceDestinationNavigationOwner =
     | PluginSurfaceDestinationPlacementOwner;
 
 export type PluginSurfaceDestinationNavigationBinding = Readonly<{
+    /**
+     * The exact host target this binding resolves destinations for.
+     *
+     * Target scopes PARTITION the destination space, so a mount whose public
+     * surface context declares a DIFFERENT target must not consume this
+     * resolver: doing so would give, say, a Services panel the enclosing
+     * Session's navigation authority. Consumers compare this against their own
+     * target and omit `openSurface` when it does not match.
+     */
+    readonly targetKind: PluginUiTargetKindV1;
     openSurface: PluginSurfaceOpenHandler;
     /**
      * Existing route/pane/details/settings owners register their exact
@@ -428,7 +438,13 @@ function createPluginSurfaceDestinationNavigationBindingFromReader(
             : unavailable('plugin_surface_open_destination_owner_unavailable');
     };
 
-    return Object.freeze({ openSurface, registerOwner });
+    // A scope host keeps one binding identity while its facts change, so the
+    // target is read at access time from the same reader the resolver uses.
+    return Object.freeze({
+        get targetKind() { return readInput().targetKind; },
+        openSurface,
+        registerOwner,
+    });
 }
 
 /**

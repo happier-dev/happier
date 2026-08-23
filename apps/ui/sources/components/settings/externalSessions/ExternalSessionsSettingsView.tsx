@@ -112,6 +112,13 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
     pending: boolean;
     mutationStatus: 'error' | 'unsupported' | undefined;
     onSetEnabled: (row: FollowRow, enabled: boolean) => Promise<void>;
+    /**
+     * Owned by the enclosing ItemGroup, which is the only place that knows whether this
+     * row ends the group or only ends one virtualized chunk of it. Forwarding it is not
+     * optional: `Item` defaults to drawing a divider, so a wrapper that swallows the prop
+     * draws one under the group's true last row and loses the group's authority entirely.
+     */
+    showDivider?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const link = readExternalSessionLink(readSessionOwnerMetadataView(props.row.session));
@@ -133,6 +140,7 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
             <Item
                 testID={`settings-external-sessions-follow-item-${props.row.session.id}`}
                 mode="info"
+                {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
                 title={props.row.title}
                 subtitle={resolveFollowStatusSubtitle('unsupported')}
                 icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}
@@ -148,6 +156,7 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
     return (
         <Item
             testID={`settings-external-sessions-follow-item-${props.row.session.id}`}
+            {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
             title={props.row.title}
             subtitle={resolveFollowStatusSubtitle(status)}
             icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}

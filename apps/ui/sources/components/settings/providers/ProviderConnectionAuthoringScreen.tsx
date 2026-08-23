@@ -18,7 +18,6 @@ import { SavedSecretPickerModal } from '@/components/ui/forms/valueRefs/SavedSec
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import {
@@ -28,7 +27,7 @@ import {
     type CustomProviderPreset,
     updateCustomProviderDraftPreset,
 } from '@/providers/authoring/state';
-import { listProviderSettingsTargetMachines, resolveProviderSettingsTargetMachine } from '@/providers/hooks/targetMachine';
+import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
 import {
@@ -36,7 +35,7 @@ import {
     probeProviderDraft,
     providerErrorFromRpcFailure,
 } from '@/providers/rpc/client';
-import { useAllMachines, useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
+import { useAllMachines, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { ProviderFeatureAvailabilityNotice, useProviderFeatureAvailability } from './ProviderFeatureAvailability';
 import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
@@ -109,23 +108,14 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const { theme } = useUnistyles();
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
     const machines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
     const savedSecrets = useSetting('secrets');
-    const activeServer = useActiveServerSnapshot();
-    const serverId = typeof activeServer.serverId === 'string' ? activeServer.serverId : null;
-    const [preferredMachineId, setPreferredMachineId] = React.useState<string | null>(null);
-    const eligibleMachineIds = React.useMemo(() => new Set(listProviderSettingsTargetMachines({
-        serverId, machines, machineListByServerId,
-    }).map((machine) => machine.id)), [machineListByServerId, machines, serverId]);
-    const targetMachines = React.useMemo(
-        () => machines.filter((machine) => eligibleMachineIds.has(machine.id)),
-        [eligibleMachineIds, machines],
-    );
-    const machineId = React.useMemo(() => resolveProviderSettingsTargetMachine({
-        serverId, preferredMachineId, machines, machineListByServerId,
-    }), [machineListByServerId, machines, preferredMachineId, serverId]);
+    const providerTarget = useProviderSettingsTarget();
+    const { machineId, resolveCurrentTarget, serverId } = providerTarget;
     const query = useProviderConnections({ enabled, machineId, serverId });
-    const mutation = useProviderConnectionMutation({ serverId, refresh: query.refresh });
+    const mutation = useProviderConnectionMutation({
+        resolveTarget: resolveCurrentTarget,
+        refresh: query.refresh,
+    });
     const connectionId = React.useRef(`pc_${randomUUID()}`).current;
     const [draft, setDraft] = React.useState<CustomProviderDraft>(() => createCustomProviderDraft('openai-responses'));
     const [secretId, setSecretId] = React.useState<string | null>(null);
@@ -188,8 +178,13 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 : null,
         };
     }, [draftRequiresApiKey, savedSecrets, secretId]);
+    // Unsaved work is the draft itself. The target machine is a persisted
+    // Machine Administration preference that survives navigation and is
+    // restored on return, and it can be initialized automatically from a sole
+    // verified candidate after the first render — including it here would mark
+    // a pristine form dirty and prompt for changes the user never made.
     const authoringStateKey = JSON.stringify({
-        draft, secretId, enableAfterSaving, preferredMachineId,
+        draft, secretId, enableAfterSaving,
         selectedCandidateId, contributionDisplayName,
         contributionEndpointValues,
     });
@@ -375,7 +370,10 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     }, [contributionDisplayName, query.data?.discoveryCandidates]);
 
     const testDraft = React.useCallback(async () => {
-        if (!machineId || props.contributionKey) return;
+        // Re-resolve immediately before the probe so a draft is never tested
+        // against a machine the selection has since moved away from.
+        const target = resolveCurrentTarget();
+        if (!machineId || props.contributionKey || !target || target.machineId !== machineId) return;
         const generation = probeGenerationRef.current;
         setProbeState('probing');
         setProbeError(null);
@@ -393,7 +391,9 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         }
         try {
             const result = await probeProviderDraft({
-                machineId, serverId, draftConnectionId: connectionId,
+                machineId: target.machineId,
+                serverId: target.serverId,
+                draftConnectionId: connectionId,
                 template,
                 savedSecretId: draftRequiresApiKey ? secretId : null,
                 actionNonce: `probe_${randomUUID()}`,
@@ -413,7 +413,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 machineId,
             }));
         }
-    }, [connectionId, draft, draftRequiresApiKey, machineId, props.contributionKey, secretId, serverId]);
+    }, [connectionId, draft, draftRequiresApiKey, machineId, props.contributionKey, resolveCurrentTarget, secretId]);
 
     const requestUnsavedChangesDecision = React.useCallback(() => promptUnsavedChangesAlert(
         (title, message, buttons) => Modal.alert(title, message, buttons),
@@ -485,7 +485,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         const previewCredential = authoringPreview?.credential ?? contribution?.credential ?? null;
         return (
             <BuiltInProviderAuthoringView
-                targetMachines={targetMachines}
+                targetSelection={providerTarget.selection}
                 machineId={machineId}
                 currentMachineName={currentMachineName}
                 providerName={contribution?.name ?? null}
@@ -504,7 +504,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 errorRetry={displayErrorRetry}
                 secondaryTextColor={theme.colors.text.secondary}
                 warningColor={theme.colors.state.warning.foreground}
-                onSelectMachine={setPreferredMachineId}
                 onPickSecret={pickSecret}
                 onChooseCandidate={(candidateId) => { void chooseAuthoringCandidate(candidateId); }}
                 onEndpointChange={(endpointTemplateId, baseUrl) => {
@@ -523,7 +522,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     return (
         <CustomProviderAuthoringView
             model={{
-                targetMachines,
+                targetSelection: providerTarget.selection,
                 machineId,
                 currentMachineName,
                 draft,
@@ -549,7 +548,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 manualModelsFieldRef,
             }}
             actions={{
-                onSelectMachine: setPreferredMachineId,
                 onPresetOpenChange: setPresetOpen,
                 onCredentialOpenChange: setCredentialOpen,
                 onPresetSelect: (preset) => {

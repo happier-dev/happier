@@ -9,6 +9,7 @@ import {
     selectBrowserTargetAdapter,
     type StreamedBrowserSurfaceAvailability,
 } from '../adapters/selection';
+import { LOCAL_BROWSER_PROFILE_ID } from '../profiles/localBrowserProfile';
 import { isClientRenderedBrowserEngine } from './lifecycle';
 import { applyBrowserControlEvent } from './reducer';
 import type { BrowserControlState } from './state';
@@ -20,8 +21,6 @@ type BrowserNavigationCommand = Extract<
 
 type BrowserFocusViewCommand = Extract<BrowserCommandV1, { kind: 'focusView' }>;
 type BrowserViewLifecycleCommand = Extract<BrowserCommandV1, { kind: 'openView' | 'closeView' | 'setTarget' }>;
-
-const DEFAULT_BROWSER_PROFILE_ID = 'browser_profile_default';
 
 export type BrowserControlCommandEffect =
     | Readonly<{
@@ -184,7 +183,7 @@ function ensureSessionForOpenView(
         kind: 'sessionCreated',
         eventId: `${command.commandId}:sessionCreated`,
         browserSessionId: command.browserSessionId,
-        profileId: DEFAULT_BROWSER_PROFILE_ID,
+        profileId: LOCAL_BROWSER_PROFILE_ID,
         occurredAt: 0,
     } satisfies BrowserEventV1);
 }

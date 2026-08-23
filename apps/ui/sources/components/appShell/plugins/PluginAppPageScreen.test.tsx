@@ -502,11 +502,14 @@ async function renderPage(input: Readonly<{
     machineId?: string | null;
     serverId?: string | null;
     withTargetNavigation?: boolean;
+    /** Wraps the page the way a real enclosing pane/underlay would. */
+    wrap?: (children: React.ReactNode) => React.ReactElement;
 }> = {}) {
     const { PluginAppPageScreen } = await import('./PluginAppPageScreen');
     const { AppShellPluginUiProjectionValueProvider } = await import('./AppShellPluginUiProjection');
     const { act } = await import('react-test-renderer');
     const model = normalizePluginUiProjection((input.projection ?? daemonProjection()) as never);
+    const wrap = input.wrap ?? ((children: React.ReactNode) => <>{children}</>);
     const screen = await renderScreen(
         <AppShellPluginUiProjectionValueProvider
             value={{
@@ -520,11 +523,13 @@ async function renderPage(input: Readonly<{
             }}
         >
             <AppTargetNavigationScope model={model} enabled={input.withTargetNavigation !== false}>
-                <PluginAppPageScreen
-                pluginId={input.pluginId ?? NOTES_PLUGIN_ID}
-                localId={input.localId ?? 'notes'}
-                subPath={input.subPath === undefined ? '' : input.subPath}
-                />
+                {wrap(
+                    <PluginAppPageScreen
+                        pluginId={input.pluginId ?? NOTES_PLUGIN_ID}
+                        localId={input.localId ?? 'notes'}
+                        subPath={input.subPath === undefined ? '' : input.subPath}
+                    />,
+                )}
             </AppTargetNavigationScope>
         </AppShellPluginUiProjectionValueProvider>,
         // The exact target snapshot and Account-mode disclosure are both required
@@ -1035,6 +1040,69 @@ describe('plugin app page host route (EU-5b)', () => {
             `${NOTES_PAGE_PATH}/entries/7`,
             `${NOTES_PAGE_PATH}/entries`,
         ]);
+    });
+
+    it('participates through the one native Back layer owner when a pane encloses the page', async () => {
+        const { act } = await import('react-test-renderer');
+        const { NativeBackLayerBoundary } = await import('@/components/ui/overlays/NativeBackLayerBoundary');
+        nativeBack.platformOS = 'android';
+        const paneCloses: number[] = [];
+        await renderPage({
+            subPath: 'entries',
+            wrap: (children) => (
+                <NativeBackLayerBoundary active onRequestClose={() => { paneCloses.push(1); }}>
+                    {children}
+                </NativeBackLayerBoundary>
+            ),
+        });
+
+        // The pane boundary is the app's ONE native Back owner here. A page
+        // that reached `BackHandler` itself would add a second device
+        // registration and race the boundary by mount order instead of
+        // participating in it.
+        expect(nativeBack.registeredCount()).toBe(1);
+
+        await act(async () => {
+            await readRenderContext().hostApi.replacePageLocation('entries/7', { backLocation: 'entries' });
+        });
+        expect(nativeBack.registeredCount()).toBe(1);
+
+        // The page's own step wins over closing the pane the page lives in.
+        expect(nativeBack.press()).toBe(true);
+        expect(routerReplacements).toEqual([
+            `${NOTES_PAGE_PATH}/entries/7`,
+            `${NOTES_PAGE_PATH}/entries`,
+        ]);
+        expect(paneCloses).toHaveLength(0);
+
+        // Out of page steps, Back belongs to the enclosing pane again.
+        expect(nativeBack.press()).toBe(true);
+        expect(routerReplacements).toHaveLength(2);
+        expect(paneCloses).toHaveLength(1);
+    });
+
+    it('does not answer Back from a suppressed retained underlay', async () => {
+        const { act } = await import('react-test-renderer');
+        const { NativeBackLayerBoundary } = await import('@/components/ui/overlays/NativeBackLayerBoundary');
+        nativeBack.platformOS = 'android';
+        await renderPage({
+            subPath: 'entries',
+            wrap: (children) => (
+                <NativeBackLayerBoundary active suppressDescendants onRequestClose={() => {}}>
+                    {children}
+                </NativeBackLayerBoundary>
+            ),
+        });
+
+        await act(async () => {
+            await readRenderContext().hostApi.replacePageLocation('entries/7', { backLocation: 'entries' });
+        });
+
+        // A retained underlay is not what the user is looking at. Nothing
+        // inside it may consume the device Back aimed at the visible layer.
+        expect(nativeBack.registeredCount()).toBe(0);
+        expect(nativeBack.press()).toBe(false);
+        expect(routerReplacements).toEqual([`${NOTES_PAGE_PATH}/entries/7`]);
     });
 
     it('retires the page Back participant when the page unmounts', async () => {

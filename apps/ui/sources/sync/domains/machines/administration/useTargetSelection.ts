@@ -131,6 +131,15 @@ export type MachineAdministrationTargetSelectionV1 = Readonly<{
     resolveExecutionTarget: () => FreshMachineAdministrationExecutionTargetV1 | null;
 }>;
 
+export type MachineAdministrationTargetSelectionOptions = Readonly<{
+    /**
+     * Most administration screens may initialize a sole verified machine.
+     * Consumers whose catalog depends on an explicit machine scope opt out so
+     * they never imply account-wide availability from one observed daemon.
+     */
+    allowSoleCandidate?: boolean;
+}>;
+
 /**
  * Administration's Account-level exact target controller. It consumes the raw
  * all-profile machine producer plus its presentation-only warm fallback; it
@@ -139,6 +148,7 @@ export type MachineAdministrationTargetSelectionV1 = Readonly<{
  */
 export function useMachineAdministrationTargetSelection(
     selectionKey: string,
+    options: MachineAdministrationTargetSelectionOptions = {},
 ): MachineAdministrationTargetSelectionV1 {
     const selections = useSetting('machineAdministrationSelectionsV1');
     const storedTarget = selections.targetsByKey[selectionKey] ?? null;
@@ -151,7 +161,8 @@ export function useMachineAdministrationTargetSelection(
         () => buildMachineAdministrationCandidateInventoryRowsFromSnapshots({ snapshots }),
         [snapshots],
     );
-    const allowSoleCandidate = areAllProfileInventoriesKnown(snapshots);
+    const allowSoleCandidate = areAllProfileInventoriesKnown(snapshots)
+        && options.allowSoleCandidate !== false;
     const targetState = React.useMemo(() => resolveMachineAdministrationTargetState({
         storedTarget,
         candidates,

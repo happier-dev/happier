@@ -10,12 +10,9 @@ import {
 function createMemoryWatchdogPersistence(): PluginReactNativeWatchdogPersistence {
     let persisted: PluginReactNativeWatchdogSnapshot | null = null;
     return {
-        readSnapshot: () => persisted === null
-            ? { durability: 'absent' as const }
-            : { durability: 'available' as const, snapshot: persisted },
+        readSnapshot: () => persisted === null ? null : { snapshot: persisted },
         writeSnapshot: (snapshot) => {
             persisted = snapshot;
-            return 'available' as const;
         },
     };
 }
@@ -125,56 +122,69 @@ describe('Plugin React Native watchdog', () => {
         expect(watchdog.readPending({ token: replacementToken, scopeKey })).toEqual([replacement]);
     });
 
-    it('cannot speak for a durable quarantine it failed to write', () => {
+    it('still contains the running mount when the durable outbox refuses the write', () => {
         const watchdog = createPluginReactNativeWatchdog({
             persistence: {
-                readSnapshot: () => ({ durability: 'absent' as const }),
-                writeSnapshot: () => 'unavailable' as const,
+                readSnapshot: () => null,
+                writeSnapshot: () => { throw new Error('platform storage unavailable'); },
             },
             createFailureOccurrenceId: () => '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
         });
-        expect(watchdog.readDurability()).toBe('absent');
 
         const pending = watchdog.recordFailure({ token, scopeKey, failure: 'render_error' });
 
-        // The refused write leaves the running mount quarantined in memory and
-        // retires this UI's claim to durable truth.
+        // Losing the durable report does not lose the recorded failure that
+        // holds this mount for the rest of the process.
         expect(watchdog.readPending({ token, scopeKey })).toEqual([pending]);
-        expect(watchdog.readDurability()).toBe('unavailable');
     });
 
-    it('separates a store that holds nothing from a store that cannot answer', () => {
-        expect(createPluginReactNativeWatchdog({
-            persistence: createMemoryWatchdogPersistence(),
-        }).readDurability()).toBe('absent');
-
-        expect(createPluginReactNativeWatchdog({
+    it('restores no occurrence — and therefore no containment — from a store it cannot interpret', () => {
+        const unreadable = createPluginReactNativeWatchdog({
             persistence: {
                 readSnapshot: () => { throw new Error('platform storage unavailable'); },
-                writeSnapshot: () => 'available' as const,
+                writeSnapshot: () => {},
             },
-        }).readDurability()).toBe('unavailable');
+        });
+        expect(unreadable.readPending({ token, scopeKey })).toEqual([]);
 
-        // Bytes exist but this version cannot account for what they quarantined.
-        expect(createPluginReactNativeWatchdog({
+        // A snapshot from another shape carries nothing this version can report.
+        const foreignShape = createPluginReactNativeWatchdog({
             persistence: {
-                readSnapshot: () => ({ durability: 'available' as const, snapshot: { v: 2, pending: [] } }),
-                writeSnapshot: () => 'available' as const,
+                readSnapshot: () => ({ snapshot: { v: 2, pending: [] } }),
+                writeSnapshot: () => {},
             },
-        }).readDurability()).toBe('unavailable');
+        });
+        expect(foreignShape.readPending({ token, scopeKey })).toEqual([]);
 
-        expect(createPluginReactNativeWatchdog({
+        // One unusable row is dropped; its readable siblings still restore.
+        const restorable = {
+            scopeKey,
+            token,
+            failureOccurrenceId: '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
+            failure: 'render_error',
+        };
+        const partialRows = createPluginReactNativeWatchdog({
             persistence: {
                 readSnapshot: () => ({
-                    durability: 'available' as const,
-                    snapshot: { v: 3, pending: [{ scopeKey, token, failureOccurrenceId: 'not-a-uuid', failure: 'render_error' }] },
+                    snapshot: {
+                        v: 3,
+                        pending: [
+                            { scopeKey, token, failureOccurrenceId: 'not-a-uuid', failure: 'render_error' },
+                            restorable,
+                        ],
+                    },
                 }),
-                writeSnapshot: () => 'available' as const,
+                writeSnapshot: () => {},
             },
-        }).readDurability()).toBe('unavailable');
+        });
+        expect(partialRows.readPending({ token, scopeKey })).toEqual([{
+            token,
+            failureOccurrenceId: restorable.failureOccurrenceId,
+            failure: 'render_error',
+        }]);
 
-        // No local store at all cannot report an absent quarantine either.
-        expect(createPluginReactNativeWatchdog({}).readDurability()).toBe('unavailable');
+        // A build with no local store carries nothing forward and blocks nothing.
+        expect(createPluginReactNativeWatchdog({}).readPending({ token, scopeKey })).toEqual([]);
     });
 });
 

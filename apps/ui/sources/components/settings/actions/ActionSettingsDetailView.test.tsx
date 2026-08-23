@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks, resetSettingsViewCommonModuleMockState } from '../settingsViewTestHelpers';
 import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import {
+    createMachineAdministrationTargetSelectionMock,
+    installMachineAdministrationTargetSelectionBoundary,
+} from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,8 +42,17 @@ const capture = vi.hoisted(() => ({
     },
 }));
 
+const administrationTargetSelection = createMachineAdministrationTargetSelectionMock({
+    selectedMachineId: null,
+});
+installMachineAdministrationTargetSelectionBoundary(administrationTargetSelection);
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
+}));
+
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => ({ phase: 'idle', inputs: null }),
 }));
 
 installSettingsViewCommonModuleMocks({
@@ -169,6 +182,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 afterEach(() => {
     standardCleanup();
     capture.reset();
+    administrationTargetSelection.controller.reset();
     resetSettingsViewCommonModuleMockState();
 });
 
@@ -190,8 +204,18 @@ describe('ActionSettingsDetailView', () => {
         );
         expect(summarySwitch?.accessibilityLabel).toBe('Start review');
         expect(capture.items.some((item) => item.testID === 'settings-actions:action:review.start:target:cli')).toBe(true);
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:review.start:target:api')).toBe(true);
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:review.start:target:plugin')).toBe(true);
         expect(capture.segmentedTabBars.some((bar) =>
             bar.testIDPrefix === 'settings-actions:action:review.start:target:cli:mode'
+            && bar.activeTabId === 'allowed',
+        )).toBe(true);
+        expect(capture.segmentedTabBars.some((bar) =>
+            bar.testIDPrefix === 'settings-actions:action:review.start:target:api:mode'
+            && bar.activeTabId === 'allowed',
+        )).toBe(true);
+        expect(capture.segmentedTabBars.some((bar) =>
+            bar.testIDPrefix === 'settings-actions:action:review.start:target:plugin:mode'
             && bar.activeTabId === 'allowed',
         )).toBe(true);
         const commandPaletteSwitch = capture.switches.find((switchProps) =>

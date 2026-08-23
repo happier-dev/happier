@@ -247,7 +247,6 @@ describe('SubAgentSettingsView', () => {
                                 id: 'claude-team-settings',
                                 title: 'Agent Teams',
                                 description: 'Open Claude provider settings',
-                                route: createPluginAgentSettingsRoute('claude'),
                                 iconIonName: 'people-outline',
                             }],
                         }],

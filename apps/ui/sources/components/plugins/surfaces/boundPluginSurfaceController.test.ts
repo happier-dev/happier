@@ -1169,6 +1169,131 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         }
     });
 
+    it('withholds the targeted provider form when the admitted operation names a client Action whose registration has not committed', async () => {
+        const operation = {
+            point: { pointId: 'providers', protocol: { id: 'happier.channels/providers', version: 1 } },
+            contributor: {
+                pluginId: 'happier.channel.discord',
+                contributionId: 'discord-provider',
+                immutableGenerationId: 'discord-generation-a',
+            },
+            role: 'setup',
+            action: { pluginId: 'happier.channel.discord', localId: 'channels/setup-v1' },
+        } as const;
+        const channelsFacts = {
+            ...FACTS,
+            pluginId: 'happier.channels',
+            contributionId: 'settings',
+            surfaceId: 'surfacePlacement:happier.channels:settings',
+            resolveContributedAction: resolveClientTargetAction,
+            executionOrigin: {
+                ...FACTS.executionOrigin,
+                materializationRef: {
+                    ...FACTS.executionOrigin.materializationRef,
+                    materializationId: 'channels-materialization-a',
+                    pluginId: 'happier.channels',
+                },
+            },
+        } as const;
+        const pluginProjectionById: Readonly<Record<string, PluginProjectionEntry>> = {
+            'happier.channel.discord': {
+                pluginId: 'happier.channel.discord',
+                immutableGenerationId: 'discord-generation-a',
+                title: 'Discord Channels',
+                description: null,
+                version: '1.0.0',
+                enabled: true,
+                generation: 12,
+                generationLabel: '12',
+                status: null,
+                provenance: null,
+                diagnostics: [],
+                actions: [{
+                    id: 'channels/setup-v1',
+                    title: 'Set up Discord Channels',
+                    description: null,
+                    icon: null,
+                    scopes: ['settings'],
+                    surfaces: ['plugin'],
+                    placementBindings: [],
+                    inputSchema: {
+                        type: 'object',
+                        properties: { workspace: { type: 'string', minLength: 1 } },
+                        required: ['workspace'],
+                        additionalProperties: false,
+                    },
+                    inputHints: {
+                        fields: [{
+                            path: 'workspace',
+                            title: 'Workspace',
+                            widget: 'text',
+                            required: true,
+                        }],
+                    },
+                    slash: null,
+                    priority: null,
+                    dangerLevel: 'safe',
+                    confirmation: null,
+                    available: true,
+                }],
+                resources: [],
+                editableSettingsGroups: [],
+            },
+        };
+        const targetedContributions: PluginUiTargetedContributionsV1 = {
+            target: {
+                pluginId: channelsFacts.pluginId,
+                immutableGenerationId: 'channels-generation-a',
+            },
+            points: [{
+                pointId: operation.point.pointId,
+                protocols: [{
+                    protocol: operation.point.protocol,
+                    contributions: [{
+                        contributor: operation.contributor,
+                        protocol: operation.point.protocol,
+                        operations: [operation],
+                        surfaces: [],
+                    }],
+                }],
+            }],
+        };
+        const { Modal } = await import('@/modal');
+        const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'unexpected-form');
+        try {
+            const controller = createBoundPluginSurfaceController({
+                facts: {
+                    ...channelsFacts,
+                    pluginProjectionById,
+                    targetedContributions,
+                },
+            });
+
+            await expect(controller.hostApi.handleRequest({
+                version: 1 as const,
+                requestId: 'channels:selectActionInput',
+                surface: {
+                    pluginId: channelsFacts.pluginId,
+                    contributionId: channelsFacts.contributionId,
+                    surfaceId: channelsFacts.surfaceId,
+                    placement: channelsFacts.placement,
+                    platform: channelsFacts.platform,
+                    channel: channelsFacts.channel,
+                    resourceScope: [],
+                    diagnostics: [],
+                },
+                method: 'selectActionInput',
+                payload: { operation },
+            } as never)).resolves.toEqual({
+                code: 'stale_surface',
+                diagnostics: ['action_retired'],
+            });
+            expect(show).not.toHaveBeenCalled();
+        } finally {
+            show.mockRestore();
+        }
+    });
+
     it('keeps placement-local openSurface available when daemon interaction is inactive', async () => {
         const openSurface = vi.fn(async () => ({ ok: true as const }));
         const controller = createBoundPluginSurfaceController({

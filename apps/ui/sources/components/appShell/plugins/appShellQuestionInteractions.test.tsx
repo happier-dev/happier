@@ -139,7 +139,7 @@ describe('app-shell transient interaction presenter', () => {
             ]) {
                 expect(flattenTestStyle(questionTree.root.findByProps({ testID }).props.style).minHeight).toBe(48);
             }
-            for (const testID of ['app-shell-confirmation-cancel', 'app-shell-confirmation-confirm']) {
+            for (const testID of ['app-shell-confirmation-decline', 'app-shell-confirmation-confirm']) {
                 expect(flattenTestStyle(confirmationTree.root.findByProps({ testID }).props.style).minHeight).toBe(48);
             }
         } finally {

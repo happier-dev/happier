@@ -394,6 +394,11 @@ describe('ExternalSessionsSettingsView passive shell', () => {
 
         expect(integrationChunkEnd?.props.showDivider).toBe(true);
         expect(followChunkEnd?.props.showDivider).toBe(true);
+        // The group's true last row must NOT draw one: `Item` defaults to drawing a
+        // divider, so a wrapper that drops the prop looks continuous here while
+        // trailing a stray rule under the bottom of the group.
+        expect(integrationContinuation?.props.showDivider).toBe(false);
+        expect(followContinuation?.props.showDivider).toBe(false);
 
         const integrationFirstSurface = requireItemGroupSurface(integrationChunkEnd);
         const integrationLastSurface = requireItemGroupSurface(integrationContinuation);

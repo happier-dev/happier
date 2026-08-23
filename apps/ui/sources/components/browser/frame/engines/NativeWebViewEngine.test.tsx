@@ -572,4 +572,78 @@ describe('NativeWebViewEngine', () => {
         expect(JSON.stringify(onDiagnosticsEvents.mock.calls)).not.toContain('secret');
         expect(JSON.stringify(onDiagnosticsEvents.mock.calls)).not.toContain('token');
     });
+
+    it('reports native history state so the toolbar can enable Back after a navigation', async () => {
+        const { NativeWebViewEngine } = await import('./NativeWebViewEngine');
+        const {
+            applyBrowserControlEvent,
+            browserViewLifecycleEvent,
+            createBrowserControlState,
+        } = await import('@/sync/domains/browser/control');
+        const { selectBrowserToolbarModel } = await import('@/sync/domains/browser/shell');
+        const { buildBrowserAdapterCapabilities } = await import('@/sync/domains/browser/adapters/capabilities');
+
+        let state = applyBrowserControlEvent(createBrowserControlState(), {
+            kind: 'viewOpened',
+            eventId: 'event_view',
+            browserSessionId: 'browser_session_1',
+            viewId: 'view_1',
+            target: {
+                kind: 'externalUrl',
+                targetId: 'external_example',
+                url: 'https://example.test/',
+            },
+            platform: 'ios',
+            currentUrl: 'https://example.test/',
+            adapterKind: 'externalUrl',
+            engineKind: 'nativeWebView',
+            adapterCapabilities: buildBrowserAdapterCapabilities({
+                adapterKind: 'externalUrl',
+                supportedTargetKinds: ['externalUrl'],
+                supportedRenderEngines: ['nativeWebView'],
+            }),
+            occurredAt: 1,
+        });
+        // The engine declares back/forward as a capability, but no history state has been reported
+        // yet, so the toolbar must stay disabled.
+        expect(state.viewsById.view_1.adapterCapabilities.navigation.canGoBack).toBe(true);
+        expect(selectBrowserToolbarModel(state.viewsById.view_1).canGoBack).toBe(false);
+
+        await renderScreen(
+            <NativeWebViewEngine
+                title="Example"
+                url="https://example.test/"
+                testID="browser-native-frame"
+                originWhitelist={['*']}
+                onNavigationStateChange={(navigationState) => {
+                    const event = browserViewLifecycleEvent(
+                        { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+                        { kind: 'navigationStateChanged', ...navigationState },
+                    );
+                    if (event) {
+                        state = applyBrowserControlEvent(state, event);
+                    }
+                }}
+            />,
+        );
+
+        const onNavigationStateChange = lastWebViewProps?.onNavigationStateChange;
+        expect(onNavigationStateChange).toBeTypeOf('function');
+
+        act(() => {
+            (onNavigationStateChange as (navigationState: Readonly<Record<string, unknown>>) => void)({
+                url: 'https://example.test/page-2',
+                title: 'Page 2',
+                loading: false,
+                canGoBack: true,
+                canGoForward: false,
+            });
+        });
+
+        const toolbar = selectBrowserToolbarModel(state.viewsById.view_1);
+        expect(toolbar.canGoBack).toBe(true);
+        expect(toolbar.canGoForward).toBe(false);
+        expect(state.viewsById.view_1.currentUrl).toBe('https://example.test/page-2');
+        expect(state.viewsById.view_1.loadingState).toBe('ready');
+    });
 });

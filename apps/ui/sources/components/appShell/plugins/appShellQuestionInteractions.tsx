@@ -415,13 +415,20 @@ export function AppShellConfirmationDialog(props: ConfirmationDialogProps): Reac
         <View style={styles.body}>
             <Text style={styles.prompt}>{props.description}</Text>
             <View style={styles.actions}>
+                {/*
+                  * This control settles `declined` — an explicit negative
+                  * DECISION the requester acts on — while dismissing the dialog
+                  * settles `userCancelled`. Labelling it "Cancel" told the user
+                  * it did the same thing as walking away, so it names the
+                  * decision it actually makes.
+                  */}
                 <Pressable
-                    testID="app-shell-confirmation-cancel"
+                    testID="app-shell-confirmation-decline"
                     accessibilityRole="button"
                     onPress={() => { props.onCancel(); props.onClose(); }}
                     style={[styles.action, { minHeight: minimumInteractiveTargetSize }]}
                 >
-                    <Text style={styles.actionText}>{t('common.cancel')}</Text>
+                    <Text style={styles.actionText}>{t('common.decline')}</Text>
                 </Pressable>
                 <Pressable
                     testID="app-shell-confirmation-confirm"

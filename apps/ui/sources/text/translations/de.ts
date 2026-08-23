@@ -8,9 +8,11 @@ import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Erstelle einen Server, importiere Host-JSON oder installiere ein empfohlenes Preset.',
@@ -693,6 +695,7 @@ export const de: TranslationStructure = {
 
 
     inbox: {
+        ...actionOperationInboxTranslations,
         openSession: ({ session }: { session: string }) => `Session öffnen: ${session}`,
         // Inbox screen
         emptyTitle: "Du bist auf dem neuesten Stand",
@@ -1086,6 +1089,14 @@ export const de: TranslationStructure = {
                 sourceUnavailable: 'Die Einrichtung der Quelle ist nicht verfügbar. Prüf die Ereignisquelle und versuch es noch einmal.',
                 chooseWatcher: 'Einen Beobachtungs-Watcher wählen',
                 noEligibleWatchers: 'Für diese Ereignisquelle gibt es keinen aktuellen Watcher.',
+                observationTransport: 'WIE EREIGNISSE ANKOMMEN',
+                observationCheckpointedPull: 'Regelmäßig abfragen',
+                observationDurablePush: 'Webhook',
+                webhookEndpointTitle: 'Diesen Webhook in GitHub anlegen',
+                webhookEndpointInstructions: 'Öffne die Repository-Einstellungen, lege einen Webhook mit dieser Payload-URL und diesem Secret an, wähle „application/json“ und die gewünschten Ereignisse aus. Happier empfängt erst Zustellungen, nachdem du dort gespeichert hast.',
+                webhookEndpointUrl: 'PAYLOAD-URL',
+                webhookEndpointSecret: 'SECRET (EINMALIG SICHTBAR)',
+                webhookEndpointSecretLost: 'Dieser Endpunkt existiert bereits und sein Secret wurde einmalig angezeigt. Rotiere die Zugangsdaten in den Webhook-Einstellungen, um ein neues zu erhalten.',
                 eventFilter: 'EREIGNISFILTER (OPTIONAL)',
                 eventFilterPlaceholder: '{"v":1,"all":[…]}',
                 eventFilterInvalid: 'Gib einen gültigen Ereignisfilter ein.',
@@ -1177,6 +1188,15 @@ export const de: TranslationStructure = {
             event: {
                 watcherTitle: 'Beobachtungs-Watcher',
                 watcherUnwatched: 'Nicht beobachtet',
+                endpointTitle: 'Webhook-Endpunkt',
+                endpointObservingSince: ({ time }: { time: string }) => `Empfängt Zustellungen seit ${time}`,
+                sourceStatusUnreported: 'Wartet auf die erste Meldung',
+                sourceCatalogStatusUnavailable: 'Quellenaktualität nicht verfügbar',
+                watcherMachineUnknown: 'Diese Maschine gehört nicht mehr zu deinem Konto, daher kann dieser Watcher keine Ereignisse beobachten.',
+                watcherMachineRevoked: 'Diese Maschine wurde widerrufen, daher kann dieser Watcher keine Ereignisse beobachten.',
+                watcherMachineReplaced: 'Diese Maschine wurde ersetzt, daher kann dieser Watcher keine Ereignisse beobachten.',
+                watcherInstallationReplaced: 'Diese Maschine wurde neu installiert, daher kann dieser Watcher erst nach erneuter Einrichtung Ereignisse beobachten.',
+                watcherMachineOffline: 'Diese Maschine ist offline, daher beobachtet dieser Watcher derzeit keine Ereignisse.',
             },
             actionsGroupTitle: 'Aktionen',
             runNowTitle: 'Jetzt ausführen',
@@ -1227,6 +1247,51 @@ export const de: TranslationStructure = {
                 scheduled: ({ time }: { time: string }) => `Geplant: ${time}`,
                 updated: ({ time }: { time: string }) => `Aktualisiert: ${time}`,
                 error: ({ message }: { message: string }) => `Fehler: ${message}`,
+                attemptTitle: 'Versuch',
+                attempt: ({ attempt }: { attempt: number }) => `Versuch ${attempt}`,
+                claimedByTitle: 'Übernommen von',
+                claimedAt: ({ time }: { time: string }) => `Übernommen: ${time}`,
+                leaseExpires: ({ time }: { time: string }) => `Übernahme läuft ab: ${time}`,
+                dispatchTitle: 'Ausführungs-Dispatch',
+                dispatchAttempt: ({ attempt }: { attempt: number }) => `Dispatch-Versuch ${attempt}`,
+                dispatchState: {
+                    notStarted: 'Nicht gestartet',
+                    dispatchPermitted: 'Dispatch erlaubt',
+                    retryWaiting: 'Wartet auf Wiederholung',
+                    started: 'Gestartet',
+                    settled: 'Abgeschlossen',
+                    outcomeUnknown: 'Ergebnis unbekannt',
+                },
+                replyHandoffTitle: 'Antwort-Übergabe',
+                replyHandoffAttempt: ({ attempt }: { attempt: number }) => `Übergabe-Versuch ${attempt}`,
+                replyHandoffDue: ({ time }: { time: string }) => `Nächster Übergabeversuch: ${time}`,
+                replyHandoffState: {
+                    none: 'Keine',
+                    awaitingResult: 'Wartet auf Ergebnis',
+                    ready: 'Bereit',
+                    handingOff: 'Wird übergeben',
+                    accepted: 'Angenommen',
+                    suppressed: 'Unterdrückt',
+                    blocked: 'Blockiert',
+                },
+                nativeExecutionTitle: 'Native Ausführung',
+                nativeExecutionCall: ({ callId }: { callId: string }) => `Aufruf ${callId}`,
+                nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+                historyTitle: 'Was passiert ist',
+                historyEvent: {
+                    run_started: 'Gestartet',
+                    run_succeeded: 'Erfolgreich',
+                    run_failed: 'Fehlgeschlagen',
+                    run_cancelled: 'Abgebrochen',
+                    run_outcome_uncertain: 'Ergebnis wurde ungewiss',
+                    execution_dispatch_retry_scheduled: 'Erneuter Versandversuch geplant',
+                    unknown: 'Lebenszyklusänderung',
+                },
+                historyReason: {
+                    cancelled_after_dispatch_permitted: 'Abgebrochen, nachdem die externe Ausführung bereits freigegeben war',
+                    dispatch_result_missing_after_lease_expiry: 'Die beanspruchende Maschine hat das Versandergebnis nie gemeldet',
+                    automation_retired_after_lease_expiry: 'Die Automatisierung wurde beim Ablauf ihrer Beanspruchung zurückgezogen',
+                },
             },
             runDetail: {
                 title: 'Zugelassene Details',
@@ -1303,6 +1368,7 @@ export const de: TranslationStructure = {
 	        moreActionsHint: 'Öffnet ein Menü mit weiteren Aktionen',
         destructiveActionHint: 'Diese Aktion ist destruktiv und lässt sich nicht rückgängig machen.',
 	        cancel: 'Abbrechen',
+	        decline: 'Ablehnen',
 	        submit: 'Absenden',
 	        close: 'Schließen',
 	        dismissKeyboard: 'Tastatur ausblenden',
@@ -4263,6 +4329,8 @@ export const de: TranslationStructure = {
             configureManagedDescription: 'Wähl das verbundene Konto oder die Gruppe für künftige Sessions. Happier startet den Dienst, wenn eine Session ihn braucht.',
             subscriptionPolicyTitle: 'Das Routing über Abos ist experimentell',
             subscriptionPolicyDescription: 'Die Richtlinien oder deren Durchsetzung beim Anbieter können sich ändern, sodass das Routing über Abos nicht mehr funktioniert. Happier zeigt die Ablehnung an und nutzt nicht stillschweigend andere Zugangsdaten.',
+            accountScopeMismatchTitle: 'Verbundene Konten liegen auf dem aktiven Server',
+            accountScopeMismatchDescription: 'Dieser Provider wird auf einer Maschine eines anderen Servers verwaltet. Wechsle zu diesem Server, um dessen verbundenes Konto oder Gruppe zu wählen.',
             editManagedDefaults: 'Standards für verwaltete Sessions bearbeiten',
             editManagedDefaultsDescription: 'Das verbundene Konto oder die Gruppe für künftige Sessions ändern. Bestehende Sessions behalten ihre gespeicherte Auswahl.',
             purposeTargetTitle: 'Ziel für das verbundene Konto',
@@ -6540,6 +6608,15 @@ export const de: TranslationStructure = {
             },
         },
 
+        transcript: {
+
+            olderLoadFailedTitle: 'Ältere Nachrichten konnten nicht geladen werden',
+
+            olderLoadFailedBody: 'Der Rest dieser Unterhaltung ist noch da. Versuch, die älteren Nachrichten noch einmal zu laden.',
+
+        },
+
+
         sharing: {
             title: 'Teilen',
             directSharing: 'Direktes Teilen',
@@ -8556,18 +8633,26 @@ export const de: TranslationStructure = {
             disabledLimitSubtitle: 'Das Limit für öffentliche Vorschauen ist erreicht. Widerruf einen bestehenden Link, bevor du einen neuen erstellst.',
             disabledNoPreviewSubtitle: 'Öffne eine lokale Vorschau, bevor du einen öffentlichen Link erstellst.',
             disabledReason: {
+                auditRequirementDisabled: 'Die Audit-Protokollierung öffentlicher Vorschauen ist erforderlich, aber auf dem Server deaktiviert.',
                 auditUnavailable: 'Das Audit-Logging für öffentliche Vorschauen ist nicht verfügbar.',
                 dnsTlsUnavailable: 'Öffentliche Vorschauen warten darauf, dass DNS/TLS bereit sind.',
                 expired: 'Dieser öffentliche Vorschaulink ist abgelaufen.',
+                linkLifetimeUnconfigured: 'Auf dem Server ist keine Gültigkeitsdauer für öffentliche Vorschaulinks eingerichtet.',
+                modeUnconfigured: 'Auf dem Server ist kein Modus für öffentliche Vorschauen eingerichtet.',
                 policyInvalid: 'Die Richtlinie für öffentliche Vorschauen ist unvollständig.',
                 previewNotEligible: 'Diese lokale Vorschau kommt für einen öffentlichen Link nicht infrage.',
+                previewServerDisabled: 'Vorschauen lokaler Dienste sind auf dem Server deaktiviert.',
                 publicBaseUrlUnavailable: 'Die Basis-URL für öffentliche Vorschauen ist nicht eingerichtet.',
+                rateLimitProfileUnconfigured: 'Auf dem Server ist kein Rate-Limit-Profil für öffentliche Vorschauen eingerichtet.',
                 rateLimitUnavailable: 'Die Ratenbegrenzung für öffentliche Vorschauen ist nicht verfügbar.',
                 rateLimited: 'Dieser öffentliche Vorschaulink ist rate-limitiert.',
                 relayUnavailable: 'Das Relay für öffentliche Vorschauen ist nicht verfügbar.',
                 revoked: 'Dieser öffentliche Vorschaulink wurde widerrufen.',
                 secretLinkUnavailable: 'Öffentliche Vorschauen über geheime Links sind nicht eingerichtet.',
+                serverDisabled: 'Öffentliche Vorschauen sind auf dem Server deaktiviert.',
                 sessionNotAuthorized: 'Du darfst für diese Session keinen öffentlichen Link erstellen.',
+                tunnelPortsUnconfigured: 'Der Server erlaubt keine Tunnel-Ports.',
+                tunnelRelayDisabled: 'Das Server-Relay für Maschinen-Tunnel ist deaktiviert.',
             },
             createActionA11y: 'Öffentlichen Vorschaulink erstellen',
             revokeActionA11y: 'Öffentlichen Vorschaulink widerrufen',
@@ -9170,6 +9255,13 @@ export const de: TranslationStructure = {
         configureActionAccessibilityLabel: 'Aktion einrichten',
         approvalHelpTitle: 'Freigabemodi',
         approvalHelpBody: '„Erst fragen“ zeigt eine Bestätigung, bevor diese Aktion von dieser Oberfläche aus läuft. „Erlaubt“ lässt die Aktion ohne Freigabeabfrage laufen.',
+        contributed: {
+            machineSelectionTitle: 'Maschine für beigetragene Aktionen wählen',
+            machineSelectionBody: 'Wähle eine Maschine, um die von ihren installierten Plugins deklarierten Aktionen anzuzeigen und zu konfigurieren.',
+            removedDescription: 'Diese beigetragene Aktion ist auf der ausgewählten Maschine nicht mehr verfügbar. Ihre gespeicherten Einstellungen bleiben erhalten.',
+            removedTargetsTitle: 'Beigetragene Aktion nicht verfügbar',
+            removedTargetsBody: 'Diese Aktion wird derzeit nicht von der ausgewählten Maschine deklariert. Ihre gespeicherten Einstellungen bleiben hier erhalten.',
+        },
         toolExposure: {
             title: 'Tool-Sichtbarkeit',
             footer: 'Legt fest, ob geeignete Aktionen als direkte Tools erscheinen oder nur über die Aktionssuche verfügbar bleiben.',
@@ -9399,6 +9491,14 @@ export const de: TranslationStructure = {
             cli: {
                 title: 'CLI zur Session-Steuerung',
                 subtitle: 'Verfügbar über die CLI-Oberfläche zur Session-Steuerung.',
+            },
+            api: {
+                title: 'API',
+                subtitle: 'Über die externe Action-API verfügbar.',
+            },
+            plugin: {
+                title: 'Vertrauenswürdige Plugins',
+                subtitle: 'Für vertrauenswürdige Plugins als Aktion verfügbar.',
             },
             contextual_ui: {
                 title: 'Kontextbezogene UI',
@@ -10134,7 +10234,7 @@ settingsSession: {
             loadingOlder: 'Ältere Nachrichten werden geladen…',
             loadOlderFailed: 'Der ältere Voice-Verlauf ließ sich nicht laden.',
             exportTitle: 'Voice-Verlauf exportieren',
-            exportSubtitle: 'Den restlichen begrenzten Verlauf laden und als JSON speichern.',
+            exportSubtitle: 'Den restlichen Verlauf laden und als JSON speichern.',
             exporting: 'Export wird vorbereitet…',
             exportSucceeded: 'Der Export des Voice-Verlaufs ist fertig.',
             exportFailed: 'Der Voice-Verlauf ließ sich nicht exportieren.',
@@ -11282,7 +11382,7 @@ settingsSession: {
                 onDemandTitle: 'Auf Anfrage',
                 onDemandSubtitle: 'Auf Nachfrage kann Voice begrenzten semantischen Kontext aus diesem Fenster oder Browser-Tab lesen. Kontextbezogene Befehle bleiben separat gesteuert.',
                 automaticTitle: 'Automatisch',
-                automaticSubtitle: 'Voice bekommt außerdem automatisch einfache Navigations-Metadaten. Detaillierter Kontext bleibt auf Nachfrage, kontextbezogene Befehle bleiben separat gesteuert.',
+                automaticSubtitle: 'Voice bekommt außerdem automatisch einfache Navigations-Metadaten, und das Öffnen einer Session teilt deren Kontext gemäß den Freigaben oben. Kontextbezogene Befehle bleiben separat gesteuert.',
             },
         },
         diagnostics: {
@@ -13274,6 +13374,7 @@ settingsSession: {
             },
         },
     },
+   ...apiTokenSettingsTranslations.de,
    settingsPlugins: {
       ...pluginWebhookAdministrationTranslations['en'],
       ...pluginAccountDataEraseTranslations.de,

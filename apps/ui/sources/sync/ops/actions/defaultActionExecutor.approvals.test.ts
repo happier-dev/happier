@@ -24,6 +24,22 @@ const executeAccountPluginDataEraseAction = vi.fn(async () => ({
     settings: { status: 'completed' as const, changed: true },
     data: { status: 'completed' as const, changed: false },
 }));
+const signOutEverywhere = vi.fn(async () => ({ status: 'signed_out' as const }));
+const apiTokenSummary = {
+    tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d',
+    label: 'CI deploy',
+    displayPrefix: 'hap_dd03e74b',
+    createdAt: '2026-08-22T12:00:00.000Z',
+    lastUsedAt: null,
+    expiresAt: '2026-11-20T12:00:00.000Z',
+} as const;
+const createCurrentAccountApiToken = vi.fn(async () => ({
+    token: `hap_v1_${apiTokenSummary.tokenId}_${'A'.repeat(43)}`,
+    apiToken: apiTokenSummary,
+}));
+const listCurrentAccountApiTokens = vi.fn(async () => ({ tokens: [apiTokenSummary] }));
+const revokeCurrentAccountApiToken = vi.fn(async () => ({ revoked: true }));
+const revokeAllCurrentAccountApiTokens = vi.fn(async () => ({ revokedCount: 1 }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStart,
@@ -169,6 +185,17 @@ vi.mock('@/sync/domains/plugins/settings/accountPluginDataEraseAction', () => ({
     executeAccountPluginDataEraseAction,
 }));
 
+vi.mock('@/sync/api/account/signOutEverywhere', () => ({
+    signOutEverywhere,
+}));
+
+vi.mock('@/sync/api/account/apiTokens', () => ({
+    createCurrentAccountApiToken,
+    listCurrentAccountApiTokens,
+    revokeCurrentAccountApiToken,
+    revokeAllCurrentAccountApiTokens,
+}));
+
 vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Object.freeze({}),
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: Object.freeze({}),
@@ -223,6 +250,11 @@ describe('createDefaultActionExecutor approvals', () => {
         updateArtifactWithHeader.mockClear();
         reviewCommentExecute.mockClear();
         executeAccountPluginDataEraseAction.mockClear();
+        signOutEverywhere.mockClear();
+        createCurrentAccountApiToken.mockClear();
+        listCurrentAccountApiTokens.mockClear();
+        revokeCurrentAccountApiToken.mockClear();
+        revokeAllCurrentAccountApiTokens.mockClear();
     });
 
     it('routes durable review-comment actions through the shared HTTP action executor', async () => {
@@ -273,6 +305,96 @@ describe('createDefaultActionExecutor approvals', () => {
         );
     });
 
+    it('routes the host-present current-Account sign-out-everywhere action', async () => {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const controller = new AbortController();
+
+        await expect(executor.execute(
+            'account.sessions.signOutEverywhere' as any,
+            {},
+            {
+                surface: 'ui',
+                actionCaller: { kind: 'host' },
+                signal: controller.signal,
+            },
+        )).resolves.toEqual({
+            ok: true,
+            result: { status: 'signed_out' },
+        });
+        expect(signOutEverywhere).toHaveBeenCalledExactlyOnceWith({}, { signal: controller.signal });
+    });
+
+    it('routes current-Account API-token Actions through their scoped transport with no caller-selected Account', async () => {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const controller = new AbortController();
+        const context = {
+            surface: 'ui' as const,
+            authority: 'present_user' as const,
+            actionCaller: { kind: 'host' as const },
+            signal: controller.signal,
+        };
+
+        await expect(executor.execute(
+            'account.apiTokens.create' as any,
+            { label: apiTokenSummary.label, expiresAt: apiTokenSummary.expiresAt },
+            context,
+        )).resolves.toEqual({
+            ok: true,
+            result: {
+                token: `hap_v1_${apiTokenSummary.tokenId}_${'A'.repeat(43)}`,
+                apiToken: apiTokenSummary,
+            },
+        });
+        await expect(executor.execute('account.apiTokens.list' as any, {}, context)).resolves.toEqual({
+            ok: true,
+            result: { tokens: [apiTokenSummary] },
+        });
+        await expect(executor.execute(
+            'account.apiTokens.revoke' as any,
+            { tokenId: apiTokenSummary.tokenId },
+            context,
+        )).resolves.toEqual({ ok: true, result: { revoked: true } });
+        await expect(executor.execute('account.apiTokens.revokeAll' as any, {}, context)).resolves.toEqual({
+            ok: true,
+            result: { revokedCount: 1 },
+        });
+
+        expect(createCurrentAccountApiToken).toHaveBeenCalledExactlyOnceWith(
+            { label: apiTokenSummary.label, expiresAt: apiTokenSummary.expiresAt },
+            { signal: controller.signal },
+        );
+        expect(listCurrentAccountApiTokens).toHaveBeenCalledExactlyOnceWith({}, { signal: controller.signal });
+        expect(revokeCurrentAccountApiToken).toHaveBeenCalledExactlyOnceWith(
+            { tokenId: apiTokenSummary.tokenId },
+            { signal: controller.signal },
+        );
+        expect(revokeAllCurrentAccountApiTokens).toHaveBeenCalledExactlyOnceWith({}, { signal: controller.signal });
+    });
+
+    it('preserves the canonical Action preparation lifecycle for current-Account API-token Actions', async () => {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const prepared = await executor.prepare(
+            'account.apiTokens.list' as any,
+            {},
+            {
+                surface: 'ui',
+                authority: 'present_user',
+                actionCaller: { kind: 'host' },
+            },
+        );
+
+        expect(prepared.kind).toBe('ready');
+        if (prepared.kind !== 'ready') throw new Error('expected_ready_action');
+        await expect(prepared.invocation.run()).resolves.toEqual({
+            ok: true,
+            result: { tokens: [apiTokenSummary] },
+        });
+        expect(listCurrentAccountApiTokens).toHaveBeenCalledExactlyOnceWith({}, undefined);
+    });
+
     it('routes permission responses through the canonical session permission RPC method', async () => {
         const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
         sessionRpcWithServerScope.mockReset();
@@ -300,6 +422,23 @@ describe('createDefaultActionExecutor approvals', () => {
             method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
             payload: { id: 'req-1', approved: false },
         });
+    });
+
+    it('projects successful void permission RPC responses through the canonical Action output', async () => {
+        const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
+        sessionRpcWithServerScope.mockReset();
+        sessionRpcWithServerScope.mockResolvedValueOnce(undefined);
+
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor({
+            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
+        });
+
+        await expect(executor.execute(
+            'session.permission.respond' as any,
+            { sessionId: 's1', requestId: 'req-1', decision: 'allow' },
+            { surface: 'ui' },
+        )).resolves.toEqual({ ok: true, result: { ok: true } });
     });
 
     it('routes owner remote grant management through the canonical session Action transport', async () => {
@@ -339,7 +478,7 @@ describe('createDefaultActionExecutor approvals', () => {
     it('routes user-action answers through the canonical session user-action RPC method', async () => {
         const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
         sessionRpcWithServerScope.mockReset();
-        sessionRpcWithServerScope.mockResolvedValueOnce({ ok: true, status: 'accepted' });
+        sessionRpcWithServerScope.mockResolvedValueOnce(undefined);
 
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const executor = createDefaultActionExecutor({
@@ -362,7 +501,7 @@ describe('createDefaultActionExecutor approvals', () => {
             { surface: 'ui' },
         );
 
-        expect(res).toEqual({ ok: true, result: { ok: true, status: 'accepted' } });
+        expect(res).toEqual({ ok: true, result: { ok: true } });
         expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
             sessionId: 's1',
             serverId: 'srv-main',

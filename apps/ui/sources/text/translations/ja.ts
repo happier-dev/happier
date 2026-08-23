@@ -12,9 +12,11 @@ import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCred
 import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 /**
  * Japanese translations for the Happier app
@@ -795,6 +797,7 @@ export const ja = {
 
 
   inbox: {
+    ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `セッションを開く: ${session}`,
     // Inbox screen
     emptyTitle: "すべて完了です",
@@ -1173,6 +1176,15 @@ export const ja = {
       event: {
         watcherTitle: "イベント監視",
         watcherUnwatched: "監視なし",
+        endpointTitle: "Webhook エンドポイント",
+        endpointObservingSince: ({ time }: { time: string }) => `${time} から配信を受信中`,
+        sourceStatusUnreported: "最初の報告を待機中",
+        sourceCatalogStatusUnavailable: "ソースの最新性が不明です",
+        watcherMachineUnknown: "このマシンはアカウントに存在しないため、この監視はイベントを監視できません。",
+        watcherMachineRevoked: "このマシンは失効しているため、この監視はイベントを監視できません。",
+        watcherMachineReplaced: "このマシンは置き換えられたため、この監視はイベントを監視できません。",
+        watcherInstallationReplaced: "このマシンは再インストールされたため、設定し直すまでこの監視はイベントを監視できません。",
+        watcherMachineOffline: "このマシンはオフラインのため、この監視は現在イベントを監視していません。",
       },
       actionsGroupTitle: "操作",
       runNowTitle: "今すぐ実行",
@@ -1226,6 +1238,51 @@ export const ja = {
         scheduled: ({ time }: { time: string }) => `スケジュール: ${time}`,
         updated: ({ time }: { time: string }) => `更新: ${time}`,
         error: ({ message }: { message: string }) => `エラー: ${message}`,
+        attemptTitle: "試行",
+        attempt: ({ attempt }: { attempt: number }) => `試行 ${attempt}`,
+        claimedByTitle: "担当マシン",
+        claimedAt: ({ time }: { time: string }) => `担当開始: ${time}`,
+        leaseExpires: ({ time }: { time: string }) => `担当リースの期限: ${time}`,
+        dispatchTitle: "実行ディスパッチ",
+        dispatchAttempt: ({ attempt }: { attempt: number }) => `ディスパッチ試行 ${attempt}`,
+        dispatchState: {
+            notStarted: "未開始",
+            dispatchPermitted: "ディスパッチ許可済み",
+            retryWaiting: "再試行待ち",
+            started: "開始済み",
+            settled: "確定済み",
+            outcomeUnknown: "結果不明",
+        },
+        replyHandoffTitle: "返信の引き渡し",
+        replyHandoffAttempt: ({ attempt }: { attempt: number }) => `引き渡し試行 ${attempt}`,
+        replyHandoffDue: ({ time }: { time: string }) => `次の引き渡し試行: ${time}`,
+        replyHandoffState: {
+            none: "なし",
+            awaitingResult: "結果待ち",
+            ready: "準備完了",
+            handingOff: "引き渡し中",
+            accepted: "受理済み",
+            suppressed: "抑制済み",
+            blocked: "ブロック中",
+        },
+        nativeExecutionTitle: "ネイティブ実行",
+        nativeExecutionCall: ({ callId }: { callId: string }) => `呼び出し ${callId}`,
+        nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+        historyTitle: "何が起きたか",
+        historyEvent: {
+            run_started: "開始",
+            run_succeeded: "成功",
+            run_failed: "失敗",
+            run_cancelled: "キャンセル",
+            run_outcome_uncertain: "結果が不確定になりました",
+            execution_dispatch_retry_scheduled: "ディスパッチ再試行を予定",
+            unknown: "ライフサイクルの変化",
+        },
+        historyReason: {
+            cancelled_after_dispatch_permitted: "外部実行がすでに許可された後にキャンセルされました",
+            dispatch_result_missing_after_lease_expiry: "取得したマシンがディスパッチ結果を報告しませんでした",
+            automation_retired_after_lease_expiry: "取得リースの期限切れ中にオートメーションが撤回されました",
+        },
       },
       runDetail: {
         title: "受理済みの詳細",
@@ -1306,6 +1363,7 @@ export const ja = {
     moreActionsHint: "追加の操作メニューを開きます",
     destructiveActionHint: "この操作は破壊的で、元に戻せません。",
     cancel: "キャンセル",
+    decline: "拒否",
     submit: "送信",
     close: "閉じる",
     dismissKeyboard: 'キーボードを閉じる',
@@ -6538,6 +6596,11 @@ localTailscale: {
           markHandledFailed: "保留中配信を対応済みにできませんでした",
         },
       },
+      transcript: {
+          olderLoadFailedTitle: '以前のメッセージを読み込めませんでした',
+          olderLoadFailedBody: 'この会話の続きはまだ残っています。以前のメッセージをもう一度読み込んでみてください。',
+      },
+
       sharing: {
         title: "共有",
         directSharing: "直接共有",
@@ -8678,18 +8741,26 @@ localTailscale: {
       disabledLimitSubtitle: '公開プレビューの上限に達しました。別のリンクを作成する前に既存のリンクを取り消してください。',
       disabledNoPreviewSubtitle: '公開リンクを作成する前にローカルプレビューを開いてください。',
       disabledReason: {
+        auditRequirementDisabled: '公開プレビューの監査ログは必須ですが、サーバーで無効になっています。',
         auditUnavailable: '公開プレビューの監査ログを利用できません。',
         dnsTlsUnavailable: '公開プレビューは DNS/TLS の準備完了を待っています。',
         expired: 'この公開プレビューリンクは期限切れです。',
+        linkLifetimeUnconfigured: 'サーバーに公開プレビューリンクの有効期間が設定されていません。',
+        modeUnconfigured: 'サーバーに公開プレビューのモードが設定されていません。',
         policyInvalid: '公開プレビューポリシーが不完全です。',
         previewNotEligible: 'このローカルプレビューは公開リンクの対象外です。',
+        previewServerDisabled: 'ローカルサービスのプレビューはサーバーで無効になっています。',
         publicBaseUrlUnavailable: '公開プレビューのベース URL が設定されていません。',
+        rateLimitProfileUnconfigured: 'サーバーに公開プレビューのレート制限プロファイルが設定されていません。',
         rateLimitUnavailable: '公開プレビューのレート制限を利用できません。',
         rateLimited: 'この公開プレビューリンクはレート制限されています。',
         relayUnavailable: '公開プレビューのリレーを利用できません。',
         revoked: 'この公開プレビューリンクは取り消されました。',
         secretLinkUnavailable: 'シークレットリンク公開プレビューが設定されていません。',
+        serverDisabled: '公開プレビューはサーバーで無効になっています。',
         sessionNotAuthorized: 'このセッションの公開リンクを作成する権限がありません。',
+        tunnelPortsUnconfigured: 'サーバーはトンネルポートを許可していません。',
+        tunnelRelayDisabled: 'マシントンネル用のサーバーリレーが無効になっています。',
       },
       createActionA11y: '公開プレビューリンクを作成',
       revokeActionA11y: '公開プレビューリンクを取り消す',
@@ -9278,6 +9349,13 @@ localTailscale: {
       configureActionAccessibilityLabel: "アクションを設定",
       approvalHelpTitle: "承認モード",
       approvalHelpBody: "「先に確認」では、このサーフェスからアクションを実行する前に確認を表示します。「許可」では、このサーフェスから承認プロンプトなしで実行できます。",
+      contributed: {
+        machineSelectionTitle: "提供アクションのマシンを選択",
+        machineSelectionBody: "インストール済みプラグインが宣言したアクションを表示・設定するマシンを選択します。",
+        removedDescription: "この提供アクションは選択したマシンでは利用できなくなりました。保存済みの設定は保持されます。",
+        removedTargetsTitle: "提供アクションは利用できません",
+        removedTargetsBody: "このアクションは現在、選択したマシンで宣言されていません。保存済みの設定はここで利用できます。",
+      },
       toolExposure: {
           title: "ツール公開",
           footer: "対象のアクションを直接ツールとして表示するか、アクション検索からのみ利用できるようにするかを制御します。",
@@ -9447,6 +9525,14 @@ localTailscale: {
             cli: {
                 title: "セッション制御 CLI",
                 subtitle: "セッション制御 CLI の画面から利用できます。",
+            },
+            api: {
+                title: "API",
+                subtitle: "外部 Action API を通じて利用できます。",
+            },
+            plugin: {
+                title: "信頼できるプラグイン",
+                subtitle: "信頼できるプラグインでアクションとして利用できます。",
             },
             contextual_ui: {
                 title: "コンテキスト UI",
@@ -10188,7 +10274,7 @@ settingsSession: {
       loadingOlder: '古いメッセージを読み込んでいます…',
       loadOlderFailed: '古い音声履歴を読み込めませんでした。',
       exportTitle: '音声履歴を書き出す',
-      exportSubtitle: '残りの履歴を上限内で読み込み、JSONとして保存します。',
+      exportSubtitle: '残りの履歴を読み込み、JSONとして保存します。',
       exporting: '書き出しを準備しています…',
       exportSucceeded: '音声履歴の書き出し準備ができました。',
       exportFailed: '音声履歴を書き出せませんでした。',
@@ -11222,7 +11308,7 @@ settingsSession: {
         onDemandTitle: "オンデマンド",
         onDemandSubtitle: "要求したときに、音声はこのアプリウィンドウまたはブラウザタブから限定された意味情報を読み取れます。コンテキストに応じたコマンドには別の制御が適用されます。",
         automaticTitle: "自動",
-        automaticSubtitle: "音声は基本的なナビゲーションメタデータも自動的に受け取ります。詳細なコンテキストはオンデマンドのままで、コンテキストに応じたコマンドには引き続き別の制御が適用されます。",
+        automaticSubtitle: "音声は基本的なナビゲーションメタデータも自動的に受け取り、セッションを開くと上の共有設定に従ってそのセッションのコンテキストが共有されます。コンテキストに応じたコマンドには引き続き別の制御が適用されます。",
       },
     },
     languageTitle: "言語",
@@ -12795,6 +12881,7 @@ settingsSession: {
       },
     },
   },
+   ...apiTokenSettingsTranslations.ja,
    settingsPlugins: {
       ...pluginWebhookAdministrationTranslations['ja'],
       ...pluginAccountDataEraseTranslations.ja,

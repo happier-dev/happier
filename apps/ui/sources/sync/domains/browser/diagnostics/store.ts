@@ -1,4 +1,5 @@
 import {
+    browserViewKey,
     BrowserDiagnosticEventV1Schema,
     INJECTED_CONSOLE_TEXT_MAX_LENGTH,
     type BrowserDiagnosticEventV1,
@@ -29,13 +30,6 @@ const FIDELITY_RANK: Readonly<Record<BrowserDiagnosticFidelityV1, number>> = {
     streamFrame: 2,
     unavailable: 1,
 };
-
-function browserDiagnosticsViewKey(input: Readonly<{
-    browserSessionId: string;
-    viewId: string;
-}>): string {
-    return `${input.browserSessionId}\u0000${input.viewId}`;
-}
 
 function pickHigherFidelity(
     current: BrowserDiagnosticFidelityV1,
@@ -821,7 +815,7 @@ export function applyBrowserDiagnosticEvents(
         const event = normalizeEvent(rawEvent, normalizeOptions);
         if (!event) continue;
 
-        const key = browserDiagnosticsViewKey(event);
+        const key = browserViewKey(event);
         const existing = viewsByKey[key];
         if (existing && event.navigationGeneration < existing.navigationGeneration) {
             continue;
@@ -844,7 +838,7 @@ export function selectBrowserDiagnosticsForView(
         viewId: string;
     }>,
 ): BrowserViewDiagnosticsProjection {
-    const view = state.viewsByKey[browserDiagnosticsViewKey(input)];
+    const view = state.viewsByKey[browserViewKey(input)];
     if (!view) {
         return {
             status: 'unavailable',

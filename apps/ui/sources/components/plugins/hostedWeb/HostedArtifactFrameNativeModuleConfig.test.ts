@@ -56,6 +56,10 @@ describe('hosted Artifact native-frame Expo module config', () => {
         expect(viewSource).not.toContain('allowedNavigationOrigins.contains(where: { $0.matches(url) }) {\n      decisionHandler(.allow)');
         expect(viewSource).not.toContain('loadHTMLString');
         expect(moduleSource).toContain('Function("unregisterArtifact")');
+        // One strict registration result on every platform: no Bool ABI.
+        expect(moduleSource).toContain('AsyncFunction("registerArtifact") { (input: [String: Any]) -> [String: Any] in');
+        expect(moduleSource).toContain('return ["kind": "registered"]');
+        expect(moduleSource).not.toContain('AsyncFunction("registerArtifact") { (input: [String: Any]) -> Bool in');
         expect(moduleSource).toContain('View(HostedWebArtifactView.self)');
         expect(moduleSource).toContain('AsyncFunction("goBack")');
         expect(moduleSource).toContain('"onHistoryStateChange"');

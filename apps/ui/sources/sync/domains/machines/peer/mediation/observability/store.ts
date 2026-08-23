@@ -1,9 +1,9 @@
-import type {
-    PeerMediationObservabilityDeltaV1,
-    PeerMediationObservabilityEventKindV1,
-    PeerMediationObservabilityEventV1,
-    PeerMediationObservabilityFlowSnapshotV1,
-    PeerMediationObservabilitySnapshotV1,
+import {
+    applyPeerMediationObservabilityEventToFlowSnapshot,
+    type PeerMediationObservabilityDeltaV1,
+    type PeerMediationObservabilityEventV1,
+    type PeerMediationObservabilityFlowSnapshotV1,
+    type PeerMediationObservabilitySnapshotV1,
 } from '@happier-dev/protocol';
 
 import {
@@ -183,97 +183,14 @@ export function applyPeerMediationObservabilitySnapshot(
     };
 }
 
-function lifecycleForEventKind(
-    kind: PeerMediationObservabilityEventKindV1,
-    previous: PeerMediationObservabilityFlowSnapshotV1['lifecycleState'] | undefined,
-): PeerMediationObservabilityFlowSnapshotV1['lifecycleState'] {
-    switch (kind) {
-        case 'flow.started':
-            return 'starting';
-        case 'flow.ready':
-            return 'ready';
-        case 'flow.denied':
-        case 'policy.denied':
-            return 'denied';
-        case 'flow.closed':
-        case 'websocket.closed':
-            return 'closed';
-        case 'flow.aborted':
-        case 'http.request.aborted':
-        case 'tunnel.substream.aborted':
-            return 'aborted';
-        case 'flow.errored':
-            return 'errored';
-        default:
-            return previous === 'starting' || previous === 'ready' ? 'active' : previous ?? 'active';
-    }
-}
-
-function readNumber(data: Readonly<Record<string, unknown>>, key: string): number | undefined {
-    const value = data[key];
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
-}
-
-function readString(data: Readonly<Record<string, unknown>>, key: string): string | undefined {
-    const value = data[key];
-    return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function applyEventToSnapshot(
-    previous: PeerMediationObservabilityFlowSnapshotV1 | undefined,
-    event: PeerMediationObservabilityEventV1,
-): PeerMediationObservabilityFlowSnapshotV1 {
-    const data = event.data ?? {};
-    const lifecycleState = lifecycleForEventKind(event.kind, previous?.lifecycleState);
-    const closedAtMs = (
-        lifecycleState === 'closed'
-        || lifecycleState === 'aborted'
-        || lifecycleState === 'errored'
-        || lifecycleState === 'denied'
-    )
-        ? event.emittedAtMs
-        : previous?.closedAtMs;
-    const isHttpEvent = event.kind.startsWith('http.request.');
-    const isWebSocketEvent = event.kind.startsWith('websocket.');
-
-    return {
-        flow: event.flow,
-        lifecycleState,
-        startedAtMs: previous?.startedAtMs ?? event.emittedAtMs,
-        lastActivityAtMs: event.emittedAtMs,
-        ...(closedAtMs !== undefined ? { closedAtMs } : {}),
-        bytesIn: readNumber(data, 'bytesIn') ?? previous?.bytesIn ?? 0,
-        bytesOut: readNumber(data, 'bytesOut') ?? previous?.bytesOut ?? 0,
-        framesIn: readNumber(data, 'framesIn') ?? previous?.framesIn ?? 0,
-        framesOut: readNumber(data, 'framesOut') ?? previous?.framesOut ?? 0,
-        messagesIn: readNumber(data, 'messagesIn') ?? previous?.messagesIn ?? 0,
-        messagesOut: readNumber(data, 'messagesOut') ?? previous?.messagesOut ?? 0,
-        activeSubstreams: readNumber(data, 'activeSubstreams') ?? previous?.activeSubstreams ?? 0,
-        ...(readNumber(data, 'totalSubstreams') ?? previous?.totalSubstreams) !== undefined
-            ? { totalSubstreams: readNumber(data, 'totalSubstreams') ?? previous?.totalSubstreams }
-            : {},
-        ...(readNumber(data, 'movingThroughputBps') ?? previous?.movingThroughputBps) !== undefined
-            ? { movingThroughputBps: readNumber(data, 'movingThroughputBps') ?? previous?.movingThroughputBps }
-            : {},
-        ...(readString(data, 'capProfileId') ?? previous?.capProfileId) !== undefined
-            ? { capProfileId: readString(data, 'capProfileId') ?? previous?.capProfileId }
-            : {},
-        ...(readNumber(data, 'capUsagePercent') ?? previous?.capUsagePercent) !== undefined
-            ? { capUsagePercent: readNumber(data, 'capUsagePercent') ?? previous?.capUsagePercent }
-            : {},
-        ...(readString(data, 'closeReasonCode') ?? (event.kind === 'flow.closed' ? readString(data, 'reasonCode') : undefined) ?? previous?.closeReasonCode) !== undefined
-            ? { closeReasonCode: readString(data, 'closeReasonCode') ?? (event.kind === 'flow.closed' ? readString(data, 'reasonCode') : undefined) ?? previous?.closeReasonCode }
-            : {},
-        ...(readString(data, 'abortReasonCode') ?? (event.kind.includes('aborted') ? readString(data, 'reasonCode') : undefined) ?? previous?.abortReasonCode) !== undefined
-            ? { abortReasonCode: readString(data, 'abortReasonCode') ?? (event.kind.includes('aborted') ? readString(data, 'reasonCode') : undefined) ?? previous?.abortReasonCode }
-            : {},
-        ...(readString(data, 'errorReasonCode') ?? (event.kind === 'flow.errored' ? readString(data, 'reasonCode') : undefined) ?? previous?.errorReasonCode) !== undefined
-            ? { errorReasonCode: readString(data, 'errorReasonCode') ?? (event.kind === 'flow.errored' ? readString(data, 'reasonCode') : undefined) ?? previous?.errorReasonCode }
-            : {},
-        ...(isHttpEvent ? { http: data } : previous?.http ? { http: previous.http } : {}),
-        ...(isWebSocketEvent ? { websocket: data } : previous?.websocket ? { websocket: previous.websocket } : {}),
-    };
-}
+/**
+ * The event -> flow-snapshot fold is owned by protocol
+ * (`applyPeerMediationObservabilityEventToFlowSnapshot`). It used to be re-implemented here with a
+ * different lifecycle mapping and different byte accumulation than the daemon and server producers,
+ * and because the delta wire shape carries no snapshots the UI must re-fold every delta — so the
+ * disagreement was directly observable: a flow rendered the producer's answer after subscribe and
+ * the consumer's answer on the next delta (DEC-8).
+ */
 
 export function applyPeerMediationObservabilityDelta(
     state: PeerMediationObservabilityUiStore,
@@ -311,7 +228,7 @@ export function applyPeerMediationObservabilityDelta(
         const key = peerMediationObservabilityFlowKey(input.delta.scope, event.flow);
         const previousEntry = nextFlowsByKey[key];
         const previousFamily = previousEntry?.sources[input.source];
-        const snapshot = applyEventToSnapshot(previousFamily?.snapshot, event);
+        const snapshot = applyPeerMediationObservabilityEventToFlowSnapshot(previousFamily?.snapshot, event);
         nextFlowsByKey[key] = upsertSourceFamily({
             entry: previousEntry,
             source: input.source,

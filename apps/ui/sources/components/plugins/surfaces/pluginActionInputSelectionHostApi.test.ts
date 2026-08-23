@@ -6,6 +6,7 @@ import {
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import { setPreferredLanguageFromSettings } from '@/text';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol';
 import type {
     PluginUiTargetedContributionOperationV1,
     PluginUiTargetedContributionsV1,
@@ -100,6 +101,33 @@ function projection(): Readonly<Record<string, PluginProjectionEntry>> {
             resources: [],
             editableSettingsGroups: [],
         },
+    };
+}
+
+/**
+ * The exact raw V2 declaration for the admitted operation's Action, declaring a
+ * client execution realm whose executable registration has not committed here.
+ */
+function clientProjectedAction(): PluginProjectedActionV2 {
+    return {
+        id: operation.action.localId,
+        pluginId: operation.action.pluginId,
+        title: 'Prepare connection',
+        scopes: ['settings'],
+        surfaces: ['plugin'],
+        execution: {
+            target: 'client',
+            client: {
+                artifactId: 'client-main',
+                modulePath: './dist/client.js',
+                exportName: 'activate',
+            },
+            platforms: ['web', 'ios', 'android'],
+        },
+        placementBindings: [],
+        priority: 0,
+        dangerLevel: 'safe',
+        available: true,
     };
 }
 
@@ -397,5 +425,63 @@ describe('plugin Action input selection Host API producer', () => {
             diagnostics: ['host_unavailable'],
         });
         expect(composeSessionServerStartDraft).not.toHaveBeenCalled();
+    });
+    it('withholds a targeted client Action form until its executable registration commits', async () => {
+        const present = vi.fn(({ form }: { form: { submit: () => Promise<unknown> } }) => {
+            void form.submit();
+        });
+        const handler = createPluginActionInputSelectionHostApiHandler({
+            pluginProjectionById: projection(),
+            targetedContributions: targetedContributions(),
+            resolveContributedAction: (identity) => (
+                identity.pluginId === operation.action.pluginId
+                    && identity.localId === operation.action.localId
+                    ? clientProjectedAction()
+                    : null
+            ),
+            host: {
+                machineId: 'machine-a',
+                serverId: 'server-a',
+                expectedGeneration: 7,
+                targetPluginId: 'acme.caller',
+                accountLifetime,
+            },
+            isCurrent: () => true,
+            present,
+        });
+
+        await expect(handler(request())).resolves.toEqual({
+            code: 'stale_surface',
+            diagnostics: ['action_retired'],
+        });
+        expect(present).not.toHaveBeenCalled();
+    });
+
+    it('still presents a targeted daemon Action form through the same raw resolver', async () => {
+        const present = vi.fn(({ form }: { form: { submit: () => Promise<unknown> } }) => {
+            void form.submit();
+        });
+        const handler = createPluginActionInputSelectionHostApiHandler({
+            pluginProjectionById: projection(),
+            targetedContributions: targetedContributions(),
+            resolveContributedAction: (identity) => (
+                identity.pluginId === operation.action.pluginId
+                    && identity.localId === operation.action.localId
+                    ? { ...clientProjectedAction(), execution: { target: 'daemon' as const } }
+                    : null
+            ),
+            host: {
+                machineId: 'machine-a',
+                serverId: 'server-a',
+                expectedGeneration: 7,
+                targetPluginId: 'acme.caller',
+                accountLifetime,
+            },
+            isCurrent: () => true,
+            present,
+        });
+
+        await expect(handler(request())).resolves.toMatchObject({ kind: 'submitted' });
+        expect(present).toHaveBeenCalledOnce();
     });
 });

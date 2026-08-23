@@ -4,10 +4,12 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text } from '@/components/ui/text/Text';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { BrowserLaunchpadRow, BrowserLaunchpadSection } from '@/sync/domains/browser/targets';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import { selectBrowserTargetAdapter } from '@/sync/domains/browser/adapters/selection';
+import { resolveExternalUrlTargetFromInput } from '@/sync/domains/browser/shell';
 import type {
     BrowserPlatformV1,
     BrowserProfileV1,
@@ -21,8 +23,8 @@ import {
 } from '@/sync/domains/browser/policy/evaluate';
 import { t } from '@/text';
 
+import { BrowserUrlField } from '../BrowserUrlField';
 import { BrowserTargetCard } from './BrowserTargetCard';
-import { BrowserLaunchpadUrlEntry } from './BrowserLaunchpadUrlEntry';
 
 export type BrowserLaunchpadOpenTargetOptions = Readonly<{
     platform: BrowserPlatformV1;
@@ -46,34 +48,24 @@ const SECTION_ORDER: readonly BrowserLaunchpadSection[] = [
 ];
 
 const stylesheet = StyleSheet.create((theme) => ({
-    root: {
-        flex: 1,
-        minHeight: 0,
+    list: {
         backgroundColor: theme.colors.surface.base,
+    },
+    listContent: {
         paddingBottom: 16,
+    },
+    urlEntry: {
+        marginHorizontal: 16,
+        marginTop: 12,
     },
     banner: {
         marginHorizontal: 16,
         marginTop: 12,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        overflow: 'hidden',
     },
-    guidance: {
-        marginHorizontal: 16,
-        marginTop: 16,
-        gap: 4,
-    },
-    guidanceTitle: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: theme.colors.text.primary,
-    },
-    guidanceBody: {
-        fontSize: 13,
-        color: theme.colors.text.secondary,
+    terminalState: {
+        // The card owns its own centring; this only gives it something to centre inside when the
+        // list is otherwise empty.
+        minHeight: 240,
     },
 }));
 
@@ -190,6 +182,12 @@ export function BrowserLaunchpad(props: Readonly<{
      * sibling tab. `onOpenTarget` (new tab) stays reserved for external-surface opens.
      */
     onNavigateInPlace?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    /**
+     * Fires the instant a row is committed, with the row's horizontal centre in shell coordinates.
+     * The shell uses it to hand the launchpad off to the load-progress sweep so the page does not
+     * simply cut in. Purely presentational; navigation still goes through the seams above.
+     */
+    onRowHandoff?: (input: Readonly<{ rowId: string; originX: number | null }>) => void;
     testID?: string;
 }>): React.ReactElement {
     const testID = props.testID ?? 'browser-launchpad';
@@ -212,13 +210,16 @@ export function BrowserLaunchpad(props: Readonly<{
         ],
     );
     const grouped = React.useMemo(() => rowsBySection(resolvedRows), [resolvedRows]);
-    const handleOpenTarget = React.useCallback((row: ResolvedBrowserLaunchpadRow) => {
+    const handleOpenTarget = React.useCallback((row: ResolvedBrowserLaunchpadRow, originX: number | null) => {
         if (!row.target || row.disabledReason) {
             return;
         }
         const open = row.launchMode === 'currentView'
             ? props.onNavigateInPlace
             : props.onOpenTarget;
+        if (row.launchMode === 'currentView') {
+            props.onRowHandoff?.({ rowId: row.id, originX });
+        }
         open?.(row.target, {
             platform: props.platform,
             ...(row.currentUrl ? { currentUrl: row.currentUrl } : {}),
@@ -226,69 +227,143 @@ export function BrowserLaunchpad(props: Readonly<{
             ...(row.targetPolicyDecision ? { targetPolicyDecision: row.targetPolicyDecision } : {}),
             ...(row.desktopWebViewAvailability ? { desktopWebViewAvailability: row.desktopWebViewAvailability } : {}),
         });
-    }, [props.onNavigateInPlace, props.onOpenTarget, props.platform]);
+    }, [props.onNavigateInPlace, props.onOpenTarget, props.onRowHandoff, props.platform]);
 
-    const showGuidance = resolvedRows.length === 0 && props.refreshStatus !== 'refreshing';
+    // The URL entry submits a normalized http(s) URL; turning it into a target is the launchpad's
+    // job because the seam it delegates to is target-shaped. One normalizer, one target builder.
+    const handleSubmitUrl = React.useCallback((url: string) => {
+        const target = resolveExternalUrlTargetFromInput(url);
+        if (!target) return;
+        // Navigate the CURRENT tab in place (turn the new-tab page INTO the page) — never a sibling tab.
+        props.onNavigateInPlace?.(target, { platform: props.platform });
+    }, [props.onNavigateInPlace, props.platform]);
+
+    const hasRows = resolvedRows.length > 0;
 
     return (
-        <View testID={testID} style={stylesheet.root}>
-            <BrowserLaunchpadUrlEntry
-                testID={`${testID}-url-entry`}
-                platform={props.platform}
-                onNavigateInPlace={props.onNavigateInPlace}
+        <ItemList
+            testID={testID}
+            style={stylesheet.list}
+            containerStyle={stylesheet.listContent}
+            keyboardShouldPersistTaps="handled"
+        >
+            <View style={stylesheet.urlEntry}>
+                <BrowserUrlField
+                    testID={`${testID}-url-entry`}
+                    density="panel"
+                    trailingAction="go"
+                    clearOnSubmit
+                    value=""
+                    disabled={!props.onNavigateInPlace}
+                    label={t('browserLaunchpad.urlEntry.label')}
+                    placeholder={t('browserLaunchpad.urlEntry.placeholder')}
+                    accessibilityLabel={t('browserLaunchpad.urlEntry.label')}
+                    onSubmitUrl={handleSubmitUrl}
+                />
+            </View>
+
+            {!hasRows ? (
+                <View style={stylesheet.terminalState}>
+                    {props.refreshStatus === 'refreshing' ? (
+                        <SurfaceStateCard
+                            testID={`${testID}-refreshing`}
+                            kind="loading"
+                            title={t('browserLaunchpad.refreshing')}
+                            accessibilitySemantics="status"
+                        />
+                    ) : props.refreshStatus === 'error' ? (
+                        <SurfaceStateCard
+                            testID={`${testID}-error`}
+                            kind="error"
+                            title={t('browserLaunchpad.error.title')}
+                            {...(props.refreshError
+                                ? { reason: t('browserLaunchpad.error.subtitle', { reason: props.refreshError }) }
+                                : {})}
+                            accessibilitySemantics="alert"
+                        />
+                    ) : (
+                        <SurfaceStateCard
+                            testID={`${testID}-guidance`}
+                            kind="empty"
+                            iconName="globe"
+                            title={t('browserLaunchpad.guidance.title')}
+                            reason={t('browserLaunchpad.guidance.body')}
+                        />
+                    )}
+                </View>
+            ) : (
+                <>
+                    {props.refreshStatus !== 'idle' ? (
+                        <View style={stylesheet.banner}>
+                            <ItemGroup>
+                                <BrowserLaunchpadRefreshBanner
+                                    testID={testID}
+                                    status={props.refreshStatus}
+                                    refreshError={props.refreshError ?? null}
+                                />
+                            </ItemGroup>
+                        </View>
+                    ) : null}
+                    {SECTION_ORDER.map((section) => {
+                        const rows = grouped.get(section) ?? [];
+                        if (rows.length === 0) {
+                            return null;
+                        }
+                        return (
+                            <ItemGroup
+                                key={section}
+                                title={titleForSection(section)}
+                                selectableItemCountOverride={rows.length}
+                            >
+                                {rows.map((row, index) => (
+                                    <BrowserTargetCard
+                                        key={row.id}
+                                        row={row}
+                                        entranceIndex={index}
+                                        testID={`${testID}-card:${row.id}`}
+                                        onOpenTarget={handleOpenTarget}
+                                        openDisabled={row.launchMode === 'currentView'
+                                            ? !props.onNavigateInPlace
+                                            : !props.onOpenTarget}
+                                    />
+                                ))}
+                            </ItemGroup>
+                        );
+                    })}
+                </>
+            )}
+        </ItemList>
+    );
+}
+
+/**
+ * The refresh state WHILE rows are already on screen. It is an informational banner rather than a
+ * {@link SurfaceStateCard} on purpose: the pane is not in a terminal state, and replacing live rows
+ * with a card would flash away hydrated content the user is reading (`apps/ui/AGENTS.md`
+ * "Preserve last-known-good UI during refresh").
+ */
+function BrowserLaunchpadRefreshBanner(props: Readonly<{
+    testID: string;
+    status: 'refreshing' | 'error';
+    refreshError: string | null;
+}>): React.ReactElement {
+    if (props.status === 'refreshing') {
+        return (
+            <Item
+                testID={`${props.testID}-refreshing`}
+                title={t('browserLaunchpad.refreshing')}
+                mode="info"
+                showChevron={false}
             />
-            {props.refreshStatus === 'refreshing' ? (
-                <View style={stylesheet.banner}>
-                    <Item
-                        testID={`${testID}-refreshing`}
-                        title={t('browserLaunchpad.refreshing')}
-                        mode="info"
-                        showChevron={false}
-                    />
-                </View>
-            ) : null}
-            {props.refreshStatus === 'error' ? (
-                <View style={stylesheet.banner}>
-                    <Item
-                        testID={`${testID}-error`}
-                        title={t('browserLaunchpad.error.title')}
-                        subtitle={props.refreshError ? t('browserLaunchpad.error.subtitle', { reason: props.refreshError }) : undefined}
-                        mode="info"
-                        showChevron={false}
-                    />
-                </View>
-            ) : null}
-            {showGuidance ? (
-                <View testID={`${testID}-guidance`} style={stylesheet.guidance}>
-                    <Text style={stylesheet.guidanceTitle}>{t('browserLaunchpad.guidance.title')}</Text>
-                    <Text style={stylesheet.guidanceBody}>{t('browserLaunchpad.guidance.body')}</Text>
-                </View>
-            ) : null}
-            {SECTION_ORDER.map((section) => {
-                const rows = grouped.get(section) ?? [];
-                if (rows.length === 0) {
-                    return null;
-                }
-                return (
-                    <ItemGroup
-                        key={section}
-                        title={titleForSection(section)}
-                        selectableItemCountOverride={rows.length}
-                    >
-                        {rows.map((row) => (
-                            <BrowserTargetCard
-                                key={row.id}
-                                row={row}
-                                testID={`${testID}-card:${row.id}`}
-                                onOpenTarget={handleOpenTarget}
-                                openDisabled={row.launchMode === 'currentView'
-                                    ? !props.onNavigateInPlace
-                                    : !props.onOpenTarget}
-                            />
-                        ))}
-                    </ItemGroup>
-                );
-            })}
-        </View>
+        );
+    }
+    return (
+        <Item
+            testID={`${props.testID}-error`}
+            title={t('browserLaunchpad.error.title')}
+            subtitle={props.refreshError ? t('browserLaunchpad.error.subtitle', { reason: props.refreshError }) : undefined}
+            mode="info"
+            showChevron={false}
+        />
     );
 }

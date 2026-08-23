@@ -10,8 +10,9 @@ import {
     type ExternalSessionsKnownAgent,
     useExternalSessionsIntegrationController,
 } from './externalSessionsIntegrationController';
-import type {
-    ExternalSessionsIntegrationDescriptor,
+import {
+    resolveExternalSessionsIntegrationActions,
+    type ExternalSessionsIntegrationDescriptor,
 } from './externalSessionsIntegrationModel';
 
 const agent = {
@@ -405,6 +406,147 @@ describe('externalSessionsIntegrationController', () => {
             state: 'installed_enabled',
             installationId: 'installation-current',
         });
+    });
+
+    it('keeps every other row actionable while one row is being rechecked', async () => {
+        const agentB = { pluginId: 'com.example.external-agent', localId: 'assistant-b' } as const;
+        const rechecked = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [
+                    { agent, status: { state: 'installed_enabled', installationId: 'installation-a' } },
+                    { agent: agentB, status: { state: 'installed_enabled', installationId: 'installation-b' } },
+                ],
+                nextCursor: null,
+                diagnostics: [],
+            })
+            .mockImplementationOnce(async () => await rechecked.promise);
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable: vi.fn(),
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                knownAgents: [
+                    { agent, agentTitle: 'Assistant A' },
+                    { agent: agentB, agentTitle: 'Assistant B' },
+                ],
+                transport,
+            }),
+        );
+        expect(hook.getCurrent().integrations).toHaveLength(2);
+        const rowA = hook.getCurrent().integrations![0]!;
+        const rowB = hook.getCurrent().integrations![1]!;
+
+        let recheck!: Promise<void>;
+        act(() => {
+            recheck = hook.getCurrent().operations!.checkAgain(rowA);
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+        await flushHookEffects();
+
+        // Rechecking one installation is row-local work. The inventory it belongs to is
+        // unchanged, so the OTHER rows keep their actions instead of being emptied by a
+        // global loading state.
+        expect(hook.getCurrent().inventoryState.status).toBe('ready');
+        expect(hook.getCurrent().operations).not.toBeNull();
+        expect(resolveExternalSessionsIntegrationActions(rowB, hook.getCurrent().operations))
+            .toEqual(['disable', 'uninstall', 'check_again']);
+
+        rechecked.resolve({
+            ok: false,
+            diagnostic: { code: 'listener_unavailable', retryable: true },
+        });
+        // A failed row-local recheck surfaces through that row's own action, not by
+        // retiring the whole inventory behind a global retry.
+        await act(async () => {
+            await expect(recheck).rejects.toThrow('listener_unavailable');
+        });
+        expect(hook.getCurrent().inventoryState.status).toBe('ready');
+        expect(hook.getCurrent().operations).not.toBeNull();
+        expect(resolveExternalSessionsIntegrationActions(rowB, hook.getCurrent().operations))
+            .toEqual(['disable', 'uninstall', 'check_again']);
+        expect(hook.getCurrent().integrations).toHaveLength(2);
+
+        await hook.unmount();
+    });
+
+    it('does not let one row\'s Review and Install invalidate another row\'s in-flight preview', async () => {
+        const agentB = { pluginId: 'com.example.external-agent', localId: 'assistant-b' } as const;
+        const previewA = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [
+                    { agent, status: { state: 'not_installed' } },
+                    { agent: agentB, status: { state: 'not_installed' } },
+                ],
+                nextCursor: null,
+                diagnostics: [],
+            })
+            .mockImplementationOnce(async () => await previewA.promise)
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{ agent: agentB, status: { state: 'not_installed', installPreview: refreshedInstallPreview } }],
+                nextCursor: null,
+                diagnostics: [],
+            });
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable: vi.fn(),
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                knownAgents: [
+                    { agent, agentTitle: 'Assistant A' },
+                    { agent: agentB, agentTitle: 'Assistant B' },
+                ],
+                transport,
+            }),
+        );
+        const rowA = hook.getCurrent().integrations![0]!;
+        const rowB = hook.getCurrent().integrations![1]!;
+        const confirmA = vi.fn(async () => false);
+        const confirmB = vi.fn(async () => false);
+
+        let reviewA!: Promise<void>;
+        act(() => {
+            reviewA = hook.getCurrent().operations!.reviewAndInstall(rowA, confirmA);
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+
+        // Row B is independently pressable, so starting its review must not silently
+        // finish row A's with no confirmation, error or result.
+        await act(async () => {
+            await hook.getCurrent().operations!.reviewAndInstall(rowB, confirmB);
+        });
+        expect(confirmB).toHaveBeenCalledWith(refreshedInstallPreview);
+
+        previewA.resolve({
+            ok: true,
+            rows: [{ agent, status: { state: 'not_installed', installPreview } }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => await reviewA);
+
+        expect(confirmA).toHaveBeenCalledWith(installPreview);
+        await hook.unmount();
     });
 
     it('does not let an earlier preview result override a newer Review and Install intent', async () => {

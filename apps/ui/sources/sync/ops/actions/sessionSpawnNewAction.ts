@@ -79,9 +79,7 @@ export async function executeSessionSpawnNewAction(
     context: ActionExecutorContext,
 ): Promise<SessionSpawnNewActionResult> {
     const result = await createFrontDoorActionExecute()('session.spawn_new', input, context);
-    if (!result.ok) {
-        return result;
-    }
+    if (!result.ok) return result;
     return {
         ok: true,
         result: SessionSpawnNewResultV1Schema.parse(result.result),

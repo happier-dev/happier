@@ -425,6 +425,58 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
+    it('refuses an omitted-connection model selection when Session Provider state is unreadable', async () => {
+        // Neither an unreadable applied binding nor an unreadable persisted
+        // intent means "native". Refuse before the transition RPC and before the
+        // inactive metadata CAS rather than publishing a native selection.
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        for (const [active, metadata] of [
+            [true, {
+                agent: 'claude',
+                providerBindingV1: {
+                    v: 1,
+                    connectionId: 'pc_active',
+                    contributionKey: null,
+                    connectionRevision: 'not-a-number',
+                    model: { id: 'active-model', name: 'Active model' },
+                    protocol: 'anthropic',
+                    materialization: 'spawnEnv',
+                    compatibilityFingerprint: 'compatibility:v1:active',
+                    bindingSecurityFingerprint: 'binding-security:v1:active',
+                    displaySnapshot: {
+                        providerName: 'Provider',
+                        connectionName: 'Active',
+                        connectionRole: 'named',
+                        connectionDisplayNameMode: 'custom',
+                    },
+                },
+            }],
+            [false, {
+                agent: 'claude',
+                modelSelectionIntentV1: { selection: { providerConnectionId: 'pc_work' } },
+            }],
+        ] as const) {
+            storageState.current = {
+                settings: { promptExternalLinksV1: { v: 1, links: [] } },
+                applySettingsLocal: applySettingsLocalMock,
+                sessions: { session_1: { active, metadata } },
+            };
+            createDefaultActionExecutor();
+
+            await expect(capturedDeps.current.sessionModelSet({
+                sessionId: 'session_1',
+                modelId: 'next-model',
+                serverId: 'server_1',
+            })).resolves.toEqual({
+                ok: false,
+                errorCode: 'model_selection_session_provider_state_unreadable',
+                error: 'model_selection_session_provider_state_unreadable',
+            });
+            expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+            expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+        }
+    });
+
     it('reroutes an inactive snapshot through the live transition owner after the conditioned metadata CAS observes activation', async () => {
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         storageState.current = {
@@ -1092,8 +1144,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                 context: {},
             })).resolves.toMatchObject({
                 v: 1,
-                actionId: 'browser.navigate',
-                status: 'accepted',
+                status: 'dispatched',
             });
             expect(state.viewsById[viewId]?.pendingUrl).toBe('https://preview.happier.test/registered');
         } finally {

@@ -167,6 +167,114 @@ function cloneFile(file: PluginUiArtifactFileV1): PluginUiArtifactFileV1 {
     return Object.freeze({ ...file });
 }
 
+export type PluginArtifactVerifiedSourceFile = Readonly<{
+    file: PluginUiArtifactFileV1;
+    bytes: Uint8Array;
+}>;
+
+export type PluginArtifactVerifiedSourceResult =
+    | Readonly<{
+        kind: 'available';
+        source: PluginArtifactSourceCandidate;
+        files: readonly PluginArtifactVerifiedSourceFile[];
+    }>
+    | Readonly<{ kind: 'notCurrent' }>
+    | Readonly<{ kind: 'unavailable'; integrityFailed: boolean }>;
+
+/**
+ * The one verified-source materializer. It walks already-ordered candidates,
+ * reads every declared file, and admits a source only when each file and the
+ * complete declared file set pass canonical integrity. It owns no lease,
+ * lifetime, cache custody, or result vocabulary: callers keep their own
+ * currentness owner and map the outcome to their own typed codes.
+ */
+export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
+    artifact: PluginSelectedArtifactIdentity;
+    graph: PluginUiArtifactsManifestEntryV1;
+    /** Already ordered by the caller's admitted source order. */
+    sources: readonly PluginArtifactSourceCandidate[];
+    isCurrent: () => boolean;
+    /** Supplied only when the Account-hosted source needs its current link. */
+    accountHostedArtifactId?: string;
+}>): Promise<PluginArtifactVerifiedSourceResult> {
+    let sawIntegrityFailure = false;
+    for (const source of input.sources) {
+        const materialized: PluginArtifactVerifiedSourceFile[] = [];
+        let sourceUsable = true;
+        for (const declared of input.graph.files) {
+            if (!input.isCurrent()) return Object.freeze({ kind: 'notCurrent' });
+            let bytes: Uint8Array | null;
+            try {
+                bytes = await source.readFile({
+                    artifact: input.artifact,
+                    relativePath: declared.relativePath,
+                    ...(source.kind === 'accountHosted' && input.accountHostedArtifactId
+                        ? { accountHostedArtifactId: input.accountHostedArtifactId }
+                        : {}),
+                });
+            } catch {
+                bytes = null;
+            }
+            if (!input.isCurrent()) return Object.freeze({ kind: 'notCurrent' });
+            if (!bytes) {
+                sourceUsable = false;
+                break;
+            }
+            if (bytes.byteLength !== declared.byteSize) {
+                sawIntegrityFailure = true;
+                sourceUsable = false;
+                break;
+            }
+            const integrity = verifyPluginUiArtifactBytesIntegrityV1({
+                bytes,
+                integrity: {
+                    digest: declared.digest,
+                    pluginId: input.artifact.pluginId,
+                    contributionId: input.artifact.contributionId,
+                    artifactKind: artifactKindFor(input.artifact.tier),
+                },
+            });
+            if (!integrity.ok) {
+                sawIntegrityFailure = true;
+                sourceUsable = false;
+                break;
+            }
+            materialized.push(Object.freeze({ file: cloneFile(declared), bytes: new Uint8Array(bytes) }));
+        }
+        if (!sourceUsable) {
+            await discardInvalidPersistentSource(source);
+            continue;
+        }
+        const setIntegrity = verifyPluginUiArtifactFileSetIntegrityV1({
+            files: materialized.map(({ file, bytes }) => ({ relativePath: file.relativePath, bytes })),
+            integrity: {
+                digest: input.artifact.digest,
+                pluginId: input.artifact.pluginId,
+                contributionId: input.artifact.contributionId,
+                artifactKind: artifactKindFor(input.artifact.tier),
+            },
+        });
+        if (!setIntegrity.ok) {
+            sawIntegrityFailure = true;
+            await discardInvalidPersistentSource(source);
+            continue;
+        }
+        return Object.freeze({
+            kind: 'available',
+            source,
+            files: Object.freeze(materialized),
+        });
+    }
+    return Object.freeze({ kind: 'unavailable', integrityFailed: sawIntegrityFailure });
+}
+
+async function discardInvalidPersistentSource(source: PluginArtifactSourceCandidate): Promise<void> {
+    if (source.kind !== 'persistentCache') return;
+    const discardInvalid = source.discardInvalid;
+    if (!discardInvalid) return;
+    await discardInvalid().catch(() => undefined);
+}
+
 /**
  * Resolves one current Artifact through the only permitted source order, fully
  * verifies its declared file graph, and returns a revocable private lease. The
@@ -243,127 +351,67 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
         isCurrent();
     });
 
-    let sawIntegrityFailure = false;
-    for (const source of sources) {
-        const materialized: Array<Readonly<{ file: PluginUiArtifactFileV1; bytes: Uint8Array }>> = [];
-        let sourceUsable = true;
-        for (const declared of graph.data.files) {
-            if (!isCurrent()) {
-                return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
-            }
-            let bytes: Uint8Array | null;
-            try {
-                bytes = await source.readFile({
-                    artifact,
-                    relativePath: declared.relativePath,
-                    ...(source.kind === 'accountHosted' && admission.artifact.accountArtifactId
-                        ? { accountHostedArtifactId: admission.artifact.accountArtifactId }
-                        : {}),
-                });
-            } catch {
-                bytes = null;
-            }
-            if (!isCurrent()) {
-                return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
-            }
-            if (!bytes) {
-                sourceUsable = false;
-                break;
-            }
-            if (bytes.byteLength !== declared.byteSize) {
-                sawIntegrityFailure = true;
-                sourceUsable = false;
-                break;
-            }
-            const integrity = verifyPluginUiArtifactBytesIntegrityV1({
-                bytes,
-                integrity: {
-                    digest: declared.digest,
-                    pluginId: artifact.pluginId,
-                    contributionId: artifact.contributionId,
-                    artifactKind: artifactKindFor(artifact.tier),
-                },
-            });
-            if (!integrity.ok) {
-                sawIntegrityFailure = true;
-                sourceUsable = false;
-                break;
-            }
-            materialized.push(Object.freeze({ file: cloneFile(declared), bytes: new Uint8Array(bytes) }));
-        }
-        if (!sourceUsable) {
-            if (source.kind === 'persistentCache') {
-                const discardInvalid = source.discardInvalid;
-                if (discardInvalid) {
-                    await discardInvalid().catch(() => undefined);
-                }
-            }
-            continue;
-        }
-        const setIntegrity = verifyPluginUiArtifactFileSetIntegrityV1({
-            files: materialized.map(({ file, bytes }) => ({ relativePath: file.relativePath, bytes })),
-            integrity: {
-                digest: artifact.digest,
-                pluginId: artifact.pluginId,
-                contributionId: artifact.contributionId,
-                artifactKind: artifactKindFor(artifact.tier),
-            },
-        });
-        if (!setIntegrity.ok) {
-            sawIntegrityFailure = true;
-            if (source.kind === 'persistentCache') {
-                const discardInvalid = source.discardInvalid;
-                if (discardInvalid) {
-                    await discardInvalid().catch(() => undefined);
-                }
-            }
-            continue;
-        }
-        const files = new Map(materialized.map(({ file, bytes }) => [file.relativePath, { file, bytes }] as const));
-        const readFile = async (relativePath: string): Promise<PluginSelectedArtifactLeaseFileResult> => {
-            if (!isCurrent()) {
-                return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
-            }
-            const record = files.get(relativePath);
-            if (!record) {
-                return Object.freeze({ kind: 'unavailable', code: 'artifact_file_not_declared' });
-            }
-            return Object.freeze({
-                kind: 'available',
-                file: record.file,
-                bytes: new Uint8Array(record.bytes),
-            });
-        };
+    const materializedSource = await materializeVerifiedPluginArtifactSource({
+        artifact,
+        graph: graph.data,
+        sources,
+        isCurrent,
+        ...(admission.artifact.accountArtifactId
+            ? { accountHostedArtifactId: admission.artifact.accountArtifactId }
+            : {}),
+    });
+    if (materializedSource.kind === 'notCurrent') {
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+    }
+    if (materializedSource.kind === 'unavailable') {
+        unsubscribe?.();
+        unsubscribe = null;
         return Object.freeze({
-            kind: 'available',
-            lease: Object.freeze({
-                artifact,
-                sourceKind: source.kind,
-                artifactGraph: graph.data,
-                files: Object.freeze(graph.data.files.map(cloneFile)),
-                readFile,
-                isCurrent,
-                onRevoke: (listener: () => void) => {
-                    if (revoked) {
-                        listener();
-                        return Object.freeze({ dispose: () => {} });
-                    }
-                    revokeListeners.add(listener);
-                    return Object.freeze({
-                        dispose: () => {
-                            revokeListeners.delete(listener);
-                        },
-                    });
-                },
-                dispose: revoke,
-            }),
+            kind: 'unavailable',
+            code: materializedSource.integrityFailed
+                ? 'artifact_source_integrity_invalid'
+                : 'artifact_source_unavailable',
         });
     }
-
-    unsubscribe?.();
-    unsubscribe = null;
+    const files = new Map(materializedSource.files.map(
+        ({ file, bytes }) => [file.relativePath, { file, bytes }] as const,
+    ));
+    const readFile = async (relativePath: string): Promise<PluginSelectedArtifactLeaseFileResult> => {
+        if (!isCurrent()) {
+            return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+        }
+        const record = files.get(relativePath);
+        if (!record) {
+            return Object.freeze({ kind: 'unavailable', code: 'artifact_file_not_declared' });
+        }
+        return Object.freeze({
+            kind: 'available',
+            file: record.file,
+            bytes: new Uint8Array(record.bytes),
+        });
+    };
     return Object.freeze({
-        kind: 'unavailable',
-        code: sawIntegrityFailure ? 'artifact_source_integrity_invalid' : 'artifact_source_unavailable',
+        kind: 'available',
+        lease: Object.freeze({
+            artifact,
+            sourceKind: materializedSource.source.kind,
+            artifactGraph: graph.data,
+            files: Object.freeze(graph.data.files.map(cloneFile)),
+            readFile,
+            isCurrent,
+            onRevoke: (listener: () => void) => {
+                if (revoked) {
+                    listener();
+                    return Object.freeze({ dispose: () => {} });
+                }
+                revokeListeners.add(listener);
+                return Object.freeze({
+                    dispose: () => {
+                        revokeListeners.delete(listener);
+                    },
+                });
+            },
+            dispose: revoke,
+        }),
     });
 }

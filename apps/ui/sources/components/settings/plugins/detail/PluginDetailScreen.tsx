@@ -3,6 +3,7 @@ import { Redirect, useNavigation } from 'expo-router';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { PluginMachineExecutionOriginSelectorView } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { usePluginMachineExecutionOriginSelection } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
@@ -64,6 +65,13 @@ function PluginDetailCurrentContent(props: Readonly<{
                     onRetry={props.state.refreshPluginTruth}
                 />
             ) : null}
+            {/*
+              * Two different facts, both true at once, and neither derivable
+              * from the other: the plugin EXECUTES on the origin below, while
+              * its Settings, Secrets and lifecycle operations are ADMINISTERED
+              * on the machine selected here. Showing only the origin left the
+              * reader editing a machine the screen never named.
+              */}
             <PluginMachineExecutionOriginSelectorView
                 selection={selection}
                 testIDPrefix="settings.plugins.detail.executionOrigin"

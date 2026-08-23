@@ -1,3 +1,4 @@
+import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol';
 import type {
     InteractionTransientRequesterV1,
     PluginActionCurrentIntentRequest,
@@ -166,7 +167,7 @@ export function createPluginActionCurrentIntentHandler(input: Readonly<{
         if (outcome.status === 'declined' || outcome.status === 'userCancelled') {
             return Object.freeze({
                 status: 'rejected' as const,
-                code: 'plugin_action_current_intent_rejected',
+                code: PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
             });
         }
         return Object.freeze({

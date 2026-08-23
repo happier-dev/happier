@@ -738,6 +738,7 @@ export async function machinePluginStructuredMessageActionExecute(
     try {
         const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({
             machineId,
+            ...(opts.requestId ? { requestId: opts.requestId } : {}),
             expectedGeneration: opts.expectedGeneration,
             qualifiedActionId: opts.qualifiedActionId,
             ...(opts.input === undefined ? {} : { input: opts.input }),

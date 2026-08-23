@@ -1,4 +1,5 @@
 import {
+    createCanonicalJsonSigningInput,
     DaemonPluginReactNativeBundleCacheIdentityV1Schema,
     isExactPluginMachineMaterializationRefV1,
     isSameDaemonPluginReactNativeCrashBindingTokenV1,
@@ -150,23 +151,22 @@ export type PluginReactNativeArtifactLeaseCommonInput = Readonly<{
 export type PluginReactNativeArtifactLeaseInput =
     PluginReactNativeArtifactLeaseCommonInput & PluginReactNativeArtifactOwner;
 
+/**
+ * The canonical strict Protocol schema owns this identity's exact field set, so
+ * both sides are parsed through it and compared by canonical serialization. A
+ * hand-expanded field list would silently stop covering a new schema field, and
+ * a locally lenient expansion would let a non-conforming projection identity
+ * match a daemon identity that omits the field.
+ */
 function cacheIdentityMatches(
     left: PluginReactNativeBundleCacheIdentity,
     right: PluginReactNativeBundleCacheIdentity,
 ): boolean {
-    return left.pluginId === right.pluginId
-        && left.contributionId === right.contributionId
-        && left.artifactDigest === right.artifactDigest
-        && left.hostAppVersion === right.hostAppVersion
-        && left.hostUiApiVersion === right.hostUiApiVersion
-        && left.reactVersion === right.reactVersion
-        && left.reactNativeVersion === right.reactNativeVersion
-        && (left.expoRuntimeVersion ?? '') === (right.expoRuntimeVersion ?? '')
-        && (left.hermesVersion ?? '') === (right.hermesVersion ?? '')
-        && left.platform === right.platform
-        && left.channel === right.channel
-        && left.nativeCapabilitiesDigest === right.nativeCapabilitiesDigest
-        && left.projectionGeneration === right.projectionGeneration;
+    const parsedLeft = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(left);
+    const parsedRight = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(right);
+    if (!parsedLeft.success || !parsedRight.success) return false;
+    return createCanonicalJsonSigningInput(parsedLeft.data)
+        === createCanonicalJsonSigningInput(parsedRight.data);
 }
 
 function artifactMatchesCacheIdentity(input: Readonly<{
@@ -216,10 +216,10 @@ function persistentScopeIsCurrent(scope: PluginReactNativeArtifactLeasePersisten
 }
 
 function readPersistentFile(record: PluginUiPersistentArtifactRecord, relativePath: string): Uint8Array | null {
-    const file = record.files?.find((candidate) => candidate.relativePath === relativePath);
-    if (file) return new Uint8Array(file.bytes);
-    if (record.entryRelativePath === relativePath) return new Uint8Array(record.bytes);
-    return null;
+    // The record always carries the exact declared file graph, so its files are
+    // the only lookup; there is no entry-only record to fall back to.
+    const file = record.files.find((candidate) => candidate.relativePath === relativePath);
+    return file ? new Uint8Array(file.bytes) : null;
 }
 
 function createPersistentSource(input: Readonly<{
@@ -699,7 +699,11 @@ export async function acquirePluginReactNativeArtifactLease(
         return Object.freeze({ kind: 'unavailable', code: 'artifact_graph_mismatch' });
     }
 
-    const requiresExactDaemonCurrentness = acquired.lease.sourceKind === 'daemon' && input.daemon !== undefined;
+    // Daemon provenance gates ACQUISITION only: `createDaemonSource` proves the
+    // exact origin before every byte it hands over. Once those bytes are copied
+    // and integrity-verified into host custody, the Account lifetime, the
+    // Account's current Artifact admission, and Account cache custody are the
+    // authorities. A daemon blip must not blank verified content.
     const requiresPersistentCurrentness = input.persistent !== undefined;
     const lease = wrapLeaseCurrentness({
         lease: acquired.lease,
@@ -707,12 +711,6 @@ export async function acquirePluginReactNativeArtifactLease(
         isAdditionalCurrent: () => (
             input.accountLifetime.isCurrent()
             && (!requiresPersistentCurrentness || persistentScopeIsCurrent(input.persistent))
-            && (!requiresExactDaemonCurrentness || exactDaemonOriginIsCurrent({
-                reader: input.reader,
-                origin: input.daemon!.origin,
-                artifact: acquired.lease.artifact,
-                identity: input.cacheIdentity,
-            }))
         ),
     });
     if (!lease.isCurrent()) {

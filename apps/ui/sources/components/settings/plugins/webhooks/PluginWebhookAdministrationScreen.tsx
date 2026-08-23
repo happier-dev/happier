@@ -14,6 +14,7 @@ import {
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import {
     createPluginWebhookAdministrationHttpClient,
@@ -512,6 +513,10 @@ export const PluginWebhookAdministrationScreen = React.memo(function PluginWebho
         () => props.client ?? createPluginWebhookAdministrationHttpClient(),
         [props.client],
     );
+    // The administration API this screen reads is behind the same server
+    // feature as public ingress, so an unavailable server has nothing to
+    // administer and the read would only surface as a load failure.
+    const webhooksAvailable = useFeatureEnabled('plugins.webhooks');
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
     const [status, setStatus] = React.useState<AccountStatus | null>(null);
     const [loading, setLoading] = React.useState(true);
@@ -541,8 +546,25 @@ export const PluginWebhookAdministrationScreen = React.memo(function PluginWebho
     }, [client]);
 
     React.useEffect(() => {
+        if (!webhooksAvailable) return;
         void refresh();
-    }, [refresh]);
+    }, [refresh, webhooksAvailable]);
+
+    if (!webhooksAvailable) {
+        return (
+            <ItemList style={{ paddingTop: 0 }} testID="settings.plugins.webhooks.screen">
+                <ItemGroup title={t('settingsPlugins.webhookAdministration.title')}>
+                    <Item
+                        testID="settings.plugins.webhooks.unavailable"
+                        title={t('settingsPlugins.webhookAdministration.unavailableTitle')}
+                        subtitle={t('settingsPlugins.webhookAdministration.unavailableSubtitle')}
+                        mode="info"
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            </ItemList>
+        );
+    }
 
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings.plugins.webhooks.screen">

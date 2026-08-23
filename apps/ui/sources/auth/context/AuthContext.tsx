@@ -27,7 +27,7 @@ export type AuthCredentialLifecycleResult =
     | Readonly<{ kind: 'recovery_failed' }>;
 
 type AuthLogoutOptions = Readonly<{
-    beforeMutation?: () => void;
+    beforeMutation?: () => void | Promise<void>;
 }>;
 
 interface AuthContextType {
@@ -139,7 +139,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         if (guard.kind !== 'allowed') {
             return guard;
         }
-        options?.beforeMutation?.();
+        await options?.beforeMutation?.();
         trackLogout();
         // Preserve device-local flags across logout — the user is signing out of
         // an account but the device itself has still seen the brand hero and

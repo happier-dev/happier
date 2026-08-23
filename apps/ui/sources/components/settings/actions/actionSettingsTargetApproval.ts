@@ -1,24 +1,33 @@
-import type { ActionId, ActionsSettingsV1 } from '@happier-dev/protocol';
+import type { ActionSettingsActionId, ActionsSettingsV1 } from '@happier-dev/protocol';
 
 import { normalizeActionsSettings } from './normalizeActionsSettings';
-import { getActionSettingsTargetDefinition, type ActionSettingsSurface, type ActionSettingsTargetId } from './actionSettingsTargetDefinitions';
+import {
+    resolveActionSettingsTargetDefinition,
+    type ActionSettingsSurface,
+    type ActionSettingsTargetDefinition,
+    type ActionSettingsTargetId,
+} from './actionSettingsTargetDefinitions';
 import {
     getMutableActionSettingsEntry,
     sortUniqueActionSettingsValues,
     writeActionSettingsEntry,
 } from './actionSettingsTargetSelection';
 
-export function isActionSettingsApprovalAction(actionId: ActionId): boolean {
+export function isActionSettingsApprovalAction(actionId: ActionSettingsActionId): boolean {
     return actionId === 'approval.request.create' || actionId === 'approval.request.decide';
 }
 
-export function resolveActionSettingsApprovalSurface(actionId: ActionId, targetId: ActionSettingsTargetId): ActionSettingsSurface | null {
-    const target = getActionSettingsTargetDefinition(actionId, targetId);
-    if (target.kind === 'surface') {
-        return target.surface;
+export function resolveActionSettingsApprovalSurface(
+    actionId: ActionSettingsActionId,
+    targetId: ActionSettingsTargetId,
+    target?: ActionSettingsTargetDefinition,
+): ActionSettingsSurface | null {
+    const resolvedTarget = resolveActionSettingsTargetDefinition({ actionId, targetId, target });
+    if (resolvedTarget.kind === 'surface') {
+        return resolvedTarget.surface;
     }
 
-    if (target.kind === 'placement' && target.placement === 'slash_command') {
+    if (resolvedTarget.kind === 'placement' && resolvedTarget.placement === 'slash_command') {
         return 'ui';
     }
 
@@ -27,8 +36,9 @@ export function resolveActionSettingsApprovalSurface(actionId: ActionId, targetI
 
 export function getActionTargetApprovalRequired(params: Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
 }>): boolean {
     const normalizedSettings = normalizeActionsSettings(params.settings);
     const entry = normalizedSettings.actions[params.actionId];
@@ -36,7 +46,7 @@ export function getActionTargetApprovalRequired(params: Readonly<{
         return false;
     }
 
-    const surface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId);
+    const surface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId, params.target);
     if (!surface) {
         return false;
     }
@@ -46,13 +56,14 @@ export function getActionTargetApprovalRequired(params: Readonly<{
 
 export function setActionTargetApprovalRequired(params: Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
     approvalRequired: boolean;
 }>): ActionsSettingsV1 {
     const normalizedSettings = normalizeActionsSettings(params.settings);
     const entry = getMutableActionSettingsEntry(normalizedSettings, params.actionId);
-    const surface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId);
+    const surface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId, params.target);
     if (!surface) {
         return normalizedSettings;
     }

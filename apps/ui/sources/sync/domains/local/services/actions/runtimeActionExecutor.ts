@@ -11,6 +11,7 @@ import {
     redactLocalServicePublicPreviewCreateResponseForAgentEgress,
     redactLocalServicePublicPreviewRevokeResponseForAgentEgress,
     redactLocalServicePublicPreviewSnapshotForAgentEgress,
+    resolveLocalServiceActionKindForRuntimeActionId,
     resolveRuntimeActionExecutionFamily,
     type LocalServicePreviewSnapshotV1,
     type LocalServicePublicPreviewSnapshotV1,
@@ -598,7 +599,12 @@ export function createLocalServicesRuntimeActionExecutor(
 
         if (args.actionId.startsWith('localServices.actions.')) {
             const request = LocalServiceActionRequestV1Schema.safeParse(parsed.input);
-            if (!request.success) return invalidParametersResult;
+            if (
+                !request.success
+                || resolveLocalServiceActionKindForRuntimeActionId(args.actionId) !== request.data.action
+            ) {
+                return invalidParametersResult;
+            }
             const result = await executeLocalServiceAction({
                 request: request.data,
                 serverId,

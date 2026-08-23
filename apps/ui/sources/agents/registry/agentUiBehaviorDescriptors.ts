@@ -6,7 +6,7 @@ import { resolveSessionModelSelectionDisposition } from '@/sync/domains/models/r
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
-import { tLoose } from '@/text';
+import { tLoose, type TranslationKey } from '@/text';
 import {
     isSupportedRuntimeDescriptorProviderId,
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
@@ -25,7 +25,8 @@ import type {
     AgentTranscriptStorageMode,
     AgentUiBehavior,
 } from './registryUiBehavior';
-import { resolveFirstPartyUiActionChip, resolveFirstPartyUiComponent } from './componentAllowlist';
+import { resolveFirstPartyUiComponent } from './componentAllowlist';
+import { createBooleanOptionActionChip } from './agentUiBehavior/booleanOptionActionChip';
 import {
     createUiProjectionDiagnostic,
     isRecord,
@@ -77,10 +78,24 @@ type DescriptorCondition =
     | Readonly<{ all: readonly DescriptorCondition[] }>
     | Readonly<{ any: readonly DescriptorCondition[] }>;
 
+type BooleanOptionChipDescriptor = Readonly<{
+    kind: 'booleanOption';
+    optionStateKey: string;
+    iconName: string;
+    onLabelKey: string;
+    offLabelKey: string;
+}>;
+
 type ComponentSlotDescriptor = Readonly<{
     id: string;
     slot: string;
-    componentId: string;
+    componentId?: string;
+    /**
+     * The declared half of a composer action chip. The host owns the control,
+     * so an Agent declares what it edits and what it is called rather than
+     * naming a host component.
+     */
+    chip?: BooleanOptionChipDescriptor;
     props?: Readonly<{
         teamIds?: Readonly<{
             kind: 'subagentGroupKeys';
@@ -99,6 +114,13 @@ type ComponentSlotDescriptor = Readonly<{
 
 type ComponentSlotsDescriptor = Readonly<{
     slots?: readonly ComponentSlotDescriptor[];
+}>;
+
+type AgentOptionDescriptor = Readonly<{
+    key: string;
+    kind: 'boolean';
+    /** Travel to the daemon as a session config option under the same id. */
+    spawnConfigOption?: boolean;
 }>;
 
 type SessionConfigOptionOverrideSource = Readonly<{
@@ -134,6 +156,23 @@ type NormalizedContextWindowModelRule = Readonly<{
 }>;
 
 export type PluginUiBehaviorDescriptor = Readonly<{
+    /**
+     * Opt-in to the host's attached-terminal viewer. Serviceability is a host
+     * fact the daemon publishes for whichever Agent runs inside a terminal
+     * host, so this declares participation, never the decision.
+     */
+    attachedSessionTerminal?: Readonly<{
+        supported?: boolean;
+    }>;
+    /**
+     * Opt-in to the host's pending-input custody presentation, driven by the
+     * `pendingInputInterruptAndRunLocalId` capability any Agent can publish
+     * through the public SDK runtime context.
+     */
+    pendingDelivery?: Readonly<{
+        custodyLabelKey?: string;
+        interruptAndRun?: boolean;
+    }>;
     guidance?: Readonly<{
         includeInSessionGettingStartedCliExamples?: boolean;
     }>;
@@ -186,6 +225,13 @@ export type PluginUiBehaviorDescriptor = Readonly<{
         transcriptStorageModes?: readonly AgentTranscriptStorageMode[];
         transcriptStorageModesByBackendMode?: Readonly<Record<string, readonly AgentTranscriptStorageMode[]>>;
         canSelectWithoutDetectedCli?: boolean;
+        /**
+         * Composer-owned new-session option state an Agent understands. The host owns
+         * the option-state store, the chip that edits it, and the spawn envelope; the
+         * Agent only declares which keys exist and which ones travel to the daemon as
+         * session config options.
+         */
+        agentOptions?: readonly AgentOptionDescriptor[];
     }>;
     payload?: Readonly<{
         spawnSessionExtras?: PayloadDescriptor;
@@ -195,6 +241,13 @@ export type PluginUiBehaviorDescriptor = Readonly<{
             values?: readonly string[];
         }>;
         environmentVariables?: unknown;
+        /**
+         * The declared half of an Agent's spawn/resume transport: its backend-mode
+         * vocabulary and the runtime-handle fields that travel with it. The host owns
+         * the canonical `runtimeDescriptorV1` shape and reads incoming descriptors
+         * through the protocol-generated canonical reader.
+         */
+        backendTransport?: unknown;
     }>;
     externalSessions?: unknown;
     sessionHandoff?: unknown;
@@ -609,12 +662,102 @@ function mergePayloadBehavior(
     a: AgentUiBehavior['payload'] | undefined,
     b: AgentUiBehavior['payload'] | undefined,
 ): AgentUiBehavior['payload'] | undefined {
-    return a || b ? { ...(a ?? {}), ...(b ?? {}) } : undefined;
+    if (!a && !b) return undefined;
+    const merged = { ...(a ?? {}), ...(b ?? {}) };
+    // Several declarations can contribute spawn extras (config-option state and
+    // backend-mode extras are independent). A shallow merge would silently drop
+    // whichever one was declared first, so the spawn envelope is composed here,
+    // at the one place payload behaviors meet.
+    if (a?.buildSpawnSessionExtras && b?.buildSpawnSessionExtras) {
+        merged.buildSpawnSessionExtras = (opts) => {
+            const first = a.buildSpawnSessionExtras!(opts);
+            const second = b.buildSpawnSessionExtras!({
+                ...opts,
+                sessionConfigOptionOverrides:
+                    first.sessionConfigOptionOverrides ?? opts.sessionConfigOptionOverrides ?? null,
+            });
+            return { ...first, ...second };
+        };
+    }
+    return merged;
+}
+
+function readAgentOptionDescriptors(
+    value: unknown,
+    diagnostics: UiProjectionDiagnostic[],
+): readonly AgentOptionDescriptor[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR',
+            'newSession.agentOptions',
+            'Agent option descriptors must be declared as an array.',
+        ));
+        return [];
+    }
+    return value.flatMap((entry, index) => {
+        const key = isRecord(entry) ? readString(entry.key) : null;
+        if (!key || !isRecord(entry) || entry.kind !== 'boolean') {
+            diagnostics.push(createUiProjectionDiagnostic(
+                'A16X1_MALFORMED_DESCRIPTOR',
+                `newSession.agentOptions.${index}`,
+                'Agent option descriptors require a non-empty key and a supported kind.',
+            ));
+            return [];
+        }
+        return [{
+            key,
+            kind: 'boolean' as const,
+            ...(entry.spawnConfigOption === true ? { spawnConfigOption: true } : {}),
+        }];
+    });
+}
+
+/**
+ * Reads the declared new-session option state the composer holds for this Agent.
+ * The host normalizes every declared key so a spawn payload never depends on
+ * whether the user touched the control.
+ */
+function createAgentOptionsNewSessionBehavior(
+    options: readonly AgentOptionDescriptor[],
+): AgentUiBehavior['newSession'] | undefined {
+    if (options.length === 0) return undefined;
+    return {
+        buildNewSessionOptions: ({ agentOptionState }) => Object.fromEntries(
+            options.map((option) => [option.key, agentOptionState?.[option.key] === true]),
+        ),
+    };
+}
+
+function createAgentOptionsPayloadBehavior(
+    options: readonly AgentOptionDescriptor[],
+): AgentUiBehavior['payload'] | undefined {
+    const spawnOptions = options.filter((option) => option.spawnConfigOption === true);
+    if (spawnOptions.length === 0) return undefined;
+    return {
+        buildSpawnSessionExtras: ({ newSessionOptions, sessionConfigOptionOverrides, updatedAt }) => {
+            const declared = newSessionOptions ?? {};
+            const configOptions = Object.fromEntries(
+                spawnOptions
+                    .filter((option) => Object.prototype.hasOwnProperty.call(declared, option.key))
+                    .map((option) => [option.key, declared[option.key] === true] as const),
+            );
+            if (Object.keys(configOptions).length === 0) return {};
+            return {
+                sessionConfigOptionOverrides: mergeSpawnConfigOptionAliases({
+                    sessionConfigOptionOverrides: sessionConfigOptionOverrides ?? undefined,
+                    configOptions,
+                    updatedAt,
+                }),
+            };
+        },
+    };
 }
 
 function createPayloadBehavior(
     descriptor: PluginUiBehaviorDescriptor,
     diagnostics: UiProjectionDiagnostic[],
+    agentOptions: readonly AgentOptionDescriptor[],
 ): AgentUiBehavior['payload'] | undefined {
     const spawnSessionExtras = normalizePayloadDescriptor(descriptor.payload?.spawnSessionExtras);
     const staticPayload = (() => {
@@ -638,7 +781,10 @@ function createPayloadBehavior(
         ? createSessionExtrasPayloadBehavior(sessionExtrasDescriptor)
         : undefined;
 
-    return mergePayloadBehavior(staticPayload, sessionExtrasPayload);
+    return mergePayloadBehavior(
+        mergePayloadBehavior(staticPayload, createAgentOptionsPayloadBehavior(agentOptions)),
+        sessionExtrasPayload,
+    );
 }
 
 function readFiniteNumber(value: unknown): number | null {
@@ -883,6 +1029,8 @@ function hasNoExecuteBehaviorFields(value: Readonly<Record<string, unknown>>): b
     const components = isRecord(value.components) ? value.components : null;
     const hasComponentSlots = Array.isArray(components?.slots) && components.slots.length > 0;
     return value.guidance != null
+        || value.attachedSessionTerminal != null
+        || value.pendingDelivery != null
         || value.mcpServers != null
         || value.permissions != null
         || value.workState != null
@@ -900,6 +1048,17 @@ function hasNoExecuteBehaviorFields(value: Readonly<Record<string, unknown>>): b
 function mergeDescriptorBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     return {
         ...(a.guidance || b.guidance ? { guidance: { ...(a.guidance ?? {}), ...(b.guidance ?? {}) } } : {}),
+        ...(a.attachedSessionTerminal || b.attachedSessionTerminal
+            ? {
+                attachedSessionTerminal: {
+                    ...(a.attachedSessionTerminal ?? {}),
+                    ...(b.attachedSessionTerminal ?? {}),
+                },
+            }
+            : {}),
+        ...(a.pendingDelivery || b.pendingDelivery
+            ? { pendingDelivery: { ...(a.pendingDelivery ?? {}), ...(b.pendingDelivery ?? {}) } }
+            : {}),
         ...(a.mcpServers || b.mcpServers ? { mcpServers: { ...(a.mcpServers ?? {}), ...(b.mcpServers ?? {}) } } : {}),
         ...(a.permissions || b.permissions
             ? {
@@ -1055,6 +1214,34 @@ function createSessionSubagentsBehaviorFromComponents(
     };
 }
 
+function readBooleanOptionChipDescriptor(
+    slot: ComponentSlotDescriptor,
+    diagnostics: UiProjectionDiagnostic[],
+): BooleanOptionChipDescriptor | null {
+    const chip = slot.chip;
+    if (!isRecord(chip) || chip.kind !== 'booleanOption') {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR',
+            'components.slots.chip',
+            `Unsupported action chip declaration for slot '${readString(slot.id) ?? ''}'.`,
+        ));
+        return null;
+    }
+    const optionStateKey = readString(chip.optionStateKey);
+    const iconName = readString(chip.iconName);
+    const onLabelKey = readString(chip.onLabelKey);
+    const offLabelKey = readString(chip.offLabelKey);
+    if (!optionStateKey || !iconName || !onLabelKey || !offLabelKey) {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR',
+            'components.slots.chip',
+            'Boolean option chips require an option state key, icon name, and both label keys.',
+        ));
+        return null;
+    }
+    return { kind: 'booleanOption', optionStateKey, iconName, onLabelKey, offLabelKey };
+}
+
 function createNewSessionActionChipsBehaviorFromComponents(
     components: ComponentSlotsDescriptor | undefined,
     diagnostics: UiProjectionDiagnostic[],
@@ -1067,15 +1254,17 @@ function createNewSessionActionChipsBehaviorFromComponents(
         getAgentInputExtraActionChips: ({ agentOptionState, setAgentOptionState }) => {
             const chips: AgentInputExtraActionChip[] = [];
             for (const slot of slots) {
-                const resolution = resolveFirstPartyUiActionChip(slot.componentId);
-                if (resolution.diagnostic) diagnostics.push(resolution.diagnostic);
-                if (!resolution.render) continue;
-                const chip = resolution.render({
-                    agentOptionState,
-                    setAgentOptionState,
-                    optionStateKey: readString(slot.props?.optionStateKey),
-                });
-                if (chip) chips.push(chip);
+                const chipDescriptor = readBooleanOptionChipDescriptor(slot, diagnostics);
+                if (!chipDescriptor) continue;
+                chips.push(createBooleanOptionActionChip({
+                    key: readString(slot.id) ?? chipDescriptor.optionStateKey,
+                    optionStateKey: chipDescriptor.optionStateKey,
+                    iconName: chipDescriptor.iconName,
+                    onLabelKey: chipDescriptor.onLabelKey,
+                    offLabelKey: chipDescriptor.offLabelKey,
+                    value: agentOptionState?.[chipDescriptor.optionStateKey] === true,
+                    setValue: (value) => setAgentOptionState(chipDescriptor.optionStateKey, value),
+                }));
             }
             return chips;
         },
@@ -1084,6 +1273,32 @@ function createNewSessionActionChipsBehaviorFromComponents(
 
 function hasBehaviorFields(value: Readonly<Record<string, unknown>>): boolean {
     return Object.keys(value).length > 0;
+}
+
+/**
+ * The declared half of pending-input custody presentation. The host owns the
+ * decision and the capability it reads; a malformed declaration refuses
+ * fail-closed so the author sees the refusal instead of a silent no-op.
+ */
+function createPendingDeliveryBehavior(
+    descriptor: PluginUiBehaviorDescriptor,
+    diagnostics: UiProjectionDiagnostic[],
+): AgentUiBehavior['pendingDelivery'] | null {
+    const declared = descriptor.pendingDelivery;
+    if (!declared) return null;
+    const custodyLabelKey = readString(declared.custodyLabelKey);
+    if (declared.custodyLabelKey !== undefined && !custodyLabelKey) {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR',
+            'pendingDelivery.custodyLabelKey',
+            'Pending-delivery custody labels require a non-empty translation key.',
+        ));
+    }
+    const behavior: NonNullable<AgentUiBehavior['pendingDelivery']> = {
+        ...(custodyLabelKey ? { custodyLabelKey: custodyLabelKey as TranslationKey } : {}),
+        ...(declared.interruptAndRun === true ? { interruptAndRun: true } : {}),
+    };
+    return Object.keys(behavior).length > 0 ? behavior : null;
 }
 
 function createAgentUiBehaviorFromBehaviorDescriptor(
@@ -1097,13 +1312,15 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
             return keys.length > 0 ? [{ keys, when: entry.when }] : [];
         });
     const transcriptStorageModes = new Set(descriptor.newSession?.transcriptStorageModes ?? []);
-    const payload = createPayloadBehavior(descriptor, diagnostics);
+    const agentOptions = readAgentOptionDescriptors(descriptor.newSession?.agentOptions, diagnostics);
+    const payload = createPayloadBehavior(descriptor, diagnostics, agentOptions);
     const workState = createWorkStateBehavior(descriptor, diagnostics);
     const sessionSubagents = createSessionSubagentsBehaviorFromComponents(descriptor.components, diagnostics);
     const newSessionActionChips = createNewSessionActionChipsBehaviorFromComponents(descriptor.components, diagnostics);
     const sessionComposer = createSessionComposerBehavior(descriptor);
     const contextWindow = createContextWindowBehaviorFromDescriptor(descriptor.contextWindow);
     const message = createMessageBehavior(descriptor, diagnostics);
+    const pendingDelivery = createPendingDeliveryBehavior(descriptor, diagnostics);
     const experimentSwitches = (descriptor.resume?.experimentSwitches ?? [])
         .reduce<AgentExperimentSwitchDescriptor[]>((acc, entry, index) => {
             const id = readString(entry.id);
@@ -1142,10 +1359,15 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
         ...(typeof descriptor.newSession?.canSelectWithoutDetectedCli === 'boolean'
             ? { canSelectWithoutDetectedCli: () => descriptor.newSession?.canSelectWithoutDetectedCli === true }
             : {}),
+        ...(createAgentOptionsNewSessionBehavior(agentOptions) ?? {}),
         ...(newSessionActionChips ?? {}),
     };
 
     const baseBehavior: AgentUiBehavior = {
+        ...(descriptor.attachedSessionTerminal?.supported === true
+            ? { attachedSessionTerminal: { supported: true } }
+            : {}),
+        ...(pendingDelivery ? { pendingDelivery } : {}),
         ...(descriptor.guidance ? { guidance: { ...descriptor.guidance } } : {}),
         ...(descriptor.mcpServers ? { mcpServers: { ...descriptor.mcpServers } } : {}),
         ...(descriptor.permissions ? { permissions: { ...descriptor.permissions } } : {}),

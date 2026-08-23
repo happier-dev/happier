@@ -196,6 +196,7 @@ describe('AppShell plugin UI invocation host', () => {
             // host only reads it at client Action invocation time.
             readNavigationBinding: () => ({
                 openSurface,
+                targetKind: 'app' as const,
                 registerOwner: () => () => {},
             }),
         };

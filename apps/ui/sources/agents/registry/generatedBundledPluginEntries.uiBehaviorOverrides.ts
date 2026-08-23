@@ -40,21 +40,36 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
   "components": {
     "slots": [
       {
-        "componentId": "firstParty.auggie.allowIndexingChip",
-        "id": "auggie.allowIndexingChip",
-        "props": {
+        "chip": {
+          "iconName": "magnifying-glass",
+          "kind": "booleanOption",
+          "offLabelKey": "agentInput.auggieIndexingChip.off",
+          "onLabelKey": "agentInput.auggieIndexingChip.on",
           "optionStateKey": "allowIndexing"
         },
+        "id": "auggie-allow-indexing",
         "slot": "newSession.agentInputExtraActionChips"
       }
     ]
   },
-  "descriptorId": "auggie.uiBehavior.v1"
+  "descriptorId": "auggie.uiBehavior.v1",
+  "newSession": {
+    "agentOptions": [
+      {
+        "key": "allowIndexing",
+        "kind": "boolean",
+        "spawnConfigOption": true
+      }
+    ]
+  }
 } as const),
     }),
     claude: Object.freeze({
         agentId: 'claude' as CanonicalAgentId,
         descriptor: Object.freeze({
+  "attachedSessionTerminal": {
+    "supported": true
+  },
   "components": {
     "slots": [
       {
@@ -157,6 +172,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         }
       }
     ]
+  },
+  "pendingDelivery": {
+    "custodyLabelKey": "session.pendingMessages.deliveryStatus.queuedInClaude",
+    "interruptAndRun": true
   },
   "sessionComposer": {
     "nonSteerableWhileBusy": {
@@ -360,6 +379,36 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     ]
   },
   "payload": {
+    "backendTransport": {
+      "agentExtra": {
+        "owner": "codex",
+        "schemaId": "codex.agentRuntimeDescriptorExtra",
+        "v": 1
+      },
+      "backendMode": {
+        "aliases": {
+          "mcp": "appServer",
+          "mcp_resume": "acp"
+        },
+        "legacyExperimentalValue": "acp",
+        "values": [
+          "acp",
+          "appServer"
+        ]
+      },
+      "legacyModeOutputKey": "codexBackendMode",
+      "providerId": "codex",
+      "runtimeDescriptorOutputKey": "runtimeDescriptorV1",
+      "runtimeHandleFields": [
+        "backendMode",
+        "providerSessionId",
+        "home",
+        "connectedServiceId",
+        "connectedServiceProfileId",
+        "connectedServiceGroupId",
+        "homePath"
+      ]
+    },
     "sessionExtras": {
       "outputKey": "codexBackendMode",
       "providerId": "codex",

@@ -3,7 +3,11 @@ import {
     PluginAccountCollectionContributionV1Schema,
     type PluginCollectionContractRefV1,
 } from '@happier-dev/protocol';
-import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import {
+    projectPluginAccountCollectionDeclaration,
+    PluginError,
+    type JsonValue,
+} from '@happier-dev/plugin-sdk';
 import type {
     PluginAccountCollectionDefinition,
     PluginAccountCollectionValue,
@@ -17,6 +21,9 @@ import type {
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
+import {
+    createActivePluginAccountKvClient,
+} from './activePluginAccountKvClient';
 import {
     createActivePluginCollectionClientForContractRef,
     type ActivePluginCollectionClientForContractRefOutcomeV1,
@@ -105,20 +112,19 @@ function unavailableError(reason: ActivePluginCollectionUnavailableReasonV1): Pl
     }
 }
 
+/**
+ * The SDK's declaration projector is the one owner that turns an executable
+ * author definition into its static manifest shape — it strips the executable
+ * schema surface AND the migration callbacks a declaration may carry. The
+ * daemon binds its declared collections through exactly this call, so a surface
+ * and its daemon side resolve the same contract digest for the same value.
+ */
 function normalizeCollectionDefinitionRef(
     pluginId: string,
     definition: PluginAccountCollectionDefinition,
 ): PluginCollectionContractRefV1 | null {
-    const jsonSchema = Reflect.get(definition.schema, 'jsonSchema');
-    const executableSchema = jsonSchema !== null
-        && typeof jsonSchema === 'object'
-        && !Array.isArray(jsonSchema)
-        && typeof Reflect.get(definition.schema, 'parse') === 'function'
-        && typeof Reflect.get(definition.schema, 'safeParse') === 'function';
     const contribution = PluginAccountCollectionContributionV1Schema.safeParse(
-        executableSchema
-            ? { ...definition, schema: jsonSchema }
-            : definition,
+        projectPluginAccountCollectionDeclaration(definition.id, definition),
     );
     if (!contribution.success) return null;
     try {
@@ -374,5 +380,9 @@ export function createPluginUiDataClient(input: Readonly<{
     return Object.freeze({
         collection,
         openCollectionQuery,
+        accountKv: createActivePluginAccountKvClient({
+            pluginId: input.pluginId,
+            accountLifetime: input.accountLifetime,
+        }),
     });
 }

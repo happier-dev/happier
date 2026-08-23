@@ -3,7 +3,12 @@ import { Platform, View } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { type ActionId, listActionSpecs } from '@happier-dev/protocol';
+import {
+    formatQualifiedPluginActionId,
+    listActionSpecs,
+    parseQualifiedPluginActionId,
+    type ActionSettingsActionId,
+} from '@happier-dev/protocol';
 
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -13,6 +18,11 @@ import { ItemInfoNotice } from '@/components/ui/lists/ItemInfoNotice';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
@@ -31,6 +41,7 @@ import {
 } from './actionSettingsTargets';
 import {
     buildActionSettingsEntries,
+    buildActionSettingsContributedActions,
     type ActionSettingsEntry,
     type ActionSettingsTargetEntry,
 } from './buildActionSettingsEntries';
@@ -65,7 +76,7 @@ function getSearchParamValue(value: string | string[] | undefined): string | und
     return value;
 }
 
-function decodeActionIdParam(value: string | string[] | undefined): ActionId | null {
+function decodeActionIdParam(value: string | string[] | undefined): ActionSettingsActionId | null {
     const raw = getSearchParamValue(value);
     if (!raw) {
         return null;
@@ -73,10 +84,13 @@ function decodeActionIdParam(value: string | string[] | undefined): ActionId | n
 
     const decoded = decodeURIComponent(raw);
     const spec = listActionSpecs().find((candidate) => candidate.id === decoded);
-    if (!spec || listActionSettingsTargetDefinitions(spec).length === 0) {
-        return null;
+    if (spec && listActionSettingsTargetDefinitions(spec).length > 0) {
+        return spec.id;
     }
-    return decoded as ActionId;
+    const contributedAction = parseQualifiedPluginActionId(decoded);
+    return contributedAction
+        ? formatQualifiedPluginActionId(contributedAction)
+        : null;
 }
 
 function getTargetSubtitle(target: ActionSettingsTargetEntry): string {
@@ -127,7 +141,7 @@ function getCategoryTitleKey(category: ActionSettingsTargetCategory) {
 }
 
 type ActionSettingsDetailContentProps = Readonly<{
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
 }>;
 
 export const ActionSettingsDetailContent = React.memo(function ActionSettingsDetailContent(props: ActionSettingsDetailContentProps) {
@@ -144,6 +158,29 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     const voiceEnabled = useFeatureEnabled('voice');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.actions,
+        { allowSoleCandidate: false },
+    );
+    const executionTarget = React.useMemo(() => {
+        const selectedTarget = administrationTargetSelection.selectedTarget;
+        const resolvedTarget = administrationTargetSelection.resolveExecutionTarget();
+        return selectedTarget !== null
+            && resolvedTarget !== null
+            && machineAdministrationTargetsEqual(selectedTarget, resolvedTarget.target)
+            ? resolvedTarget
+            : null;
+    }, [administrationTargetSelection]);
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: executionTarget?.machine.id ?? null,
+        serverId: executionTarget?.serverId ?? null,
+        enabled: executionTarget !== null,
+    });
+    const contributedActions = React.useMemo(() => (
+        executionTarget && daemonMergedProjection.inputs
+            ? buildActionSettingsContributedActions(daemonMergedProjection.inputs.pluginProjectionById)
+            : []
+    ), [daemonMergedProjection.inputs, executionTarget]);
     const voiceShareDeviceInventory = voiceSettings?.privacy?.shareDeviceInventory !== false;
     const availability = React.useMemo(() => ({
         executionRunsEnabled,
@@ -165,10 +202,11 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
             query: '',
             settings,
             availability,
+            contributedActions,
             translate: t,
         });
         return entries.find((candidate) => candidate.actionId === props.actionId) ?? null;
-    }, [availability, props.actionId, settings]);
+    }, [availability, contributedActions, props.actionId, settings]);
     const filteredTargets = React.useMemo(() => (
         entry?.targets.filter((target) => targetMatchesSearch(target, searchQuery)) ?? []
     ), [entry?.targets, searchQuery]);
@@ -177,7 +215,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         filteredTargets
             .map((target) => {
                 const available = target.state !== 'unavailable';
-                const exposureState = entry
+                const exposureState = entry?.kind === 'host'
                     ? resolveActionSettingsToolExposureState({
                         settings,
                         actionId: entry.actionId,
@@ -212,6 +250,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
             settings,
             actionId: props.actionId,
             targetId: target.id,
+            target: target.definition,
             value,
         }));
     }, [commitSettings, props.actionId, settings]);
@@ -220,13 +259,14 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         target: ActionSettingsTargetEntry,
         value: ActionSettingsToolExposureControlValue,
     ) => {
+        if (entry?.kind !== 'host') return;
         commitSettings(setActionSettingsToolExposureMode({
             settings,
-            actionId: props.actionId,
+            actionId: entry.actionId,
             targetId: target.id,
             value,
         }));
-    }, [commitSettings, props.actionId, settings]);
+    }, [commitSettings, entry, settings]);
 
     if (!entry) {
         return (
@@ -253,6 +293,17 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
             />
 
             <ItemList>
+                <MachineAdministrationTargetSelector
+                    selection={administrationTargetSelection}
+                    testIDPrefix="settings.actions.administration.target"
+                />
+                {administrationTargetSelection.selectedTarget === null ? (
+                    <ItemInfoNotice
+                        testID="settings-actions:contributed:machine-selection-required"
+                        title={t('settingsActions.contributed.machineSelectionTitle')}
+                        body={t('settingsActions.contributed.machineSelectionBody')}
+                    />
+                ) : null}
                 <ItemGroup>
                     <Item
                         testID={`settings-actions:action:${entry.actionId}:summary`}
@@ -285,6 +336,14 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                     body={t('settingsActions.approvalHelpBody')}
                 />
 
+                {entry.kind === 'retained' ? (
+                    <ItemInfoNotice
+                        testID="settings-actions:contributed:retained"
+                        title={t('settingsActions.contributed.removedTargetsTitle')}
+                        body={t('settingsActions.contributed.removedTargetsBody')}
+                    />
+                ) : null}
+
                 {targetSections.length === 0 ? (
                     <ItemGroup>
                         <View style={styles.emptyState}>
@@ -302,6 +361,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                 settings,
                                 actionId: entry.actionId,
                                 targetId: target.id,
+                                target: target.definition,
                                 available,
                             });
                             const shouldStackModeControl = compactLayout && controlState.kind === 'approval';
@@ -355,7 +415,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                     </ItemGroup>
                 ) : null}
 
-                {entry.actionId === 'session.spawn_new' ? (
+                {entry.kind === 'host' && entry.actionId === 'session.spawn_new' ? (
                     <SessionAgentSpawnPolicyControls
                         rawPolicy={rawSpawnPolicy}
                         disabled={!entry.enabled}

@@ -196,11 +196,12 @@ describe('PluginSurfacePlacementStack', () => {
         }));
     });
 
-    // A Services panel mounts inside a target scope that already installed the
-    // one navigation binding. Losing it costs the whole slot `openSurface` (C1),
-    // while a genuinely standalone Services mount has no such owner and must
-    // keep advertising the method as unsupported.
-    it('threads the contextual target navigation binding into services placements', async () => {
+    // Target scopes partition the destination space, so an enclosing resolver is
+    // this mount's navigation authority only when it resolves this mount's own
+    // target. A Services panel rendered inside a Session/Project scope publicly
+    // declares `target: services`; handing it the Session resolver would let it
+    // open the enclosing Session's destinations.
+    it('threads an enclosing navigation binding only when its target matches the mounted target', async () => {
         const { PluginSurfacePlacementStack } = await import('./PluginSurfacePlacementStack');
         const {
             createPluginSurfaceDestinationNavigationBinding,
@@ -208,13 +209,13 @@ describe('PluginSurfacePlacementStack', () => {
         } = await import('./pluginSurfaceDestinationNavigation');
         placementHostSpy.mockClear();
 
-        const navigationBinding = createPluginSurfaceDestinationNavigationBinding({
+        const sessionBinding = createPluginSurfaceDestinationNavigationBinding({
             placements: Object.values(servicesProjection.surfacePlacementsById),
             targetKind: 'session',
         });
 
         await renderScreen(
-            <PluginSurfaceDestinationNavigationBindingProvider binding={navigationBinding}>
+            <PluginSurfaceDestinationNavigationBindingProvider binding={sessionBinding}>
                 <PluginSurfacePlacementStack
                     container="servicesPanel"
                     targetKind="services"
@@ -228,8 +229,29 @@ describe('PluginSurfacePlacementStack', () => {
         );
 
         expect(placementHostSpy).toHaveBeenCalledTimes(1);
+        expect((placementHostSpy.mock.calls.at(-1)?.[0] as Readonly<{ binding?: unknown }>).binding)
+            .toBeUndefined();
+
+        // The same enclosing binding IS the authority for a stack whose mounted
+        // target is the one it resolves.
+        placementHostSpy.mockClear();
+        await renderScreen(
+            <PluginSurfaceDestinationNavigationBindingProvider binding={sessionBinding}>
+                <PluginSurfacePlacementStack
+                    container="detailsTab"
+                    targetKind="session"
+                    pluginUiProjection={pluginUiProjection}
+                    machineId="machine-1"
+                    serverId="server-1"
+                    platform="web"
+                    testID="session-plugin-placements"
+                />
+            </PluginSurfaceDestinationNavigationBindingProvider>,
+        );
+
+        expect(placementHostSpy).toHaveBeenCalledTimes(3);
         expect(placementHostSpy).toHaveBeenCalledWith(expect.objectContaining({
-            binding: expect.objectContaining({ openSurface: navigationBinding.openSurface }),
+            binding: expect.objectContaining({ openSurface: sessionBinding.openSurface }),
         }));
 
         // Standalone: no surrounding target scope, so no navigation authority is

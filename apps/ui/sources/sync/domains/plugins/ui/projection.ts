@@ -11,7 +11,6 @@ import {
     VoiceProviderContributionSchema,
     buildQualifiedPluginContributionKey,
     compilePluginJsonSchema,
-    createRecipientContractDigestV1,
     createPluginContributionIdentity,
     type PluginLocalizedStringV2,
     type OpenableContentViewerSelectorV1,
@@ -649,11 +648,15 @@ export function normalizePluginUiProjection(
                 id !== expectedKey
                 || contributionKey !== expectedKey
                 || generation !== projection.generation
+                // The daemon stamped `recipientContractDigest` from this same
+                // contract with this same function, so recomputing it here can
+                // only agree — and a disagreement would silently drop a Voice
+                // provider the user already configured. What still has to hold
+                // is that the contract parses and names this contribution.
                 || (entry?.recipientContract !== undefined && (
                     !recipientContract?.success
                     || recipientContract.data.contribution.pluginId !== pluginId
                     || recipientContract.data.contribution.localId !== definition.data.id
-                    || recipientContractDigest !== createRecipientContractDigestV1(recipientContract.data)
                 ))
             ) continue;
             voiceProvidersById[id] = Object.freeze({

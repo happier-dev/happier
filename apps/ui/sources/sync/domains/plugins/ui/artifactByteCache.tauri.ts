@@ -9,7 +9,6 @@ import {
 import {
     derivePluginUiPersistentArtifactAccountKey,
     derivePluginUiPersistentArtifactKey,
-    type PluginUiPersistentArtifactFile,
     type PluginUiPersistentArtifactIdentity,
     type PluginUiPersistentArtifactNativeResourceDescriptor,
     type PluginUiPersistentArtifactNativeResourceStore,
@@ -51,16 +50,6 @@ function locatorFor(identity: PluginUiPersistentArtifactIdentity): TauriCacheLoc
 
 function recordKeyHashFor(identity: PluginUiPersistentArtifactIdentity): string {
     return locatorFor(identity).artifactKeyHash;
-}
-
-function recordFiles(record: PluginUiPersistentArtifactRecord): readonly PluginUiPersistentArtifactFile[] {
-    if (record.files?.length) return record.files;
-    return Object.freeze([{
-        relativePath: record.entryRelativePath ?? '__entry__',
-        digest: record.persistentIdentity.artifactDigest,
-        byteSize: record.bytes.byteLength,
-        bytes: record.bytes,
-    }]);
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -109,13 +98,12 @@ function readNativeRecord(
     identity: PluginUiPersistentArtifactIdentity,
 ): PluginUiPersistentArtifactRecord | null {
     if (!isRecord(value)) return null;
-    const hasEntryPath = typeof value.entryRelativePath === 'string';
-    if (!hasExactKeys(value, hasEntryPath
-        ? ['identityKeyHash', 'entryRelativePath', 'files']
-        : ['identityKeyHash', 'files'])) return null;
+    if (!hasExactKeys(value, ['identityKeyHash', 'entryRelativePath', 'files'])) return null;
     if (
         typeof value.identityKeyHash !== 'string'
         || value.identityKeyHash !== recordKeyHashFor(identity)
+        || typeof value.entryRelativePath !== 'string'
+        || value.entryRelativePath.length === 0
         || !Array.isArray(value.files)
         || value.files.length === 0
     ) return null;
@@ -123,7 +111,7 @@ function readNativeRecord(
     if (files.some((file): file is null => file === null)) return null;
     const decodedFiles = files as TauriCacheFile[];
     if (new Set(decodedFiles.map((file) => file.relativePath)).size !== decodedFiles.length) return null;
-    const entryRelativePath = hasEntryPath ? value.entryRelativePath as string : '__entry__';
+    const entryRelativePath = value.entryRelativePath;
     const entry = decodedFiles.find((file) => file.relativePath === entryRelativePath);
     if (!entry) return null;
     let entryBytes: Uint8Array;
@@ -135,15 +123,13 @@ function readNativeRecord(
     return Object.freeze({
         persistentIdentity: identity,
         bytes: new Uint8Array(entryBytes),
-        ...(hasEntryPath ? { entryRelativePath } : {}),
-        ...(hasEntryPath ? {
-            files: Object.freeze(decodedFiles.map((file) => Object.freeze({
-                relativePath: file.relativePath,
-                digest: file.digest,
-                byteSize: file.byteSize,
-                bytes: decodeBase64(file.bytesBase64, 'base64'),
-            }))),
-        } : {}),
+        entryRelativePath,
+        files: Object.freeze(decodedFiles.map((file) => Object.freeze({
+            relativePath: file.relativePath,
+            digest: file.digest,
+            byteSize: file.byteSize,
+            bytes: decodeBase64(file.bytesBase64, 'base64'),
+        }))),
     });
 }
 
@@ -234,14 +220,13 @@ export function createTauriPluginUiPersistentArtifactStore(input: Readonly<{
             }
         },
         write: async (record) => {
-            const files = recordFiles(record);
             const dispatch = await resolveInvoke();
             await dispatch('desktop_hosted_artifact_cache_write', {
                 input: {
                     locator: locatorFor(record.persistentIdentity),
                     identityKeyHash: recordKeyHashFor(record.persistentIdentity),
-                    ...(record.entryRelativePath ? { entryRelativePath: record.entryRelativePath } : {}),
-                    files: files.map((file) => Object.freeze({
+                    entryRelativePath: record.entryRelativePath,
+                    files: record.files.map((file) => Object.freeze({
                         relativePath: file.relativePath,
                         digest: file.digest,
                         byteSize: file.byteSize,

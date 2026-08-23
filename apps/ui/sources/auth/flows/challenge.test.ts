@@ -4,11 +4,13 @@ import sodium from '@/encryption/libsodium.lib';
 
 import {
     authChallenge,
+    authChallengeV2,
     deriveAccountSigningPublicKey,
     signAccountPayload,
 } from './challenge';
 import {
     createExpectedAccountKeyChallengeSigningInputV1,
+    createKeyChallengeV2SigningInput,
 } from '@happier-dev/protocol';
 
 describe('Account signing', () => {
@@ -56,5 +58,39 @@ describe('Account signing', () => {
                 result.publicKey,
             ),
         ).toBe(false);
+    });
+
+    it('signs only the selected server audience for a v2 challenge', () => {
+        const secret = new Uint8Array(32).fill(9);
+        const challenge = {
+            challengeId: 'challenge-123',
+            nonce: 'nonce-abc',
+            issuedAt: '2026-08-22T12:00:00.000Z',
+            expiresAt: '2026-08-22T12:05:00.000Z',
+            audience: {
+                origin: 'https://selected.example.test',
+                serverIdentityId: 'srv_selected',
+            },
+        };
+
+        const result = authChallengeV2(secret, {
+            challenge,
+            expectedAudience: challenge.audience,
+        });
+
+        expect(
+            sodium.crypto_sign_verify_detached(
+                result.signature,
+                createKeyChallengeV2SigningInput(challenge),
+                result.publicKey,
+            ),
+        ).toBe(true);
+        expect(() => authChallengeV2(secret, {
+            challenge,
+            expectedAudience: {
+                origin: 'https://attacker.example.test',
+                serverIdentityId: 'srv_attacker',
+            },
+        })).toThrow(/audience/i);
     });
 });

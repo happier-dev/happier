@@ -1,8 +1,8 @@
 import { serverFetch } from '@/sync/http/client';
 import {
-    ProviderSettingsV1Schema,
+    readProviderSettingsMutationBasisV1,
     removeProviderMachineStateV1,
-    type ProviderSettingsV1,
+    writeProviderSettingsToAccountSettingsV1,
 } from '@happier-dev/protocol';
 
 export type MachineRevokeFromAccountResult =
@@ -45,10 +45,10 @@ export type MachineRevokeWithProviderCleanupResult =
     | Readonly<{
         ok: false;
         status: number;
-        error: string;
+        error: 'provider_cleanup_pending' | 'provider_settings_unreadable';
         machineRevoked: true;
         providerCleanup: 'pending';
-        retryable: true;
+        retryable: boolean;
     }>
     | Extract<MachineRevokeFromAccountResult, { ok: false }>;
 
@@ -57,13 +57,20 @@ export type MachineRevokeWithProviderCleanupResult =
  * settings CAS owner. The server cannot decrypt Provider settings, so cleanup
  * intentionally follows revocation: a cleanup failure is safe, explicit, and
  * retryable, while a settings write never happens for a failed revoke.
+ *
+ * Revoking a machine is a client-only flow — it can remove the last reachable
+ * machine, so the CLI Provider settings owner is not callable here. Both writers
+ * therefore consume the SAME Protocol mutation-basis decision: a Provider
+ * subtree this build cannot fully parse is left byte-for-byte untouched and the
+ * cleanup is reported pending, instead of being rewritten from the reader's
+ * recovered defaults.
  */
 export async function machineRevokeWithProviderCleanup(
     machineId: string,
     dependencies: Readonly<{
         revoke(id: string): Promise<MachineRevokeFromAccountResult>;
-        mutateProviderSettings(
-            mutate: (settings: ProviderSettingsV1) => ProviderSettingsV1,
+        mutateAccountSettings(
+            mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown>,
         ): Promise<void>;
     }>,
 ): Promise<MachineRevokeWithProviderCleanupResult> {
@@ -73,19 +80,22 @@ export async function machineRevokeWithProviderCleanup(
     const machineAlreadyRevoked = !revoked.ok && revoked.status === 410 && revoked.error === 'machine_revoked';
     if (!revoked.ok && !machineAlreadyRevoked) return revoked;
 
+    let cleanupNeeded = false;
+    let settingsUnreadable = false;
     try {
-        let cleanupNeeded = false;
-        await dependencies.mutateProviderSettings((settings) => {
-            const current = ProviderSettingsV1Schema.parse(settings);
-            const next = removeProviderMachineStateV1(current, id);
-            cleanupNeeded = JSON.stringify(next) !== JSON.stringify(current);
-            return next;
+        await dependencies.mutateAccountSettings((raw) => {
+            const basis = readProviderSettingsMutationBasisV1(raw);
+            if (basis.status === 'refused') {
+                settingsUnreadable = true;
+                return raw as Record<string, unknown>;
+            }
+            settingsUnreadable = false;
+            const next = removeProviderMachineStateV1(basis.settings, id);
+            cleanupNeeded = JSON.stringify(next) !== JSON.stringify(basis.settings);
+            return cleanupNeeded
+                ? writeProviderSettingsToAccountSettingsV1(raw, next)
+                : raw as Record<string, unknown>;
         });
-        return {
-            ok: true,
-            machineAlreadyRevoked,
-            providerCleanup: cleanupNeeded ? 'complete' : 'not_needed',
-        };
     } catch {
         return {
             ok: false,
@@ -96,6 +106,21 @@ export async function machineRevokeWithProviderCleanup(
             retryable: true,
         };
     }
+    if (settingsUnreadable) {
+        return {
+            ok: false,
+            status: 409,
+            error: 'provider_settings_unreadable',
+            machineRevoked: true,
+            providerCleanup: 'pending',
+            retryable: false,
+        };
+    }
+    return {
+        ok: true,
+        machineAlreadyRevoked,
+        providerCleanup: cleanupNeeded ? 'complete' : 'not_needed',
+    };
 }
 
 export async function machineReplaceInAccount(params: Readonly<{

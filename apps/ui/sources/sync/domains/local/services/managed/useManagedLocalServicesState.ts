@@ -30,7 +30,6 @@ export type UseManagedLocalServicesStateInput = Readonly<{
     serverId?: string | null;
     sessionId?: string | null;
     enabled?: boolean;
-    refreshIntervalMs?: number | null;
     nowMs?: () => number;
     snapshotClient?: LocalServiceManagedSnapshotClient;
 }>;

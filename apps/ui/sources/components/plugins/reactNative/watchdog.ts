@@ -11,9 +11,9 @@ import {
 import { randomUUID } from '@/platform/randomUUID';
 
 /**
- * The UI owns only failures it has durably quarantined locally while it cannot
- * yet know whether the daemon accepted the report. Counts, thresholds,
- * disablement, and reset remain daemon-owned state.
+ * The UI owns only failures it recorded locally while it cannot yet know
+ * whether the daemon accepted the report. Counts, thresholds, disablement, and
+ * reset remain daemon-owned state.
  */
 export type PluginReactNativePendingFailure = Readonly<{
     token: DaemonPluginReactNativeCrashBindingTokenV1;
@@ -31,12 +31,6 @@ type PluginReactNativePersistedPendingFailure = PluginReactNativePendingFailure 
 }>;
 
 export type PluginReactNativeWatchdog = Readonly<{
-    /**
-     * Whether this UI can still speak for its own durable quarantine. Consumers
-     * use `unavailable` to avoid executing cached plugin bytes that no local
-     * truth and no current daemon truth has cleared.
-     */
-    readDurability: () => PluginReactNativeWatchdogDurability;
     /** Persist a new real failure once, before it can be reported. */
     recordFailure: (input: Readonly<{
         token: DaemonPluginReactNativeCrashBindingTokenV1;
@@ -55,29 +49,17 @@ export type PluginReactNativeWatchdog = Readonly<{
     }>) => readonly PluginReactNativePendingFailure[];
 }>;
 
+/** Stored bytes this store holds, or `null` when it holds or can offer none. */
+export type PluginReactNativeWatchdogSnapshotRead = Readonly<{ snapshot: unknown }> | null;
+
 /**
- * What this UI can currently say about its own durable quarantine, as opposed
- * to what it happens to hold in memory.
- *
- * `absent` is a positive fact — the store answered and holds no quarantine —
- * while `unavailable` means the store could not be read, held bytes this
- * version cannot interpret, or refused a write. Collapsing the two would let a
- * broken store read as "nothing was quarantined" and silently turn containment
- * into no containment across a restart.
+ * Best-effort durable storage for the unreported-failure outbox. Reads and
+ * writes may fail; an unreachable store only means this launch cannot carry an
+ * unreported occurrence forward, never that a plugin must be held back.
  */
-export type PluginReactNativeWatchdogDurability = 'available' | 'absent' | 'unavailable';
-
-export type PluginReactNativeWatchdogSnapshotRead =
-    | Readonly<{ durability: 'available'; snapshot: unknown }>
-    | Readonly<{ durability: 'absent' }>
-    | Readonly<{ durability: 'unavailable' }>;
-
 export type PluginReactNativeWatchdogPersistence = Readonly<{
     readSnapshot: () => PluginReactNativeWatchdogSnapshotRead;
-    /** `unavailable` means this snapshot did not reach durable storage. */
-    writeSnapshot: (
-        snapshot: PluginReactNativeWatchdogSnapshot,
-    ) => 'available' | 'unavailable';
+    writeSnapshot: (snapshot: PluginReactNativeWatchdogSnapshot) => void;
 }>;
 
 export type PluginReactNativeWatchdogSnapshot = Readonly<{
@@ -171,52 +153,37 @@ function removeSupersededPendingFailures(
     return changed;
 }
 
-type RestoredQuarantine = Readonly<{
-    durability: PluginReactNativeWatchdogDurability;
-    pending: readonly PluginReactNativePersistedPendingFailure[];
-}>;
+const NO_RESTORED_PENDING: readonly PluginReactNativePersistedPendingFailure[] = Object.freeze([]);
 
-const UNREADABLE_QUARANTINE: RestoredQuarantine = Object.freeze({
-    durability: 'unavailable',
-    pending: Object.freeze([]),
-});
-
+/**
+ * Restores only occurrences this version can still report. A missing adapter,
+ * an unreadable store, or a row from another snapshot shape yields no
+ * restorable occurrence; it never becomes containment of its own.
+ */
 function readPersistedSnapshot(
     persistence: PluginReactNativeWatchdogPersistence | undefined,
-): RestoredQuarantine {
-    // No adapter at all is not "nothing was quarantined": this build cannot
-    // durably record a crash, so it cannot speak for one either.
+): readonly PluginReactNativePersistedPendingFailure[] {
     if (!persistence) {
-        return UNREADABLE_QUARANTINE;
+        return NO_RESTORED_PENDING;
     }
     let read: PluginReactNativeWatchdogSnapshotRead;
     try {
         read = persistence.readSnapshot();
     } catch {
-        return UNREADABLE_QUARANTINE;
+        return NO_RESTORED_PENDING;
     }
-    if (read.durability === 'absent') {
-        return Object.freeze({ durability: 'absent', pending: Object.freeze([]) });
-    }
-    if (read.durability !== 'available') {
-        return UNREADABLE_QUARANTINE;
-    }
-    const snapshot = read.snapshot;
+    const snapshot = read?.snapshot;
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
-        return UNREADABLE_QUARANTINE;
+        return NO_RESTORED_PENDING;
     }
     const record = snapshot as Readonly<Record<string, unknown>>;
     if (record.v !== 3 || !Array.isArray(record.pending)) {
-        return UNREADABLE_QUARANTINE;
+        return NO_RESTORED_PENDING;
     }
 
-    let durability: PluginReactNativeWatchdogDurability = 'available';
     const pendingByOccurrence = new Map<string, PluginReactNativePersistedPendingFailure>();
     for (const entry of record.pending) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-            // A row this version cannot interpret is a quarantine it cannot
-            // account for, not an absent one.
-            durability = 'unavailable';
             continue;
         }
         const candidate = entry as Readonly<Record<string, unknown>>;
@@ -227,7 +194,6 @@ function readPersistedSnapshot(
         const occurrenceId = DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema.safeParse(candidate.failureOccurrenceId);
         const failure = DaemonPluginReactNativeCrashFailureV1Schema.safeParse(candidate.failure);
         if (!scopeKey || !token.success || !occurrenceId.success || !failure.success) {
-            durability = 'unavailable';
             continue;
         }
         const pending = freezePersistedPendingFailure({
@@ -237,44 +203,38 @@ function readPersistedSnapshot(
             failure: failure.data,
         });
         const key = JSON.stringify([pending.scopeKey, pending.token, pending.failureOccurrenceId]);
-        const existing = pendingByOccurrence.get(key);
         // A duplicated persisted entry cannot turn into a second report. Keep
         // the first exact entry; the daemon is still authoritative for a
         // same-ID/different-failure conflict.
-        if (!existing) {
+        if (!pendingByOccurrence.has(key)) {
             pendingByOccurrence.set(key, pending);
         }
     }
-    return Object.freeze({
-        durability,
-        pending: Object.freeze([...pendingByOccurrence.values()]),
-    });
+    return Object.freeze([...pendingByOccurrence.values()]);
 }
 
 export function createPluginReactNativeWatchdog(options: Readonly<{
     persistence?: PluginReactNativeWatchdogPersistence;
     createFailureOccurrenceId?: () => string;
 }>): PluginReactNativeWatchdog {
-    const restored = readPersistedSnapshot(options.persistence);
-    const pendingFailures = [...restored.pending];
-    let durability = restored.durability;
+    const pendingFailures = [...readPersistedSnapshot(options.persistence)];
     const createFailureOccurrenceId = options.createFailureOccurrenceId ?? randomUUID;
 
     function persistSnapshot(): void {
         if (!options.persistence) {
             return;
         }
-        // This storage adapter is the only local quarantine persistence. A
-        // refused write keeps the in-memory quarantine fail-closed for the
-        // current mount AND retires this UI's claim to durable truth, so a
-        // later mount cannot read the gap as "nothing was quarantined".
+        // Persistence only carries an unreported occurrence across a restart so
+        // the daemon still hears about it. A refused write costs that report,
+        // not the running mount, which stays contained in memory by the failure
+        // it actually recorded.
         try {
-            durability = options.persistence.writeSnapshot(Object.freeze({
+            options.persistence.writeSnapshot(Object.freeze({
                 v: 3 as const,
                 pending: Object.freeze([...pendingFailures]),
             }));
         } catch {
-            durability = 'unavailable';
+            // Best effort: the daemon remains the durable owner of crash state.
         }
     }
 
@@ -311,7 +271,6 @@ export function createPluginReactNativeWatchdog(options: Readonly<{
     }
 
     return Object.freeze({
-        readDurability: () => durability,
         recordFailure,
         acknowledgeReportedFailure: (input) => {
             const occurrenceId = DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema.parse(

@@ -1049,32 +1049,13 @@ describe('hosted-web Artifact availability producer', () => {
         expect(removePersistentArtifact).not.toHaveBeenCalled();
     });
 
-    it('quarantines a disposed hosted Artifact when Availability clears then replacement exact deletion fails', async () => {
+    it('retires only the exact hosted Artifact when Availability replaces it and its deletion fails', async () => {
         const current = fixture();
         const record = persistentRecordFor(current);
-        let cleanupStarted = false;
-        let beginCleanup!: () => void;
-        const cleanupBegan = new Promise<void>((resolve) => {
-            beginCleanup = resolve;
-        });
-        let allowCleanup!: () => void;
-        const cleanupGate = new Promise<void>((resolve) => {
-            allowCleanup = resolve;
-        });
-        let finishCleanup!: () => void;
-        const cleanupFinished = new Promise<void>((resolve) => {
-            finishCleanup = resolve;
-        });
         const persistent = createNativePersistentStore({
             initialRecord: record,
             onRemove: async () => {
                 throw new Error('exact persistent deletion failed');
-            },
-            onRemoveAccount: async () => {
-                cleanupStarted = true;
-                beginCleanup();
-                await cleanupGate;
-                finishCleanup();
             },
         });
         const registry = createPluginNativeArtifactResourceRegistry({
@@ -1132,14 +1113,12 @@ describe('hosted-web Artifact availability producer', () => {
             await vi.waitFor(() => {
                 expect(persistent.remove).toHaveBeenCalledWith(record.persistentIdentity);
             });
-            await vi.waitFor(() => {
-                expect(persistent.removeAccount).toHaveBeenCalled();
-            });
-            await cleanupBegan;
+            // A failed exact deletion retires that one identity and keeps its
+            // physical deletion owed. It must never escalate into destroying
+            // every cached Artifact for the Account.
+            expect(persistent.removeAccount).not.toHaveBeenCalled();
             expect(persistent.readRecord()).toEqual(record);
         } finally {
-            allowCleanup();
-            if (cleanupStarted) await cleanupFinished;
             acquired.handle.dispose();
         }
     });

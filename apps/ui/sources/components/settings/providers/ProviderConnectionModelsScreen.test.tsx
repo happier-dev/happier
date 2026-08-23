@@ -12,8 +12,11 @@ import {
     createProviderConnectionViewFixture,
     createProviderConnectionsDescribeFixture,
     createProviderModelsFixture,
+    createMachineAdministrationTargetSelectionMock,
     createProviderSettingsHarness,
+    createDeferred,
     flushHookEffects,
+    installMachineAdministrationTargetSelectionBoundary,
     installProviderSettingsRpcBoundary,
     renderScreen,
     standardCleanup,
@@ -47,12 +50,23 @@ const loadModel = vi.hoisted(() => vi.fn<(_connectionId: string, _modelId: strin
 ));
 const probeProviderConnection = vi.hoisted(() => vi.fn(async (_input: unknown) => ({ status: 'success' as const, models: [], requestFingerprint: 'probe-request:v1:test' })));
 const routerPush = vi.hoisted(() => vi.fn());
+const routerBack = vi.hoisted(() => vi.fn());
+const navigationDispatch = vi.hoisted(() => vi.fn());
+const navigationPreventRemove = vi.hoisted(() => ({
+    enabled: false,
+    callback: null as null | ((event: { data: { action: unknown } }) => void),
+}));
 let modelsRequestCount = 0;
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
+const administrationTarget = createMachineAdministrationTargetSelectionMock();
+installMachineAdministrationTargetSelectionBoundary(administrationTarget);
 
 installSettingsViewCommonModuleMocks({
-    router: async () => ({ useRouter: () => ({ push: routerPush, back: vi.fn() }) }),
+    router: async () => ({
+        useRouter: () => ({ push: routerPush, back: routerBack }),
+        useNavigation: () => ({ dispatch: navigationDispatch }),
+    }),
     storage: async () => ({
         useAllMachines: () => [{
             id: 'machine-a', active: true, revokedAt: null,
@@ -84,6 +98,15 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     },
 }));
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({ useActiveServerSnapshot: () => ({ serverId: 'server-a' }) }));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({
+        usePreventRemove: (enabled, callback) => {
+            navigationPreventRemove.enabled = enabled;
+            navigationPreventRemove.callback = callback;
+        },
+    });
+});
 vi.mock('@/components/ui/forms/InlineAddExpander', () => ({
     InlineAddExpander: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('InlineAddExpander', props, props.children),
 }));
@@ -100,6 +123,12 @@ describe('ProviderConnectionModelsScreen', () => {
     afterEach(standardCleanup);
     beforeEach(() => {
         providerHarness.reset();
+        administrationTarget.controller.reset();
+        navigationDispatch.mockClear();
+        navigationPreventRemove.enabled = false;
+        navigationPreventRemove.callback = null;
+        mutate.mockReset();
+        mutate.mockImplementation(async () => ({ status: 'success', action: 'manualRemove' }));
         state.providerDecisionState = 'enabled';
         modelsRequestCount = 0;
         state.manualModelPolicy = 'allowed';
@@ -107,7 +136,6 @@ describe('ProviderConnectionModelsScreen', () => {
         state.loading = false;
         state.error = null;
         state.models = [{ id: 'manual-a', name: 'Manual A', source: 'manual', stale: false, loadState: 'unknown', visibility: 'visible' }];
-        mutate.mockClear();
         refresh.mockClear();
         confirm.mockClear();
         alert.mockClear();
@@ -434,6 +462,88 @@ describe('ProviderConnectionModelsScreen', () => {
         expect(modelsRequestCount).toBe(3);
         expect(refresh).toHaveBeenCalledTimes(2);
         expect(routerPush).not.toHaveBeenCalled();
+    });
+
+    it('settles overlapping visibility writes in the order the user issued them', async () => {
+        // Two rapid toggles for the same model must not race: dispatching them
+        // concurrently lets the daemon apply them in the opposite order and
+        // leave the catalog showing the opposite of the user's last intent.
+        const firstWrite = createDeferred<DaemonProviderModelSettingsMutationResponseV1>();
+        const dispatched: boolean[] = [];
+        mutate.mockImplementation(async (input) => {
+            const request = (input as { request: { hidden?: boolean } }).request;
+            dispatched.push(request.hidden === true);
+            if (dispatched.length === 1) return await firstWrite.promise;
+            return { status: 'success', action: 'setVisibility' };
+        });
+        const { ProviderConnectionModelsScreen } = await import('./ProviderConnectionModelsScreen');
+        const screen = await renderScreen(<ProviderConnectionModelsScreen connectionId="pc_a" />);
+        const ref = { scope: 'allAgents' as const, providerConnectionId: 'pc_a', modelId: 'manual-a' };
+        const setVisibility = screen.findByType(ProviderModelManager).props.onSetVisibility;
+
+        let both!: Promise<unknown>;
+        await act(async () => {
+            both = Promise.all([setVisibility?.(ref, true), setVisibility?.(ref, false)]);
+            await Promise.resolve();
+        });
+        expect(dispatched).toEqual([true]);
+
+        await act(async () => {
+            firstWrite.resolve({ status: 'success', action: 'setVisibility' });
+            await both;
+            await flushHookEffects();
+        });
+
+        expect(dispatched).toEqual([true, false]);
+    });
+
+    it('refuses a queued visibility write once the selection moved to another machine', async () => {
+        const { ProviderConnectionModelsScreen } = await import('./ProviderConnectionModelsScreen');
+        const screen = await renderScreen(<ProviderConnectionModelsScreen connectionId="pc_a" />);
+        const setVisibility = screen.findByType(ProviderModelManager).props.onSetVisibility;
+
+        await act(async () => {
+            administrationTarget.controller.select(null);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await setVisibility?.(
+                { scope: 'allAgents', providerConnectionId: 'pc_a', modelId: 'manual-a' },
+                true,
+            );
+            await flushHookEffects();
+        });
+
+        expect(mutate).not.toHaveBeenCalled();
+    });
+
+    it('keeps a typed manual-model draft through the shared navigation transaction', async () => {
+        const { ProviderConnectionModelsScreen } = await import('./ProviderConnectionModelsScreen');
+        const screen = await renderScreen(<ProviderConnectionModelsScreen connectionId="pc_a" />);
+        expect(navigationPreventRemove.enabled).toBe(false);
+
+        await act(async () => {
+            screen.findByType('MachineSetupTextField').props.onChangeText?.('draft-model');
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+
+        expect(navigationPreventRemove.enabled).toBe(true);
+        const action = { type: 'GO_BACK' };
+        await act(async () => {
+            navigationPreventRemove.callback?.({ data: { action } });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+        const buttons = alert.mock.calls.at(-1)?.[2] as Array<{
+            style?: string;
+            onPress?: () => void;
+        }>;
+        await act(async () => {
+            buttons.find((button) => button.style === 'cancel')?.onPress?.();
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+
+        expect(navigationDispatch).not.toHaveBeenCalled();
+        expect(mutate).not.toHaveBeenCalled();
     });
 
     it('contains a single-model visibility transport failure in the same inline recovery owner', async () => {

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { BrowserDiagnosticEventV1 } from '@happier-dev/protocol';
+import { browserViewKey, type BrowserDiagnosticEventV1 } from '@happier-dev/protocol';
 
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 
@@ -62,12 +62,7 @@ function activeViewKey(
     if (!view || !machineId) {
         return null;
     }
-    return [
-        machineId,
-        view.browserSessionId,
-        view.viewId,
-        String(view.navigationGeneration),
-    ].join('\u0000');
+    return browserViewKey(view, machineId, view.navigationGeneration);
 }
 
 function selectSnapshotEventsForView(

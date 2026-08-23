@@ -5,8 +5,10 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
     createProviderConnectionsDescribeFixture,
+    createMachineAdministrationTargetSelectionMock,
     createProviderSettingsHarness,
     flushHookEffects,
+    installMachineAdministrationTargetSelectionBoundary,
     installProviderSettingsRpcBoundary,
     renderScreen,
     standardCleanup,
@@ -55,6 +57,8 @@ const navigationPreventRemove = vi.hoisted(() => ({
 }));
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
+const administrationTarget = createMachineAdministrationTargetSelectionMock();
+installMachineAdministrationTargetSelectionBoundary(administrationTarget);
 
 installSettingsViewCommonModuleMocks({
     modal: async () => {
@@ -154,7 +158,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemGroup', props, props.children) }));
 vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemList', props, props.children) }));
-vi.mock('@/components/settings/providers/ProviderMachineSelector', () => ({ ProviderMachineSelector: () => null }));
 vi.mock('@/components/ui/icons/SafeIonicons', () => ({ SafeIonicons: () => null }));
 
 function findProviderExternalLink(
@@ -180,6 +183,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
         state.providerName = 'Ollama';
         state.websiteUrl = null;
         state.endpointTemplates = [{ id: 'chat', protocol: 'openai-chat' }];
+        administrationTarget.controller.reset();
         run.mockReset();
         openUrl.mockReset();
         openUrl.mockResolvedValue(undefined);
@@ -839,6 +843,27 @@ describe('ProviderConnectionAuthoringScreen', () => {
         });
 
         expect(getActiveUnsavedChangesGuard()?.continueOnSave).toBe(false);
+    });
+
+    it('stays pristine when the resolved target machine changes under an untouched form', async () => {
+        // The target machine is a persisted Administration preference that can
+        // resolve or move after the first render — automatic sole-candidate
+        // initialization does exactly that. It is not user-entered draft
+        // content, so an untouched form must not claim unsaved changes.
+        administrationTarget.controller.setMachines([
+            { machineId: 'machine-a' },
+            { machineId: 'machine-b' },
+        ]);
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        await renderScreen(<ProviderConnectionAuthoringScreen />);
+        expect(navigationPreventRemove.enabled).toBe(false);
+
+        await React.act(async () => {
+            administrationTarget.controller.select('machine-b');
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+
+        expect(navigationPreventRemove.enabled).toBe(false);
     });
 
     it('keeps or discards a dirty Provider draft through the shared navigation transaction', async () => {

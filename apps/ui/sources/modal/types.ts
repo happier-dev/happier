@@ -50,6 +50,12 @@ export type CustomModalInjectedProps = Readonly<{
     setChrome?: (chrome: CustomModalChromeConfig | null) => void;
 }>;
 
+export type CustomModalDismissReason = 'shared' | 'action';
+
+export type CustomModalDismissGuard = (
+    reason: CustomModalDismissReason,
+) => boolean | void | PromiseLike<boolean | void>;
+
 export type CustomModalComponentType<P extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>> =
     ComponentType<CustomModalInjectedProps & P>;
 
@@ -105,6 +111,15 @@ export interface CustomModalConfig<P extends CustomModalInjectedProps = any> ext
      * - Prefer this over threading `onRequestClose` through component props.
      */
     onRequestClose?: () => void;
+    /**
+     * Optionally decides whether a user-requested dismissal may proceed.
+     *
+     * Return `false` or reject to keep the modal open. Returning `true` or
+     * `void` permits the dismissal, so existing modals keep their current
+     * behavior when no guard is supplied. The reason distinguishes shared
+     * close surfaces from an injected content action.
+     */
+    onDismissRequest?: CustomModalDismissGuard;
     /**
      * Synchronously settles modal-owned work when this provider is removed.
      * It is not a user choice and must not perform the modal's destructive or

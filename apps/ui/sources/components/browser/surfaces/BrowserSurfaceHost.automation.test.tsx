@@ -161,8 +161,8 @@ describe('BrowserSurfaceHost in-app automation control service wiring', () => {
 
         expect(result).toMatchObject({
             v: 1,
-            actionId: 'browser.automation.cancelActive',
-            status: 'accepted',
+            outcome: 'no_active',
+            canceledCount: 0,
         });
     });
 

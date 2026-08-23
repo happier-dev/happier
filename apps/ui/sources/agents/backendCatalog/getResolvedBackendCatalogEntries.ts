@@ -168,6 +168,24 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
         entriesByTargetKey.set(resolvedEntry.backendTargetKey, resolvedEntry);
     }
 
+    // Installed Agents are first-class targets. The daemon's agents projection
+    // is this machine's open Agent catalog and is the only place a standalone
+    // installed Session Agent appears: the V2 projection carries no parallel
+    // backend registry, and `enabledAgentIds` is the closed bundled seed which
+    // can never name one. A bundled id stays owned by that seed so its
+    // selection policy is applied exactly once.
+    for (const projectedAgentId of Object.keys(params.mergedProviderProjectionById ?? {})) {
+        const agentId = String(projectedAgentId ?? '').trim();
+        if (!agentId || isBundledAgentId(agentId)) continue;
+        const resolvedEntry = createProjectedAgentTargetEntry(agentId, params);
+        if (!resolvedEntry) continue;
+        if (entriesByTargetKey.has(resolvedEntry.backendTargetKey)) continue;
+        if (!isResolvedEntryEnabled(params.backendEnabledByTargetKey, resolvedEntry)) {
+            continue;
+        }
+        entriesByTargetKey.set(resolvedEntry.backendTargetKey, resolvedEntry);
+    }
+
     if (params.collapseConfiguredBackendProviderSentinels === true) {
         for (const agentId of collectConfiguredProviderOwnedProviderIds(catalog.backends, params)) {
             const resolvedEntry = createBuiltInTargetEntry(agentId, params);
@@ -330,6 +348,23 @@ function resolveProjectionIconAgentId(
         return agentId;
     }
     return fallbackAgentId;
+}
+
+/**
+ * Builds the selectable target row for one Agent named by the current agents
+ * projection. An id the canonical target-key owner refuses cannot address a
+ * runtime target at all, so it is not selectable rather than fatal to the whole
+ * catalog read.
+ */
+function createProjectedAgentTargetEntry(
+    agentId: string,
+    params: MergedProjectionInputs,
+): ResolvedBackendCatalogEntry | null {
+    try {
+        return createBuiltInTargetEntry(agentId, params);
+    } catch {
+        return null;
+    }
 }
 
 function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInputs): ResolvedBackendCatalogEntry | null {

@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { useIsFocused } from '@react-navigation/native';
-import { BackHandler, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Stack, useRouter } from 'expo-router';
 
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
@@ -142,20 +143,21 @@ export function PluginAppPageScreen(props: Readonly<{
     }, [locationOwner, props.subPath]);
 
     const pageIsLive = props.subPath !== null && !!page && page.disabledReason === null;
-    // Registered for the whole focused lifetime of a live page rather than only
-    // while a step is declared. React Native dispatches Back in REVERSE
-    // registration order, so a listener that came and went with plugin state
-    // would keep changing its position relative to overlays that registered
-    // later; a stable registration keeps "overlay first, then the page, then
-    // ordinary navigation" true no matter when the plugin declared its step.
-    React.useEffect(() => {
-        if (Platform.OS !== 'android' || !isFocused || !pageIsLive) return;
-        const subscription = BackHandler.addEventListener(
-            'hardwareBackPress',
-            () => locationOwner.consumeBack(),
-        );
-        return () => subscription.remove();
-    }, [isFocused, locationOwner, pageIsLive]);
+    // Registered through the app's ONE native-Back layer owner for the whole
+    // focused lifetime of a live page, rather than only while a step is
+    // declared. React Native dispatches Back in REVERSE registration order, so
+    // a listener that came and went with plugin state would keep changing its
+    // position relative to overlays that registered later; a stable
+    // registration keeps "overlay first, then the page, then ordinary
+    // navigation" true no matter when the plugin declared its step. Going
+    // through the layer owner rather than `BackHandler` directly is what makes
+    // an enclosing pane yield to this page, and what keeps a retained,
+    // invisible underlay from answering a Back the user aimed at what they see.
+    const consumePageBack = React.useCallback(() => locationOwner.consumeBack(), [locationOwner]);
+    useNativeBackLayerBackHandler(
+        Platform.OS === 'android' && isFocused && pageIsLive,
+        consumePageBack,
+    );
 
     const binding = React.useMemo<BoundPluginSurfaceBinding>(() => ({
         ...(openSurface ? { openSurface } : {}),

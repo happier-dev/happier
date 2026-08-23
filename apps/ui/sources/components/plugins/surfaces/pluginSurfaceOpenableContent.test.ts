@@ -60,6 +60,49 @@ describe('plugin surface openable content', () => {
         workspaceReadFileMock.mockResolvedValue({ ok: true, contentBase64: 'aGVsbG8=' });
     });
 
+    it('changes the revision for an equal-size edit that preserved the modification time', async () => {
+        // The failure this pins: a tool that rewrites a file in place and restores
+        // its mtime — and any filesystem whose mtime granularity is coarser than
+        // the edit — produced byte-identical size and mtime for different bytes.
+        // The viewer then compared revisions, saw no change, and presented stale
+        // content as current. A write always advances the file's status-change
+        // time, and no utimes call can put that back, so it is the fact that
+        // makes this revision answer for bytes.
+        const before = {
+            success: true,
+            exists: true,
+            kind: 'file',
+            sizeBytes: 5,
+            modifiedMs: 100,
+            changedMs: 100,
+        } as const;
+        const afterEqualSizeEdit = { ...before, changedMs: 240 };
+
+        workspaceStatFileMock.mockResolvedValueOnce(before);
+        const binding = createWorkspaceFileOpenableContentBinding({
+            target: TARGET,
+            filePath: 'notes/README.md',
+        });
+        const first = await binding.stat();
+
+        workspaceStatFileMock.mockResolvedValue(afterEqualSizeEdit);
+        const second = await binding.stat();
+
+        expect(first.status).toBe('ready');
+        expect(second.status).toBe('ready');
+        expect(second.status === 'ready' && first.status === 'ready'
+            ? second.revision === first.revision
+            : true).toBe(false);
+
+        // And the read guard must refuse the superseded revision rather than
+        // handing back the new bytes under the old identity.
+        await expect(binding.read({
+            ref: binding.ref,
+            expectedRevision: first.status === 'ready' ? first.revision : '',
+            maxBytes: 1024,
+        })).resolves.toEqual({ status: 'changed' });
+    });
+
     it('keeps the workspace path in host custody and reads only the exact opaque reference', async () => {
         const binding = createWorkspaceFileOpenableContentBinding({
             target: TARGET,

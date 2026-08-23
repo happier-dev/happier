@@ -67,6 +67,106 @@ describe('buildActionSettingsEntries', () => {
         expect(mcp?.state).toBe('off');
     });
 
+    it('presents the direct-cut API and trusted-plugin surfaces for configurable host actions', async () => {
+        const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+
+        const entries = buildActionSettingsEntries({
+            query: '',
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: {
+                executionRunsEnabled: true,
+                memorySearchEnabled: true,
+                voiceEnabled: true,
+                sessionHandoffEnabled: true,
+                mcpServersEnabled: true,
+                voiceShareDeviceInventory: true,
+            },
+        });
+
+        const review = entries.find((entry) => entry.actionId === 'review.start');
+        expect(review?.targets.find((target) => target.id === 'api')).toMatchObject({ state: 'on' });
+        expect(review?.targets.find((target) => target.id === 'plugin')).toMatchObject({ state: 'on' });
+    });
+
+    it('builds contributed rows from one selected daemon projection with universal API availability', async () => {
+        const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+
+        const entries = buildActionSettingsEntries({
+            query: '',
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: {
+                executionRunsEnabled: true,
+                memorySearchEnabled: true,
+                voiceEnabled: true,
+                sessionHandoffEnabled: true,
+                mcpServersEnabled: true,
+                voiceShareDeviceInventory: true,
+            },
+            contributedActions: [{
+                pluginId: 'com.acme.review',
+                localId: 'review/start',
+                title: 'Start Acme review',
+                description: 'Starts a review from Acme.',
+                icon: 'sparkle',
+                surfaces: ['plugin'],
+            }],
+        });
+
+        const contributed = entries.find((entry) => entry.actionId === 'com.acme.review/actions/review/start');
+        expect(contributed).toMatchObject({
+            title: 'Start Acme review',
+            description: 'Starts a review from Acme.',
+        });
+        expect(contributed?.targets.find((target) => target.id === 'api')).toMatchObject({ state: 'on' });
+        expect(contributed?.targets.find((target) => target.id === 'plugin')).toMatchObject({ state: 'on' });
+    });
+
+    it('retains removed qualified actions while preserving current long contributed labels', async () => {
+        const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+        const longTitle = 'Review action with a deliberately long, provider-authored presentation label that must not be truncated by the catalog owner';
+
+        const entries = buildActionSettingsEntries({
+            query: '',
+            settings: ActionsSettingsV1Schema.parse({
+                v: 1,
+                actions: {
+                    'com.acme.removed/actions/no-longer-installed': {
+                        enabled: false,
+                    },
+                },
+            }),
+            availability: {
+                executionRunsEnabled: true,
+                memorySearchEnabled: true,
+                voiceEnabled: true,
+                sessionHandoffEnabled: true,
+                mcpServersEnabled: true,
+                voiceShareDeviceInventory: true,
+            },
+            contributedActions: [{
+                pluginId: 'com.acme.review',
+                localId: 'review/start',
+                title: longTitle,
+                description: null,
+                icon: null,
+                surfaces: [],
+            }],
+        });
+
+        const current = entries.find((entry) => entry.actionId === 'com.acme.review/actions/review/start');
+        expect(current).toMatchObject({
+            kind: 'contributed',
+            title: longTitle,
+        });
+        expect(current?.targets.find((target) => target.id === 'api')).toMatchObject({ state: 'on' });
+        expect(current?.targets.find((target) => target.id === 'plugin')).toBeUndefined();
+        expect(entries.find((entry) => entry.actionId === 'com.acme.removed/actions/no-longer-installed')).toMatchObject({
+            kind: 'retained',
+            enabled: false,
+            targets: [],
+        });
+    });
+
     it('exposes contextual ui for ui-button actions and supports tokenized translated target search', async () => {
         const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
 

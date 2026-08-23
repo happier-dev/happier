@@ -1,5 +1,6 @@
-export type LocalServicesSharedSubscriptionStoreOptions<TSnapshotClient> = Readonly<{
+export type LocalServicesSharedSubscriptionStoreOptions<TSnapshotClient, TWatchClient = never> = Readonly<{
     snapshotClient?: TSnapshotClient;
+    watchClient?: TWatchClient;
     nowMs?: () => number;
 }>;
 
@@ -11,7 +12,35 @@ export type LocalServicesSharedSubscriptionRefreshParams<TInput, TState, TSnapsh
     signal?: AbortSignal;
 }>;
 
-export type LocalServicesSharedSubscriptionStoreConfig<TInput, TState, TSnapshot, TSnapshotClient> = Readonly<{
+/**
+ * One parked watch answer.
+ *
+ * `changed` carries the daemon's new snapshot; `idle` means the daemon's park window elapsed with
+ * nothing to report and the store re-arms; `unavailable` retires the watch for this entry until a
+ * user-initiated refresh or a foreground invalidation restarts it. There is deliberately no retry,
+ * backoff or breaker here: the daemon owns the wait, so re-arming is rate-limited by its window,
+ * and an unavailable watch degrades to the explicit refresh path rather than to a client timer.
+ */
+export type LocalServicesSharedSubscriptionWatchOutcome<TSnapshot> =
+    | Readonly<{ status: 'changed'; snapshot: TSnapshot }>
+    | Readonly<{ status: 'idle' }>
+    | Readonly<{ status: 'unavailable' }>;
+
+export type LocalServicesSharedSubscriptionWatchParams<TInput, TState, TWatchClient> = Readonly<{
+    input: TInput;
+    state: TState;
+    watchClient: TWatchClient;
+    nowMs: () => number;
+    signal?: AbortSignal;
+}>;
+
+export type LocalServicesSharedSubscriptionStoreConfig<
+    TInput,
+    TState,
+    TSnapshot,
+    TSnapshotClient,
+    TWatchClient = never,
+> = Readonly<{
     emptyState: TState;
     createState: () => TState;
     normalizeInput: (input: TInput) => TInput;
@@ -22,46 +51,72 @@ export type LocalServicesSharedSubscriptionStoreConfig<TInput, TState, TSnapshot
     failRefresh?: (state: TState, input: TInput, nowMs: () => number, error: unknown) => TState;
     applySnapshot: (state: TState, snapshot: TSnapshot) => TState;
     matchesPublish?: (entryInput: TInput, publishInput: TInput) => boolean;
+    /**
+     * Optional push half. While an entry has subscribers the store keeps exactly one watch
+     * outstanding and re-arms it on every answer, so a domain that supplies this stays fresh
+     * without any interval. Domains that do not supply it keep the pull-only lifecycle.
+     */
+    defaultWatchClient?: TWatchClient;
+    watch?: (
+        params: LocalServicesSharedSubscriptionWatchParams<TInput, TState, TWatchClient>,
+    ) => Promise<LocalServicesSharedSubscriptionWatchOutcome<TSnapshot>>;
 }>;
 
-export type LocalServicesSharedSubscriptionStore<TInput, TState, TSnapshot, TSnapshotClient> = Readonly<{
+export type LocalServicesSharedSubscriptionStore<
+    TInput,
+    TState,
+    TSnapshot,
+    TSnapshotClient,
+    TWatchClient = never,
+> = Readonly<{
     getState(input: TInput): TState;
     subscribe(
         input: TInput,
         listener: () => void,
-        options?: LocalServicesSharedSubscriptionStoreOptions<TSnapshotClient>,
+        options?: LocalServicesSharedSubscriptionStoreOptions<TSnapshotClient, TWatchClient>,
     ): () => void;
     invalidate(input: TInput): void;
     publish(input: TInput, snapshot: TSnapshot): void;
     reset(): void;
 }>;
 
-type SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient> = {
+type SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient, TWatchClient> = {
     readonly input: TInput;
     state: TState;
     snapshotClient: TSnapshotClient;
+    watchClient: TWatchClient;
     readonly listeners: Set<() => void>;
     refCount: number;
     inFlight: boolean;
     abortController: AbortController | null;
+    watchAbortController: AbortController | null;
+    watching: boolean;
+    watchRetired: boolean;
     nowMs: () => number;
 };
 
-function notify<TInput, TState, TSnapshotClient>(
-    entry: SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient>,
+function notify<TInput, TState, TSnapshotClient, TWatchClient>(
+    entry: SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient, TWatchClient>,
 ): void {
     for (const listener of entry.listeners) {
         listener();
     }
 }
 
-export function createLocalServicesSharedSubscriptionStore<TInput, TState, TSnapshot, TSnapshotClient>(
-    config: LocalServicesSharedSubscriptionStoreConfig<TInput, TState, TSnapshot, TSnapshotClient>,
-): LocalServicesSharedSubscriptionStore<TInput, TState, TSnapshot, TSnapshotClient> {
-    const entries = new Map<string, SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient>>();
+export function createLocalServicesSharedSubscriptionStore<
+    TInput,
+    TState,
+    TSnapshot,
+    TSnapshotClient,
+    TWatchClient = never,
+>(
+    config: LocalServicesSharedSubscriptionStoreConfig<TInput, TState, TSnapshot, TSnapshotClient, TWatchClient>,
+): LocalServicesSharedSubscriptionStore<TInput, TState, TSnapshot, TSnapshotClient, TWatchClient> {
+    type Entry = SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient, TWatchClient>;
+    const entries = new Map<string, Entry>();
 
     const setState = (
-        entry: SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient>,
+        entry: Entry,
         next: TState,
     ): void => {
         if (entry.state === next) {
@@ -74,24 +129,31 @@ export function createLocalServicesSharedSubscriptionStore<TInput, TState, TSnap
     const ensureEntry = (
         key: string,
         input: TInput,
-        options?: LocalServicesSharedSubscriptionStoreOptions<TSnapshotClient>,
-    ): SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient> => {
+        options?: LocalServicesSharedSubscriptionStoreOptions<TSnapshotClient, TWatchClient>,
+    ): Entry => {
         let entry = entries.get(key);
         if (!entry) {
             entry = {
                 input,
                 state: config.createState(),
                 snapshotClient: options?.snapshotClient ?? config.defaultSnapshotClient,
+                watchClient: (options?.watchClient ?? config.defaultWatchClient) as TWatchClient,
                 listeners: new Set(),
                 refCount: 0,
                 inFlight: false,
                 abortController: null,
+                watchAbortController: null,
+                watching: false,
+                watchRetired: false,
                 nowMs: options?.nowMs ?? Date.now,
             };
             entries.set(key, entry);
         } else {
             if (options?.snapshotClient) {
                 entry.snapshotClient = options.snapshotClient;
+            }
+            if (options?.watchClient) {
+                entry.watchClient = options.watchClient;
             }
             if (options?.nowMs) {
                 entry.nowMs = options.nowMs;
@@ -101,7 +163,7 @@ export function createLocalServicesSharedSubscriptionStore<TInput, TState, TSnap
     };
 
     const runRefresh = async (
-        entry: SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient>,
+        entry: Entry,
     ): Promise<void> => {
         if (entry.inFlight) {
             return;
@@ -135,6 +197,55 @@ export function createLocalServicesSharedSubscriptionStore<TInput, TState, TSnap
         }
     };
 
+    // The push half. Exactly one watch is outstanding per entry with subscribers; every answer
+    // re-arms the next one, so the cadence is the daemon's park window and there is no timer here.
+    // An unavailable watch retires until `invalidate` restarts it, which is what the user-visible
+    // refresh control and the foreground trigger call.
+    const runWatchLoop = (entry: Entry): void => {
+        const watch = config.watch;
+        if (!watch || entry.watching || entry.watchRetired || entry.refCount <= 0) {
+            return;
+        }
+        entry.watching = true;
+        const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        entry.watchAbortController = abortController;
+        void (async () => {
+            try {
+                const outcome = await watch({
+                    input: entry.input,
+                    state: entry.state,
+                    watchClient: entry.watchClient,
+                    nowMs: entry.nowMs,
+                    ...(abortController ? { signal: abortController.signal } : {}),
+                });
+                if (abortController?.signal.aborted || entry.refCount <= 0) {
+                    return;
+                }
+                if (outcome.status === 'unavailable') {
+                    entry.watchRetired = true;
+                    return;
+                }
+                if (outcome.status === 'changed') {
+                    setState(entry, config.applySnapshot(entry.state, outcome.snapshot));
+                }
+            } catch {
+                entry.watchRetired = true;
+            } finally {
+                entry.watching = false;
+                if (entry.watchAbortController === abortController) {
+                    entry.watchAbortController = null;
+                }
+            }
+            runWatchLoop(entry);
+        })();
+    };
+
+    const stopWatch = (entry: Entry): void => {
+        entry.watchAbortController?.abort();
+        entry.watchAbortController = null;
+        entry.watching = false;
+    };
+
     return {
         getState(input) {
             const normalized = config.normalizeInput(input);
@@ -150,6 +261,7 @@ export function createLocalServicesSharedSubscriptionStore<TInput, TState, TSnap
             if (entry.refCount === 1) {
                 void runRefresh(entry);
             }
+            runWatchLoop(entry);
             return () => {
                 if (!subscribed) {
                     return;
@@ -159,6 +271,7 @@ export function createLocalServicesSharedSubscriptionStore<TInput, TState, TSnap
                 entry.refCount -= 1;
                 if (entry.refCount <= 0) {
                     entry.abortController?.abort();
+                    stopWatch(entry);
                     entries.delete(key);
                 }
             };
@@ -168,6 +281,9 @@ export function createLocalServicesSharedSubscriptionStore<TInput, TState, TSnap
             const entry = entries.get(config.storeKey(normalized));
             if (entry) {
                 void runRefresh(entry);
+                // A user-initiated refresh is also the recovery path for a retired watch.
+                entry.watchRetired = false;
+                runWatchLoop(entry);
             }
         },
         publish(input, snapshot) {
@@ -185,6 +301,7 @@ export function createLocalServicesSharedSubscriptionStore<TInput, TState, TSnap
         reset() {
             for (const entry of entries.values()) {
                 entry.abortController?.abort();
+                stopWatch(entry);
             }
             entries.clear();
         },

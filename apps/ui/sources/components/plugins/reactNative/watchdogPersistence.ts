@@ -20,65 +20,47 @@ const NATIVE_STORAGE_BASE_ID = 'plugin-react-native-watchdog';
 const SNAPSHOT_KEY = 'pending-v3';
 const WEB_SNAPSHOT_BASE_KEY = 'happier:plugin-react-native-watchdog:pending-v3';
 
-type WatchdogStoredValue =
-    | Readonly<{ durability: 'available'; value: string }>
-    | Readonly<{ durability: 'absent' }>
-    | Readonly<{ durability: 'unavailable' }>;
-
-const STORAGE_ABSENT: WatchdogStoredValue = Object.freeze({ durability: 'absent' });
-const STORAGE_UNAVAILABLE: WatchdogStoredValue = Object.freeze({ durability: 'unavailable' });
-
-/**
- * A key this store answered for and does not hold is `absent`; a store that
- * cannot be asked at all is `unavailable`. The watchdog needs that difference
- * to tell "nothing was quarantined" from "the quarantine cannot be read".
- */
-function readStorageValue(storage: WatchdogStringStorage, key: string): WatchdogStoredValue {
-    if (!storage.getString && !storage.getItem) {
-        return STORAGE_UNAVAILABLE;
-    }
+/** The stored string, or `null` when this store holds none or cannot answer. */
+function readStorageValue(storage: WatchdogStringStorage, key: string): string | null {
     try {
         const value = storage.getString?.(key) ?? storage.getItem?.(key) ?? null;
-        if (typeof value === 'string') {
-            return Object.freeze({ durability: 'available' as const, value });
-        }
-        return value === null || value === undefined ? STORAGE_ABSENT : STORAGE_UNAVAILABLE;
+        return typeof value === 'string' ? value : null;
     } catch {
-        return STORAGE_UNAVAILABLE;
+        return null;
     }
 }
 
-function writeStorageValue(
-    storage: WatchdogStringStorage,
-    key: string,
-    value: string,
-): 'available' | 'unavailable' {
+function writeStorageValue(storage: WatchdogStringStorage, key: string, value: string): void {
+    // Best effort: this outbox exists so an unreported occurrence survives a
+    // restart. A store that refuses the write costs that report, never the
+    // running mount.
     try {
         if (storage.set) {
             storage.set(key, value);
-            return 'available';
+        } else {
+            storage.setItem?.(key, value);
         }
-        if (storage.setItem) {
-            storage.setItem(key, value);
-            return 'available';
-        }
-        return 'unavailable';
     } catch {
-        // The write is still best-effort for the running mount, which stays
-        // quarantined in memory, but the watchdog must know this snapshot never
-        // became durable truth.
-        return 'unavailable';
+        // Intentionally ignored; the daemon owns durable crash state.
     }
 }
 
 function resolveWebStorage(): WatchdogStringStorage | null {
-    const windowStorage = globalThis.window?.localStorage;
-    if (windowStorage && typeof windowStorage.getItem === 'function' && typeof windowStorage.setItem === 'function') {
-        return windowStorage;
-    }
-    const localStorage = globalThis.localStorage;
-    if (localStorage && typeof localStorage.getItem === 'function' && typeof localStorage.setItem === 'function') {
-        return localStorage;
+    // Browsers that block site data throw from the `localStorage` getter
+    // itself, so even reading the property is a failure mode. This mirrors the
+    // native branch: no reachable store degrades to "no durable persistence",
+    // never to an exception that would take the whole surface module down.
+    try {
+        const windowStorage = globalThis.window?.localStorage;
+        if (windowStorage && typeof windowStorage.getItem === 'function' && typeof windowStorage.setItem === 'function') {
+            return windowStorage;
+        }
+        const localStorage = globalThis.localStorage;
+        if (localStorage && typeof localStorage.getItem === 'function' && typeof localStorage.setItem === 'function') {
+            return localStorage;
+        }
+    } catch {
+        return null;
     }
     return null;
 }
@@ -90,25 +72,20 @@ export function createPluginReactNativeWatchdogStoragePersistence(params: Readon
     return Object.freeze({
         readSnapshot: (): PluginReactNativeWatchdogSnapshotRead => {
             const raw = readStorageValue(params.storage, params.key);
-            if (raw.durability !== 'available') {
-                return Object.freeze({ durability: raw.durability });
+            if (raw === null) {
+                return null;
             }
             try {
-                return Object.freeze({
-                    durability: 'available' as const,
-                    snapshot: JSON.parse(raw.value) as unknown,
-                });
+                return Object.freeze({ snapshot: JSON.parse(raw) as unknown });
             } catch {
-                // Stored bytes exist but cannot be interpreted. That is a
-                // quarantine this UI cannot account for, not an absent one.
-                return Object.freeze({ durability: 'unavailable' as const });
+                // Bytes this version cannot interpret carry no reportable
+                // occurrence, so there is nothing to restore.
+                return null;
             }
         },
-        writeSnapshot: (snapshot: PluginReactNativeWatchdogSnapshot) => writeStorageValue(
-            params.storage,
-            params.key,
-            JSON.stringify(snapshot),
-        ),
+        writeSnapshot: (snapshot: PluginReactNativeWatchdogSnapshot) => {
+            writeStorageValue(params.storage, params.key, JSON.stringify(snapshot));
+        },
     });
 }
 

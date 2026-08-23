@@ -75,6 +75,7 @@ describe('Plugin Event Automation authoring draft', () => {
         const event = eligibleEvent();
         const draft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -174,6 +175,7 @@ describe('Plugin Event Automation authoring draft', () => {
         const event = eligibleEvent();
         const draft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
@@ -237,6 +239,7 @@ describe('Plugin Event Automation authoring draft', () => {
         const event = eligibleEvent();
         const draft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: event,
+            observation: { kind: 'checkpointedPull' },
             setupResult: {
                 v: 1,
                 sourceInstanceId: 'repository:42',

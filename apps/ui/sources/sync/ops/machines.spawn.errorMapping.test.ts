@@ -60,7 +60,7 @@ describe('machineSpawnNewSession error mapping', () => {
 
   function buildMachine(params: Readonly<{
     id: string;
-    startedWithCliVersion?: string | null;
+    cliVersion?: string | null;
     homeDir?: string | null;
     platform?: string;
   }>): Machine {
@@ -76,15 +76,15 @@ describe('machineSpawnNewSession error mapping', () => {
       metadata: homeDir === null ? null : {
         host: params.id,
         platform: params.platform ?? 'darwin',
-        happyCliVersion: params.startedWithCliVersion ?? '0.2.0',
+        happyCliVersion: params.cliVersion ?? '0.2.0',
         happyHomeDir: `${homeDir}/.happier`,
         homeDir,
       },
       metadataVersion: 0,
-      daemonState: params.startedWithCliVersion
-        ? ({ startedWithCliVersion: params.startedWithCliVersion } as any)
+      daemonState: params.cliVersion
+        ? ({ cliVersion: params.cliVersion } as any)
         : null,
-      daemonStateVersion: params.startedWithCliVersion ? 1 : 0,
+      daemonStateVersion: params.cliVersion ? 1 : 0,
     };
   }
 
@@ -1053,7 +1053,7 @@ describe('machineSpawnNewSession error mapping', () => {
       profileScope: { serverId: 'server-a', accountId: 'account-1' },
       machines: {
         ...initialStorageState.machines,
-        'machine-1': buildMachine({ id: 'machine-1', startedWithCliVersion: '0.0.9' }),
+        'machine-1': buildMachine({ id: 'machine-1', cliVersion: '0.0.9' }),
       },
     }, true);
     const { machineSpawnNewSession } = await import('./machines');
@@ -1462,7 +1462,7 @@ describe('machineSpawnNewSession error mapping', () => {
   it('fails closed before RPC when an older daemon sees a configured ACP backend target', async () => {
     storage.getState().applyMachines([buildMachine({
       id: 'machine-legacy',
-      startedWithCliVersion: '0.0.9',
+      cliVersion: '0.0.9',
     })]);
 
     const { machineSpawnNewSession } = await import('./machines');
@@ -1486,7 +1486,7 @@ describe('machineSpawnNewSession error mapping', () => {
   it('fails closed before RPC for an unsupported pre-backend-target daemon', async () => {
     storage.getState().applyMachines([buildMachine({
       id: 'machine-legacy',
-      startedWithCliVersion: '0.0.9',
+      cliVersion: '0.0.9',
     })]);
 
     const { machineSpawnNewSession } = await import('./machines');

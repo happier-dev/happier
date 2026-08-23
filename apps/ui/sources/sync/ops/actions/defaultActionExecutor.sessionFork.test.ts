@@ -586,6 +586,48 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     }));
   });
 
+  /**
+   * The handoff request tells the TARGET daemon which storage to import the
+   * transcript into. On a layout-1 row whose owner projection has not landed,
+   * this device cannot see an owner-only external link at all — the lenient
+   * presentation projection answers `persisted` for it, and stamping that
+   * would import a live external Agent's transcript as if it were ours.
+   */
+  it('refuses a session handoff instead of stamping a storage mode it cannot prove', async () => {
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          active: false,
+          activeAt: 0,
+          metadataVersion: 0,
+          agentStateVersion: 0,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 0,
+          metadataLayoutVersion: 1,
+          metadata: { v: 1, agentPresentation: { agentId: 'codex' } },
+          ownerMetadataView: null,
+        },
+      },
+      settings: { sessionReplayEnabled: true },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.handoff' as any,
+      { sessionId: 'sess_parent', targetMachineId: 'machine_2' },
+      { surface: 'ui', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res).toMatchObject({ ok: false, errorCode: 'session_owner_metadata_unavailable' });
+    expect(startSessionHandoffOpMock).not.toHaveBeenCalled();
+  });
+
   it('prefers the reachable machine target over stale session metadata for session handoff', async () => {
     startSessionHandoffOpMock.mockResolvedValueOnce({
       ok: true,

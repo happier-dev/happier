@@ -613,6 +613,19 @@ installSettingsViewCommonModuleMocks({
     },
 });
 
+// This suite's harness does not stand up the server-selection store the real
+// feature hook subscribes to, and the plugins settings tree asks for exactly one
+// feature, so the decision is supplied directly and every other id stays off.
+const webhookFeature = vi.hoisted(() => ({ enabled: true }));
+const observedFeatureIds = vi.hoisted(() => [] as string[]);
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => {
+        observedFeatureIds.push(featureId);
+        return featureId === 'plugins.webhooks' ? webhookFeature.enabled : false;
+    },
+}));
+
 vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
     usePrimaryMachineFromActiveSelection: () => usePrimaryMachineFromActiveSelectionMock(),
 }));
@@ -937,6 +950,8 @@ afterEach(() => {
     modalAlertAsyncMock.mockClear();
     prefetchMachineCapabilitiesMock.mockReset();
     machineAdministrationFixture.setSelections.mockReset();
+    webhookFeature.enabled = true;
+    observedFeatureIds.length = 0;
     vi.unstubAllGlobals();
 });
 
@@ -1046,6 +1061,19 @@ describe('PluginSettingsHomeScreen', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/plugins/webhooks');
+    });
+
+    it('hides the webhook administration entry when the server webhook feature is unavailable', async () => {
+        webhookFeature.enabled = false;
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: createMachineCapabilitiesState([]),
+            refresh: vi.fn(),
+        });
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+
+        expect(observedFeatureIds).toContain('plugins.webhooks');
+        expect(screen.findRow('settings.plugins.webhooks')).toBeNull();
     });
 
     it('defaults to Installed and keeps every plugin-management view reachable through accessible selectors', async () => {

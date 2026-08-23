@@ -11,11 +11,13 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import {
     MACHINE_ADMINISTRATION_SELECTION_KEYS_V1,
 } from '@/sync/domains/machines/administration/selectionPreferences';
-import {
-    useMachineAdministrationTargetSelection,
-    type FreshMachineAdministrationExecutionTargetV1,
-    type MachineAdministrationTargetSelectionV1,
+import type {
+    FreshMachineAdministrationExecutionTargetV1,
+    MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import {
+    useScopedPluginSettingsDaemonTargetBinding,
+} from '@/sync/domains/machines/administration/scopedPluginSettingsTarget';
 import {
     publishMachineContributionRegistryProjectionInvalidation,
 } from '@/sync/ops/machineContributionRegistryProjection';
@@ -73,16 +75,6 @@ import {
 type ConfirmedPluginChangeAction = 'update' | 'rollback' | 'uninstall' | 'forgetTrust';
 type CommitIntendedPluginChangeAction = 'install' | ConfirmedPluginChangeAction;
 type PluginActionCountsByAuthority = Readonly<Record<string, Readonly<Record<string, number>>>>;
-
-function sameExecutionTarget(
-    left: FreshMachineAdministrationExecutionTargetV1,
-    right: FreshMachineAdministrationExecutionTargetV1,
-): boolean {
-    return left.target.serverIdentityId === right.target.serverIdentityId
-        && left.machine.id === right.machine.id
-        && left.serverId === right.serverId
-        && left.machine.daemonStateVersion === right.machine.daemonStateVersion;
-}
 
 function resolvePluginChangeActionLabel(action: ConfirmedPluginChangeAction): string {
     if (action === 'update') return t('common.update');
@@ -149,14 +141,19 @@ export type PluginSettingsScreenState = Readonly<{
 
 export function usePluginSettingsScreenState(): PluginSettingsScreenState {
     const activeServer = useActiveServerSnapshot();
-    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+    // The one administration-target owner. It supplies the selection, the exact
+    // Settings/Secrets record target, and the single currentness fence every
+    // asynchronous write re-checks — shared with the deep-linked Settings page
+    // screen so the two cannot disagree about which machine is being edited.
+    const administration = useScopedPluginSettingsDaemonTargetBinding(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins,
     );
+    const administrationTargetSelection = administration.selection;
     const accountServerIdentityId = React.useMemo(
         () => resolveScopedPluginSettingsServerIdentity(activeServer.serverId),
         [activeServer.serverId],
     );
-    const executionTarget = administrationTargetSelection.resolveExecutionTarget();
+    const executionTarget = administration.executionTarget;
     const executionMachineId = executionTarget?.machine.id ?? null;
     const executionServerId = executionTarget?.serverId ?? null;
     const executionServerIdentityId = executionTarget?.target.serverIdentityId ?? null;
@@ -196,22 +193,8 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
      * rendered target is presentation state; this guard rejects a stale or
      * retired target before it can route an effect or mutation.
      */
-    const resolveCurrentExecutionTarget = React.useCallback((
-        expected: FreshMachineAdministrationExecutionTargetV1 | null,
-    ): FreshMachineAdministrationExecutionTargetV1 | null => {
-        if (!expected) return null;
-        const current = administrationTargetSelection.resolveExecutionTarget();
-        return current && sameExecutionTarget(current, expected) ? current : null;
-    }, [administrationTargetSelection]);
-    const isDaemonSettingsTargetCurrent = React.useCallback((
-        target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>,
-    ): boolean => {
-        const current = resolveCurrentExecutionTarget(executionTarget);
-        return current !== null
-            && current.target.serverIdentityId === target.serverIdentityId
-            && current.machine.id === target.machineId
-            && current.serverId === target.serverId;
-    }, [executionTarget, resolveCurrentExecutionTarget]);
+    const resolveCurrentExecutionTarget = administration.resolveCurrentExecutionTarget;
+    const isDaemonSettingsTargetCurrent = administration.isTargetCurrent;
 
     const [activeView, setActiveView] = React.useState<PluginSettingsViewId>('installed');
     const [catalogUrl, setCatalogUrlState] = React.useState('');

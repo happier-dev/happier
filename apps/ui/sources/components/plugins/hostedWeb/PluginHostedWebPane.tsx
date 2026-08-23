@@ -803,7 +803,11 @@ export function PluginHostedWebPane(props: Readonly<{
                 code: readNativeArtifactLoadErrorCode(event),
             },
         });
-    }, [nativeArtifactHandle]);
+        // The native mount has failed and this render transitions off it. Retire
+        // the adoption/bridge lifetime synchronously with that transition so no
+        // late guest, bridge, or history work can settle through the dead frame.
+        nativeArtifactAdoption?.dispose();
+    }, [nativeArtifactAdoption, nativeArtifactHandle]);
     const handleNativeArtifactHistoryStateChange = React.useCallback((canGoBack: boolean) => {
         const handle = nativeArtifactHandle;
         if (!handle || artifactCurrentnessRef.current !== handle || !handle.isCurrent()) return;
@@ -858,6 +862,10 @@ export function PluginHostedWebPane(props: Readonly<{
     const bridgeNonce = React.useMemo(
         () => props.bridgeNonce ?? createBridgeNonce(),
         [
+            // Canonical Account lifetime replacement replaces the guest, so the
+            // one nonce rotates on it. There is deliberately no bridge-owned
+            // Account epoch/revision beside the shared lifetime (`03f` r0.4).
+            props.accountLifetime,
             launchInputSemanticKey,
             projectionGeneration,
             props.bridgeNonce,
@@ -976,16 +984,6 @@ export function PluginHostedWebPane(props: Readonly<{
             canonicalHostApi.surface.targetedContributions.target.immutableGenerationId,
         ].join('')
         : null;
-    // Account lifetime is an opaque object rather than serializable UI state.
-    // Track only replacement identity for the bridge/frame key; currentness
-    // and retirement still come exclusively from the captured lifetime.
-    const bridgeAccountLifetimeRef = React.useRef(props.accountLifetime ?? null);
-    const bridgeAccountLifetimeRevisionRef = React.useRef(0);
-    if (bridgeAccountLifetimeRef.current !== (props.accountLifetime ?? null)) {
-        bridgeAccountLifetimeRef.current = props.accountLifetime ?? null;
-        bridgeAccountLifetimeRevisionRef.current += 1;
-    }
-    const bridgeAccountLifetimeRevision = bridgeAccountLifetimeRevisionRef.current;
     const frameOrigin = nativeArtifactFrame?.frameOrigin
         ?? (nativeArtifactActivationPending ? nativeArtifactFrameOrigin : null)
         ?? endpoint?.origin
@@ -1024,7 +1022,6 @@ export function PluginHostedWebPane(props: Readonly<{
         projectionGeneration,
         handleRequestInstalled,
         collectionUiQueryBridgeAllowed,
-        accountLifetimeRevision: bridgeAccountLifetimeRevision,
         surfaceIdentity: bridgeSurfaceIdentityKey,
     });
     const collectionUiQueryBridgeFactoryRef = React.useRef<PluginHostedWebCollectionUiQueryBridgeFactory | undefined>(undefined);
@@ -1241,21 +1238,12 @@ export function PluginHostedWebPane(props: Readonly<{
         endpointRenderable,
     });
 
-    // The bounded resolver above owns every terminal reason. Retain the direct
-    // presence guard so TypeScript narrows the render-only values below without
-    // introducing a second policy/currentness decision.
-    if (unavailableDiagnosticCode || !descriptor || !sandbox || !security || !frameOrigin) {
-        if (unavailableDiagnosticCode === 'hosted_web_bridge_timeout' && props.targetedFallback !== undefined) {
-            return <>{props.targetedFallback}</>;
-        }
-        return <PluginHostedWebUnavailable diagnosticCode={unavailableDiagnosticCode} />;
-    }
-
-    if (nativeArtifactActivationPending) {
-        return <BrowserFrameLoading testID="plugin-hosted-web-frame" />;
-    }
-
-    if (nativeArtifactFrame && typeof nativeArtifactFrameLoadState !== 'string') {
+    // A mounted native Artifact frame that reported a load failure is the exact
+    // terminal reason for this surface, and it is decided before the generic
+    // resolver: retiring the failed mount's adoption necessarily removes its
+    // frame origin, which the generic resolver would otherwise report as a
+    // less truthful "no source" state.
+    if (nativeArtifactHandle && typeof nativeArtifactFrameLoadState !== 'string') {
         if (props.targetedFallback !== undefined) {
             return <>{props.targetedFallback}</>;
         }
@@ -1265,6 +1253,20 @@ export function PluginHostedWebPane(props: Readonly<{
                 errorCode={nativeArtifactFrameLoadState.code}
             />
         );
+    }
+
+    // The bounded resolver above owns every remaining terminal reason. Retain
+    // the direct presence guard so TypeScript narrows the render-only values
+    // below without introducing a second policy/currentness decision.
+    if (unavailableDiagnosticCode || !descriptor || !sandbox || !security || !frameOrigin) {
+        if (unavailableDiagnosticCode === 'hosted_web_bridge_timeout' && props.targetedFallback !== undefined) {
+            return <>{props.targetedFallback}</>;
+        }
+        return <PluginHostedWebUnavailable diagnosticCode={unavailableDiagnosticCode} />;
+    }
+
+    if (nativeArtifactActivationPending) {
+        return <BrowserFrameLoading testID="plugin-hosted-web-frame" />;
     }
 
     // A native Artifact error has returned above. Keep the renderer's narrow

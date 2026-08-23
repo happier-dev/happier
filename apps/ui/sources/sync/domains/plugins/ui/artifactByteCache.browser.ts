@@ -8,7 +8,6 @@ import {
     derivePluginUiPersistentArtifactKey,
     type PluginUiPersistentArtifactFile,
     type PluginUiPersistentArtifactIdentity,
-    type PluginUiPersistentArtifactRecord,
     type PluginUiPersistentArtifactStore,
 } from './artifactByteCache';
 
@@ -18,7 +17,7 @@ const CACHE_ORIGIN = 'https://plugin-ui-artifact-cache.happier.invalid/v1';
 type BrowserArtifactManifestV1 = Readonly<{
     v: 1;
     identityKey: string;
-    entryRelativePath?: string;
+    entryRelativePath: string;
     files: readonly Readonly<{
         relativePath: string;
         digest: PluginUiArtifactDigestV1;
@@ -49,16 +48,6 @@ async function removeArtifactRecord(cache: Cache, prefix: string): Promise<void>
         .map((request) => cache.delete(request)));
 }
 
-function recordFiles(record: PluginUiPersistentArtifactRecord): readonly PluginUiPersistentArtifactFile[] {
-    if (record.files?.length) return record.files;
-    return Object.freeze([{
-        relativePath: record.entryRelativePath ?? '__entry__',
-        digest: record.persistentIdentity.artifactDigest,
-        byteSize: record.bytes.byteLength,
-        bytes: record.bytes,
-    }]);
-}
-
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -68,6 +57,8 @@ function decodeManifest(value: unknown): BrowserArtifactManifestV1 | null {
     if (
         value.v !== 1
         || typeof value.identityKey !== 'string'
+        || typeof value.entryRelativePath !== 'string'
+        || value.entryRelativePath.length === 0
         || !Array.isArray(value.files)
         || value.files.length === 0
     ) return null;
@@ -91,9 +82,7 @@ function decodeManifest(value: unknown): BrowserArtifactManifestV1 | null {
     return Object.freeze({
         v: 1,
         identityKey: value.identityKey,
-        ...(typeof value.entryRelativePath === 'string'
-            ? { entryRelativePath: value.entryRelativePath }
-            : {}),
+        entryRelativePath: value.entryRelativePath,
         files: Object.freeze(files),
     });
 }
@@ -127,14 +116,13 @@ export function createBrowserPluginUiPersistentArtifactStore(
                     if (bytes.byteLength !== declared.byteSize) return await discardIncompleteRecord();
                     files.push(Object.freeze({ ...declared, bytes }));
                 }
-                const entryPath = manifest.entryRelativePath ?? '__entry__';
-                const entry = files.find((file) => file.relativePath === entryPath);
+                const entry = files.find((file) => file.relativePath === manifest.entryRelativePath);
                 if (!entry) return await discardIncompleteRecord();
                 return Object.freeze({
                     persistentIdentity: identity,
                     bytes: entry.bytes,
-                    ...(manifest.entryRelativePath ? { entryRelativePath: manifest.entryRelativePath } : {}),
-                    ...(manifest.entryRelativePath ? { files: Object.freeze(files) } : {}),
+                    entryRelativePath: manifest.entryRelativePath,
+                    files: Object.freeze(files),
                 });
             } catch {
                 return await discardIncompleteRecord();
@@ -144,7 +132,7 @@ export function createBrowserPluginUiPersistentArtifactStore(
             const cache = await open();
             const prefix = artifactUrlPrefix(record.persistentIdentity);
             await cache.delete(`${prefix}/manifest`);
-            const files = recordFiles(record);
+            const files = record.files;
             for (let index = 0; index < files.length; index += 1) {
                 const body = new Uint8Array(files[index].bytes.byteLength);
                 body.set(files[index].bytes);
@@ -153,7 +141,7 @@ export function createBrowserPluginUiPersistentArtifactStore(
             const manifest: BrowserArtifactManifestV1 = Object.freeze({
                 v: 1,
                 identityKey: derivePluginUiPersistentArtifactKey(record.persistentIdentity),
-                ...(record.entryRelativePath ? { entryRelativePath: record.entryRelativePath } : {}),
+                entryRelativePath: record.entryRelativePath,
                 files: Object.freeze(files.map((file) => Object.freeze({
                     relativePath: file.relativePath,
                     digest: file.digest,

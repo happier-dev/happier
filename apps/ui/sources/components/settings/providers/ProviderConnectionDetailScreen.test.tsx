@@ -8,9 +8,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     createProviderConnectionViewFixture,
     createProviderConnectionsDescribeFixture,
+    createMachineAdministrationTargetSelectionMock,
     createProviderSettingsHarness,
     createDeferred,
     flushHookEffects,
+    installMachineAdministrationTargetSelectionBoundary,
     installProviderSettingsRpcBoundary,
     renderScreen,
     standardCleanup,
@@ -53,6 +55,13 @@ const router = vi.hoisted(() => ({
 }));
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
+const administrationTarget = createMachineAdministrationTargetSelectionMock({
+    machines: [
+        { machineId: 'machine-a', displayName: 'Mac' },
+        { machineId: 'machine-b', displayName: 'Linux box' },
+    ],
+});
+installMachineAdministrationTargetSelectionBoundary(administrationTarget);
 
 installSettingsViewCommonModuleMocks({
     router: async () => ({
@@ -147,7 +156,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemGroup', props, props.children) }));
 vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemList', props, props.children) }));
-vi.mock('@/components/settings/providers/ProviderMachineSelector', () => ({ ProviderMachineSelector: (props: Record<string, unknown>) => React.createElement('ProviderMachineSelector', props) }));
 vi.mock('@/components/ui/status/StatusPill', () => ({ StatusPill: (props: Record<string, unknown>) => React.createElement('StatusPill', props) }));
 vi.mock('@/components/ui/forms/Switch', () => ({ Switch: (props: Record<string, unknown>) => React.createElement('Switch', props) }));
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: () => null }));
@@ -207,6 +215,7 @@ describe('ProviderConnectionDetailScreen', () => {
     afterEach(standardCleanup);
     beforeEach(() => {
         providerHarness.reset();
+        administrationTarget.controller.reset();
         state.providerDecisionState = 'enabled';
         state.connection = connection();
         state.discoveryCandidates = [];
@@ -509,7 +518,7 @@ describe('ProviderConnectionDetailScreen', () => {
             .toBe('settingsProviders.detail.testSucceeded');
 
         await act(async () => {
-            screen.findByType('ProviderMachineSelector').props.onSelect?.('machine-b');
+            administrationTarget.controller.select('machine-b');
         });
         expect(screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.detail.testConnection')?.props.subtitle)
@@ -525,7 +534,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const testRow = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.detail.testConnection');
         await act(async () => { testRow?.props.onPress?.(); });
-        await act(async () => { screen.findByType('ProviderMachineSelector').props.onSelect?.('machine-b'); });
+        await act(async () => { administrationTarget.controller.select('machine-b'); });
         await act(async () => {
             resolveProbe?.({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:late' });
             await Promise.resolve();
@@ -566,7 +575,7 @@ describe('ProviderConnectionDetailScreen', () => {
             },
         });
         await act(async () => {
-            screen.findByType('ProviderMachineSelector').props.onSelect?.('machine-a');
+            administrationTarget.controller.select('machine-a');
         });
 
         expect(screen.findAllByType('Item')
@@ -630,7 +639,7 @@ describe('ProviderConnectionDetailScreen', () => {
             probeObservationIdentity: 'probe-observation:v1:request-two',
         });
         await act(async () => {
-            screen.findByType('ProviderMachineSelector').props.onSelect?.('machine-a');
+            administrationTarget.controller.select('machine-a');
         });
         await act(async () => {
             resolveProbe?.({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:late' });
@@ -805,8 +814,10 @@ describe('ProviderConnectionDetailScreen', () => {
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         const titles = screen.findAllByType('Item').map((item) => item.props.title);
         expect(titles).toContain('settingsProviders.detail.accountAccess');
+        // Machine rows are named by the canonical Administration candidate
+        // projection, not by a second lookup in the active server's store.
         expect(titles).toContain('Mac');
-        expect(titles).toContain('Linux');
+        expect(titles).toContain('Linux box');
     });
 
     it('enables the exact selected machine from its not-enabled recovery action', async () => {
@@ -838,7 +849,8 @@ describe('ProviderConnectionDetailScreen', () => {
             connectionId: 'pc_a',
             enabled: true,
         }));
-        expect(screen.findByType('ProviderMachineSelector').props.selectedId).toBe('machine-a');
+        expect(screen.findByType('MachineAdministrationTargetSelector').props.selection.selectedTarget.machineId)
+            .toBe('machine-a');
     });
 
     it('returns a successfully deleted connection to the Provider index without requiring back history', async () => {
@@ -856,6 +868,33 @@ describe('ProviderConnectionDetailScreen', () => {
         }));
         expect(router.replace).toHaveBeenCalledWith('/(app)/settings/providers');
         expect(router.back).not.toHaveBeenCalled();
+    });
+
+    it('refuses a confirmed delete once the machine selection moved while the modal was open', async () => {
+        // The confirmation authorized deleting the connection on machine-a. By
+        // the time it resolved the user had switched targets, so running the
+        // captured request would delete on a machine they never confirmed.
+        confirm.mockReset();
+        confirm.mockImplementationOnce(async () => {
+            administrationTarget.controller.select('machine-b');
+            return true;
+        });
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        const remove = screen.findAllByType('Item')
+            .find((item) => item.props.title === 'settingsProviders.detail.deleteTitle');
+
+        await pressAndFlush(remove);
+
+        expect(confirm).toHaveBeenCalledOnce();
+        expect(run.mock.calls.map((call) => (call[0] as { action?: string }).action))
+            .not.toContain('delete');
+        expect(router.replace).not.toHaveBeenCalled();
+        // The detail view has already re-scoped to the newly selected machine,
+        // so the refusal is silent by the existing scope contract rather than
+        // surfacing an error about the machine the user just left.
+        expect(screen.findByType('MachineAdministrationTargetSelector')
+            .props.selection.selectedTarget.machineId).toBe('machine-b');
     });
 
     it('admits one delete confirmation and re-enables the action after cancellation', async () => {
@@ -1377,6 +1416,114 @@ describe('ProviderConnectionDetailScreen', () => {
         }, 'deployment:managedLocal');
     });
 
+    it('refuses to store a chosen connected-account target the Account no longer offers', async () => {
+        // The draft survives a profile refresh, so a group removed after it was
+        // chosen would otherwise be written to the daemon as a reference that
+        // only fails later.
+        connectedAccountProfileState.groups = [{
+            v: 1,
+            ref: {
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                groupId: 'team',
+            },
+            incarnation: 'qualified-group-row-team',
+            displayName: 'Team pool',
+            policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { quota: true, usageLimit: true } },
+            activeConnectedAccountId: null,
+            generation: 1,
+            runtimeStateRevision: 1,
+            state: { status: 'ready' },
+            createdAt: 1,
+            updatedAt: 1,
+            members: [],
+        }];
+        state.connection = connection({
+            deployment: { kind: 'external' },
+            managedLocalOption: {
+                targetMachineId: 'machine-a',
+                connectedAccountPurposes: [{
+                    purpose: 'upstream',
+                    service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                    required: true,
+                }],
+            },
+        });
+
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-configure',
+        ));
+        const { ConnectedAccountPurposeTargetChooser } = await import(
+            '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
+        );
+        await act(async () => {
+            screen.findAllByType(ConnectedAccountPurposeTargetChooser).find(
+                (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:upstream',
+            )?.props.onChange({
+                kind: 'group',
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                groupId: 'team',
+            });
+            for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
+        });
+
+        // The Account drops the group while the editor is still open, and the
+        // user reloads the chooser's targets through its own refresh action.
+        connectedAccountProfileState.groups = [];
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:upstream:reload',
+        ));
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-save',
+        ));
+
+        expect(alert).toHaveBeenCalledWith(
+            'settingsProviders.local.invalidPurposeTargetTitle',
+            'settingsProviders.local.invalidPurposeTargetDescription',
+        );
+        expect(run).not.toHaveBeenCalled();
+    });
+
+    it('refuses managed connected-account configuration when the target belongs to another server Account', async () => {
+        // Connected accounts, their labels, and the qualified-account transport
+        // all come from the ACTIVE server's Account. Offering this Account's
+        // choices for a target on another server would store a foreign
+        // reference that only fails later on that server.
+        administrationTarget.controller.setMachines([
+            { machineId: 'machine-a', displayName: 'Mac' },
+            {
+                machineId: 'machine-remote',
+                displayName: 'Remote box',
+                serverIdentityId: 'srv_b',
+                serverId: 'server-b',
+            },
+        ]);
+        administrationTarget.controller.select('machine-remote', 'srv_b');
+        state.connection = connection({
+            deployment: { kind: 'external' },
+            managedLocalOption: {
+                targetMachineId: 'machine-remote',
+                connectedAccountPurposes: [{
+                    purpose: 'telemetry',
+                    service: {
+                        pluginId: 'happier.connected-account.openai',
+                        localId: 'openai',
+                    },
+                    required: false,
+                }],
+            },
+        });
+
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+
+        const testIDs = screen.findAllByType('Item').map((item) => item.props.testID);
+        expect(testIDs).toContain('provider-connection-managed-account-scope');
+        expect(testIDs).not.toContain('provider-connection-managed-configure');
+        expect(run).not.toHaveBeenCalled();
+    });
+
     it('activates managed deployment with empty defaults when every purpose is optional and unbound', async () => {
         state.connection = connection({
             deployment: { kind: 'external' },
@@ -1508,6 +1655,23 @@ describe('ProviderConnectionDetailScreen', () => {
     });
 
     it('edits future managed defaults and explicitly contracts back to external', async () => {
+        connectedAccountProfileState.groups = [{
+            v: 1,
+            ref: {
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                groupId: 'future-team',
+            },
+            incarnation: 'qualified-group-row-future-team',
+            displayName: 'Future team pool',
+            policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { quota: true, usageLimit: true } },
+            activeConnectedAccountId: null,
+            generation: 1,
+            runtimeStateRevision: 1,
+            state: { status: 'ready' },
+            createdAt: 1,
+            updatedAt: 1,
+            members: [],
+        }];
         state.connection = connection({
             revision: 4,
             scope: 'machine',

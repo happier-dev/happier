@@ -15,11 +15,11 @@ import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
 import { ProviderErrorItems } from '../ProviderErrorItems';
 import { ProviderExternalLinkItem } from '../ProviderExternalLinkItem';
-import { ProviderMachineSelector } from '../ProviderMachineSelector';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { Icon } from '@/components/ui/icons/Icon';
 
 type PreviewCredential = Readonly<{ required: boolean }>;
@@ -47,7 +47,7 @@ function endpointProtocolLabel(protocol: ProviderWireProtocol): string {
 }
 
 export function BuiltInProviderAuthoringView(props: Readonly<{
-    targetMachines: readonly Machine[];
+    targetSelection: MachineAdministrationTargetSelectionV1;
     machineId: string;
     currentMachineName: string;
     providerName: string | null;
@@ -69,7 +69,6 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
     errorRetry?: () => void | Promise<void>;
     secondaryTextColor: string;
     warningColor: string;
-    onSelectMachine: (machineId: string) => void;
     onPickSecret: () => void;
     onChooseCandidate: (candidateId: string) => void;
     onEndpointChange: (endpointTemplateId: string, baseUrl: string) => void;
@@ -78,11 +77,10 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
 }>): React.ReactElement {
     return (
         <ItemList testID="settings-provider-authoring-built-in" style={{ paddingTop: 0 }}>
-            {props.targetMachines.length > 1 ? (
-                <ItemGroup title={t('settingsProviders.detail.targetMachine')}>
-                    <ProviderMachineSelector machines={props.targetMachines} selectedId={props.machineId} onSelect={props.onSelectMachine} />
-                </ItemGroup>
-            ) : null}
+            <MachineAdministrationTargetSelector
+                selection={props.targetSelection}
+                testIDPrefix="settings.providers.administration.target"
+            />
             <ItemGroup title={props.providerName ?? t('settingsProviders.authoring.providerTitle')} footer={t('settingsProviders.authoring.builtInDescription')}>
                 {props.provenance === 'external' ? (
                     <Item

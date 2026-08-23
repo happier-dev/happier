@@ -216,6 +216,7 @@ describe('provider account usage selectors', () => {
 
         const viewModel = selectors.computeProviderAccountUsageGaugeViewModel({
             snapshot,
+            state: 'loaded_data',
             windowMode: 'most_constrained',
             nowMs: 2_000,
             formatter,
@@ -227,6 +228,26 @@ describe('provider account usage selectors', () => {
             nextExpiresAtMs: 4_000,
             providerCreditId: 'reset-credit-1',
         });
+    });
+
+    it('presents a retained snapshot whose refresh failed as last-known-good', async () => {
+        const selectors = await loadSelectors();
+        const snapshot = makeSnapshot();
+        const fresh = {
+            snapshot,
+            windowMode: 'most_constrained' as const,
+            nowMs: 2_000,
+            formatter,
+        };
+
+        // Same bytes, same clock: only the state its owner resolved differs, so a
+        // gauge that recomputes freshness from the snapshot cannot tell them apart.
+        expect(selectors.computeProviderAccountUsageGaugeViewModel({
+            ...fresh, state: 'loaded_data',
+        })?.isStale).toBe(false);
+        expect(selectors.computeProviderAccountUsageGaugeViewModel({
+            ...fresh, state: 'error_last_known_good',
+        })?.isStale).toBe(true);
     });
 
     it('normalizes provider-account usage record ids', async () => {

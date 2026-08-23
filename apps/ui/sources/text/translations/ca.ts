@@ -12,9 +12,11 @@ import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCred
 import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Crea un servidor, importa JSON de l’amfitrió o instal·la un preajust recomanat.',
@@ -802,6 +804,7 @@ export const ca = {
 
 
     inbox: {
+        ...actionOperationInboxTranslations,
         openSession: ({ session }: { session: string }) => `Obre la sessió: ${session}`,
         // Inbox screen
         emptyTitle: 'Tot al dia',
@@ -1174,6 +1177,15 @@ export const ca = {
             event: {
                 watcherTitle: 'Observador d\'observació',
                 watcherUnwatched: 'Sense observador',
+                endpointTitle: 'Punt final de webhook',
+                endpointObservingSince: ({ time }: { time: string }) => `Rep lliuraments des de ${time}`,
+                sourceStatusUnreported: "A l'espera del primer informe",
+                sourceCatalogStatusUnavailable: 'Actualitat de la font no disponible',
+                watcherMachineUnknown: 'Aquesta màquina ja no és al teu compte, així que aquest observador no pot observar esdeveniments.',
+                watcherMachineRevoked: 'Aquesta màquina s’ha revocat, així que aquest observador no pot observar esdeveniments.',
+                watcherMachineReplaced: 'Aquesta màquina s’ha substituït, així que aquest observador no pot observar esdeveniments.',
+                watcherInstallationReplaced: 'Aquesta màquina s’ha reinstal·lat, així que aquest observador no podrà observar esdeveniments fins que es torni a configurar.',
+                watcherMachineOffline: 'Aquesta màquina està fora de línia, així que aquest observador ara mateix no observa esdeveniments.',
             },
             actionsGroupTitle: 'Accions',
             runNowTitle: 'Executa ara',
@@ -1226,6 +1238,51 @@ export const ca = {
                 scheduled: ({ time }: { time: string }) => `Programada: ${time}`,
                 updated: ({ time }: { time: string }) => `Actualitzada: ${time}`,
                 error: ({ message }: { message: string }) => `Error: ${message}`,
+                attemptTitle: 'Intent',
+                attempt: ({ attempt }: { attempt: number }) => `Intent ${attempt}`,
+                claimedByTitle: 'Assignat a',
+                claimedAt: ({ time }: { time: string }) => `Assignat: ${time}`,
+                leaseExpires: ({ time }: { time: string }) => `L’assignació caduca: ${time}`,
+                dispatchTitle: 'Enviament d’execució',
+                dispatchAttempt: ({ attempt }: { attempt: number }) => `Intent d’enviament ${attempt}`,
+                dispatchState: {
+                    notStarted: 'No iniciat',
+                    dispatchPermitted: 'Enviament permès',
+                    retryWaiting: 'Esperant per reintentar',
+                    started: 'Iniciat',
+                    settled: 'Resolt',
+                    outcomeUnknown: 'Resultat desconegut',
+                },
+                replyHandoffTitle: 'Lliurament de resposta',
+                replyHandoffAttempt: ({ attempt }: { attempt: number }) => `Intent de lliurament ${attempt}`,
+                replyHandoffDue: ({ time }: { time: string }) => `Pròxim intent de lliurament: ${time}`,
+                replyHandoffState: {
+                    none: 'Cap',
+                    awaitingResult: 'Esperant el resultat',
+                    ready: 'A punt',
+                    handingOff: 'Lliurant',
+                    accepted: 'Acceptat',
+                    suppressed: 'Suprimit',
+                    blocked: 'Bloquejat',
+                },
+                nativeExecutionTitle: 'Execució nativa',
+                nativeExecutionCall: ({ callId }: { callId: string }) => `Crida ${callId}`,
+                nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+                historyTitle: 'Què ha passat',
+                historyEvent: {
+                    run_started: 'Iniciada',
+                    run_succeeded: 'Completada',
+                    run_failed: 'Fallida',
+                    run_cancelled: 'Cancel·lada',
+                    run_outcome_uncertain: 'El resultat ha esdevingut incert',
+                    execution_dispatch_retry_scheduled: 'Nou intent d’enviament programat',
+                    unknown: 'Canvi de cicle de vida',
+                },
+                historyReason: {
+                    cancelled_after_dispatch_permitted: 'Cancel·lada després que l’execució externa ja estigués autoritzada',
+                    dispatch_result_missing_after_lease_expiry: 'La màquina que la va reclamar no ha informat mai del resultat de l’enviament',
+                    automation_retired_after_lease_expiry: 'L’automatització s’ha retirat mentre expirava la seva reclamació',
+                },
             },
             runDetail: {
                 title: 'Detalls admesos',
@@ -1306,6 +1363,7 @@ export const ca = {
           moreActionsHint: 'Obre un menú amb més accions',
           destructiveActionHint: 'Aquesta acció és destructiva i no es pot desfer.',
           cancel: 'Cancel·la',
+          decline: 'Rebutja',
           submit: 'Envia',
           close: 'Tancar',
           dismissKeyboard: 'Amaga el teclat',
@@ -5508,6 +5566,15 @@ deps: {
               },
           },
 
+          transcript: {
+
+              olderLoadFailedTitle: 'No s’han pogut carregar els missatges anteriors',
+
+              olderLoadFailedBody: 'La resta d’aquesta conversa encara hi és. Torna a provar de carregar els missatges anteriors.',
+
+          },
+
+
           sharing: {
               title: 'Compartició',
               directSharing: 'Compartició directa',
@@ -7466,18 +7533,26 @@ deps: {
             disabledLimitSubtitle: 'S’ha assolit el límit de previsualitzacions públiques. Revoca un enllaç existent abans de crear-ne un altre.',
             disabledNoPreviewSubtitle: 'Obre una previsualització local abans de crear un enllaç públic.',
             disabledReason: {
+                auditRequirementDisabled: 'El registre d’auditoria de les previsualitzacions públiques és obligatori però està desactivat al servidor.',
                 auditUnavailable: 'El registre d’auditoria de la previsualització pública no està disponible.',
                 dnsTlsUnavailable: 'Les previsualitzacions públiques esperen que DNS/TLS estigui a punt.',
                 expired: 'Aquest enllaç de previsualització pública ha caducat.',
+                linkLifetimeUnconfigured: 'El servidor no té configurada la durada de l’enllaç de previsualització pública.',
+                modeUnconfigured: 'El servidor no té configurat cap mode de previsualització pública.',
                 policyInvalid: 'La política de previsualització pública és incompleta.',
                 previewNotEligible: 'Aquesta previsualització local no és apta per a un enllaç públic.',
+                previewServerDisabled: 'Les previsualitzacions de serveis locals estan desactivades al servidor.',
                 publicBaseUrlUnavailable: 'L’URL base de previsualització pública no està configurat.',
+                rateLimitProfileUnconfigured: 'El servidor no té configurat cap perfil de límit de peticions per a previsualitzacions públiques.',
                 rateLimitUnavailable: 'La limitació de freqüència de la previsualització pública no està disponible.',
                 rateLimited: 'Aquest enllaç de previsualització pública està limitat per freqüència.',
                 relayUnavailable: 'El relay de previsualització pública no està disponible.',
                 revoked: 'Aquest enllaç de previsualització pública s’ha revocat.',
                 secretLinkUnavailable: 'Les previsualitzacions públiques amb enllaç secret no estan configurades.',
+                serverDisabled: 'Les previsualitzacions públiques estan desactivades al servidor.',
                 sessionNotAuthorized: 'No tens accés per crear un enllaç públic per a aquesta sessió.',
+                tunnelPortsUnconfigured: 'El servidor no permet cap port de túnel.',
+                tunnelRelayDisabled: 'El relé del servidor per als túnels de màquina està desactivat.',
             },
             createActionA11y: 'Crea un enllaç de previsualització pública',
             revokeActionA11y: 'Revoca l’enllaç de previsualització pública',
@@ -8063,6 +8138,13 @@ deps: {
         configureActionAccessibilityLabel: 'Configura l’acció',
         approvalHelpTitle: 'Modes d’aprovació',
         approvalHelpBody: '“Demana primer” mostra una confirmació abans que aquesta acció s’executi des d’aquesta superfície. “Permès” deixa executar l’acció des d’aquesta superfície sense demanar aprovació.',
+        contributed: {
+            machineSelectionTitle: 'Tria una màquina per a les accions aportades',
+            machineSelectionBody: 'Selecciona una màquina per veure i configurar les accions declarades pels seus connectors instal·lats.',
+            removedDescription: 'Aquesta acció aportada ja no està disponible a la màquina seleccionada. Se’n conserven els paràmetres desats.',
+            removedTargetsTitle: 'Acció aportada no disponible',
+            removedTargetsBody: 'La màquina seleccionada no declara aquesta acció actualment. Els paràmetres desats es conserven aquí.',
+        },
         toolExposure: {
             title: 'Exposició de l’eina',
             footer: 'Controla si les accions compatibles apareixen com a eines directes o només estan disponibles mitjançant el descobriment d’accions.',
@@ -8292,6 +8374,14 @@ deps: {
             cli: {
                 title: 'CLI de control de sessió',
                 subtitle: 'Disponible a través de la superfície CLI de control de sessió.',
+            },
+            api: {
+                title: 'API',
+                subtitle: 'Disponible mitjançant l’API externa d’accions.',
+            },
+            plugin: {
+                title: 'Connectors de confiança',
+                subtitle: 'Disponible per als connectors de confiança com a acció.',
             },
             contextual_ui: {
                 title: 'IU contextual',
@@ -8965,7 +9055,7 @@ settingsSession: {
             loadingOlder: 'S’estan carregant missatges antics…',
             loadOlderFailed: 'No s’ha pogut carregar l’historial de veu antic.',
             exportTitle: 'Exporta l’historial de veu',
-            exportSubtitle: 'Carrega l’historial restant dins dels límits i desa’l com a JSON.',
+            exportSubtitle: 'Carrega la resta de l’historial i desa’l com a JSON.',
             exporting: 'S’està preparant l’exportació…',
             exportSucceeded: 'L’exportació de l’historial de veu està preparada.',
             exportFailed: 'No s’ha pogut exportar l’historial de veu.',
@@ -9909,7 +9999,7 @@ settingsSession: {
                 onDemandTitle: 'A demanda',
                 onDemandSubtitle: 'Quan ho demanes, la veu pot llegir context semàntic limitat d’aquesta finestra de l’app o pestanya del navegador. Les ordres contextuals continuen sotmeses a controls separats.',
                 automaticTitle: 'Automàtic',
-                automaticSubtitle: 'La veu també rep automàticament metadades bàsiques de navegació. El context detallat continua disponible a demanda i les ordres contextuals continuen sotmeses a controls separats.',
+                automaticSubtitle: 'La veu també rep automàticament metadades bàsiques de navegació, i obrir una sessió en comparteix el context segons les opcions de compartició de dalt. Les ordres contextuals continuen sotmeses a controls separats.',
             },
         },
         languageTitle: 'Idioma',
@@ -11611,6 +11701,7 @@ settingsSession: {
             },
         },
     },
+   ...apiTokenSettingsTranslations.ca,
    settingsPlugins: {
       ...pluginWebhookAdministrationTranslations['ca'],
       ...pluginAccountDataEraseTranslations.ca,

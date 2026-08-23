@@ -24,6 +24,8 @@ function fixture(
     current: boolean,
     availabilityCursor = 42,
     accountArtifactId: string | null = '00000000-0000-4000-8000-000000000001',
+    /** Declares an artifact digest that is not the declared file set's digest. */
+    artifactDigestOverride?: string,
 ) {
     const entryPath = 'hosted-web/acme/index.html';
     const appPath = 'hosted-web/acme/app.js';
@@ -41,7 +43,7 @@ function fixture(
             byteSize: appBytes.byteLength,
         },
     ];
-    const digest = computePluginUiArtifactFileSetSha256DigestV1([
+    const digest = artifactDigestOverride ?? computePluginUiArtifactFileSetSha256DigestV1([
         { relativePath: entryPath, bytes: entryBytes },
         { relativePath: appPath, bytes: appBytes },
     ]);
@@ -203,6 +205,25 @@ describe('Artifact selected handle lease', () => {
             kind: 'unavailable',
             code: 'artifact_lease_revoked',
         });
+    });
+
+    it('refuses a source whose files each verify but whose complete declared set does not', async () => {
+        // Every per-file digest is canonical; only the artifact's whole-graph
+        // digest disagrees with the bytes the source hands over.
+        const current = fixture(true, 42, null, `sha256:${'e'.repeat(64)}`);
+        const store = createPluginAccountAvailabilityReaderStore();
+        store.replace({ scope, snapshot: current.snapshot });
+        const readFile = vi.fn(async ({ relativePath }: Readonly<{ relativePath: string }>) => (
+            current.bytesByPath.get(relativePath) ?? null
+        ));
+
+        await expect(acquirePluginSelectedArtifactLease({
+            reader: store.bind(scope),
+            slot,
+            artifactGraph: current.graph,
+            sources: [{ kind: 'appExact', readFile }],
+        })).resolves.toEqual({ kind: 'unavailable', code: 'artifact_source_integrity_invalid' });
+        expect(readFile).toHaveBeenCalledTimes(current.graph.files.length);
     });
 
     it('keeps an exact Artifact lease current across an unrelated Availability cursor advance', async () => {

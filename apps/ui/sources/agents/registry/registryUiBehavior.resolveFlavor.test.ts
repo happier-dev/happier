@@ -115,13 +115,10 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         })).toBe(1_000_000);
     });
 
-    it('projects Claude AskUserQuestion presentation through the plugin behavior registry', () => {
-        expect(resolveAgentUiBehavior('claude').workflow?.resolveAskUserQuestionPresentation).toBeTypeOf('function');
-    });
-
-    it('projects pending delivery presentation through the Claude provider behavior', () => {
-        expect(resolveAgentUiBehavior('claude').pendingDelivery?.resolveLabelKey).toBeTypeOf('function');
-        expect(resolveAgentUiBehavior('codex').pendingDelivery?.resolveLabelKey).toBeUndefined();
+    it('projects the Claude pending-delivery custody label through provider behavior', () => {
+        expect(resolveAgentUiBehavior('claude').pendingDelivery?.custodyLabelKey)
+            .toBe('session.pendingMessages.deliveryStatus.queuedInClaude');
+        expect(resolveAgentUiBehavior('codex').pendingDelivery?.custodyLabelKey).toBeUndefined();
     });
 
     it('projects current Codex catalog windows through provider UI behavior', () => {

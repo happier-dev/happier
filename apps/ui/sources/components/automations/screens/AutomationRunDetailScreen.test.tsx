@@ -13,6 +13,7 @@ const syncSpies = vi.hoisted(() => ({
 }));
 const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1' }));
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const runDetailMachinesState = vi.hoisted(() => ({ list: [] as Array<{ id: string; metadata?: { displayName?: string } }> }));
 const runsState = vi.hoisted(() => ({
     list: [] as any[],
 }));
@@ -28,7 +29,15 @@ function inspectRunDetail(detail: Record<string, unknown>, privateContent: Recor
     result: { kind: 'absent' },
 }) {
     return {
-        detail,
+        detail: {
+            // The direct detail response always carries these; the schema owner
+            // makes them required, so a fixture must not silently omit them.
+            executionNativeRunId: null,
+            executionNativeCallId: null,
+            executionNativeSidechainId: null,
+            events: [],
+            ...detail,
+        },
         privateContent: {
             failureDetail: { kind: 'absent' },
             ...privateContent,
@@ -66,6 +75,20 @@ installAutomationScreensCommonModuleMocks({
             if (key === 'automations.detail.runMeta.sourceTitle') return 'Observation source';
             if (key === 'automations.detail.runMeta.updated') return `Updated: ${String(params?.time ?? '')}`;
             if (key === 'automations.detail.runMeta.error') return `Error: ${String(params?.message ?? '')}`;
+            if (key === 'automations.detail.runMeta.attemptTitle') return 'Attempt';
+            if (key === 'automations.detail.runMeta.attempt') return `Attempt ${String(params?.attempt ?? '')}`;
+            if (key === 'automations.detail.runMeta.claimedByTitle') return 'Claimed by';
+            if (key === 'automations.detail.runMeta.claimedAt') return `Claimed: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.leaseExpires') return `Claim lease expires: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.dispatchTitle') return 'Execution dispatch';
+            if (key === 'automations.detail.runMeta.dispatchAttempt') return `Dispatch attempt ${String(params?.attempt ?? '')}`;
+            if (key === 'automations.detail.runMeta.dispatchState.retryWaiting') return 'Waiting to retry';
+            if (key === 'automations.detail.runMeta.dispatchState.outcomeUnknown') return 'Outcome unknown';
+            if (key === 'automations.detail.runMeta.dispatchState.settled') return 'Settled';
+            if (key === 'automations.detail.runMeta.replyHandoffTitle') return 'Reply handoff';
+            if (key === 'automations.detail.runMeta.replyHandoffAttempt') return `Handoff attempt ${String(params?.attempt ?? '')}`;
+            if (key === 'automations.detail.runMeta.replyHandoffDue') return `Next handoff attempt: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.replyHandoffState.awaitingResult') return 'Awaiting result';
             if (key === 'automations.detail.runMeta.state.queued') return 'Queued';
             if (key === 'automations.detail.runMeta.state.claimed') return 'Claimed';
             if (key === 'automations.detail.runMeta.state.running') return 'Running';
@@ -101,6 +124,16 @@ installAutomationScreensCommonModuleMocks({
             if (key === 'executionRuns.details.timestamps.finished') return 'Finished';
             if (key === 'runs.openSession') return 'Open session';
             if (key === 'automations.detail.runDetail.outcomeUnknown') return 'Dispatch outcome is unknown. Happier will not dispatch the frozen target again.';
+            if (key === 'automations.detail.runMeta.nativeExecutionTitle') return 'Native execution';
+            if (key === 'automations.detail.runMeta.nativeExecutionCall') return `Call ${String(params?.callId ?? '')}`;
+            if (key === 'automations.detail.runMeta.nativeExecutionSidechain') return `Sidechain ${String(params?.sidechainId ?? '')}`;
+            if (key === 'automations.detail.runMeta.historyTitle') return 'What happened';
+            if (key === 'automations.detail.runMeta.historyEvent.run_started') return 'Started running';
+            if (key === 'automations.detail.runMeta.historyEvent.run_outcome_uncertain') return 'Outcome became uncertain';
+            if (key === 'automations.detail.runMeta.historyEvent.unknown') return 'Lifecycle change';
+            if (key === 'automations.detail.runMeta.historyReason.cancelled_after_dispatch_permitted') {
+                return 'Cancelled after the external execution had already been permitted';
+            }
             return key;
         },
     },
@@ -108,6 +141,7 @@ installAutomationScreensCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useAutomationRuns: () => runsState.list,
+            useAllMachines: () => runDetailMachinesState.list,
         });
     },
     unistyles: async () => {
@@ -316,6 +350,10 @@ describe('AutomationRunDetailScreen', () => {
                 executionInputEnvelope: 'sealed-execution-recipe',
                 resultEnvelope: 'sealed-result',
                 legacySummaryCiphertext: null,
+                executionNativeRunId: null,
+                executionNativeCallId: null,
+                executionNativeSidechainId: null,
+                events: [],
             },
             privateContent: {
                 recipe: {
@@ -515,6 +553,148 @@ describe('AutomationRunDetailScreen', () => {
         expect(rendered).not.toContain('outcome_uncertain');
         // The ratified uncertain-outcome sentence stays the only explanation of this state.
         expect(rendered).toContain('Dispatch outcome is unknown. Happier will not dispatch the frozen target again.');
+    });
+
+    it('surfaces the assignment, attempt, dispatch and reply-handoff facts the Run already carries', async () => {
+        runDetailMachinesState.list = [{ id: 'machine-1', metadata: { displayName: 'Build box' } }];
+        runsState.list = [{
+            ...runsState.list[0],
+            state: 'running',
+            errorCode: null,
+            attempt: 2,
+            claimedAt: 20,
+            claimedByMachineId: 'machine-1',
+            leaseExpiresAt: 30,
+            startedAt: 21,
+            executionDispatchState: 'retryWaiting',
+            executionAttempt: 3,
+            replyHandoffState: 'awaitingResult',
+            replyHandoffAttempt: 1,
+            replyHandoffDueAt: 40,
+            updatedAt: 22,
+        }];
+        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
+            ...runsState.list[0],
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            resultEnvelope: null,
+            legacySummaryCiphertext: null,
+        }));
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
+        await vi.waitFor(() => {
+            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
+        });
+
+        const rendered = screen.getTextContent();
+        expect(rendered).toContain('Attempt');
+        expect(rendered).toContain('Claimed by');
+        expect(rendered).toContain('Claim lease expires:');
+        expect(rendered).toContain('Execution dispatch');
+        expect(rendered).toContain('Dispatch attempt 3');
+        expect(rendered).toContain('Reply handoff');
+        expect(rendered).toContain('Handoff attempt 1');
+        expect(rendered).toContain('Next handoff attempt:');
+        // Values ride the row `detail`, which the text projection does not read.
+        const tree = JSON.stringify(screen.tree.toJSON());
+        expect(tree).toContain('Attempt 2');
+        expect(tree).toContain('Build box');
+        expect(tree).toContain('Waiting to retry');
+        expect(tree).toContain('Awaiting result');
+        // Raw enum tokens are never painted at the user.
+        expect(tree).not.toContain('retryWaiting');
+        expect(tree).not.toContain('awaitingResult');
+    });
+
+    it('names the native execution and its ordered transition history for an uncertain Run', async () => {
+        runDetailMachinesState.list = [];
+        runsState.list = [{
+            ...runsState.list[0],
+            state: 'outcome_uncertain',
+            executionDispatchState: 'outcomeUnknown',
+            errorCode: null,
+            updatedAt: 22,
+        }];
+        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
+            ...runsState.list[0],
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            resultEnvelope: null,
+            legacySummaryCiphertext: null,
+            executionNativeRunId: 'native-run-9',
+            executionNativeCallId: 'native-call-9',
+            executionNativeSidechainId: 'native-sidechain-9',
+            events: [
+                { at: 10, type: 'run_started', machineId: 'machine-1', errorCode: null, executionAttempt: null, outcome: null, reason: null },
+                {
+                    at: 20,
+                    type: 'run_outcome_uncertain',
+                    machineId: null,
+                    errorCode: null,
+                    executionAttempt: null,
+                    outcome: null,
+                    reason: 'cancelled_after_dispatch_permitted',
+                },
+            ],
+        }));
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
+        await vi.waitFor(() => {
+            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
+        });
+
+        const rendered = screen.getTextContent();
+        // Without the native identity an uncertain Run gives the user nothing
+        // to inspect or stop.
+        expect(rendered).toContain('Native execution');
+        expect(rendered).toContain('native-run-9');
+        expect(rendered).toContain('Call native-call-9');
+        expect(rendered).toContain('Sidechain native-sidechain-9');
+        expect(screen.findAllByType('ItemGroup' as any).find((group: any) => (
+            group.props.title === 'What happened'
+        ))).toBeTruthy();
+        expect(rendered).toContain('Started running');
+        expect(rendered).toContain('Cancelled after the external execution had already been permitted');
+        // Raw persisted transition tokens are never painted at the user.
+        const tree = JSON.stringify(screen.tree.toJSON());
+        expect(tree).not.toContain('run_started');
+        expect(tree).not.toContain('cancelled_after_dispatch_permitted');
+    });
+
+    it('omits the assignment and handoff rows a Run has no fact for', async () => {
+        runDetailMachinesState.list = [];
+        runsState.list = [{
+            ...runsState.list[0],
+            attempt: 1,
+            claimedAt: null,
+            claimedByMachineId: null,
+            leaseExpiresAt: null,
+            replyHandoffState: 'none',
+            replyHandoffAttempt: 0,
+            replyHandoffDueAt: null,
+        }];
+        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
+            ...runsState.list[0],
+            triggerEvidenceEnvelope: null,
+            executionInputEnvelope: null,
+            resultEnvelope: null,
+            legacySummaryCiphertext: null,
+        }));
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
+        await vi.waitFor(() => {
+            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
+        });
+
+        const rendered = screen.getTextContent();
+        expect(rendered).not.toContain('Claimed by');
+        expect(rendered).not.toContain('Claim lease expires:');
+        expect(rendered).not.toContain('Reply handoff');
+        expect(rendered).not.toContain('Next handoff attempt:');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Attempt 1');
     });
 
     it('does not let an older direct response regress the bounded Run projection', async () => {

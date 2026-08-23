@@ -1,6 +1,7 @@
 export const SETTINGS_ROUTES = {
     general: '/settings',
     account: '/settings/account',
+    apiTokens: '/settings/account/api-tokens',
     secrets: '/settings/secrets',
     usage: '/settings/usage',
     machines: '/settings/machines',

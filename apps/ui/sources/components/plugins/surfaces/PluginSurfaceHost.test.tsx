@@ -72,12 +72,9 @@ import {
 function createMemoryWatchdogPersistence(): PluginReactNativeWatchdogPersistence {
     let persisted: PluginReactNativeWatchdogSnapshot | null = null;
     return {
-        readSnapshot: () => persisted === null
-            ? { durability: 'absent' as const }
-            : { durability: 'available' as const, snapshot: persisted },
+        readSnapshot: () => persisted === null ? null : { snapshot: persisted },
         writeSnapshot: (snapshot) => {
             persisted = snapshot;
-            return 'available' as const;
         },
     };
 }
@@ -5589,6 +5586,149 @@ describe('PluginSurfacePlacementHost', () => {
         }
     });
 
+    it('retires the mounted author tree on Account replacement while the successor Account read is unavailable', async () => {
+        // UI-NAV-REQ-12 through the real bound host: A -> B -> A with B's read
+        // never settling. The author holds last-known-good rows in its own
+        // React state exactly as the Channels surface does, so a retained tree
+        // would keep Account A's private binding rendered under Account B. A
+        // successor that resolved instantly could not tell the two apart.
+        //
+        // The mount is a `devHotReload` source with no projected crash state:
+        // the host admits that shape (`requiresGeneratedCrashState` covers only
+        // installed/disabled artifacts), and it is exactly the shape whose
+        // watchdog scope key — the incidental carrier of the Account today —
+        // is absent, so only a real Account boundary can retire this tree.
+        reactNativeSurfaceProps.length = 0;
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const devUrl = 'http://127.0.0.1:8082/index.bundle?platform=ios&dev=true';
+        const nativeCacheIdentity = {
+            ...generatedReactNativeCacheIdentity,
+            platform: 'ios',
+        } as const;
+        const nativeArtifactGraph = {
+            ...generatedReactNativeArtifactGraph,
+            platform: 'ios',
+            builtWith: { bundler: 'repack', version: '5.0.0' },
+            repack: defaultReactNativeModuleReference,
+        } as const;
+        const nativePlacement = Object.freeze({
+            ...surfacePlacementFixture({
+                binding: {
+                    pluginId: 'acme.browser',
+                    destinationId: 'native-dev-panel',
+                    rendererId: 'native-panel',
+                    container: 'rightPane',
+                    target: { kind: 'session', sessionIdPath: '/session/id' },
+                },
+                renderer: { kind: 'reactNative', contributionId: 'native-panel' },
+                display: { label: 'Native dev panel' },
+                runtime: {},
+            }),
+            generatedV2: true,
+        }) as unknown as PluginUiSurfacePlacementProjection;
+        const targetedFixture = primeExactTargetedContributions({
+            pluginId: 'acme.browser',
+            immutableGenerationId: 'browser-account-author-boundary-generation-44',
+            projectionGeneration: generatedReactNativeCacheIdentity.projectionGeneration,
+        });
+        const devProjection = withMountedTargetPackage({
+            ...generatedReactNativeProjection,
+            reactNativeBundlesById: {
+                'reactNativeBundle:acme.browser:native-panel': {
+                    ...generatedReactNativeProjection.reactNativeBundlesById['reactNativeBundle:acme.browser:native-panel'],
+                    artifactGraph: nativeArtifactGraph,
+                    runtime: {
+                        decision: { state: 'load', reason: 'compatible', diagnostics: [] },
+                        loadPolicy: {
+                            source: 'devHotReload',
+                            devUrl,
+                            featureEnabled: true,
+                            loaderBackendAvailable: true,
+                        },
+                        cacheKey: 'generated-native-account-boundary-cache-key',
+                        cacheIdentity: nativeCacheIdentity,
+                    },
+                },
+            },
+        } as unknown as PluginUiProjectionModel, targetedFixture, {
+            displayName: 'Browser Inspector',
+            version: '3.2.1',
+        });
+
+        let currentAccountRow: string | null = 'account-a-private-binding';
+        let authorMounts = 0;
+        const AuthorTree = (): React.ReactElement => {
+            const [lastKnownGood] = React.useState(() => {
+                authorMounts += 1;
+                return currentAccountRow;
+            });
+            return React.createElement('View', {
+                testID: 'plugin-rn-account-author-rows',
+                accessibilityLabel: lastKnownGood ?? 'no-rows-yet',
+            });
+        };
+        reactNativeSurfaceRuntime.enabled = true;
+        reactNativeSurfaceRuntime.module = Object.freeze({
+            renderSurface: defineUiSurface(() => React.createElement(AuthorTree)),
+        });
+        const host = () => (
+            <PluginSurfacePlacementHost
+                placement={nativePlacement}
+                machineId="machine_1"
+                serverId="server_1"
+                sessionId="session_1"
+                pluginUiProjection={devProjection}
+                platform="ios"
+                formFactor="tablet"
+                reactNativeLoaderBackend={{
+                    backendId: 'repackScriptManager',
+                    available: true,
+                    loadDevServerBundle: vi.fn(async () => () => null),
+                }}
+            />
+        );
+        const readAuthorRows = () => (
+            screen.findByTestId('plugin-rn-account-author-rows')?.props.accessibilityLabel
+        );
+
+        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        const screen = await renderScreen(host(), { flushOptions: { cycles: 0 } });
+        await vi.waitFor(() => {
+            expect(readAuthorRows()).toBe('account-a-private-binding');
+        });
+        expect(authorMounts).toBe(1);
+        expect((reactNativeSurfaceProps.at(-1) as {
+            crashReportScopeKey?: string;
+        }).crashReportScopeKey).toBeUndefined();
+
+        // Control: an ordinary re-render inside ONE Account lifetime must NOT
+        // retire the author tree. Without this arm the assertions below would
+        // also pass for a host that remounts the plugin on every render, which
+        // is not the contract and would hide the loss of the real boundary.
+        currentAccountRow = null;
+        await screen.update(host());
+        expect(readAuthorRows()).toBe('account-a-private-binding');
+        expect(authorMounts).toBe(1);
+
+        // Account B's read never settles, so only a retired author tree can
+        // clear Account A's rows.
+        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-b' });
+        await screen.update(host());
+        await vi.waitFor(() => {
+            expect(readAuthorRows()).toBe('no-rows-yet');
+        });
+        expect(authorMounts).toBe(2);
+
+        currentAccountRow = 'account-a-private-binding';
+        pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await screen.update(host());
+        await vi.waitFor(() => {
+            expect(readAuthorRows()).toBe('account-a-private-binding');
+        });
+        expect(authorMounts).toBe(3);
+        await screen.unmount();
+    });
+
     it('does not let a late old-scope report completion alter the current surface', async () => {
         reactNativeSurfaceProps.length = 0;
         const crashState = generatedReactNativeCrashState();
@@ -10520,6 +10660,13 @@ describe('Composer physical surface mount', () => {
 
         expect(screen.findByTestId('plugin-declarative-state:root.fallback')).toBeTruthy();
         expect(screen.findByTestId('plugin-surface-unavailable')).toBeNull();
+        // The committed fallback is reported, not silent. Nesting is
+        // structurally unsupported for an embedded Composer mount exactly as it
+        // is for an embedded targeted mount, and an author whose declared child
+        // never appears has no other way to learn why.
+        await vi.waitFor(() => expect(pluginSurfaceDiagnosticLog).toHaveBeenCalledWith(
+            expect.stringContaining('"code":"unsupported_nested_targeted_surface"'),
+        ));
     });
 
     it('lends the exact hosted Composer bridge publisher only while its embedded mount is alive', async () => {

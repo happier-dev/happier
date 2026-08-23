@@ -78,12 +78,15 @@ describe('machineRevokeWithProviderCleanup', () => {
             }],
             secretBindingsByConnectionId: { pc_a: { byMachineId: { revoked: { apiKey: 'secret-a' }, kept: { apiKey: 'secret-b' } } } },
         });
-        const mutateProviderSettings = vi.fn(async (mutate: (current: typeof settings) => typeof settings) => {
-            settings = mutate(settings);
+        const mutateAccountSettings = vi.fn(async (
+            mutate: (current: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+        ) => {
+            const next = mutate({ providerSettingsV1: settings });
+            settings = ProviderSettingsV1Schema.parse(next.providerSettingsV1);
         });
         await expect(machineRevokeWithProviderCleanup('revoked', {
             revoke: vi.fn(async () => ({ ok: true as const })),
-            mutateProviderSettings,
+            mutateAccountSettings,
         })).resolves.toEqual({ ok: true, machineAlreadyRevoked: false, providerCleanup: 'complete' });
         expect(settings.machineGrants).toEqual([]);
         expect(settings.connections[0]?.endpointOverridesByMachineId).toEqual({
@@ -108,15 +111,17 @@ describe('machineRevokeWithProviderCleanup', () => {
                 },
             }],
         });
-        const mutateProviderSettings = vi.fn()
+        const mutateAccountSettings = vi.fn()
             .mockRejectedValueOnce(new Error('offline'))
-            .mockImplementationOnce(async (mutate: (current: typeof settings) => typeof settings) => {
-                mutate(settings);
+            .mockImplementationOnce(async (
+                mutate: (current: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+            ) => {
+                mutate({ providerSettingsV1: settings });
             });
         const revoke = vi.fn()
             .mockResolvedValueOnce({ ok: true })
             .mockResolvedValueOnce({ ok: false, status: 410, error: 'machine_revoked' });
-        const deps = { revoke, mutateProviderSettings };
+        const deps = { revoke, mutateAccountSettings };
         await expect(machineRevokeWithProviderCleanup('revoked', deps)).resolves.toEqual({
             ok: false, status: 503, error: 'provider_cleanup_pending', machineRevoked: true, providerCleanup: 'pending', retryable: true,
         });
@@ -148,14 +153,18 @@ describe('machineRevokeWithProviderCleanup', () => {
             },
         });
         let committed = initial;
-        const mutateProviderSettings = vi.fn(async (mutate: (current: typeof initial) => typeof initial) => {
-            mutate(initial); // first CAS candidate loses to the concurrent writer
-            committed = mutate(concurrentWinner); // retry must derive from the winner
+        const mutateAccountSettings = vi.fn(async (
+            mutate: (current: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+        ) => {
+            mutate({ providerSettingsV1: initial }); // first CAS candidate loses to the concurrent writer
+            committed = ProviderSettingsV1Schema.parse(
+                mutate({ providerSettingsV1: concurrentWinner }).providerSettingsV1,
+            ); // retry must derive from the winner
         });
 
         await expect(machineRevokeWithProviderCleanup('revoked', {
             revoke: vi.fn(async () => ({ ok: true as const })),
-            mutateProviderSettings,
+            mutateAccountSettings,
         })).resolves.toEqual({
             ok: true, machineAlreadyRevoked: false, providerCleanup: 'complete',
         });
@@ -163,6 +172,60 @@ describe('machineRevokeWithProviderCleanup', () => {
         expect(readOwnRecordValue(committed.manualModelsByConnectionId, 'pc_a')).toEqual([
             { id: 'concurrent/model', addedAt: 9 },
         ]);
+    });
+
+    it('leaves a future-version Provider subtree byte-for-byte untouched and reports cleanup pending', async () => {
+        // The Provider settings reader RECOVERS a future subtree into defaults so
+        // readers can degrade. Writing that recovery back would erase every
+        // connection, grant, override and binding this build cannot parse.
+        const futureSubtree = Object.freeze({
+            v: 99,
+            connections: [{ id: 'pc_future', somethingNewEntirely: true }],
+            machineGrants: [{ machineId: 'revoked', connectionId: 'pc_future' }],
+        });
+        let raw: Record<string, unknown> = {
+            schemaVersion: 7,
+            providerSettingsV1: futureSubtree,
+        };
+        const before = JSON.stringify(raw.providerSettingsV1);
+        const mutateAccountSettings = vi.fn(async (
+            mutate: (current: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+        ) => {
+            raw = mutate(raw);
+        });
+
+        await expect(machineRevokeWithProviderCleanup('revoked', {
+            revoke: vi.fn(async () => ({ ok: true as const })),
+            mutateAccountSettings,
+        })).resolves.toMatchObject({
+            ok: false,
+            machineRevoked: true,
+            providerCleanup: 'pending',
+            error: 'provider_settings_unreadable',
+        });
+        expect(JSON.stringify(raw.providerSettingsV1)).toBe(before);
+        expect(raw.providerSettingsV1).toBe(futureSubtree);
+    });
+
+    it('leaves a malformed Provider subtree byte-for-byte untouched', async () => {
+        const malformed = Object.freeze({ v: 1, connections: 'not-a-list' });
+        let raw: Record<string, unknown> = { providerSettingsV1: malformed };
+        const mutateAccountSettings = vi.fn(async (
+            mutate: (current: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+        ) => {
+            raw = mutate(raw);
+        });
+
+        await expect(machineRevokeWithProviderCleanup('revoked', {
+            revoke: vi.fn(async () => ({ ok: true as const })),
+            mutateAccountSettings,
+        })).resolves.toMatchObject({
+            ok: false,
+            machineRevoked: true,
+            providerCleanup: 'pending',
+            error: 'provider_settings_unreadable',
+        });
+        expect(raw.providerSettingsV1).toBe(malformed);
     });
 });
 

@@ -21,7 +21,11 @@ import type {
     ActionInputFormSubmissionResult,
 } from './actionInputForm';
 
-type AnyActionInputForm = ActionInputForm<ActionInputFormSubmissionResult, string, string>;
+type AnyActionInputForm = ActionInputForm<
+    ActionInputFormSubmissionResult,
+    string,
+    string
+>;
 
 const stylesheet = StyleSheet.create(() => ({
     content: {
@@ -45,7 +49,11 @@ function staticFieldOptions(field: Pick<ActionInputFieldHint, 'options'>): reado
 }
 
 function isSuccessfulSubmit(
-    outcome: ActionInputFormSubmitOutcome<ActionInputFormSubmissionResult, string, string>,
+    outcome: ActionInputFormSubmitOutcome<
+        ActionInputFormSubmissionResult,
+        string,
+        string
+    >,
 ): boolean {
     return outcome.kind === 'settled' && outcome.outcome.ok;
 }

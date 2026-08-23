@@ -29,7 +29,6 @@ export type UseLocalServicePublicPreviewStateInput = Readonly<{
     exposureId?: string | null;
     serverId?: string | null;
     enabled?: boolean;
-    refreshIntervalMs?: number | null;
     nowMs?: () => number;
     statusClient?: LocalServicePublicPreviewStatusClient;
 }>;

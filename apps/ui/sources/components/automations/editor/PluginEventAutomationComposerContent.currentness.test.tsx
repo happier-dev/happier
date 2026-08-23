@@ -37,6 +37,7 @@ function createModel(options: Readonly<{
     watcherCurrent?: boolean;
     filterValid?: boolean;
     maximumObservationAgeMsValid?: boolean;
+    webhookEndpoint?: PluginEventAutomationComposerModel['webhookEndpoint'];
 }> = {}): PluginEventAutomationComposerModel {
     const eventAvailable = options.eventAvailable ?? false;
     const watcherCurrent = options.watcherCurrent ?? true;
@@ -100,7 +101,6 @@ function createModel(options: Readonly<{
         editTarget: null,
         targetKind: 'newSession',
         setTargetKind: vi.fn(),
-        targetKindLocked: false,
         existingSessionOptions: [],
         selectedExistingSessionId: null,
         selectExistingSession: vi.fn(),
@@ -126,6 +126,10 @@ function createModel(options: Readonly<{
         sourceStatus: 'configured',
         sourceDisplayLabel: 'acme/widgets',
         sourceInstanceId: 'repository:42',
+        availableObservationTransports: ['checkpointedPull'],
+        observationTransport: 'checkpointedPull',
+        setObservationTransport: vi.fn(),
+        webhookEndpoint: options.webhookEndpoint ?? null,
         configureSource: vi.fn(),
         watcherCandidates,
         selectedWatcherOrigin: {
@@ -159,6 +163,36 @@ function createModel(options: Readonly<{
 describe('PluginEventAutomationComposerContent currentness', () => {
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('stops disclosing the one-time webhook secret once the configured source is no longer current', async () => {
+        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
+        const webhookEndpoint = {
+            publicUrl: 'https://ingress.example/hooks/abc',
+            oneTimeGeneratedSecret: 'whsec-account-a-private',
+        } as PluginEventAutomationComposerModel['webhookEndpoint'];
+
+        // A live configured source is exactly where this credential is meant
+        // to be readable, so the negative below cannot pass for a composer that
+        // never renders it at all.
+        const live = await renderScreen(
+            <PluginEventAutomationComposerContent
+                model={createModel({ eventAvailable: true, watcherCurrent: true, webhookEndpoint })}
+            />,
+        );
+        expect(live.findByTestId('automation-event-webhook-endpoint-secret')?.props.children)
+            .toBe('whsec-account-a-private');
+        expect(live.getTextContent()).toContain('whsec-account-a-private');
+
+        // The same retained `configured` state whose event/watcher binding is no
+        // longer current — the shape an Account or target change leaves behind.
+        const stale = await renderScreen(
+            <PluginEventAutomationComposerContent
+                model={createModel({ eventAvailable: false, watcherCurrent: true, webhookEndpoint })}
+            />,
+        );
+        expect(stale.findByTestId('automation-event-webhook-endpoint')).toBeNull();
+        expect(stale.getTextContent()).not.toContain('whsec-account-a-private');
     });
 
     it('does not present a stale configured source as ready to reconfigure', async () => {

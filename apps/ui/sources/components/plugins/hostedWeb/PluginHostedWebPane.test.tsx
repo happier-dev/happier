@@ -764,6 +764,51 @@ describe('PluginHostedWebPane', () => {
         }
     });
 
+    it('rotates bridge authority when the canonical Account lifetime is replaced', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+        const randomUUID = vi.fn()
+            .mockReturnValueOnce('account-lifetime-one')
+            .mockReturnValueOnce('account-lifetime-two');
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: { randomUUID },
+        });
+        const lifetime = (accountId: string) => Object.freeze({
+            scope: Object.freeze({ serverId: 'server-a', accountId }),
+            isCurrent: () => true,
+            onRetire: () => Object.freeze({ dispose: () => undefined }),
+        });
+        const element = (accountId: string) => (
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={surfaceContext}
+                pluginUiProjection={projection}
+                endpointUrl="https://preview.happier.test/plugin/acme/"
+                platform="web"
+                accountLifetime={lifetime(accountId)}
+                onBridgeMessage={() => undefined}
+            />
+        );
+
+        try {
+            const screen = await renderScreen(element('account-a'));
+            expect(findHostedWebIframe(screen).props.src)
+                .toContain('happierBridgeNonce=account-lifetime-one');
+
+            await screen.update(element('account-b'));
+
+            expect(findHostedWebIframe(screen).props.src)
+                .toContain('happierBridgeNonce=account-lifetime-two');
+        } finally {
+            if (previousCrypto) {
+                Object.defineProperty(globalThis, 'crypto', previousCrypto);
+            } else {
+                delete (globalThis as { crypto?: unknown }).crypto;
+            }
+        }
+    });
+
     it('restarts hosted-web readiness authority when the daemon projection generation changes', async () => {
         vi.useFakeTimers();
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');

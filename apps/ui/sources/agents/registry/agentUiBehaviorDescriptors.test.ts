@@ -272,12 +272,25 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             experiments: { enabled: false, switches: {} },
             resumeSessionId: '',
         })).toEqual([]);
+        // The retired `mcp` spelling normalizes to `appServer`, and the spawn
+        // envelope carries it both as the legacy output key and as the canonical
+        // config-option override the runtime reads.
         expect(behavior.payload?.buildSpawnSessionExtras?.({
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'mcp' }),
             experiments: { enabled: true, switches: {} },
             resumeSessionId: '',
-        })).toEqual({ codexBackendMode: 'appServer' });
+            updatedAt: 4242,
+        })).toEqual({
+            codexBackendMode: 'appServer',
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 4242,
+                overrides: {
+                    codexBackendMode: { value: 'appServer', updatedAt: 4242 },
+                },
+            },
+        });
         expect(behavior.payload?.buildResumeSessionExtras?.({
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'acp' }),
@@ -679,6 +692,79 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             experiments: { enabled: true, switches: {} },
             resumeSessionId: '',
         })).toEqual({ backendMode: 'managed' });
+    });
+
+    it('materializes declared backend transport fields for an Agent that names no host adapter', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            payload: {
+                backendTransport: {
+                    providerId: 'codex',
+                    runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
+                    legacyModeOutputKey: 'codexBackendMode',
+                    backendMode: {
+                        values: ['acp', 'appServer'],
+                        aliases: { mcp: 'appServer', mcp_resume: 'acp' },
+                        legacyExperimentalValue: 'acp',
+                    },
+                    runtimeHandleFields: ['backendMode', 'providerSessionId'],
+                    agentExtra: {
+                        owner: 'codex',
+                        schemaId: 'codex.agentRuntimeDescriptorExtra',
+                        v: 1,
+                    },
+                },
+            },
+        });
+
+        expect(diagnostics).toEqual([]);
+        expect(behavior.payload?.buildBackendTransportFields?.({
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            providerMode: 'appServer',
+            providerSessionId: 'codex-session-1',
+        } as any)).toEqual({
+            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: {
+                    backendMode: 'appServer',
+                    providerSessionId: 'codex-session-1',
+                    agentExtra: {
+                        owner: 'codex',
+                        schemaId: 'codex.agentRuntimeDescriptorExtra',
+                        v: 1,
+                        runtimeHandle: {
+                            backendMode: 'appServer',
+                            providerSessionId: 'codex-session-1',
+                        },
+                    },
+                },
+            },
+        });
+
+        // The retired setting spelling and the legacy experiment flag both still
+        // resolve, and a mode nobody can resolve contributes nothing.
+        expect(behavior.payload?.buildBackendTransportFields?.({
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            providerMode: 'mcp',
+        } as any).codexBackendMode).toBe('appServer');
+        expect(behavior.payload?.buildBackendTransportFields?.({
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            legacyExperimentalMode: true,
+        } as any).codexBackendMode).toBe('acp');
+        expect(behavior.payload?.buildBackendTransportFields?.({
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        } as any)).toEqual({});
+        // Another Agent's spawn never picks up this declaration.
+        expect(behavior.payload?.buildBackendTransportFields?.({
+            agentId: 'claude',
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+            providerMode: 'appServer',
+        } as any)).toEqual({});
     });
 
     it('materializes first-party session subagent component slots through the host allowlist', () => {

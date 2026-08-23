@@ -651,6 +651,152 @@ describe('ConnectedAccountServiceView', () => {
         expect(runControlMock).toHaveBeenCalledTimes(2);
     });
 
+    it('resolves a lost authentication reply with one exact daemon read on user retry', async () => {
+        Object.assign(routeState, { pluginId: 'acme.accounts', localId: 'work' });
+        const service = { pluginId: 'acme.accounts', localId: 'work' };
+        const describedService = {
+            status: 'described',
+            service,
+            descriptor: {
+                id: 'work',
+                title: 'Acme Work',
+                authentication: {
+                    defaultModeId: 'manual',
+                    modes: [{
+                        id: 'manual',
+                        kind: 'manual',
+                        outcomeReconciliation: 'none',
+                        fields: [{
+                            id: 'token',
+                            title: 'Token',
+                            schema: { type: 'string', minLength: 1 },
+                            secret: true,
+                        }],
+                    }],
+                },
+            },
+            generation: 'generation-1',
+            immutableGenerationId: 'artifact-1',
+            accounts: [],
+        } as const;
+        runControlMock.mockResolvedValue(describedService);
+        runAuthenticationMock
+            .mockResolvedValueOnce({ status: 'awaitingManual', attemptId: 'attempt-1' })
+            .mockRejectedValueOnce(new Error('reply lost'))
+            .mockResolvedValueOnce({
+                status: 'connected',
+                attemptId: 'attempt-1',
+                account: { service, accountId: 'account-1' },
+            });
+
+        const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
+        const rendered = await renderScreen(<ConnectedAccountServiceView />);
+        const tree = rendered.tree;
+
+        await pressTestInstanceAsync(
+            await vi.waitFor(() => tree.find(
+                (node) => node.props.testID === 'connected-account-mode:manual',
+            )),
+        );
+        const token = await vi.waitFor(() => tree.find(
+            (node) => node.props.testID === 'connected-account-manual:token',
+        ));
+        await act(async () => token.props.onChangeText('secret-token'));
+        await pressTestInstanceAsync(
+            tree.find((node) => node.props.testID === 'connected-account-manual:submit'),
+        );
+
+        const retry = await vi.waitFor(() => tree.find(
+            (node) => node.props.testID === 'connected-account:error:retry',
+        ));
+        await pressTestInstanceAsync(retry);
+
+        await vi.waitFor(() => {
+            expect(runAuthenticationMock).toHaveBeenLastCalledWith({
+                serverId: 'server-a',
+                machineId: 'machine-1',
+                expectedActiveServer: { serverId: 'server-a', generation: 1 },
+                command: { operation: 'read', attemptId: 'attempt-1' },
+            });
+        });
+        expect(runAuthenticationMock).toHaveBeenCalledTimes(3);
+        await vi.waitFor(() => {
+            expect(tree.findAll(
+                (node) => node.props.testID === 'connected-account:error',
+            )).toHaveLength(0);
+        });
+    });
+
+    it('keeps a lost authentication reply visible when the exact daemon read proves nothing advanced', async () => {
+        Object.assign(routeState, { pluginId: 'acme.accounts', localId: 'work' });
+        const service = { pluginId: 'acme.accounts', localId: 'work' };
+        runControlMock.mockResolvedValue({
+            status: 'described',
+            service,
+            descriptor: {
+                id: 'work',
+                title: 'Acme Work',
+                authentication: {
+                    defaultModeId: 'manual',
+                    modes: [{
+                        id: 'manual',
+                        kind: 'manual',
+                        outcomeReconciliation: 'none',
+                        fields: [{
+                            id: 'token',
+                            title: 'Token',
+                            schema: { type: 'string', minLength: 1 },
+                            secret: true,
+                        }],
+                    }],
+                },
+            },
+            generation: 'generation-1',
+            immutableGenerationId: 'artifact-1',
+            accounts: [],
+        });
+        runAuthenticationMock
+            .mockResolvedValueOnce({ status: 'awaitingManual', attemptId: 'attempt-1' })
+            .mockRejectedValueOnce(new Error('reply lost'))
+            .mockResolvedValueOnce({ status: 'awaitingManual', attemptId: 'attempt-1' });
+
+        const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
+        const rendered = await renderScreen(<ConnectedAccountServiceView />);
+        const tree = rendered.tree;
+
+        await pressTestInstanceAsync(
+            await vi.waitFor(() => tree.find(
+                (node) => node.props.testID === 'connected-account-mode:manual',
+            )),
+        );
+        const token = await vi.waitFor(() => tree.find(
+            (node) => node.props.testID === 'connected-account-manual:token',
+        ));
+        await act(async () => token.props.onChangeText('secret-token'));
+        await pressTestInstanceAsync(
+            tree.find((node) => node.props.testID === 'connected-account-manual:submit'),
+        );
+
+        await pressTestInstanceAsync(await vi.waitFor(() => tree.find(
+            (node) => node.props.testID === 'connected-account:error:retry',
+        )));
+
+        await vi.waitFor(() => {
+            expect(runAuthenticationMock).toHaveBeenLastCalledWith({
+                serverId: 'server-a',
+                machineId: 'machine-1',
+                expectedActiveServer: { serverId: 'server-a', generation: 1 },
+                command: { operation: 'read', attemptId: 'attempt-1' },
+            });
+        });
+        // The read proves the attempt neither advanced nor settled, so the lost
+        // submit's outcome is still unknown and must stay visible instead of
+        // re-enabling the same effectful action.
+        expect(tree.findAll(
+            (node) => node.props.testID === 'connected-account:error',
+        )).not.toHaveLength(0);
+    });
+
     it('renders daemon-proven exact-old Codex accounts passively with no mutation affordance', async () => {
         Object.assign(routeState, {
             pluginId: 'happier.agent.codex',

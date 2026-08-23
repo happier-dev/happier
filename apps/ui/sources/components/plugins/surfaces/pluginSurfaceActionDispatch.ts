@@ -1,5 +1,6 @@
 import {
     PluginInvocableActionIdSchema,
+    PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
     PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
     buildQualifiedPluginContributionKey,
     createPluginActionInvocation,
@@ -193,6 +194,8 @@ export type PluginSurfaceActionDispatchOutcome =
     | Readonly<{ ok: false; code: PluginUiHostApiErrorCodeV1; reason: string }>;
 
 export type DispatchPluginSurfaceActionInput = Readonly<{
+    /** Stable host request identity used only by the daemon's operation observer. */
+    actionRequestId?: string;
     /**
      * The mounted plugin owning the request (host-stamped, never author-supplied).
      * Direct host presentation deliberately has no plugin caller.
@@ -448,10 +451,27 @@ function readClientActionCurrentUiContext(
 function clientActionFailure(
     code: string,
 ): PluginSurfaceActionDispatchOutcome {
-    return failure(
+    return actionDeclinedFailure(code) ?? failure(
         code === 'plugin_action_generation_retired' ? 'stale_surface' : 'unavailable',
         code,
     );
+}
+
+/**
+ * Projects a present-user DECLINE onto the typed `denied` host code.
+ *
+ * A decline is a decision, not an absence. Settling it as `unavailable` makes a
+ * deliberate "no" indistinguishable from "this Action is not available right
+ * now", which invites an autonomous caller (Voice) to ask the same person
+ * again. The rejection code is minted by the canonical current-intent gate, so
+ * both the client-target and daemon-target settlements recognise it here.
+ */
+function actionDeclinedFailure(
+    code: string,
+): PluginSurfaceActionDispatchOutcome | null {
+    return code === PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE
+        ? failure('denied', code)
+        : null;
 }
 
 /** Maps the canonical indeterminate Action code to Voice's private terminal fact. */
@@ -810,6 +830,7 @@ async function executeContributedAction(
         serverId: binding.serverId ?? null,
         expectedGeneration: binding.expectedGeneration,
         qualifiedActionId: buildQualifiedPluginContributionKey(identity),
+        ...(input.actionRequestId ? { requestId: input.actionRequestId } : {}),
         ...(actionInput === undefined
             ? {}
             : {
@@ -863,7 +884,8 @@ async function executeContributedAction(
     }
     const outcomeUnknown = actionOutcomeUnknownFailure(result.result.code);
     if (outcomeUnknown) return outcomeUnknown;
-    return failure('unavailable', result.result.code);
+    return actionDeclinedFailure(result.result.code)
+        ?? failure('unavailable', result.result.code);
 }
 
 export type CreatePluginSurfaceActionDispatchHandlerInput = Readonly<{

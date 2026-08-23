@@ -6,6 +6,7 @@ import {
     AutomationSourceSelectorIdV1Schema,
     AutomationV3DefinitionDetailSchema,
     PluginEventAutomationSetupResultV1Schema,
+    PluginWebhookEndpointIdV1Schema,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
 } from '@happier-dev/protocol';
 import type {
@@ -15,12 +16,40 @@ import type {
     AutomationRunExecutionTargetV1,
     MentionRefV1,
     PluginEventAutomationSetupResultV1,
+    PluginWebhookEndpointIdV1,
 } from '@happier-dev/protocol';
 
 import type {
     AutomationDefinition,
     AutomationDefinitionDetailForTrigger,
 } from '@/sync/domains/automations/automationTypes';
+
+/**
+ * The persisted observation transport, in the same discriminated shape the
+ * composer draft and the V3 writer input use. Both arms are editable: the
+ * pull arm re-selects its watcher materialization, and the push arm keeps the
+ * already-ensured endpoint identity so an ordinary prompt, filter, or target
+ * correction never re-runs one-time credential setup.
+ */
+export type PluginEventAutomationEditSeedObservation =
+    | Readonly<{
+        kind: 'checkpointedPull';
+        watcherMaterializationRef: Readonly<{
+            machineId: string;
+            pluginId: string;
+            materializationId: string;
+        }>;
+    }>
+    | Readonly<{
+        kind: 'durablePush';
+        webhookEndpointId: PluginWebhookEndpointIdV1;
+        /**
+         * The generic endpoint-routing source instance retained privately
+         * beside the provider's own source identity. The V3 writer requires
+         * it, so a push definition missing it cannot be re-written.
+         */
+        webhookRoutingSourceInstanceId: string;
+    }>;
 
 /**
  * Direct-detail-only Event edit input. It is handed once to the incumbent
@@ -34,11 +63,7 @@ export type PluginEventAutomationEditSeed = Readonly<{
     enabled: boolean;
     eventRef: Readonly<{ pluginId: string; localId: string }>;
     source: PluginEventAutomationSetupResultV1;
-    watcherMaterializationRef: Readonly<{
-        machineId: string;
-        pluginId: string;
-        materializationId: string;
-    }>;
+    observation: PluginEventAutomationEditSeedObservation;
     filter: AutomationEventFilterV1 | null;
     maximumObservationAgeMs: number | null;
     prompt: string;
@@ -153,6 +178,46 @@ export function readPluginEventAutomationPrivateDetail(
 }
 
 /**
+ * Projects the persisted transport into the editable observation union. Each
+ * arm must be internally consistent with the private definition it was sealed
+ * with: a pull definition never carries endpoint routing state, and a push
+ * definition is unusable without the canonical endpoint identity plus the
+ * routing source instance the V3 writer replays.
+ */
+function readEditSeedObservation(
+    detail: AutomationDefinitionDetailForTrigger<'pluginEvent'>,
+    privateDefinition: AutomationEventTriggerDefinitionStoredPayloadV1,
+): PluginEventAutomationEditSeedObservation | null {
+    const observation = detail.trigger.observation;
+    if (observation.kind === 'checkpointedPull') {
+        const watcher = observation.watcher;
+        if (
+            watcher === null
+            || watcher.pluginId !== detail.trigger.eventRef.pluginId
+            || privateDefinition.webhookRoutingSourceInstanceId !== undefined
+        ) {
+            return null;
+        }
+        return Object.freeze({
+            kind: 'checkpointedPull' as const,
+            watcherMaterializationRef: Object.freeze({
+                machineId: watcher.machineId,
+                pluginId: watcher.pluginId,
+                materializationId: watcher.materializationId,
+            }),
+        });
+    }
+    const webhookEndpointId = PluginWebhookEndpointIdV1Schema.safeParse(observation.webhookEndpointId);
+    const webhookRoutingSourceInstanceId = privateDefinition.webhookRoutingSourceInstanceId;
+    if (!webhookEndpointId.success || webhookRoutingSourceInstanceId === undefined) return null;
+    return Object.freeze({
+        kind: 'durablePush' as const,
+        webhookEndpointId: webhookEndpointId.data,
+        webhookRoutingSourceInstanceId,
+    });
+}
+
+/**
  * Opens only the direct detail associated with the currently displayed
  * definition. The writer repeats its direct-detail/current-version check
  * immediately before mutation; this reader only prepares one editor handoff.
@@ -166,19 +231,8 @@ export function readPluginEventAutomationEditSeed(
     }
 
     const { detail, storedDefinition: privateDefinition, recipe } = privateDetail;
-    if (
-        detail.trigger.observation.kind !== 'checkpointedPull'
-        || detail.trigger.observation.watcher === null
-    ) {
-        return null;
-    }
-    if (
-        // This editor is the explicitly pull-only r0.28 vertical. Dropping a
-        // push routing source would silently change a durable definition.
-        privateDefinition.webhookRoutingSourceInstanceId !== undefined
-    ) {
-        return null;
-    }
+    const observation = readEditSeedObservation(detail, privateDefinition);
+    if (!observation) return null;
     const source = PluginEventAutomationSetupResultV1Schema.safeParse({
         v: 1,
         sourceInstanceId: privateDefinition.sourceInstanceId,
@@ -199,9 +253,6 @@ export function readPluginEventAutomationEditSeed(
     const target = AutomationRunExecutionTargetV1Schema.safeParse(recipe.target);
     if (!template.success || !target.success) return null;
 
-    const watcher = detail.trigger.observation.watcher;
-    if (watcher.pluginId !== detail.trigger.eventRef.pluginId) return null;
-
     return Object.freeze({
         automationId: detail.id,
         expectedTemplateVersion: detail.templateVersion,
@@ -210,11 +261,7 @@ export function readPluginEventAutomationEditSeed(
         enabled: detail.enabled,
         eventRef: Object.freeze({ ...detail.trigger.eventRef }),
         source: source.data,
-        watcherMaterializationRef: Object.freeze({
-            machineId: watcher.machineId,
-            pluginId: watcher.pluginId,
-            materializationId: watcher.materializationId,
-        }),
+        observation,
         filter: privateDefinition.filter,
         maximumObservationAgeMs: privateDefinition.maximumObservationAgeMs,
         prompt: template.data.prompt,

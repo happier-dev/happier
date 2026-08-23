@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol';
 import { DaemonProviderConnectionMutationRequestV1Schema } from '@happier-dev/protocol/rpc';
 import type { z } from 'zod';
 
@@ -8,8 +8,9 @@ import { mutateProviderConnection, providerErrorFromRpcFailure } from '@/provide
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 type ProviderConnectionMutationResult = Awaited<ReturnType<typeof mutateProviderConnection>> | null;
+type ProviderConnectionExecutionTarget = Readonly<{ machineId: string; serverId: string }>;
 type ProviderConnectionMutationScope = Readonly<{
-    serverId: string | null;
+    resolveTarget: () => ProviderConnectionExecutionTarget | null;
     refresh: () => Promise<void>;
     revision: number;
 }>;
@@ -18,8 +19,15 @@ type PendingMutationState = Readonly<{
     countByKey: ReadonlyMap<string, number>;
 }>;
 
+/**
+ * Every Provider connection write. A modal, confirmation, or prompt can sit
+ * between the render that built a request and the moment it runs, so the
+ * canonical target is re-resolved here — immediately before the effect — and a
+ * request whose machine no longer matches the live selection is refused rather
+ * than issued against a different machine or server.
+ */
 export function useProviderConnectionMutation(input: Readonly<{
-    serverId: string | null;
+    resolveTarget: () => ProviderConnectionExecutionTarget | null;
     refresh: () => Promise<void>;
 }>) {
     const [failure, setFailure] = React.useState<Readonly<{
@@ -27,7 +35,7 @@ export function useProviderConnectionMutation(input: Readonly<{
         retry?: () => Promise<void>;
     }> | null>(null);
     const activeScope = React.useRef<ProviderConnectionMutationScope>({
-        serverId: input.serverId,
+        resolveTarget: input.resolveTarget,
         refresh: input.refresh,
         revision: 0,
     });
@@ -38,9 +46,9 @@ export function useProviderConnectionMutation(input: Readonly<{
     const inFlightByRequestKey = React.useRef(new Map<string, Readonly<{
         promise: Promise<ProviderConnectionMutationResult> | null;
     }>>());
-    if (activeScope.current.serverId !== input.serverId || activeScope.current.refresh !== input.refresh) {
+    if (activeScope.current.resolveTarget !== input.resolveTarget || activeScope.current.refresh !== input.refresh) {
         activeScope.current = {
-            serverId: input.serverId,
+            resolveTarget: input.resolveTarget,
             refresh: input.refresh,
             revision: activeScope.current.revision + 1,
         };
@@ -51,7 +59,7 @@ export function useProviderConnectionMutation(input: Readonly<{
             ? current
             : { scope, countByKey: new Map() });
         setFailure(null);
-    }, [input.refresh, input.serverId]);
+    }, [input.refresh, input.resolveTarget]);
     const updatePending = React.useCallback((
         scope: ProviderConnectionMutationScope,
         key: string,
@@ -111,9 +119,19 @@ export function useProviderConnectionMutation(input: Readonly<{
             updatePending(scope, key, 1);
             if (isCurrentScope()) setFailure(null);
             try {
+                // Re-resolve the canonical target immediately before the write.
+                // A rendered snapshot, or a request a modal delayed, may name a
+                // machine the user has since moved away from.
+                const target = scope.resolveTarget();
+                if (!target || target.machineId !== parsedRequest.machineId) {
+                    if (isCurrentScope()) {
+                        setFailure({ error: createProviderErrorV1('provider_authorization_changed', errorContext) });
+                    }
+                    return null;
+                }
                 let result: Awaited<ReturnType<typeof mutateProviderConnection>>;
                 try {
-                    result = await mutateProviderConnection({ serverId: scope.serverId, request: parsedRequest });
+                    result = await mutateProviderConnection({ serverId: target.serverId, request: parsedRequest });
                 } catch (caught) {
                     if (!isCurrentScope()) return null;
                     const nextError = providerErrorFromRpcFailure(caught, errorContext);

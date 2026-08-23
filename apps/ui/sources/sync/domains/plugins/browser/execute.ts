@@ -7,11 +7,13 @@ import type {
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy/evaluate';
 import { comparePluginContributionOrder } from '@/sync/domains/plugins/contributionOrder';
 import {
-    dispatchPluginSurfaceAction,
     type PluginSurfaceActionDispatchOutcome,
     type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceContributedActionTransport,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import {
+    launchPluginSurfaceAction,
+} from '@/components/plugins/surfaces/launchPluginSurfaceAction';
 import {
     createPluginActionCurrentIntentHandler,
 } from '@/components/plugins/surfaces/pluginSurfaceFeedback';
@@ -79,7 +81,9 @@ export async function executePluginBrowserAction(params: Readonly<{
     signal?: AbortSignal;
     isCurrent?: () => boolean;
     readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
-}>): Promise<PluginSurfaceActionDispatchOutcome> {
+}>): Promise<
+    PluginSurfaceActionDispatchOutcome
+> {
     const machineId = normalizeMachineId(params.machineId);
     if (
         !params.action
@@ -114,7 +118,7 @@ export async function executePluginBrowserAction(params: Readonly<{
         })
         : undefined;
 
-    return await dispatchPluginSurfaceAction({
+    const launched = await launchPluginSurfaceAction({
         callerPluginId: params.action.pluginId,
         action: params.action.actionIdentity,
         input: input.data as PluginUiJsonValueV1,
@@ -150,4 +154,5 @@ export async function executePluginBrowserAction(params: Readonly<{
         ...(params.signal ? { signal: params.signal } : {}),
         isCurrent,
     });
+    return launched.outcome;
 }

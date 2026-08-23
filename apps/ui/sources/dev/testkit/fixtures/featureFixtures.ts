@@ -12,6 +12,10 @@ import {
     type FeaturesResponse as RootLayoutFeatures,
 } from '@happier-dev/protocol';
 
+export const DEFAULT_AUTH_KEY_CHALLENGE_CAPABILITIES = {
+    v2: false,
+} as const;
+
 type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' | 'capabilities'> & Readonly<{
     features?: Omit<
         Partial<RootLayoutFeatures['features']>,
@@ -286,6 +290,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         oauth: { providers: { github: { enabled: true, configured: true } } },
         auth: {
             methods: [],
+            keyChallenge: DEFAULT_AUTH_KEY_CHALLENGE_CAPABILITIES,
             signup: { methods: [{ id: 'anonymous', enabled: true }] },
             login: { methods: [{ id: 'key_challenge', enabled: true }], requiredProviders: [] },
             recovery: {

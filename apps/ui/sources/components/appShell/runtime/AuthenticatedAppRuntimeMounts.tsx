@@ -18,6 +18,7 @@ import { DesktopBrowserRecordingReverseCaptureRuntime } from '@/sync/domains/bro
 import { resolveVerifiedLocalBrowserRecordingCaptureMachineId } from '@/sync/domains/browser/recording/localReverseCaptureOwnership';
 import { storage, useAllMachines } from '@/sync/domains/state/storage';
 import { CurrentSessionPresentationRuntime } from '@/components/sessions/presentation/CurrentSessionPresentationRuntime';
+import { ActionOperationRuntime } from '@/sync/domains/actionOperations/actionOperationRuntime';
 
 type ActivitySurfacesRuntimeComponent = React.ComponentType;
 
@@ -88,6 +89,7 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
             <ActivityBadgeRuntime />
             <IosActivitySurfacesRuntimeMount />
             <ActivityLocalNotificationRuntime />
+            {props.isAuthenticated ? <ActionOperationRuntime /> : null}
             {props.isAuthenticated ? <PushNotificationPermissionPrimingRuntime /> : null}
             {props.isAuthenticated ? <CurrentSessionPresentationRuntime /> : null}
             <DesktopPetOverlayRuntimeMount />

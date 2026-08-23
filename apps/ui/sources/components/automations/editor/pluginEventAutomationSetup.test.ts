@@ -250,6 +250,59 @@ function executionOrigin(
     };
 }
 
+const WEBHOOK_LOCAL_ID = 'github-events';
+const WEBHOOK_ENDPOINT_ID = 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA';
+
+/** The same Event, declaring the push arm its webhook contribution serves. */
+function durablePushEligibleEvent(): DaemonContributionRegistryProjectionAutomationEligibleEventV1 {
+    const base = eligibleEvent();
+    return DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+        ...base,
+        event: {
+            ...base.event,
+            automation: {
+                ...base.event.automation,
+                source: {
+                    ...base.event.automation.source,
+                    supportedObservationTransports: ['checkpointedPull', 'durablePush'],
+                    webhookContributionRef: { pluginId: PLUGIN_ID, localId: WEBHOOK_LOCAL_ID },
+                },
+            },
+        },
+    });
+}
+
+function durablePushSetupParams(
+    event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
+): Omit<Parameters<typeof configurePluginEventAutomationSetup>[0], 'observationTransport'> {
+    return {
+        eligibleEvent: event,
+        filter: null,
+        maximumObservationAgeMs: null,
+        accountLifetime: ACCOUNT_LIFETIME,
+        resolveExecutionOrigin: () => executionOrigin(),
+        loadCurrentProjection: async () => projectionInputs(event),
+        resolveConnectedAccountOptions: vi.fn(async () => ({
+            supported: true as const,
+            result: { ok: true as const, options: [{ value: ACCOUNT, label: 'Work GitHub' }] },
+        })),
+        present: ({ form }) => {
+            form.replaceInput({ repository: 'happier-dev/happier', credentialRef: ACCOUNT });
+            void form.submit();
+        },
+        dispatch: vi.fn<PluginContributedActionDispatch>(async () => ({
+            ok: true as const,
+            result: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+        })),
+    };
+}
+
 describe('Plugin Event Automation setup orchestration', () => {
     it('uses the exact Event setup Action form, restores the selected Account, and dispatches with its immutable generation', async () => {
         const event = eligibleEvent();
@@ -269,6 +322,7 @@ describe('Plugin Event Automation setup orchestration', () => {
         let selectedOrigin = executionOrigin();
         const result = await configurePluginEventAutomationSetup({
             eligibleEvent: event,
+            observationTransport: 'checkpointedPull',
             filter: null,
             maximumObservationAgeMs: null,
             accountLifetime: ACCOUNT_LIFETIME,
@@ -370,6 +424,7 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         await expect(configurePluginEventAutomationSetup({
             eligibleEvent: event,
+            observationTransport: 'checkpointedPull',
             filter: null,
             maximumObservationAgeMs: null,
             accountLifetime: ACCOUNT_LIFETIME,
@@ -409,6 +464,7 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         const result = await configurePluginEventAutomationSetup({
             eligibleEvent: event,
+            observationTransport: 'checkpointedPull',
             filter: null,
             maximumObservationAgeMs: null,
             accountLifetime: ACCOUNT_LIFETIME,
@@ -447,6 +503,7 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         const result = await configurePluginEventAutomationSetup({
             eligibleEvent: original,
+            observationTransport: 'checkpointedPull',
             filter: null,
             maximumObservationAgeMs: null,
             accountLifetime: ACCOUNT_LIFETIME,
@@ -478,6 +535,7 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         const result = await configurePluginEventAutomationSetup({
             eligibleEvent: event,
+            observationTransport: 'checkpointedPull',
             filter: null,
             maximumObservationAgeMs: null,
             accountLifetime: ACCOUNT_LIFETIME,
@@ -539,6 +597,7 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         const result = await configurePluginEventAutomationSetup({
             eligibleEvent: event,
+            observationTransport: 'checkpointedPull',
             filter: null,
             maximumObservationAgeMs: null,
             accountLifetime: ACCOUNT_LIFETIME,
@@ -560,5 +619,88 @@ describe('Plugin Event Automation setup orchestration', () => {
 
         expect(result).toEqual({ kind: 'unavailable' });
         expect(dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('ensures the Account webhook endpoint and writes the durable-push arm the user can complete', async () => {
+        const event = durablePushEligibleEvent();
+        const ensureWebhookEndpoint = vi.fn(async () => ({
+            kind: 'available' as const,
+            endpoint: Object.freeze({
+                webhookEndpointId: WEBHOOK_ENDPOINT_ID,
+                publicUrl: 'https://happier.example/v1/plugins/webhooks/wh_route_abc',
+                readiness: 'providerConfirmationRequired' as const,
+                oneTimeGeneratedSecret: 'whsec-visible-once',
+            }),
+        }));
+        const result = await configurePluginEventAutomationSetup({
+            ...durablePushSetupParams(event),
+            observationTransport: 'durablePush',
+            ensureWebhookEndpoint,
+        });
+
+        expect(result).toMatchObject({
+            kind: 'configured',
+            webhookEndpoint: {
+                publicUrl: 'https://happier.example/v1/plugins/webhooks/wh_route_abc',
+                oneTimeGeneratedSecret: 'whsec-visible-once',
+            },
+        });
+        if (result.kind !== 'configured') throw new Error('expected configured Event setup');
+        // The endpoint is keyed on the source instance the setup Action just
+        // returned, not on anything the composer chose before dispatch.
+        expect(ensureWebhookEndpoint).toHaveBeenCalledWith(expect.objectContaining({
+            sourceInstanceId: 'repository:42',
+        }));
+
+        const watcherOrigin = result.draft.resolveFreshWatcherOrigin();
+        if (!watcherOrigin) throw new Error('expected current watcher origin');
+        const executionRecipe = buildPlainPluginEventAutomationExecutionRecipe({
+            templateVersion: 0,
+            prompt: 'Triage {{input}}',
+            target: {
+                kind: 'newSession',
+                spawn: {
+                    executionTarget: { serverId: 'server-account-a', machineId: 'executor-machine' },
+                    directory: '/workspace/acme',
+                    agentTarget: {
+                        kind: 'agent',
+                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    },
+                },
+            },
+        });
+        if (!executionRecipe) throw new Error('expected execution recipe');
+        const request = buildPluginEventAutomationDefinitionCreateRequest({
+            name: 'Repository triage',
+            description: null,
+            enabled: true,
+            eligibleEvents: [event],
+            draft: result.draft.draft,
+            watcherOrigin: watcherOrigin.origin,
+            executionRecipe,
+            assignments: [{ machineId: 'executor-machine', enabled: true, priority: 100 }],
+        });
+        expect(request?.trigger.observationTransport).toEqual({
+            kind: 'durablePush',
+            webhookEndpointId: WEBHOOK_ENDPOINT_ID,
+            endpointMaterializationRef: {
+                machineId: MACHINE_ID,
+                materializationId: MATERIALIZATION_ID,
+                pluginId: PLUGIN_ID,
+            },
+            webhookRoutingSourceInstanceId: 'repository:42',
+            setup: { kind: 'githubAccountEndpointV1', credential: 'serverGenerated' },
+        });
+    });
+
+    it('does not author a durable-push trigger when the endpoint could not be ensured', async () => {
+        const event = durablePushEligibleEvent();
+        const result = await configurePluginEventAutomationSetup({
+            ...durablePushSetupParams(event),
+            observationTransport: 'durablePush',
+            ensureWebhookEndpoint: vi.fn(async () => ({ kind: 'unavailable' as const })),
+        });
+
+        expect(result).toEqual({ kind: 'unavailable' });
     });
 });

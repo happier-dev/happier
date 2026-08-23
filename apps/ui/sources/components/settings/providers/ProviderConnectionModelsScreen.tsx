@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import {
     createProviderErrorV1,
     parseProviderManualModelInput,
@@ -8,11 +8,10 @@ import {
 } from '@happier-dev/protocol';
 
 import { TextInput } from '@/components/ui/text/Text';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { Modal } from '@/modal';
 import { useProviderConnectionModels } from '@/providers/hooks/useProviderConnectionModels';
 import { useProviderModelLoadAction } from '@/providers/hooks/useProviderModelLoadAction';
-import { resolveProviderSettingsTargetMachine } from '@/providers/hooks/targetMachine';
+import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import {
     buildProviderModelVisibilityChanges,
     type ProviderModelManagerGroup,
@@ -28,8 +27,10 @@ import {
     providerRetryRecoveryForError,
 } from '@/providers/connection/recovery';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
-import { useAllMachines, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
+import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
+import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { ProviderConnectionModelsView } from './models/ProviderConnectionModelsView';
 import { useProviderFeatureAvailability } from './ProviderFeatureAvailability';
 
@@ -37,14 +38,9 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
     props: Readonly<{ connectionId: string; startAdding?: boolean }>,
 ) {
     const router = useRouter();
+    const navigation = useNavigation();
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
-    const machines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    const activeServer = useActiveServerSnapshot();
-    const serverId = typeof activeServer.serverId === 'string' ? activeServer.serverId : null;
-    const machineId = React.useMemo(() => resolveProviderSettingsTargetMachine({
-        serverId, machines, machineListByServerId,
-    }), [machineListByServerId, machines, serverId]);
+    const { machineId, resolveCurrentTarget, serverId } = useProviderSettingsTarget();
     const connectionQuery = useProviderConnections({
         enabled, machineId, serverId, connectionId: props.connectionId,
     });
@@ -121,28 +117,48 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
         }
         showError(error, providerRetryRecoveryForError(error, retry));
     }, [reviewCurrentState, showError]);
-    const runModelSettingsMutation = React.useCallback(async (
+    // Model-settings writes for one connection settle in issue order. Two rapid
+    // visibility toggles dispatched concurrently could otherwise be applied by
+    // the daemon in the opposite order and leave the catalog showing the
+    // opposite of the user's last intent.
+    const modelSettingsQueue = React.useRef<Promise<unknown>>(Promise.resolve());
+    const runModelSettingsMutation = React.useCallback((
         request: Parameters<typeof mutateProviderModelSettings>[0]['request'],
         retry: () => Promise<void>,
     ): Promise<boolean> => {
-        let result: Awaited<ReturnType<typeof mutateProviderModelSettings>>;
-        try {
-            result = await mutateProviderModelSettings({ serverId, request });
-        } catch (caught) {
-            await handleModelSettingsMutationFailure(providerErrorFromRpcFailure(caught, {
-                connectionId: props.connectionId,
-                ...(machineId ? { machineId } : {}),
-            }), retry);
-            return false;
-        }
-        if (result.status === 'error') {
-            await handleModelSettingsMutationFailure(result.error, retry);
-            return false;
-        }
-        setOperationError(null);
-        await catalog.refresh();
-        return true;
-    }, [catalog.refresh, handleModelSettingsMutationFailure, machineId, props.connectionId, serverId]);
+        const queued = modelSettingsQueue.current.then(async (): Promise<boolean> => {
+            // Re-resolve the canonical target immediately before the write: a
+            // confirmation modal may have kept this request waiting while the
+            // user moved to another machine or server profile.
+            const target = resolveCurrentTarget();
+            if (!target || target.machineId !== request.machineId) {
+                showError(createProviderErrorV1('provider_authorization_changed', {
+                    connectionId: props.connectionId,
+                    ...(request.machineId ? { machineId: request.machineId } : {}),
+                }));
+                return false;
+            }
+            let result: Awaited<ReturnType<typeof mutateProviderModelSettings>>;
+            try {
+                result = await mutateProviderModelSettings({ serverId: target.serverId, request });
+            } catch (caught) {
+                await handleModelSettingsMutationFailure(providerErrorFromRpcFailure(caught, {
+                    connectionId: props.connectionId,
+                    machineId: target.machineId,
+                }), retry);
+                return false;
+            }
+            if (result.status === 'error') {
+                await handleModelSettingsMutationFailure(result.error, retry);
+                return false;
+            }
+            setOperationError(null);
+            await catalog.refresh();
+            return true;
+        });
+        modelSettingsQueue.current = queued.catch(() => undefined);
+        return queued;
+    }, [catalog.refresh, handleModelSettingsMutationFailure, props.connectionId, resolveCurrentTarget, showError]);
     const refreshLoadedModel = React.useCallback(async (connectionId: string, modelId: string) => {
         if (connectionId !== props.connectionId) return false;
         const result = await catalog.refreshWithResult();
@@ -150,7 +166,12 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
         if (result.status === 'error') throw result.error;
         return result.models.some((model) => model.id === modelId && model.loadState === 'loaded');
     }, [catalog.refreshWithResult, props.connectionId]);
-    const modelLoad = useProviderModelLoadAction({ machineId, serverId, refresh: refreshLoadedModel });
+    const modelLoad = useProviderModelLoadAction({
+        machineId,
+        serverId,
+        refresh: refreshLoadedModel,
+        resolveExecutionTarget: resolveCurrentTarget,
+    });
     const loadModel = React.useCallback(async (connectionId: string, modelId: string) => {
         const result = await modelLoad.load(connectionId, modelId);
         if (result.status === 'error') {
@@ -214,19 +235,19 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
         });
     }, [bulkChanges, machineId, runModelSettingsMutation]);
 
-    const addManualModels = React.useCallback(async () => {
-        if (!machineId || catalog.connectionRevision === null || savingManualModels) return;
+    const addManualModels = React.useCallback(async (): Promise<boolean> => {
+        if (!machineId || catalog.connectionRevision === null || savingManualModels) return false;
         const parsed = parseProviderManualModelInput(manualModelText, {
             existingIds: new Set(catalog.models.map((model) => model.id)),
         });
         if (parsed.accepted.length === 0 && parsed.rejected.length === 0) {
             setEditorError(t('settingsProviders.models.noNewModels'));
-            return;
+            return false;
         }
         if (parsed.accepted.length === 0) {
             setManualModelText(parsed.rejected.map((entry) => entry.value).join('\n'));
             setEditorError(t('settingsProviders.models.invalidModelIds', { ids: parsed.rejected.map((entry) => entry.value).join(', ') }));
-            return;
+            return false;
         }
         setSavingManualModels(true);
         setEditorError(null);
@@ -237,18 +258,60 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
                 connectionId: props.connectionId,
                 expectedConnectionRevision: catalog.connectionRevision,
                 models: parsed.accepted.map((id) => ({ id })),
-            }, addManualModels);
-            if (!succeeded) return;
+            }, async () => { await addManualModels(); });
+            if (!succeeded) return false;
             const rejectedText = parsed.rejected.map((entry) => entry.value).join('\n');
             setManualModelText(rejectedText);
             setEditorOpen(parsed.rejected.length > 0);
             setEditorError(parsed.rejected.length > 0
                 ? t('settingsProviders.models.invalidModelIds', { ids: parsed.rejected.map((entry) => entry.value).join(', ') })
                 : null);
+            return parsed.rejected.length === 0;
         } finally {
             setSavingManualModels(false);
         }
     }, [catalog.connectionRevision, catalog.models, machineId, manualModelText, props.connectionId, runModelSettingsMutation, savingManualModels]);
+
+    // A typed manual-model draft is unsaved work. It joins the shared
+    // unsaved-change transaction every other authoring surface uses, so leaving
+    // the screen prompts instead of silently discarding it.
+    const manualDraftDirtyRef = React.useRef(false);
+    manualDraftDirtyRef.current = manualModelText.trim().length > 0;
+    const ignoreManualDraftGuardRef = React.useRef(false);
+    const requestManualDraftDecision = React.useCallback(() => promptUnsavedChangesAlert(
+        (title, message, buttons) => Modal.alert(title, message, buttons),
+        {
+            title: t('common.discardChanges'),
+            message: t('common.unsavedChangesWarning'),
+            discardText: t('common.discard'),
+            saveText: t('common.save'),
+            keepEditingText: t('common.keepEditing'),
+        },
+    ), []);
+    const continueManualDraftNavigation = React.useCallback((action: unknown) => {
+        if (action) (navigation as { dispatch?: (value: unknown) => void } | null)?.dispatch?.(action);
+    }, [navigation]);
+    useUnsavedChangesBeforeRemoveGuard({
+        ignoreRef: ignoreManualDraftGuardRef,
+        isDirty: manualDraftDirtyRef.current,
+        isDirtyRef: manualDraftDirtyRef,
+        requestDecision: requestManualDraftDecision,
+        onSave: addManualModels,
+        continueOnSave: true,
+        onContinue: continueManualDraftNavigation,
+        tag: 'ProviderConnectionModelsScreen.beforeRemove',
+    });
+    useActiveUnsavedChangesGuard({
+        navigation,
+        guard: React.useMemo(() => ({
+            isDirtyRef: manualDraftDirtyRef,
+            ignoreRef: ignoreManualDraftGuardRef,
+            requestDecision: requestManualDraftDecision,
+            onSave: addManualModels,
+            continueOnSave: true,
+            tag: 'ProviderConnectionModelsScreen.shellGuard',
+        }), [addManualModels, requestManualDraftDecision]),
+    });
 
     const removeManualModel = React.useCallback(async (connectionId: string, modelId: string) => {
         if (!machineId || catalog.connectionRevision === null || connectionId !== props.connectionId) return;
@@ -265,12 +328,13 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
     }, [catalog.connectionRevision, machineId, props.connectionId, runModelSettingsMutation]);
 
     const refreshCatalog = React.useCallback(async () => {
-        if (!machineId || refreshingCatalog) return;
+        const target = resolveCurrentTarget();
+        if (!machineId || refreshingCatalog || !target || target.machineId !== machineId) return;
         setRefreshingCatalog(true);
         try {
             const result = await probeProviderConnection({
-                machineId,
-                serverId,
+                machineId: target.machineId,
+                serverId: target.serverId,
                 connectionId: props.connectionId,
             });
             if (result.status === 'error') {
@@ -284,7 +348,7 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
         } finally {
             setRefreshingCatalog(false);
         }
-    }, [catalog.refresh, machineId, props.connectionId, refreshingCatalog, serverId, showError, showTransportError]);
+    }, [catalog.refresh, machineId, props.connectionId, refreshingCatalog, resolveCurrentTarget, showError, showTransportError]);
 
     const displayError = operationError?.error
         ?? catalog.error;

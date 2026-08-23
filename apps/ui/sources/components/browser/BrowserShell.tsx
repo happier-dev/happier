@@ -83,7 +83,7 @@ import { openDesktopBrowserDevtools } from '@/sync/domains/browser/adapters/desk
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
 import type { BrowserControlCommandEffect } from '@/sync/domains/browser/control';
 
-import { BrowserAddressField } from './BrowserAddressField';
+import { BrowserUrlField } from './BrowserUrlField';
 import { BrowserLoadProgressBar } from './BrowserLoadProgressBar';
 import {
     BrowserDiagnosticsDrawer,
@@ -933,12 +933,15 @@ export function BrowserShell(props: Readonly<{
                     onStop={() => dispatchViewCommand('stop')}
                 />
                 <View style={stylesheet.addressFieldSlot}>
-                    <BrowserAddressField
+                    <BrowserUrlField
                         testID={`${testID}-address`}
+                        density="toolbar"
+                        trailingAction="copy"
+                        formatWhileBlurred
                         value={activeView?.pendingUrl ?? activeView?.currentUrl ?? ''}
                         disabled={activeView ? !toolbar.canNavigate : !props.onNavigateInPlace}
-                        searchUrlTemplate={props.searchUrlTemplate}
-                        onNavigate={dispatchNavigate}
+                        {...(props.searchUrlTemplate ? { searchUrlTemplate: props.searchUrlTemplate } : {})}
+                        onSubmitUrl={dispatchNavigate}
                     />
                 </View>
                 <SecurityOriginIndicator

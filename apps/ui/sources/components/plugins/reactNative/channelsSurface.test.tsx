@@ -402,6 +402,7 @@ function offlineBindingStateRow(overrides: Readonly<{
   revision?: number;
   enabled?: boolean;
   approval?: 'enabled' | 'off';
+  newSession?: 'enabled' | 'off';
 }> = {}): ChannelStateRow {
   const id = overrides.id ?? 'binding-offline-1';
   const connectionId = overrides.connectionId ?? 'connection-offline-1';
@@ -438,11 +439,13 @@ function offlineBindingStateRow(overrides: Readonly<{
                 maximumScope: 'session',
                 principalIds: ['approval-principal-private'],
               },
-            newSession: {
-              kind: 'enabled',
-              principalIds: ['new-session-principal-private'],
-              recipe: { command: 'private-recipe' },
-            },
+            newSession: overrides.newSession === 'off'
+              ? { kind: 'off' }
+              : {
+                kind: 'enabled',
+                principalIds: ['new-session-principal-private'],
+                recipe: { command: 'private-recipe' },
+              },
           },
         },
         // The persisted policy owner rejects approval and /new principals that
@@ -1485,6 +1488,91 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findByTestId(renderer, 'channels-bindings-resource-stale')).toHaveLength(0);
   });
 
+  it('drops Account-local last-known-good rows when the mounted Collection identity is replaced', async () => {
+    // The host rebuilds this surface's Data client for a new Account lifetime,
+    // so a replacement Collection is a different Account scope. Its first read
+    // is made to FAIL here: a successor that answered instantly could not
+    // distinguish a dropped last-known-good from a retained one.
+    const { renderSurface } = await import('../../../../../../packages/plugins/channels/src/ui/renderSurface');
+    const accountA = createOfflineChannelsDataClient({
+      rows: [offlineConnectionStateRow(), offlineBindingStateRow()],
+    });
+    const accountB = createOfflineChannelsDataClient({
+      rows: [],
+      queryFailure: () => Object.assign(new Error('unavailable'), { code: 'unavailable' }),
+    });
+    const host = createChannelsHostApi({
+      methods: ['executeAction', 'watchContext'],
+      readResource: async () => {
+        throw new Error('A cold offline Account policy read must not reach the daemon Resource.');
+      },
+    });
+    const element = renderSurface({
+      plugin: { id: 'happier.channels', version: '0.0.0' },
+      view: CHANNELS_SETTINGS_VIEW,
+      surface: createChannelsSettingsSurfaceContextFixture(),
+      hostApi: host.hostApi,
+      signal: new AbortController().signal,
+    } as never);
+    if (!React.isValidElement(element)) {
+      throw new Error('Channels renderSurface must return a React element.');
+    }
+    const mountWith = (dataClient: PluginUiDataClient) => React.cloneElement(
+      element as React.ReactElement<Record<string, unknown>>,
+      { dataClient },
+    );
+    await act(async () => {
+      renderer = create(mountWith(accountA.client));
+    });
+    await flushHookEffects();
+    expect(findByTestId(renderer!, 'channels-binding-binding-offline-1').length).toBeGreaterThan(0);
+
+    await act(async () => {
+      renderer!.update(mountWith(accountB.client));
+    });
+    await flushHookEffects();
+
+    expect(findByTestId(renderer!, 'channels-binding-binding-offline-1')).toHaveLength(0);
+    expect(findByTestId(renderer!, 'channels-bindings-error').length).toBeGreaterThan(0);
+  });
+
+  it('does not offer a new-Session recipe control the cold-offline host cannot run', async () => {
+    // Cold offline the host installs no daemon-owned `selectActionInput`, so
+    // the recipe selector can only report failure after the press. The control
+    // must therefore be truthfully disabled rather than presented.
+    const connection = offlineConnectionStateRow();
+    const binding = offlineBindingStateRow({ newSession: 'off' });
+    const data = createOfflineChannelsDataClient({ rows: [connection, binding] });
+    const host = createChannelsHostApi({
+      methods: ['executeAction', 'watchContext'],
+      readResource: async () => {
+        throw new Error('A cold offline Account policy read must not reach the daemon Resource.');
+      },
+    });
+
+    renderer = await renderChannelsSurface(
+      host.hostApi,
+      createChannelsSettingsSurfaceContextFixture(),
+      undefined,
+      data.client,
+    );
+    const editBinding = renderer.root.findAll((instance) => (
+      instance.props?.title === 'Edit binding' && typeof instance.props?.onPress === 'function'
+    ))[0];
+    if (!editBinding) throw new Error('Expected an Edit binding control.');
+    await act(async () => {
+      editBinding.props.onPress();
+    });
+    await flushHookEffects();
+
+    const readControl = (testID: string) => findByTestId(renderer!, testID)
+      .find((instance) => instance.props?.disabled !== undefined);
+    // Control: the rest of the Session target policy is editable cold offline,
+    // so a blanket `disabled` cannot be what this assertion is reading.
+    expect(readControl('channels-binding-target-delivery-mode')?.props.disabled).toBe(false);
+    expect(readControl('channels-binding-target-configure-new-session')?.props.disabled).toBe(true);
+  });
+
   it('blocks a direct Account-local binding retry after an unknown mutation outcome until an explicit reread settles', async () => {
     const connection = offlineConnectionStateRow();
     const binding = offlineBindingStateRow({ approval: 'off' });
@@ -2078,6 +2166,27 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(firstToggle.props.accessibilityRole).toBe('switch');
     expect(firstToggle.props.accessibilityLabel).toBe('Binding enabled');
     expect(firstToggle.props.checked).toBe(true);
+  });
+
+  it('keeps healthy connection management usable while only the binding Resource fails', async () => {
+    // The two Resources are separate daemon capabilities. A binding read that
+    // fails must not hide connection management, provider setup, or the
+    // connection rows the user needs to repair the Account.
+    const connection = connectionFixture();
+    const host = createChannelsHostApi({
+      readResource: async () => connectionResourceContent([connection]),
+      readBindingsResource: async () => {
+        throw Object.assign(new Error('binding read failed'), { code: 'unavailable' });
+      },
+    });
+
+    renderer = await renderChannelsSurface(host.hostApi);
+    await flushHookEffects();
+
+    expect(findByTestId(renderer, 'channels-bindings-error').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-connections-list').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-connection-connection-1').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-resource-refresh').length).toBeGreaterThan(0);
   });
 
   it('uses the management Resource row and its revision for the canonical update action', async () => {

@@ -104,6 +104,7 @@ const machinesState = vi.hoisted(() => ({
         active?: boolean;
         activeAt?: number;
         revokedAt?: number | null;
+        installationId?: string | null;
         metadata?: { displayName?: string; host?: string; platform?: string };
     }>,
 }));
@@ -133,8 +134,16 @@ installAutomationScreensCommonModuleMocks({
                 'automations.detail.machineAssignmentsTitle': 'Machine assignments',
                 'automations.detail.event.watcherTitle': 'Observation watcher',
                 'automations.detail.event.watcherUnwatched': 'Unwatched',
+                'automations.detail.event.watcherMachineUnknown': 'This machine is no longer in your account, so this watcher cannot observe events.',
+                'automations.detail.event.watcherMachineRevoked': 'This machine was revoked, so this watcher cannot observe events.',
+                'automations.detail.event.watcherMachineReplaced': 'This machine was replaced, so this watcher cannot observe events.',
+                'automations.detail.event.watcherInstallationReplaced': 'This machine was reinstalled, so this watcher cannot observe events until it is set up again.',
+                'automations.detail.event.watcherMachineOffline': 'This machine is offline, so this watcher is not observing events right now.',
                 'settingsPlugins.eventAutomationComposer.sourceStatusTitle': 'Observation source',
                 'settingsPlugins.eventAutomationComposer.sourceCatalogStatusTitle': 'Catalog reconciliation',
+                'automations.detail.event.endpointTitle': 'Webhook endpoint',
+                'automations.detail.event.sourceStatusUnreported': 'Waiting for the first report',
+                'automations.detail.event.sourceCatalogStatusUnavailable': 'Source currentness unavailable',
                 'automations.detail.runDetail.sourceInstance': 'Source instance',
                 'automations.detail.runDetail.filter': 'Filter',
                 'automations.detail.runDetail.target': 'Frozen target',
@@ -159,6 +168,9 @@ installAutomationScreensCommonModuleMocks({
                 'status.online': 'online',
                 'status.offline': 'offline',
             };
+            if (key === 'automations.detail.event.endpointObservingSince') {
+                return `Receiving deliveries since ${String(params?.time ?? '')}`;
+            }
             if (key === 'settingsPlugins.eventAutomationComposer.sourceStatusNextRetry') {
                 return `Next retry: ${String(params?.time ?? '')}`;
             }
@@ -473,6 +485,138 @@ describe('AutomationDetailScreen', () => {
             (instance: any) => instance.props.accessibilityLabel === 'Observation watcher',
         );
         expect(watcher?.props.detail).toBe('Unwatched');
+    });
+
+    it.each([
+        {
+            name: 'a machine that is no longer in the account',
+            machines: [] as typeof machinesState.list,
+            expected: 'This machine is no longer in your account, so this watcher cannot observe events.',
+        },
+        {
+            name: 'a revoked machine',
+            machines: [{
+                id: 'watcher-machine',
+                active: true,
+                activeAt: Date.now(),
+                revokedAt: 10,
+                installationId: 'watcher-installation',
+                metadata: { displayName: 'Build box' },
+            }],
+            expected: 'This machine was revoked, so this watcher cannot observe events.',
+        },
+        {
+            name: 'a machine whose installation was replaced',
+            machines: [{
+                id: 'watcher-machine',
+                active: true,
+                activeAt: Date.now(),
+                revokedAt: null,
+                installationId: 'reinstalled-installation',
+                metadata: { displayName: 'Build box' },
+            }],
+            expected: 'This machine was reinstalled, so this watcher cannot observe events until it is set up again.',
+        },
+        {
+            name: 'an offline machine',
+            machines: [{
+                id: 'watcher-machine',
+                active: false,
+                activeAt: 1,
+                revokedAt: null,
+                installationId: 'watcher-installation',
+                metadata: { displayName: 'Build box' },
+            }],
+            expected: 'This machine is offline, so this watcher is not observing events right now.',
+        },
+    ])('explains why a watcher on $name cannot observe', async ({ machines, expected }) => {
+        machinesState.list = machines as typeof machinesState.list;
+        automationState.automation = currentEventDefinitionForEditor('executionRun');
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const watcher = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Observation watcher',
+        );
+        expect(watcher?.props.subtitle).toBe(expected);
+    });
+
+    it('leaves a current, online watcher unqualified', async () => {
+        machinesState.list = [{
+            id: 'watcher-machine',
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            installationId: 'watcher-installation',
+            metadata: { displayName: 'Build box' },
+        }] as typeof machinesState.list;
+        automationState.automation = currentEventDefinitionForEditor('executionRun');
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const watcher = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Observation watcher',
+        );
+        expect(watcher?.props.detail).toBe('Build box');
+        expect(watcher?.props.subtitle).toBeUndefined();
+    });
+
+    it('renders missing Event source and catalog status as explicit states rather than omitting the rows', async () => {
+        automationState.automation = {
+            ...automationState.automation,
+            trigger: {
+                kind: 'pluginEvent',
+                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
+                sourceSelectorId: 'selector-1',
+                sourceContractVersion: 1,
+                observation: { kind: 'checkpointedPull', watcher: null },
+            },
+            sourceStatus: undefined,
+            sourceCatalogStatus: undefined,
+        };
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const status = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Observation source',
+        );
+        const catalogStatus = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.accessibilityLabel === 'Catalog reconciliation',
+        );
+        expect(status?.props.detail).toBe('Waiting for the first report');
+        expect(catalogStatus?.props.detail).toBe('Source currentness unavailable');
+    });
+
+    it('shows the durable-push endpoint a webhook Automation actually observes', async () => {
+        automationState.automation = {
+            ...automationState.automation,
+            trigger: {
+                kind: 'pluginEvent',
+                eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
+                sourceSelectorId: 'selector-1',
+                sourceContractVersion: 1,
+                observation: {
+                    kind: 'durablePush',
+                    webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ',
+                    observationStartsAt: 1_700_000_000_000,
+                },
+            },
+        };
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const endpoint = screen.findAllByType('Pressable' as any).find(
+            (instance: any) => instance.props.testID === 'automation-detail-event-endpoint',
+        );
+        expect(endpoint?.props.detail).toBe('wh_ep_AAAAAAAAAAAAAAAAAAAAAQ');
     });
 
     it('renders the bounded Event source status from the canonical projection', async () => {

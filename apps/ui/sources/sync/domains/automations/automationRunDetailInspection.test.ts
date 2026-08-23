@@ -139,6 +139,10 @@ function createDetail(params: Readonly<{
         executionInputEnvelope: serialized.serialized,
         resultEnvelope: params.resultEnvelope ?? null,
         legacySummaryCiphertext: null,
+        executionNativeRunId: null,
+        executionNativeCallId: null,
+        executionNativeSidechainId: null,
+        events: [],
         errorDetailEnvelope: params.errorDetailEnvelope ?? null,
     });
 }

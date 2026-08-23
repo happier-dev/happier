@@ -592,6 +592,66 @@ describe('React Native Artifact lease acquisition', () => {
         });
     });
 
+    it('refuses daemon bytes for a cache identity that does not conform to the canonical Protocol schema', async () => {
+        const current = fixture();
+        const readerStore = createPluginAccountAvailabilityReaderStore();
+        readerStore.replace({ scope, snapshot: current.snapshot });
+        // An empty optional compatibility coordinate is not the canonical
+        // "absent" value; it must not be coerced into matching daemon bytes
+        // whose identity omits the field.
+        const nonConformingIdentity = { ...current.cacheIdentity, expoRuntimeVersion: '' };
+        const { expoRuntimeVersion: _omitted, ...daemonCacheIdentity } = current.cacheIdentity;
+
+        const acquired = await acquire({
+            reader: readerStore.bind(scope),
+            artifactGraph: current.graph,
+            cacheIdentity: nonConformingIdentity,
+            crashStateToken: createCrashStateToken(nonConformingIdentity),
+            daemon: {
+                origin: current.origin,
+                serverId: scope.serverId,
+                fetchArtifactBytes: async () => ({
+                    ...current.daemonResponse,
+                    cacheIdentity: daemonCacheIdentity,
+                }),
+            },
+        });
+
+        expect(acquired).toEqual({ kind: 'unavailable', code: 'artifact_source_unavailable' });
+    });
+
+    it('keeps an acquired daemon-sourced lease current after its daemon materialization disappears', async () => {
+        const current = fixture();
+        const readerStore = createPluginAccountAvailabilityReaderStore();
+        readerStore.replace({ scope, snapshot: current.snapshot });
+
+        const acquired = await acquire({
+            reader: readerStore.bind(scope),
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            daemon: {
+                origin: current.origin,
+                serverId: scope.serverId,
+                fetchArtifactBytes: async () => current.daemonResponse,
+            },
+        });
+        expect(acquired).toMatchObject({ kind: 'available', lease: { sourceKind: 'daemon' } });
+        if (acquired.kind !== 'available') throw new Error('unreachable');
+
+        // The daemon that supplied the bytes goes away. The bytes are already
+        // copied, integrity-verified and in host custody, and the Account's
+        // current Artifact admission is unchanged, so the lease must survive.
+        readerStore.replace({
+            scope,
+            snapshot: Object.freeze({ ...current.snapshot, materializations: Object.freeze([]) }),
+        });
+
+        expect(acquired.lease.isCurrent()).toBe(true);
+        await expect(acquired.lease.readFile(current.graph.entry)).resolves.toMatchObject({
+            kind: 'available',
+        });
+    });
+
     it('rejects daemon bytes whose echoed crash token is stale even when their artifact identity matches', async () => {
         const current = fixture();
         const staleResponse = {

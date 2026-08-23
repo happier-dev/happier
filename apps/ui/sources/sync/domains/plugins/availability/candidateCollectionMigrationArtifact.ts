@@ -7,8 +7,6 @@ import {
 import {
     PluginUiArtifactsManifestEntryV1Schema,
     derivePluginUiNativeCapabilitiesDigestV1,
-    verifyPluginUiArtifactBytesIntegrityV1,
-    verifyPluginUiArtifactFileSetIntegrityV1,
     type PluginUiArtifactDigestV1,
     type PluginUiArtifactFileV1,
     type PluginUiArtifactsManifestEntryV1,
@@ -41,10 +39,11 @@ import {
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 
-import type {
-    PluginArtifactSourceCandidate,
-    PluginSelectedArtifactIdentity,
-    PluginSelectedArtifactLease,
+import {
+    materializeVerifiedPluginArtifactSource,
+    type PluginArtifactSourceCandidate,
+    type PluginSelectedArtifactIdentity,
+    type PluginSelectedArtifactLease,
 } from './artifactLease';
 import {
     decodePluginReactNativeExactArtifactFileSet,
@@ -468,6 +467,11 @@ function createCandidateLease(input: Readonly<{
     });
 }
 
+/**
+ * Candidate acquisition keeps its own currentness owner and typed codes; the
+ * verified-source walk itself is the one shared Artifact materializer, so
+ * candidate and live admission cannot drift on integrity.
+ */
 async function materializeExactCandidateSource(input: Readonly<{
     candidate: CandidatePluginCollectionMigrationArtifactLoadInput;
     artifact: PluginSelectedArtifactIdentity;
@@ -477,81 +481,34 @@ async function materializeExactCandidateSource(input: Readonly<{
     | Readonly<{ kind: 'available'; candidateLease: CandidateLease }>
     | Readonly<{ kind: 'unavailable'; code: 'candidate_currentness_changed' | 'candidate_source_unavailable' | 'candidate_source_integrity_invalid' }>
 > {
-    let sawIntegrityFailure = false;
-    for (const source of input.sources) {
-        const files = new Map<string, Readonly<{ file: PluginUiArtifactFileV1; bytes: Uint8Array }>>();
-        let sourceUsable = true;
-        for (const declared of input.graph.files) {
-            if (!callCurrent(input.candidate)) {
-                return Object.freeze({ kind: 'unavailable', code: 'candidate_currentness_changed' });
-            }
-            let bytes: Uint8Array | null;
-            try {
-                bytes = await source.readFile({
-                    artifact: input.artifact,
-                    relativePath: declared.relativePath,
-                });
-            } catch {
-                bytes = null;
-            }
-            if (!callCurrent(input.candidate)) {
-                return Object.freeze({ kind: 'unavailable', code: 'candidate_currentness_changed' });
-            }
-            if (!bytes) {
-                sourceUsable = false;
-                break;
-            }
-            const integrity = bytes.byteLength === declared.byteSize
-                && verifyPluginUiArtifactBytesIntegrityV1({
-                    bytes,
-                    integrity: {
-                        digest: declared.digest,
-                        pluginId: input.artifact.pluginId,
-                        contributionId: input.artifact.contributionId,
-                        artifactKind: 'reactNativeBundle',
-                    },
-                }).ok;
-            if (!integrity) {
-                sawIntegrityFailure = true;
-                sourceUsable = false;
-                break;
-            }
-            files.set(declared.relativePath, Object.freeze({
-                file: cloneFile(declared),
-                bytes: new Uint8Array(bytes),
-            }));
-        }
-        if (!sourceUsable) continue;
-        const setIntegrity = verifyPluginUiArtifactFileSetIntegrityV1({
-            files: [...files.values()].map(({ file, bytes }) => ({
-                relativePath: file.relativePath,
-                bytes,
-            })),
-            integrity: {
-                digest: input.artifact.digest,
-                pluginId: input.artifact.pluginId,
-                contributionId: input.artifact.contributionId,
-                artifactKind: 'reactNativeBundle',
-            },
-        });
-        if (!setIntegrity.ok) {
-            sawIntegrityFailure = true;
-            continue;
-        }
+    const materialized = await materializeVerifiedPluginArtifactSource({
+        artifact: input.artifact,
+        graph: input.graph,
+        sources: input.sources,
+        isCurrent: () => callCurrent(input.candidate),
+    });
+    if (materialized.kind === 'notCurrent') {
+        return Object.freeze({ kind: 'unavailable', code: 'candidate_currentness_changed' });
+    }
+    if (materialized.kind === 'unavailable') {
         return Object.freeze({
-            kind: 'available',
-            candidateLease: createCandidateLease({
-                candidate: input.candidate,
-                artifact: input.artifact,
-                artifactGraph: input.graph,
-                source,
-                files,
-            }),
+            kind: 'unavailable',
+            code: materialized.integrityFailed
+                ? 'candidate_source_integrity_invalid'
+                : 'candidate_source_unavailable',
         });
     }
     return Object.freeze({
-        kind: 'unavailable',
-        code: sawIntegrityFailure ? 'candidate_source_integrity_invalid' : 'candidate_source_unavailable',
+        kind: 'available',
+        candidateLease: createCandidateLease({
+            candidate: input.candidate,
+            artifact: input.artifact,
+            artifactGraph: input.graph,
+            source: materialized.source,
+            files: new Map(materialized.files.map(
+                ({ file, bytes }) => [file.relativePath, { file, bytes }] as const,
+            )),
+        }),
     });
 }
 

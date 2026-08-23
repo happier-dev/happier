@@ -159,6 +159,13 @@ function toGaugeQuotaSnapshot(snapshot: ProviderAccountUsageSnapshotV1): Connect
 
 export function computeProviderAccountUsageGaugeViewModel(params: Readonly<{
     snapshot: ProviderAccountUsageSnapshotV1 | null;
+    /**
+     * The state its owner already resolved through
+     * `resolveProviderAccountUsageSnapshotState`. Recomputing it here would have to
+     * invent a `hadError` value, and inventing `false` silently discards the
+     * `error_last_known_good` the caller knows about.
+     */
+    state: ProviderAccountUsageStateV1;
     windowMode: ConnectedServiceQuotaGaugeWindowMode;
     nowMs: number;
     formatter: ConnectedServiceQuotaGaugeLabelFormatter;
@@ -166,14 +173,8 @@ export function computeProviderAccountUsageGaugeViewModel(params: Readonly<{
     activeAccountDisplayLabel?: string | null;
 }>): ConnectedServiceQuotaGaugeViewModel | null {
     if (!params.snapshot) return null;
-    const state = resolveProviderAccountUsageSnapshotState({
-        snapshot: params.snapshot,
-        loading: false,
-        hadError: false,
-        nowMs: params.nowMs,
-    });
-    if (state === 'not_loaded' || state === 'loaded_empty') return null;
-    return computeConnectedServiceQuotaGaugeViewModel({
+    if (params.state === 'not_loaded' || params.state === 'loaded_empty') return null;
+    const viewModel = computeConnectedServiceQuotaGaugeViewModel({
         snapshot: toGaugeQuotaSnapshot(params.snapshot),
         windowMode: params.windowMode,
         nowMs: params.nowMs,
@@ -181,6 +182,13 @@ export function computeProviderAccountUsageGaugeViewModel(params: Readonly<{
         providerDisplayName: params.providerDisplayName,
         activeAccountDisplayLabel: params.activeAccountDisplayLabel,
     });
+    if (!viewModel) return null;
+    // `error_last_known_good` means the retained snapshot is the newest good one and
+    // the latest fetch failed. Its `fetchedAtMs` can still be inside the stale window,
+    // so freshness derived from the snapshot alone would present failed data as current.
+    return params.state === 'error_last_known_good' && !viewModel.isStale
+        ? { ...viewModel, isStale: true }
+        : viewModel;
 }
 
 export function normalizeProviderAccountUsageRecordIds(

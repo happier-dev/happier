@@ -12,9 +12,11 @@ import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCred
 import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Создайте сервер, импортируйте JSON хоста или установите рекомендуемый пресет.',
@@ -827,6 +829,7 @@ export const ru = {
 
 
   inbox: {
+    ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `Открыть сессию: ${session}`,
     // Inbox screen
     emptyTitle: "Вы в курсе всего",
@@ -1218,6 +1221,15 @@ export const ru = {
       event: {
         watcherTitle: "Наблюдатель событий",
         watcherUnwatched: "Нет наблюдателя",
+        endpointTitle: "Конечная точка вебхука",
+        endpointObservingSince: ({ time }: { time: string }) => `Принимает доставки с ${time}`,
+        sourceStatusUnreported: "Ожидание первого отчёта",
+        sourceCatalogStatusUnavailable: "Актуальность источника недоступна",
+        watcherMachineUnknown: "Этой машины больше нет в вашем аккаунте, поэтому этот наблюдатель не может отслеживать события.",
+        watcherMachineRevoked: "Эта машина отозвана, поэтому этот наблюдатель не может отслеживать события.",
+        watcherMachineReplaced: "Эта машина заменена, поэтому этот наблюдатель не может отслеживать события.",
+        watcherInstallationReplaced: "Эта машина переустановлена, поэтому этот наблюдатель не будет отслеживать события, пока его не настроят заново.",
+        watcherMachineOffline: "Эта машина не в сети, поэтому этот наблюдатель сейчас не отслеживает события.",
       },
       actionsGroupTitle: "Действия",
       runNowTitle: "Запустить сейчас",
@@ -1270,6 +1282,51 @@ export const ru = {
         scheduled: ({ time }: { time: string }) => `Запланировано: ${time}`,
         updated: ({ time }: { time: string }) => `Обновлено: ${time}`,
         error: ({ message }: { message: string }) => `Ошибка: ${message}`,
+        attemptTitle: "Попытка",
+        attempt: ({ attempt }: { attempt: number }) => `Попытка ${attempt}`,
+        claimedByTitle: "Взято машиной",
+        claimedAt: ({ time }: { time: string }) => `Взято: ${time}`,
+        leaseExpires: ({ time }: { time: string }) => `Аренда истекает: ${time}`,
+        dispatchTitle: "Отправка на выполнение",
+        dispatchAttempt: ({ attempt }: { attempt: number }) => `Попытка отправки ${attempt}`,
+        dispatchState: {
+            notStarted: "Не начата",
+            dispatchPermitted: "Отправка разрешена",
+            retryWaiting: "Ожидание повтора",
+            started: "Начата",
+            settled: "Завершена",
+            outcomeUnknown: "Результат неизвестен",
+        },
+        replyHandoffTitle: "Передача ответа",
+        replyHandoffAttempt: ({ attempt }: { attempt: number }) => `Попытка передачи ${attempt}`,
+        replyHandoffDue: ({ time }: { time: string }) => `Следующая попытка передачи: ${time}`,
+        replyHandoffState: {
+            none: "Нет",
+            awaitingResult: "Ожидание результата",
+            ready: "Готово",
+            handingOff: "Передаётся",
+            accepted: "Принято",
+            suppressed: "Подавлено",
+            blocked: "Заблокировано",
+        },
+        nativeExecutionTitle: "Нативное выполнение",
+        nativeExecutionCall: ({ callId }: { callId: string }) => `Вызов ${callId}`,
+        nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+        historyTitle: "Что произошло",
+        historyEvent: {
+            run_started: "Запущено",
+            run_succeeded: "Успешно",
+            run_failed: "Не удалось",
+            run_cancelled: "Отменено",
+            run_outcome_uncertain: "Результат стал неопределённым",
+            execution_dispatch_retry_scheduled: "Запланирована повторная отправка",
+            unknown: "Изменение жизненного цикла",
+        },
+        historyReason: {
+            cancelled_after_dispatch_permitted: "Отменено после того, как внешнее выполнение уже было разрешено",
+            dispatch_result_missing_after_lease_expiry: "Захватившая машина так и не сообщила результат отправки",
+            automation_retired_after_lease_expiry: "Автоматизация была снята, пока истекал срок её захвата",
+        },
       },
       runDetail: {
         title: "Сведения о принятии",
@@ -1351,6 +1408,7 @@ export const ru = {
     moreActionsHint: "Открывает меню с другими действиями",
     destructiveActionHint: "Это действие необратимо и не может быть отменено.",
     cancel: "Отмена",
+    decline: "Отклонить",
     submit: "Отправить",
     close: "Закрыть",
     dismissKeyboard: 'Скрыть клавиатуру',
@@ -6775,6 +6833,11 @@ export const ru = {
           markHandledFailed: "Не удалось отметить отложенную доставку обработанной",
         },
       },
+      transcript: {
+          olderLoadFailedTitle: 'Не удалось загрузить более ранние сообщения',
+          olderLoadFailedBody: 'Остальная часть этого разговора никуда не делась. Попробуйте загрузить более ранние сообщения ещё раз.',
+      },
+
       sharing: {
         title: "Общий доступ",
         directSharing: "Прямой доступ",
@@ -8424,18 +8487,26 @@ export const ru = {
       disabledLimitSubtitle: 'Достигнут лимит публичных предпросмотров. Отзовите существующую ссылку перед созданием новой.',
       disabledNoPreviewSubtitle: 'Откройте локальный предпросмотр перед созданием публичной ссылки.',
       disabledReason: {
+        auditRequirementDisabled: 'Журналирование аудита публичных предпросмотров обязательно, но отключено на сервере.',
         auditUnavailable: 'Журнал аудита публичного предпросмотра недоступен.',
         dnsTlsUnavailable: 'Публичные предпросмотры ожидают готовности DNS/TLS.',
         expired: 'Эта ссылка публичного предпросмотра истекла.',
+        linkLifetimeUnconfigured: 'На сервере не настроен срок действия публичной ссылки предпросмотра.',
+        modeUnconfigured: 'На сервере не настроен режим публичного предпросмотра.',
         policyInvalid: 'Политика публичного предпросмотра неполная.',
         previewNotEligible: 'Этот локальный предпросмотр не подходит для публичной ссылки.',
+        previewServerDisabled: 'Предпросмотры локальных сервисов отключены на сервере.',
         publicBaseUrlUnavailable: 'Базовый URL публичного предпросмотра не настроен.',
+        rateLimitProfileUnconfigured: 'На сервере не настроен профиль ограничения частоты для публичных предпросмотров.',
         rateLimitUnavailable: 'Ограничение частоты публичного предпросмотра недоступно.',
         rateLimited: 'Эта ссылка публичного предпросмотра ограничена по частоте.',
         relayUnavailable: 'Релей публичного предпросмотра недоступен.',
         revoked: 'Эта ссылка публичного предпросмотра была отозвана.',
         secretLinkUnavailable: 'Публичные предпросмотры по секретной ссылке не настроены.',
+        serverDisabled: 'Публичные предпросмотры отключены на сервере.',
         sessionNotAuthorized: 'У вас нет доступа для создания публичной ссылки для этой сессии.',
+        tunnelPortsUnconfigured: 'Сервер не разрешает ни один порт туннеля.',
+        tunnelRelayDisabled: 'Ретрансляция сервера для туннелей машин отключена.',
       },
       createActionA11y: 'Создать публичную ссылку предпросмотра',
       revokeActionA11y: 'Отозвать публичную ссылку предпросмотра',
@@ -9024,6 +9095,13 @@ export const ru = {
         configureActionAccessibilityLabel: "Настроить действие",
         approvalHelpTitle: "Режимы одобрения",
         approvalHelpBody: "«Сначала спрашивать» показывает подтверждение перед запуском этого действия из этой поверхности. «Разрешено» позволяет запускать его из этой поверхности без запроса одобрения.",
+        contributed: {
+            machineSelectionTitle: "Выберите машину для предоставленных действий",
+            machineSelectionBody: "Выберите машину, чтобы просматривать и настраивать действия, объявленные установленными на ней плагинами.",
+            removedDescription: "Это предоставленное действие больше недоступно на выбранной машине. Его сохранённые настройки сохранены.",
+            removedTargetsTitle: "Предоставленное действие недоступно",
+            removedTargetsBody: "Это действие сейчас не объявлено выбранной машиной. Его сохранённые настройки остаются доступными здесь.",
+        },
         toolExposure: {
             title: "Экспонирование инструмента",
             footer: "Определяет, показываются ли подходящие действия как прямые инструменты или доступны только через поиск действий.",
@@ -9193,6 +9271,14 @@ export const ru = {
             cli: {
                 title: "Интерфейс командной строки управления сеансом",
                 subtitle: "Доступно через интерфейс командной строки управления сеансом.",
+            },
+            api: {
+                title: "API",
+                subtitle: "Доступно через внешний API действий.",
+            },
+            plugin: {
+                title: "Доверенные плагины",
+                subtitle: "Доступно доверенным плагинам как действие.",
             },
             contextual_ui: {
                 title: "Контекстный пользовательский интерфейс",
@@ -9936,7 +10022,7 @@ settingsSession: {
       loadingOlder: 'Загрузка старых сообщений…',
       loadOlderFailed: 'Не удалось загрузить старую историю голоса.',
       exportTitle: 'Экспортировать историю голоса',
-      exportSubtitle: 'Загрузить оставшуюся ограниченную историю и сохранить её в JSON.',
+      exportSubtitle: 'Загрузить оставшуюся историю и сохранить её в JSON.',
       exporting: 'Подготовка экспорта…',
       exportSucceeded: 'Экспорт истории голоса готов.',
       exportFailed: 'Не удалось экспортировать историю голоса.',
@@ -10972,7 +11058,7 @@ settingsSession: {
         onDemandTitle: "По запросу",
         onDemandSubtitle: "По вашему запросу Voice может прочитать ограниченный семантический контекст этого окна приложения или вкладки браузера. Контекстные команды по-прежнему проходят отдельные проверки.",
         automaticTitle: "Автоматически",
-        automaticSubtitle: "Voice также автоматически получает основные метаданные навигации. Подробный контекст остаётся доступным по запросу, а контекстные команды по-прежнему проходят отдельные проверки.",
+        automaticSubtitle: "Voice также автоматически получает основные метаданные навигации, а при открытии сессии её контекст передаётся в соответствии с настройками передачи выше. Контекстные команды по-прежнему проходят отдельные проверки.",
       },
     },
     languageTitle: "Язык",
@@ -12818,6 +12904,7 @@ settingsSession: {
       },
     },
   },
+   ...apiTokenSettingsTranslations.ru,
    settingsPlugins: {
       ...pluginWebhookAdministrationTranslations['ru'],
       ...pluginAccountDataEraseTranslations.ru,

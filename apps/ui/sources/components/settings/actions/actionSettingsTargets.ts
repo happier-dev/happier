@@ -9,6 +9,7 @@ export {
     type ActionSettingsTargetCategory,
     type ActionSettingsTargetDefinition,
     type ActionSettingsTargetId,
+    type ActionSettingsTargetSource,
 } from './actionSettingsTargetDefinitions';
 export {
     getActionSettingsTargetSelected,

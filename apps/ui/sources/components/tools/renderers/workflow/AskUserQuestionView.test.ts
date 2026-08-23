@@ -508,6 +508,59 @@ describe('AskUserQuestionView', () => {
         expect(screen.findAllByProps({ testID: 'ask-user-question.submit' })).toHaveLength(0);
     });
 
+    it('replaces an optionless terminal-notice prompt with the host notice copy', async () => {
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: {
+                    kind: 'unrecognized',
+                    mode: 'notice',
+                    dialogId: 'unrecognized_confirmation',
+                    action: 'open_terminal',
+                },
+                questions: [{ header: 'Claude dialog', question: 'Open terminal?', multiSelect: false, options: [] }],
+            },
+        }));
+
+        expect(findTestInstanceByTypeContainingText(
+            screen,
+            'Text',
+            'tools.askUserQuestion.claudeDialogNotice.header',
+        )).toBeTruthy();
+        expect(findTestInstanceByTypeContainingText(
+            screen,
+            'Text',
+            'tools.askUserQuestion.claudeDialogNotice.question',
+        )).toBeTruthy();
+        // The raw TUI prompt text never reaches the user.
+        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'Open terminal?')).toBeUndefined();
+    });
+
+    it('leaves a terminal-notice prompt that still offers choices on its own copy', async () => {
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: {
+                    kind: 'unrecognized',
+                    mode: 'notice',
+                    dialogId: 'unrecognized_confirmation',
+                    action: 'open_terminal',
+                },
+                questions: [{
+                    header: 'Claude dialog',
+                    question: 'Trust this folder?',
+                    multiSelect: false,
+                    options: [{ label: 'Yes', description: '' }],
+                }],
+            },
+        }));
+
+        expect(findTestInstanceByTypeContainingText(screen, 'Text', 'Trust this folder?')).toBeTruthy();
+        expect(findTestInstanceByTypeContainingText(
+            screen,
+            'Text',
+            'tools.askUserQuestion.claudeDialogNotice.question',
+        )).toBeUndefined();
+    });
+
     it('explains when a terminal-only dialog cannot open an attached terminal', async () => {
         attachedSessionTerminalAvailable = false;
         attachedSessionTerminalUnavailableReason = 'cli_update_required';

@@ -44,6 +44,33 @@ const persistentIdentity = {
     artifactDigest: identity.artifactDigest,
 } as const;
 
+function fileSetDigestFor(relativePath: string, bytes: Uint8Array) {
+    return computePluginUiArtifactFileSetSha256DigestV1([{ relativePath, bytes }]);
+}
+
+/**
+ * Every persisted record is the Artifact-owned exact file graph. A one-file
+ * artifact is that graph with a single declared entry, never an entry-only
+ * record.
+ */
+function singleFileRecord(
+    identity: PluginReactNativePersistentArtifactRecord['persistentIdentity'],
+    relativePath: string,
+    bytes: Uint8Array,
+): PluginReactNativePersistentArtifactRecord {
+    return {
+        persistentIdentity: identity,
+        bytes,
+        entryRelativePath: relativePath,
+        files: [{
+            relativePath,
+            digest: computePluginUiArtifactSha256DigestV1(bytes),
+            byteSize: bytes.byteLength,
+            bytes,
+        }],
+    };
+}
+
 function createMemoryPersistentArtifactStore() {
     const records = new Map<string, PluginReactNativePersistentArtifactRecord>();
     const reads: string[] = [];
@@ -234,10 +261,10 @@ describe('React Native bundle cache', () => {
             onRetire: () => ({ dispose: () => undefined }),
         };
         const persistentScope = createPluginReactNativeArtifactLeasePersistentScope({ cache, lifetime });
-        persistent.records.set(derivePluginReactNativePersistentArtifactKey(persistentIdentity), {
-            persistentIdentity,
-            bytes: new Uint8Array([1]),
-        });
+        persistent.records.set(
+            derivePluginReactNativePersistentArtifactKey(persistentIdentity),
+            singleFileRecord(persistentIdentity, 'index.bundle', new Uint8Array([1])),
+        );
 
         persistentScope.release();
         await persistentScope.store.remove(persistentIdentity);
@@ -253,7 +280,7 @@ describe('React Native bundle cache', () => {
         const bytes = new TextEncoder().encode('// retained Account cache bytes');
         const retainedIdentity = {
             ...persistentIdentity,
-            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+            artifactDigest: fileSetDigestFor('index.bundle', bytes),
         };
         const runtimeIdentity = {
             ...identity,
@@ -275,8 +302,7 @@ describe('React Native bundle cache', () => {
         });
 
         await expect(cache.writePersistentArtifact({
-            persistentIdentity: retainedIdentity,
-            bytes,
+            ...singleFileRecord(retainedIdentity, 'index.bundle', bytes),
         })).resolves.toBe(true);
         expect(cache.putInstalledArtifact({
             identity: runtimeIdentity,
@@ -317,7 +343,7 @@ describe('React Native bundle cache', () => {
         const bytes = new TextEncoder().encode('// delayed stale Account write');
         const delayedIdentity = {
             ...persistentIdentity,
-            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+            artifactDigest: fileSetDigestFor('index.bundle', bytes),
         };
         const delayedPersistentKey = derivePluginReactNativePersistentArtifactKey(delayedIdentity);
         let beginWrite!: () => void;
@@ -341,10 +367,9 @@ describe('React Native bundle cache', () => {
             },
         });
 
-        const staleWrite = cache.writePersistentArtifact({
-            persistentIdentity: delayedIdentity,
-            bytes,
-        });
+        const staleWrite = cache.writePersistentArtifact(
+            singleFileRecord(delayedIdentity, 'index.bundle', bytes),
+        );
         await writeBegan;
 
         await cache.retireAccount(delayedIdentity.accountScope);
@@ -371,13 +396,10 @@ describe('React Native bundle cache', () => {
         const bytes = new TextEncoder().encode('// re-admitted exact Artifact bytes');
         const reAdmittedIdentity = {
             ...persistentIdentity,
-            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+            artifactDigest: fileSetDigestFor('index.bundle', bytes),
         };
         const key = derivePluginReactNativePersistentArtifactKey(reAdmittedIdentity);
-        persistent.records.set(key, {
-            persistentIdentity: reAdmittedIdentity,
-            bytes,
-        });
+        persistent.records.set(key, singleFileRecord(reAdmittedIdentity, 'index.bundle', bytes));
         let beginRemoval!: () => void;
         const removalBegan = new Promise<void>((resolve) => {
             beginRemoval = resolve;
@@ -408,10 +430,9 @@ describe('React Native bundle cache', () => {
         // storage adapter. The cache must serialize the new write after that
         // exact deletion rather than let the stale remove erase A's record.
         replacementCurrent = false;
-        const reAdmittedWrite = cache.writePersistentArtifact({
-            persistentIdentity: reAdmittedIdentity,
-            bytes,
-        });
+        const reAdmittedWrite = cache.writePersistentArtifact(
+            singleFileRecord(reAdmittedIdentity, 'index.bundle', bytes),
+        );
 
         allowRemoval();
         await staleRemoval;
@@ -427,13 +448,10 @@ describe('React Native bundle cache', () => {
         const bytes = new TextEncoder().encode('// delayed persistent re-adoption read');
         const reAdmittedIdentity = {
             ...persistentIdentity,
-            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+            artifactDigest: fileSetDigestFor('index.bundle', bytes),
         };
         const key = derivePluginReactNativePersistentArtifactKey(reAdmittedIdentity);
-        persistent.records.set(key, {
-            persistentIdentity: reAdmittedIdentity,
-            bytes,
-        });
+        persistent.records.set(key, singleFileRecord(reAdmittedIdentity, 'index.bundle', bytes));
         let beginRemoval!: () => void;
         const removalBegan = new Promise<void>((resolve) => {
             beginRemoval = resolve;
@@ -474,15 +492,16 @@ describe('React Native bundle cache', () => {
         const validBytes = new TextEncoder().encode('// valid exact Artifact after corrupt cache entry');
         const identity = {
             ...persistentIdentity,
-            artifactDigest: computePluginUiArtifactSha256DigestV1(validBytes),
+            artifactDigest: fileSetDigestFor('index.bundle', validBytes),
         };
         const key = derivePluginReactNativePersistentArtifactKey(identity);
-        persistent.records.set(key, {
-            persistentIdentity: identity,
-            // Same identity but invalid content makes the cache reader start
-            // its corrupt-entry exact deletion.
-            bytes: new TextEncoder().encode('// corrupt cached Artifact bytes'),
-        });
+        // Same identity but invalid content makes the cache reader start its
+        // corrupt-entry exact deletion.
+        persistent.records.set(key, singleFileRecord(
+            identity,
+            'index.bundle',
+            new TextEncoder().encode('// corrupt cached Artifact bytes'),
+        ));
         let beginCorruptRemoval!: () => void;
         const corruptRemovalBegan = new Promise<void>((resolve) => {
             beginCorruptRemoval = resolve;
@@ -507,10 +526,9 @@ describe('React Native bundle cache', () => {
 
         // A later valid A must join the cache owner's pending exact deletion,
         // not write bytes that the earlier corrupt-delete will erase.
-        const validWrite = cache.writePersistentArtifact({
-            persistentIdentity: identity,
-            bytes: validBytes,
-        });
+        const validWrite = cache.writePersistentArtifact(
+            singleFileRecord(identity, 'index.bundle', validBytes),
+        );
         allowCorruptRemoval();
 
         await expect(corruptRead).resolves.toBeNull();
@@ -521,58 +539,70 @@ describe('React Native bundle cache', () => {
         });
     });
 
-    it('quarantines persistent cache reuse before cleanup after an exact Artifact deletion fails', async () => {
+    it('retires only the exact identity when its physical deletion fails and keeps every other Account entry', async () => {
         const persistent = createMemoryPersistentArtifactStore();
         const diagnostics: string[] = [];
-        const bytes = new TextEncoder().encode('// exact deletion failure');
+        const failedBytes = new TextEncoder().encode('// exact deletion failure');
         const failedIdentity = {
             ...persistentIdentity,
-            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+            artifactDigest: fileSetDigestFor('index.bundle', failedBytes),
         };
         const failedKey = derivePluginReactNativePersistentArtifactKey(failedIdentity);
-        persistent.records.set(failedKey, {
-            persistentIdentity: failedIdentity,
-            bytes,
-        });
-        let cleanupAttempts = 0;
-        let beginCleanup!: () => void;
-        const cleanupBegan = new Promise<void>((resolve) => {
-            beginCleanup = resolve;
-        });
-        let allowCleanup!: () => void;
-        const cleanupGate = new Promise<void>((resolve) => {
-            allowCleanup = resolve;
-        });
+        persistent.records.set(failedKey, singleFileRecord(failedIdentity, 'index.bundle', failedBytes));
+
+        const neighborBytes = new TextEncoder().encode('// unrelated Account entry');
+        const neighborIdentity = {
+            ...persistentIdentity,
+            contributionId: 'native-neighbor',
+            artifactDigest: fileSetDigestFor('index.bundle', neighborBytes),
+        };
+        const neighborKey = derivePluginReactNativePersistentArtifactKey(neighborIdentity);
+        persistent.records.set(neighborKey, singleFileRecord(neighborIdentity, 'index.bundle', neighborBytes));
+
+        let exactRemovalFails = true;
+        const removeAccount = vi.fn(persistent.store.removeAccount);
         const cache = createPluginReactNativeBundleCache({
             persistentStore: {
                 ...persistent.store,
-                remove: async () => {
-                    throw new Error('exact persistent deletion failed');
+                remove: async (identity) => {
+                    if (exactRemovalFails) throw new Error('exact persistent deletion failed');
+                    await persistent.store.remove(identity);
                 },
-                removeAccount: async (scope) => {
-                    cleanupAttempts += 1;
-                    beginCleanup();
-                    await cleanupGate;
-                    await persistent.store.removeAccount(scope);
-                },
+                removeAccount,
             },
             onPersistentCacheDiagnostic: (code) => diagnostics.push(code),
         });
 
-        const removal = cache.removePersistentArtifact(failedIdentity);
-        await Promise.resolve();
-        await Promise.resolve();
+        await cache.removePersistentArtifact(failedIdentity);
 
-        expect(cleanupAttempts).toBe(1);
-        await cleanupBegan;
+        // One bad entry must never escalate into destroying the Account cache.
+        expect(removeAccount).not.toHaveBeenCalled();
+        expect(diagnostics).toEqual(['plugin_ui_artifact_cache_delete_failed']);
+        expect(persistent.records.has(neighborKey)).toBe(true);
+        await expect(cache.readPersistentArtifact(neighborIdentity)).resolves.toMatchObject({
+            persistentIdentity: neighborIdentity,
+            bytes: neighborBytes,
+        });
+
+        // The exact identity is retired from lookup without a raw read while
+        // its physical deletion is still owed.
         const rawReadsBeforeQuarantinedRead = persistent.reads.length;
         await expect(cache.readPersistentArtifact(failedIdentity)).resolves.toBeNull();
         expect(persistent.reads).toHaveLength(rawReadsBeforeQuarantinedRead);
-        expect(diagnostics).toEqual(['plugin_ui_artifact_cache_delete_failed']);
 
-        allowCleanup();
-        await removal;
-        expect(persistent.records.has(failedKey)).toBe(false);
+        // Storage recovers: the owed deletion is retried for that exact entry,
+        // the neighbouring entry is still untouched, and lookup reopens.
+        exactRemovalFails = false;
+        await expect(cache.readPersistentArtifact(failedIdentity)).resolves.toBeNull();
+        await vi.waitFor(() => {
+            expect(persistent.records.has(failedKey)).toBe(false);
+        });
+        expect(persistent.records.has(neighborKey)).toBe(true);
+        expect(removeAccount).not.toHaveBeenCalled();
+
+        const rawReadsBeforeReopenedRead = persistent.reads.length;
+        await expect(cache.readPersistentArtifact(failedIdentity)).resolves.toBeNull();
+        expect(persistent.reads.length).toBeGreaterThan(rawReadsBeforeReopenedRead);
     });
 
     it('stores installed plain-JS artifact bytes by full runtime identity and evicts only identities absent from current sources', () => {

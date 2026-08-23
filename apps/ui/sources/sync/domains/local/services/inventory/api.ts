@@ -67,3 +67,23 @@ export async function fetchLocalServiceInventorySnapshot(
         return { ok: false, reason: 'request_failed' };
     }
 }
+
+/**
+ * Parked read of the daemon's inventory registry (the push half of freshness).
+ *
+ * `sinceGeneratedAt` is the `generatedAt` of the snapshot the caller already holds, so a change
+ * that lands between the caller's snapshot read and its first watch is answered immediately
+ * instead of being missed. Exactly one watch is outstanding per subscribed store entry.
+ */
+export type LocalServiceInventoryWatchClientInput = Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    sessionId?: string | null;
+    sinceGeneratedAt?: number | null;
+    signal?: AbortSignal;
+}>;
+
+export type LocalServiceInventoryWatchClientResult =
+    | Readonly<{ ok: true; changed: true; snapshot: LocalServiceInventorySnapshot }>
+    | Readonly<{ ok: true; changed: false }>
+    | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;

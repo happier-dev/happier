@@ -26,6 +26,10 @@ describe('resolveActionSettingsFamily', () => {
         expect(resolveActionSettingsFamily('plugins.permissions.grants.grant')).toBe('plugins');
     });
 
+    it('maps qualified contributed actions to the plugins family', () => {
+        expect(resolveActionSettingsFamily('com.acme.review/actions/start')).toBe('plugins');
+    });
+
     it('maps session/core actions to the session family', () => {
         expect(resolveActionSettingsFamily('session.stop')).toBe('session');
         expect(resolveActionSettingsFamily('session.message.send')).toBe('session');

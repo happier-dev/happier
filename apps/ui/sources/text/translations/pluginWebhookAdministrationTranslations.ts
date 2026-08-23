@@ -2,6 +2,8 @@ const english = {
     webhookAdministration: {
         title: 'Plugin webhooks',
         footer: 'Account endpoints, exact machine targets, delivery queues, and dead-letter recovery. Delivery bodies are never shown here.',
+        unavailableTitle: 'Plugin webhooks are unavailable',
+        unavailableSubtitle: 'This server has not enabled plugin webhook ingress.',
         endpointsTitle: 'Webhook endpoints',
         emptyTitle: 'No plugin webhook endpoints',
         emptySubtitle: 'Endpoints created by installed plugins will remain visible here, including endpoints whose target is unavailable.',
@@ -50,6 +52,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'Plugin-Webhooks',
         footer: 'Konto-Endpunkte, genaue Rechnerziele, Zustell-Warteschlangen und Wiederherstellung aus dem Dead-Letter-Bereich. Zustellinhalte werden hier nie gezeigt.',
+        unavailableTitle: 'Plugin-Webhooks sind nicht verfügbar',
+        unavailableSubtitle: 'Auf diesem Server ist der Plugin-Webhook-Eingang nicht aktiviert.',
         endpointsTitle: 'Webhook-Endpunkte',
         emptyTitle: 'Keine Plugin-Webhook-Endpunkte',
         emptySubtitle: 'Endpunkte, die installierte Plugins anlegen, bleiben hier sichtbar – auch solche, deren Ziel nicht verfügbar ist.',
@@ -91,6 +95,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'Webhooks de plugin',
         footer: 'Endpoints du compte, cibles machine exactes, files de livraison et récupération des dead letters. Le contenu des livraisons n’est jamais affiché ici.',
+        unavailableTitle: 'Les webhooks de plugin sont indisponibles',
+        unavailableSubtitle: 'Ce serveur n’a pas activé la réception des webhooks de plugin.',
         endpointsTitle: 'Endpoints webhook',
         emptyTitle: 'Aucun endpoint webhook de plugin',
         emptySubtitle: 'Les endpoints créés par les plugins installés restent visibles ici, y compris ceux dont la cible est indisponible.',
@@ -132,6 +138,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'Плагин вебхуков',
         footer: 'Конечные точки учетной записи, точные целевые машины, очереди доставки и восстановление недоставленных сообщений. Органы доставки здесь никогда не отображаются.',
+        unavailableTitle: 'Вебхуки плагинов недоступны',
+        unavailableSubtitle: 'На этом сервере приём вебхуков плагинов не включён.',
         endpointsTitle: 'Конечные точки вебхука',
         emptyTitle: 'Нет конечных точек веб-перехватчика плагина',
         emptySubtitle: 'Конечные точки, созданные установленными плагинами, останутся здесь видимыми, включая конечные точки, цель которых недоступна.',
@@ -173,6 +181,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'Wtyczki webhooków',
         footer: 'Punkty końcowe konta, dokładne cele maszyn, kolejki dostaw i odzyskiwanie utraconych wiadomości. Organy dostawcze nigdy nie są tu pokazane.',
+        unavailableTitle: 'Webhooki wtyczek są niedostępne',
+        unavailableSubtitle: 'Ten serwer nie włączył przyjmowania webhooków wtyczek.',
         endpointsTitle: 'Punkty końcowe webhooka',
         emptyTitle: 'Brak punktów końcowych webhook wtyczek',
         emptySubtitle: 'Punkty końcowe utworzone przez zainstalowane wtyczki pozostaną tutaj widoczne, łącznie z punktami końcowymi, których cel jest niedostępny.',
@@ -214,6 +224,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'Webhooks de complemento',
         footer: 'Puntos finales de cuentas, destinos de máquinas exactos, colas de entrega y recuperación de mensajes no entregados. Los cuerpos de entrega nunca se muestran aquí.',
+        unavailableTitle: 'Los webhooks de plugin no están disponibles',
+        unavailableSubtitle: 'Este servidor no ha habilitado la recepción de webhooks de plugin.',
         endpointsTitle: 'Puntos finales de webhook',
         emptyTitle: 'Sin puntos finales de webhook complementarios',
         emptySubtitle: 'Los puntos finales creados por complementos instalados permanecerán visibles aquí, incluidos los puntos finales cuyo objetivo no está disponible.',
@@ -255,6 +267,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'Webhook plug-in',
         footer: 'Endpoint dell\'account, target macchina esatti, code di consegna e recupero dei messaggi non recapitabili. I corpi di consegna non vengono mai mostrati qui.',
+        unavailableTitle: 'I webhook dei plugin non sono disponibili',
+        unavailableSubtitle: 'Questo server non ha abilitato la ricezione dei webhook dei plugin.',
         endpointsTitle: 'Endpoint del webhook',
         emptyTitle: 'Nessun endpoint webhook plug-in',
         emptySubtitle: 'Gli endpoint creati dai plugin installati rimarranno visibili qui, inclusi gli endpoint la cui destinazione non è disponibile.',
@@ -296,6 +310,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'Plug-in webhooks',
         footer: 'Endpoints de conta, destinos exatos de máquina, filas de entrega e recuperação de mensagens mortas. Os corpos de entrega nunca são mostrados aqui.',
+        unavailableTitle: 'Os webhooks de plugin estão indisponíveis',
+        unavailableSubtitle: 'Este servidor não ativou a receção de webhooks de plugin.',
         endpointsTitle: 'Pontos de extremidade de webhook',
         emptyTitle: 'Nenhum ponto de extremidade de webhook de plug-in',
         emptySubtitle: 'Os endpoints criados por plug-ins instalados permanecerão visíveis aqui, incluindo endpoints cujo destino não está disponível.',
@@ -337,6 +353,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'Connectors webhooks',
         footer: 'Punts finals del compte, objectius exactes de la màquina, cues de lliurament i recuperació de missatges no lliurats. Els cossos de lliurament mai es mostren aquí.',
+        unavailableTitle: 'Els webhooks de connector no estan disponibles',
+        unavailableSubtitle: 'Aquest servidor no ha habilitat la recepció de webhooks de connector.',
         endpointsTitle: 'Punts finals del webhook',
         emptyTitle: 'No hi ha cap punt final de connectors webhook',
         emptySubtitle: 'Els punts finals creats pels connectors instal·lats romandran visibles aquí, inclosos els punts finals l\'objectiu dels quals no està disponible.',
@@ -378,6 +396,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: '插件网络钩子',
         footer: '帐户端点、确切的计算机目标、传送队列和死信恢复。此处从未显示交付尸体。',
+        unavailableTitle: '插件 Webhook 不可用',
+        unavailableSubtitle: '此服务器尚未启用插件 Webhook 接收。',
         endpointsTitle: 'Webhook 端点',
         emptyTitle: '没有插件 webhook 端点',
         emptySubtitle: '由已安装插件创建的端点将在此处保持可见，包括目标不可用的端点。',
@@ -419,6 +439,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: '插件網路鉤子',
         footer: '帳戶端點、確切的電腦目標、傳送佇列和死信復原。此處從未顯示交付屍體。',
+        unavailableTitle: '外掛程式 Webhook 無法使用',
+        unavailableSubtitle: '此伺服器尚未啟用外掛程式 Webhook 接收。',
         endpointsTitle: 'Webhook 端點',
         emptyTitle: '沒有外掛 webhook 端點',
         emptySubtitle: '由已安裝插件建立的端點將在此處保持可見，包括目標不可用的端點。',
@@ -460,6 +482,8 @@ export const pluginWebhookAdministrationTranslations = {
     webhookAdministration: {
         title: 'プラグイン Webhook',
         footer: 'アカウントのエンドポイント、正確なマシンターゲット、配信キュー、配信不能の回復。配信本体はここには表示されません。',
+        unavailableTitle: 'プラグイン Webhook を利用できません',
+        unavailableSubtitle: 'このサーバーではプラグイン Webhook の受信が有効になっていません。',
         endpointsTitle: 'Webhook エンドポイント',
         emptyTitle: 'プラグイン Webhook エンドポイントなし',
         emptySubtitle: 'インストールされたプラグインによって作成されたエンドポイントは、ターゲットが使用できないエンドポイントも含めて、ここに表示されたままになります。',

@@ -7,27 +7,23 @@ import {
     PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     PluginCollectionContractReadRequestV1Schema,
     PluginCollectionContractReadResultV1Schema,
-    PluginCollectionContentEnvelopeV1Schema,
     PluginCollectionGetRequestV1Schema,
     PluginCollectionGetResultV1Schema,
     PluginCollectionMutationErrorV1Schema,
     PluginCollectionMutationRequestV1Schema,
     PluginCollectionMutationResultV1Schema,
-    PluginCollectionPrivatePayloadV1Schema,
-    PluginCollectionProjectionV1Schema,
     PluginCollectionQueryRequestV1Schema,
     PluginCollectionQueryResultV1Schema,
     PluginCollectionReadErrorV1Schema,
     PluginCollectionRowIdV1Schema,
-    assertPluginCollectionContentEnvelopeForModeV1,
     compilePluginJsonSchema,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
+    decodePluginCollectionLogicalRowV1,
+    encodePluginCollectionLogicalValueV1,
     isValidPluginJsonSchemaValue,
     measurePluginCollectionMutationRequestDecompositionV1,
-    openPluginCollectionPrivatePayloadV1,
     resolveEffectivePluginCollectionLimitsV1,
-    sealPluginCollectionPrivatePayloadV1,
     type AccountScopedCryptoMaterial,
     type NormalizedPluginAccountCollectionContractV1,
     type PluginCollectionContractRefV1,
@@ -278,27 +274,6 @@ function rejected(
     };
 }
 
-function hasOwn(value: Readonly<Record<string, unknown>>, key: string): boolean {
-    return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function createJsonRecord(): Record<string, JsonValue> {
-    return {};
-}
-
-function setJsonRecordValue(
-    record: Record<string, JsonValue>,
-    key: string,
-    value: JsonValue,
-): void {
-    Object.defineProperty(record, key, {
-        value,
-        enumerable: true,
-        writable: false,
-        configurable: false,
-    });
-}
-
 function isScopeAndServerCurrent(
     lifetime: ActiveServerAccountScopeLifetime,
     serverSnapshot: ReturnType<typeof getActiveServerSnapshot>,
@@ -443,19 +418,22 @@ export async function prepareCollectionOperation(
 export async function requestCollectionOperation(input: Readonly<{
     operation: PreparedCollectionOperation;
     path: string;
-    body: unknown;
+    /** Omit together with a `GET` method for a read-only Account Data route. */
+    body?: unknown;
+    method?: 'GET' | 'POST';
     options?: ActivePluginCollectionOperationOptionsV1;
 }>): Promise<
     | Readonly<{ status: 'response'; ok: boolean; body: unknown }>
     | ActivePluginCollectionUnavailableV1
 > {
+    const method = input.method ?? 'POST';
     try {
         const response = await input.operation.authority.request(
             input.path,
             withAccountStoredContentCompatibilityRequestDeclaration({
-                method: 'POST',
+                method,
                 headers: input.operation.headers,
-                body: JSON.stringify(input.body),
+                ...(method === 'GET' ? {} : { body: JSON.stringify(input.body) }),
                 signal: input.operation.signal,
             }, PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
         );
@@ -490,21 +468,6 @@ export async function requestCollectionOperation(input: Readonly<{
     }
 }
 
-function ensureExactProjection(input: Readonly<{
-    contract: NormalizedPluginAccountCollectionContractV1;
-    rowId: string;
-    projection: PluginCollectionProjectionV1;
-}>): PluginCollectionProjectionV1 | null {
-    const fields = Object.keys(input.projection);
-    const expected = new Set(input.contract.serverReadable);
-    if (fields.length !== expected.size || fields.some((field) => !expected.has(field))) return null;
-    for (const field of input.contract.serverReadable) {
-        if (!hasOwn(input.projection, field)) return null;
-        if (field === input.contract.rowIdField && input.projection[field] !== input.rowId) return null;
-    }
-    return input.projection;
-}
-
 export type EncodedPluginCollectionLogicalValueV1 = Readonly<{
     rowId: string;
     content: Extract<PluginCollectionMutationOperationV1, { kind: 'put' }>['content'];
@@ -523,46 +486,21 @@ export function encodePluginCollectionLogicalValue<TValue extends PluginAccountC
     encryptionMode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
 }>): EncodedPluginCollectionLogicalValueV1 | null {
-    if (!isValidPluginJsonSchemaValue(input.validate, input.value)) return null;
-    const rowIdCandidate = input.value[input.contract.rowIdField];
-    const rowId = PluginCollectionRowIdV1Schema.safeParse(rowIdCandidate);
-    if (!rowId.success) return null;
-    const projection = createJsonRecord();
-    for (const field of input.contract.serverReadable) {
-        setJsonRecordValue(projection, field, hasOwn(input.value, field) ? input.value[field]! : null);
-    }
-    const parsedProjection = PluginCollectionProjectionV1Schema.safeParse(projection);
-    if (!parsedProjection.success || !ensureExactProjection({
+    const encoded = encodePluginCollectionLogicalValueV1({
         contract: input.contract,
-        rowId: rowId.data,
-        projection: parsedProjection.data,
-    })) {
-        return null;
-    }
-    const privatePayload = createJsonRecord();
-    const reserved = new Set([input.contract.rowIdField, ...input.contract.serverReadable]);
-    for (const [field, value] of Object.entries(input.value)) {
-        if (!reserved.has(field)) setJsonRecordValue(privatePayload, field, value);
-    }
-    try {
-        const content = input.encryptionMode === 'plain'
-            ? PluginCollectionContentEnvelopeV1Schema.parse({ t: 'plain', v: privatePayload })
-            : PluginCollectionContentEnvelopeV1Schema.parse({
-                t: 'encrypted',
-                c: sealPluginCollectionPrivatePayloadV1({
-                    material: input.material ?? (() => { throw new Error('Missing Account crypto material'); })(),
-                    payload: PluginCollectionPrivatePayloadV1Schema.parse(privatePayload),
-                    randomBytes: getRandomBytes,
-                }),
-            });
-        return {
-            rowId: rowId.data,
-            content,
-            projection: parsedProjection.data,
-        };
-    } catch {
-        return null;
-    }
+        isValidLogicalValue: (value) => isValidPluginJsonSchemaValue(input.validate, value),
+        value: input.value,
+        encryptionMode: input.encryptionMode,
+        material: input.material,
+        randomBytes: getRandomBytes,
+    });
+    return encoded.status === 'encoded'
+        ? {
+            rowId: encoded.rowId,
+            content: encoded.content,
+            projection: encoded.projection,
+        }
+        : null;
 }
 
 function splitLogicalPut<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(input: Readonly<{
@@ -591,47 +529,23 @@ export function mergeLogicalRow<TValue extends PluginAccountCollectionValue<Plug
     encryptionMode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
 }>): ActivePluginCollectionLogicalRowV1<TValue> | null {
-    try {
-        const envelope = assertPluginCollectionContentEnvelopeForModeV1(
-            input.row.content,
-            input.encryptionMode,
-        );
-        const privatePayload = envelope.t === 'plain'
-            ? envelope.v
-            : input.material
-                ? openPluginCollectionPrivatePayloadV1({
-                    material: input.material,
-                    ciphertext: envelope.c,
-                })
-                : null;
-        const projection = ensureExactProjection({
-            contract: input.contract,
-            rowId: input.row.rowId,
-            projection: input.row.projection,
-        });
-        if (!privatePayload || !projection) return null;
-        const logical = createJsonRecord();
-        const reserved = new Set([input.contract.rowIdField, ...input.contract.serverReadable]);
-        for (const [field, value] of Object.entries(privatePayload)) {
-            if (reserved.has(field)) return null;
-            setJsonRecordValue(logical, field, value);
-        }
-        for (const field of input.contract.serverReadable) {
-            setJsonRecordValue(logical, field, projection[field]!);
-        }
-        if (!hasOwn(logical, input.contract.rowIdField)) {
-            setJsonRecordValue(logical, input.contract.rowIdField, input.row.rowId);
-        }
-        const value = Object.freeze({ ...logical });
-        if (!isLogicalCollectionValue<TValue>(input.validate, value)) return null;
-        return Object.freeze({
-            rowId: input.row.rowId,
-            revision: input.row.revision,
+    const decoded = decodePluginCollectionLogicalRowV1<TValue>({
+        contract: input.contract,
+        isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(
+            input.validate,
             value,
-        });
-    } catch {
-        return null;
-    }
+        ),
+        row: input.row,
+        encryptionMode: input.encryptionMode,
+        material: input.material,
+    });
+    return decoded.status === 'decoded'
+        ? Object.freeze({
+            rowId: decoded.rowId,
+            revision: decoded.revision,
+            value: decoded.value,
+        })
+        : null;
 }
 
 function isLogicalCollectionValue<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(

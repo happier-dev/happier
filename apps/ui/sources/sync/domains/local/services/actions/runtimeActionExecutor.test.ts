@@ -293,6 +293,38 @@ describe('UI local-services runtime action executor', () => {
         }))).resolves.toEqual(actionResult);
     });
 
+    it('rejects a local-service request whose action does not match its Action id', async () => {
+        const mod = await import('./runtimeActionExecutor').catch(() => null);
+
+        expect(mod?.createLocalServicesRuntimeActionExecutor).toBeTypeOf('function');
+        if (!mod?.createLocalServicesRuntimeActionExecutor) return;
+
+        const executeLocalServiceAction = vi.fn(async () => ({ ok: true as const, result: actionResult }));
+        const execute = mod.createLocalServicesRuntimeActionExecutor({
+            executeLocalServiceAction,
+        });
+
+        await expect(execute(runtimeArgs({
+            actionId: 'localServices.actions.copyUrl',
+            input: {
+                requestId: 'request_stop',
+                target: {
+                    kind: 'managed_service',
+                    managedServiceId: 'managed_1',
+                    machineId: 'machine_1',
+                },
+                action: 'stop_managed',
+                confirmationNonce: 'confirmation_1',
+                force: false,
+            },
+        }))).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_parameters',
+            error: 'invalid_parameters',
+        });
+        expect(executeLocalServiceAction).not.toHaveBeenCalled();
+    });
+
     it('maps localServices.launcher.start to the injected launcher start route', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 

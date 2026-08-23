@@ -10,6 +10,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { PluginScaffoldUiMode } from '@happier-dev/protocol';
@@ -71,6 +72,10 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     const router = useRouter();
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const state = usePluginSettingsScreenState();
+    // The webhook administration screen and its account API are both behind the
+    // server's public-webhook feature, so the entry only exists where it leads
+    // somewhere the server will answer.
+    const webhooksAvailable = useFeatureEnabled('plugins.webhooks');
     const views = createPluginSettingsViews((key) => t(key));
     const createDevelopmentPlugin = React.useCallback(async () => {
         if (!state.daemonOperationsAvailable || !state.developmentCreateAvailable) return;
@@ -171,15 +176,17 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                 testIDPrefix="settings.plugins.administration.target"
             />
 
-            <ItemGroup>
-                <Item
-                    testID="settings.plugins.webhooks"
-                    title={t('settingsPlugins.webhookAdministration.title')}
-                    subtitle={t('settingsPlugins.webhookAdministration.footer')}
-                    icon={<Icon name="link" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push(SETTINGS_ROUTES.pluginWebhooks)}
-                />
-            </ItemGroup>
+            {webhooksAvailable ? (
+                <ItemGroup>
+                    <Item
+                        testID="settings.plugins.webhooks"
+                        title={t('settingsPlugins.webhookAdministration.title')}
+                        subtitle={t('settingsPlugins.webhookAdministration.footer')}
+                        icon={<Icon name="link" size={29} color={theme.colors.accent.indigo} />}
+                        onPress={() => router.push(SETTINGS_ROUTES.pluginWebhooks)}
+                    />
+                </ItemGroup>
+            ) : null}
 
             <NativeAppPluginPanelsSettingsEntry />
 

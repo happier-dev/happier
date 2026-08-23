@@ -1,7 +1,7 @@
 import {
     ACTION_TOOL_EXPOSURE_SURFACES,
     isActionSettingsOptInPlacement,
-    type ActionId,
+    type ActionSettingsActionId,
     type ActionSurfaces,
     type ActionToolExposureMode,
     type ActionToolExposureSurface,
@@ -10,7 +10,11 @@ import {
 } from '@happier-dev/protocol';
 
 import { normalizeActionsSettings } from './normalizeActionsSettings';
-import { getActionSettingsTargetDefinition, type ActionSettingsTargetId } from './actionSettingsTargetDefinitions';
+import {
+    resolveActionSettingsTargetDefinition,
+    type ActionSettingsTargetDefinition,
+    type ActionSettingsTargetId,
+} from './actionSettingsTargetDefinitions';
 
 type MutableActionSettingsEntry = {
     enabled?: boolean;
@@ -25,7 +29,7 @@ export function sortUniqueActionSettingsValues<T extends string>(values: readonl
     return Array.from(new Set(values)).sort((left, right) => left.localeCompare(right));
 }
 
-export function getMutableActionSettingsEntry(settings: ActionsSettingsV1, actionId: ActionId): MutableActionSettingsEntry {
+export function getMutableActionSettingsEntry(settings: ActionsSettingsV1, actionId: ActionSettingsActionId): MutableActionSettingsEntry {
     const entry = settings.actions[actionId];
     return {
         enabled: entry?.enabled,
@@ -81,7 +85,7 @@ function normalizeEntry(entry: MutableActionSettingsEntry) {
     return normalized;
 }
 
-export function writeActionSettingsEntry(settings: ActionsSettingsV1, actionId: ActionId, entry: MutableActionSettingsEntry): ActionsSettingsV1 {
+export function writeActionSettingsEntry(settings: ActionsSettingsV1, actionId: ActionSettingsActionId, entry: MutableActionSettingsEntry): ActionsSettingsV1 {
     const normalizedSettings = normalizeActionsSettings(settings);
     const normalizedEntry = normalizeEntry(entry);
     const nextActions: Record<string, unknown> = { ...normalizedSettings.actions };
@@ -100,10 +104,11 @@ export function writeActionSettingsEntry(settings: ActionsSettingsV1, actionId: 
 
 export function getActionSettingsTargetPreferenceSelected(params: Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
 }>): boolean {
-    const target = getActionSettingsTargetDefinition(params.actionId, params.targetId);
+    const target = resolveActionSettingsTargetDefinition(params);
     const entry = normalizeActionsSettings(params.settings);
     const actionEntry = entry.actions[params.actionId];
 
@@ -119,8 +124,9 @@ export function getActionSettingsTargetPreferenceSelected(params: Readonly<{
 
 export function getActionSettingsTargetSelected(params: Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
 }>): boolean {
     const entry = normalizeActionsSettings(params.settings);
     if (entry.actions[params.actionId]?.enabled === false) {
@@ -132,7 +138,7 @@ export function getActionSettingsTargetSelected(params: Readonly<{
 
 export function setActionEnabled(params: Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     enabled: boolean;
 }>): ActionsSettingsV1 {
     const normalizedSettings = normalizeActionsSettings(params.settings);
@@ -143,13 +149,14 @@ export function setActionEnabled(params: Readonly<{
 
 export function setActionTargetSelected(params: Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
     selected: boolean;
 }>): ActionsSettingsV1 {
     const normalizedSettings = normalizeActionsSettings(params.settings);
     const entry = getMutableActionSettingsEntry(normalizedSettings, params.actionId);
-    const target = getActionSettingsTargetDefinition(params.actionId, params.targetId);
+    const target = resolveActionSettingsTargetDefinition(params);
 
     if (target.kind === 'placement') {
         if (isActionSettingsOptInPlacement(target.placement)) {

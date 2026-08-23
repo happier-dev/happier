@@ -10,9 +10,7 @@ import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/bo
 import type { PluginSurfaceHostActionExecute } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import {
     PluginSurfacePaneLaunchScope,
-    stagePluginSurfacePaneLaunch,
     usePluginSurfaceDestinationNavigationBinding,
-    useRegisterPluginSurfaceDestinationNavigationOwner,
     usePluginSurfacePaneLaunch,
     usePluginSurfacePaneLaunchScope,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
@@ -191,27 +189,12 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
         // user returns to this selection later.
         paneLaunchStore.retire();
     }, [pane, paneLaunchStore, tabs]);
-    const openRightSidebarTab = React.useCallback((resolution: Parameters<typeof stagePluginSurfacePaneLaunch>[0]['resolution']) => {
-        if (!stagePluginSurfacePaneLaunch({ store: paneLaunchStore, resolution })) {
-            return { ok: false as const, code: 'unavailable' as const, reason: 'plugin_surface_open_origin_unavailable' };
-        }
-        pane.selectRightDestination({
-            kind: 'plugin',
-            destination: resolution.placement.binding.destination,
-            ...(resolution.request.instanceKey === undefined ? {} : { instanceKey: resolution.request.instanceKey }),
-        });
-        return { ok: true as const };
-    }, [pane, paneLaunchStore]);
+    // The app shell owns every app-target navigation registration, including
+    // this container's, so a plugin's first `openSurface` can reach the sidebar
+    // before its route is entered. This leaf is presentation-only: it renders
+    // the selection the app-lifetime owner recorded and never installs a
+    // resolver of its own.
     const appTargetBinding = usePluginSurfaceDestinationNavigationBinding();
-    const sidebarOwner = React.useMemo(() => ({
-        container: 'rightSidebarTab' as const,
-        handler: openRightSidebarTab,
-    }), [openRightSidebarTab]);
-    // The app shell constructs the one app-target binding and owns the page
-    // and Settings registrations. This incumbent sidebar only registers its
-    // own container against that binding; it must not resurrect a leaf-local
-    // resolver when rendered outside the shell.
-    useRegisterPluginSurfaceDestinationNavigationOwner(sidebarOwner, appTargetBinding);
 
     // §3.1: this sidebar supplies only the facts it owns. Identity, scope,
     // addressability, the host-ActionSpec front door, the resource snapshot

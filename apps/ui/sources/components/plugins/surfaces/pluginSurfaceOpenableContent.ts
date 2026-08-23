@@ -170,8 +170,31 @@ function classifyOpenableContentBytes(bytes: Uint8Array): 'text' | 'binary' {
     return isBinaryContent(text) ? 'binary' : 'text';
 }
 
-function revisionFromWorkspaceStat(sizeBytes: number, modifiedMs: number): string {
-    return `workspace-file:${sizeBytes}:${modifiedMs}`;
+/**
+ * One revision that answers for bytes, not just for metadata.
+ *
+ * Size and modification time alone were not a content identity: a rewrite that
+ * preserves length and restores mtime — a formatter, a checkout, an rsync with
+ * `--times` — and any filesystem whose mtime granularity is coarser than the
+ * edit both produced the same revision for different bytes, so a viewer holding
+ * it saw no change and kept presenting stale content as current.
+ *
+ * The status-change time closes that: a write always advances it, and no
+ * `utimes` call can put it back. It also advances for a permission or rename
+ * change, which produces a revision the viewer treats as changed and re-reads —
+ * the safe direction. An older daemon does not report it, and this deliberately
+ * keeps the previous two-part identity there rather than inventing a value:
+ * degrading to the predecessor's guarantee is honest, and inventing one would
+ * make every stat look like an edit.
+ */
+function revisionFromWorkspaceStat(
+    sizeBytes: number,
+    modifiedMs: number,
+    changedMs: number | null,
+): string {
+    return changedMs === null
+        ? `workspace-file:${sizeBytes}:${modifiedMs}`
+        : `workspace-file:${sizeBytes}:${modifiedMs}:${changedMs}`;
 }
 
 type WorkspaceOpenableContentMetadata =
@@ -209,10 +232,15 @@ async function statWorkspaceFileMetadata(input: Readonly<{
         }
 
         const sizeBytes = Math.floor(result.sizeBytes);
+        const changedMs = typeof result.changedMs === 'number'
+            && Number.isFinite(result.changedMs)
+            && result.changedMs >= 0
+            ? result.changedMs
+            : null;
         return {
             status: 'ready',
             sizeBytes,
-            revision: revisionFromWorkspaceStat(sizeBytes, result.modifiedMs),
+            revision: revisionFromWorkspaceStat(sizeBytes, result.modifiedMs, changedMs),
         };
     } catch {
         return input.signal?.aborted ? { status: 'cancelled' } : { status: 'unavailable' };

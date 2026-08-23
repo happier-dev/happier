@@ -89,37 +89,32 @@ describe('React Native watchdog persistence', () => {
             key: 'watchdog',
         });
 
-        // A store that has never been written answers, and holds nothing.
-        expect(persistence.readSnapshot()).toEqual({ durability: 'absent' });
+        // A store that has never been written holds nothing to restore.
+        expect(persistence.readSnapshot()).toBeNull();
 
-        expect(persistence.writeSnapshot({
-            v: 3,
-            pending: [pendingFailure],
-        })).toBe('available');
+        persistence.writeSnapshot({ v: 3, pending: [pendingFailure] });
 
         expect(persistence.readSnapshot()).toMatchObject({
-            durability: 'available',
             snapshot: {
                 v: 3,
                 pending: [{ failureOccurrenceId: pendingFailure.failureOccurrenceId }],
             },
         });
 
-        // Stored bytes this version cannot interpret are a quarantine it cannot
-        // account for, never an absent one.
+        // Bytes this version cannot interpret carry no reportable occurrence.
         storage.store.set('watchdog', '{not-json');
-        expect(persistence.readSnapshot()).toEqual({ durability: 'unavailable' });
+        expect(persistence.readSnapshot()).toBeNull();
     });
 
-    it('reports unavailable rather than empty when storage throws', async () => {
+    it('degrades to no restorable occurrence instead of throwing when storage throws', async () => {
         const { createPluginReactNativeWatchdogStoragePersistence } = await import('./watchdogPersistence');
         const persistence = createPluginReactNativeWatchdogStoragePersistence({
             storage: createThrowingStorage(),
             key: 'watchdog',
         });
 
-        expect(persistence.readSnapshot()).toEqual({ durability: 'unavailable' });
-        expect(persistence.writeSnapshot({ v: 3, pending: [] })).toBe('unavailable');
+        expect(persistence.readSnapshot()).toBeNull();
+        expect(() => persistence.writeSnapshot({ v: 3, pending: [] })).not.toThrow();
     });
 
     it('uses scoped localStorage on web without constructing MMKV', async () => {
@@ -154,6 +149,24 @@ describe('React Native watchdog persistence', () => {
         const { MMKV } = await import('react-native-mmkv') as unknown as { MMKV: { instances: Array<{ id?: string; store: Map<string, string> }> } };
         expect(MMKV.instances.at(-1)?.id).toBe('plugin-react-native-watchdog__native-stack');
         expect(MMKV.instances.at(-1)?.store.has('pending-v3')).toBe(true);
+    });
+
+    it('disables persistence instead of throwing when web storage access is denied', async () => {
+        vi.resetModules();
+        vi.spyOn(Platform, 'OS', 'get').mockReturnValue('web');
+        // Browsers that block site data throw a SecurityError from the
+        // `localStorage` getter itself. The native branch already degrades to
+        // "no durable store"; the web branch must not take the whole surface
+        // module down with it.
+        vi.stubGlobal('window', {
+            get localStorage(): never {
+                throw new Error('Access is denied for this document.');
+            },
+        });
+
+        const { createDefaultPluginReactNativeWatchdogPersistence } = await import('./watchdogPersistence');
+
+        expect(createDefaultPluginReactNativeWatchdogPersistence()).toBeUndefined();
     });
 
     it('disables persistence instead of throwing when native storage construction fails', async () => {

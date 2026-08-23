@@ -879,6 +879,62 @@ describe('AppShellPluginUiProjectionProvider', () => {
         await screen.unmount();
     });
 
+    // The app-target `rightSidebarTab` opener must be installed by the SHELL, at
+    // app lifetime. While it was registered from the sidebar leaf instead, a
+    // plugin's FIRST open answered `plugin_surface_open_destination_owner_unavailable`
+    // precisely because the route that would have installed the resolver had
+    // never been entered. This exercises the production shell rather than a
+    // mirror of it, so deleting that registration cannot stay green.
+    it('installs the app-target rightSidebarTab opener before any sidebar route mounts', async () => {
+        storageState.machines = [{
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+            metadata: { host: 'local' },
+        }];
+        const pluginId = 'acme.app-shell-cold-right-sidebar';
+        const origin = installSelectedAppScopePluginFixture({
+            machineId: 'machine-1',
+            pluginId,
+        });
+        projectionDescribeSpy.mockImplementation(async () => ({
+            supported: true,
+            projection: pluginUiProjectionWithAppTab({ generation: 3, pluginId, origin }),
+        }));
+
+        const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { usePluginSurfaceDestinationNavigationBinding } = await import(
+            '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation'
+        );
+        type AppTargetBinding = ReturnType<typeof usePluginSurfaceDestinationNavigationBinding>;
+        let binding: AppTargetBinding = null;
+        function AppTargetBindingProbe() {
+            binding = usePluginSurfaceDestinationNavigationBinding();
+            return null;
+        }
+
+        // No sidebar route is mounted: only the shell boundary and the app pane
+        // owner it writes selection through.
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <AppShellPluginUiProjectionProvider>
+                    <AppTargetBindingProbe />
+                </AppShellPluginUiProjectionProvider>
+            </AppPaneProvider>,
+        );
+        await flushHookEffects({ cycles: 5 });
+
+        expect(binding).not.toBeNull();
+        await act(async () => {
+            await expect(binding!.openSurface({
+                destination: { pluginId, localId: 'panel' },
+            })).resolves.toEqual({ ok: true });
+        });
+
+        await screen.unmount();
+    });
+
     it('retries invalidation from the last applied projection after an invalidation failure', async () => {
         storageState.machines = [{
             id: 'machine-1',

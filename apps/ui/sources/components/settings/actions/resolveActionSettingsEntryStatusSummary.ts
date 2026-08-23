@@ -1,4 +1,4 @@
-import type { ActionId, ActionsSettingsV1 } from '@happier-dev/protocol';
+import type { ActionSettingsActionId, ActionsSettingsV1 } from '@happier-dev/protocol';
 import type { TranslationKey } from '@/text';
 
 import {
@@ -6,10 +6,12 @@ import {
     type ActionSettingsTargetId,
 } from './actionSettingsTargets';
 import type { ActionSettingsTargetState } from './buildActionSettingsEntries';
+import type { ActionSettingsTargetDefinition } from './actionSettingsTargetDefinitions';
 
 export type ActionSettingsEntryStatusTarget = Readonly<{
     id: ActionSettingsTargetId;
     state: ActionSettingsTargetState;
+    definition: ActionSettingsTargetDefinition;
 }>;
 
 export type ActionSettingsEntryStatusSummary = Readonly<{
@@ -27,7 +29,7 @@ export type ActionSettingsEntryStatusPart = Readonly<{
 
 export function resolveActionSettingsEntryStatusSummary(params: Readonly<{
     settings: ActionsSettingsV1;
-    actionId: ActionId;
+    actionId: ActionSettingsActionId;
     targets: readonly ActionSettingsEntryStatusTarget[];
 }>): ActionSettingsEntryStatusSummary {
     const summary = {
@@ -47,6 +49,7 @@ export function resolveActionSettingsEntryStatusSummary(params: Readonly<{
             settings: params.settings,
             actionId: params.actionId,
             targetId: target.id,
+            target: target.definition,
             available: true,
         });
 

@@ -153,25 +153,35 @@ export type AgentUiBehavior = Readonly<{
      * external identity for a built-in Agent.
      */
     agentId?: CanonicalAgentId;
+    /**
+     * Presentation of the host's own pending-input custody facts. The host owns
+     * both the decision and the state it reads (`agentState.capabilities`,
+     * published by any Agent through the public SDK runtime context); an Agent
+     * only declares that it participates and which label names it.
+     */
     pendingDelivery?: Readonly<{
-        resolveLabelKey?: (ctx: Readonly<{
-            agentId: AgentLookupId;
-            session: Session;
-            localId: string | null;
-            detail: PendingDeliveryDetailV1 | undefined;
-        }>) => TranslationKey | null;
-        resolveTransientAction?: (ctx: Readonly<{
-            agentId: AgentLookupId;
-            session: Session;
-            localId: string;
-            wireMode: PendingInputServerWireMode;
-        }>) => PendingDeliveryTransientAction | null;
+        /**
+         * Label shown once the runner reports custody of a queued prompt.
+         * Undeclared means the Agent publishes no custody evidence and the
+         * generic queued presentation applies.
+         */
+        custodyLabelKey?: TranslationKey;
+        /**
+         * Whether the Agent's runner honours `interrupt_and_run` for the
+         * prompt it currently holds. The host still requires the runner to have
+         * published that local id before offering the action.
+         */
+        interruptAndRun?: boolean;
     }>;
+    /**
+     * Whether this Agent's sessions can be driven from the attached terminal
+     * viewer. Serviceability itself is a host fact
+     * (`metadata.terminal.controlServiceabilityV1`, written by the daemon for
+     * whichever Agent runs inside a terminal host), so this is an opt-in, not a
+     * second decision-maker.
+     */
     attachedSessionTerminal?: Readonly<{
-        isAvailable?: (ctx: Readonly<{
-            agentId: AgentLookupId;
-            session: Session;
-        }>) => boolean;
+        supported?: boolean;
     }>;
     guidance?: Readonly<{
         includeInSessionGettingStartedCliExamples?: boolean;
@@ -206,12 +216,6 @@ export type AgentUiBehavior = Readonly<{
         classifyNonSteerablePayload?: (
             ctx: AgentSessionComposerNonSteerablePayloadContext
         ) => AgentSessionComposerNonSteerableReason | null;
-    }>;
-    workflow?: Readonly<{
-        resolveAskUserQuestionPresentation?: (ctx: Readonly<{
-            input: unknown;
-            translate: (key: string) => string;
-        }>) => unknown;
     }>;
     contextWindow?: AgentContextWindowBehavior;
     message?: Readonly<{
@@ -348,6 +352,12 @@ export type NewSessionRelevantInstallableDepsContext = Readonly<{
     settings: Settings;
     experiments: AgentResumeExperiments;
     resumeSessionId: string;
+    /**
+     * The machine whose installables are being resolved. Omitted by the
+     * cross-machine picker counts, where every machine's declaration is equally
+     * applicable; supplied whenever the answer is about one machine's Agent.
+     */
+    machineId?: string | null;
 }>;
 
 export type NewSessionPreflightIssue = Readonly<{
@@ -412,7 +422,6 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
         ...(a.sessionComposer || b.sessionComposer
             ? { sessionComposer: { ...(a.sessionComposer ?? {}), ...(b.sessionComposer ?? {}) } }
             : {}),
-        ...(a.workflow || b.workflow ? { workflow: { ...(a.workflow ?? {}), ...(b.workflow ?? {}) } } : {}),
         ...(a.contextWindow || b.contextWindow
             ? { contextWindow: { ...(a.contextWindow ?? {}), ...(b.contextWindow ?? {}) } }
             : {}),
@@ -592,20 +601,49 @@ export function resolveAgentUiBehaviorFromSessionMetadata(metadata: unknown): Ag
     return agentId ? resolveAgentUiBehavior(agentId, resolveSessionMachineId(metadata)) : null;
 }
 
+/**
+ * The runner's own report that it now holds a queued prompt. Any Agent can
+ * publish it through the public SDK runtime context
+ * (`pendingInputInterruptAndRunLocalId`), so reading it is host work; the Agent
+ * only declares the label and whether interrupt-and-run is honoured.
+ */
+function readCustodyObservedLocalId(session: Session): string | null {
+    const value = session.agentState?.capabilities?.pendingInputInterruptAndRunLocalId;
+    return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * The machine that owns a Session's render, read through the canonical owner
+ * metadata view. Every Session-scoped behavior read passes it so a decision
+ * about the Agent running on this machine can never be answered with another
+ * machine's declaration.
+ */
+function resolveOwningMachineIdForSession(session: Session | null | undefined): string | null {
+    if (!session) return null;
+    return resolveSessionMachineId(readSessionOwnerMetadataView(session));
+}
+
+function resolveSessionAgentUiBehavior(session: Session): AgentUiBehavior | null {
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
+    if (!agentId) return null;
+    return resolveAgentUiBehavior(agentId, resolveSessionMachineId(ownerMetadata));
+}
+
 export function resolvePendingDeliveryLabelKeyForSession(ctx: Readonly<{
     session: Session;
     localId: string | null;
     detail: PendingDeliveryDetailV1 | undefined;
 }>): TranslationKey | null {
-    const ownerMetadata = readSessionOwnerMetadataView(ctx.session);
-    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
-    if (!agentId) return null;
-    return resolveAgentUiBehavior(agentId, resolveSessionMachineId(ownerMetadata)).pendingDelivery?.resolveLabelKey?.({
-        agentId,
-        session: ctx.session,
-        localId: ctx.localId,
-        detail: ctx.detail,
-    }) ?? null;
+    const custodyLabelKey = resolveSessionAgentUiBehavior(ctx.session)?.pendingDelivery?.custodyLabelKey;
+    if (!custodyLabelKey) return null;
+    if (ctx.detail === 'custody_observed') return custodyLabelKey;
+    const custodyObservedLocalId = readCustodyObservedLocalId(ctx.session);
+    return ctx.localId !== null
+        && ctx.localId.length > 0
+        && ctx.localId === custodyObservedLocalId
+        ? custodyLabelKey
+        : null;
 }
 
 export function resolvePendingDeliveryTransientActionForSession(ctx: Readonly<{
@@ -613,24 +651,35 @@ export function resolvePendingDeliveryTransientActionForSession(ctx: Readonly<{
     localId: string;
     wireMode: PendingInputServerWireMode;
 }>): PendingDeliveryTransientAction | null {
-    const ownerMetadata = readSessionOwnerMetadataView(ctx.session);
-    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
-    if (!agentId) return null;
-    return resolveAgentUiBehavior(agentId, resolveSessionMachineId(ownerMetadata)).pendingDelivery?.resolveTransientAction?.({
-        agentId,
-        session: ctx.session,
+    if (ctx.wireMode !== 'pending_input_v1') return null;
+    if (resolveSessionAgentUiBehavior(ctx.session)?.pendingDelivery?.interruptAndRun !== true) return null;
+    if (readCustodyObservedLocalId(ctx.session) !== ctx.localId) return null;
+    const stateAt = ctx.session.agentState?.capabilities?.pendingInputInterruptAndRunStateAt;
+    return {
+        id: 'interrupt_and_run',
         localId: ctx.localId,
-        wireMode: ctx.wireMode,
-    }) ?? null;
+        ...(typeof stateAt === 'number' ? { stateAtMs: stateAt } : {}),
+    };
 }
 
+/**
+ * Whether the attached-terminal viewer can drive this session right now.
+ *
+ * Every fact in the decision is host-owned: the session is live, the daemon
+ * published a servable, unretired control attachment for it, and the terminal
+ * host is a controllable one rather than `plain`. The Agent contributes only
+ * the opt-in, so an installed Agent that declares support is answered by the
+ * same predicate as a bundled one.
+ */
 export function isAttachedSessionTerminalAvailableForSession(session: Session): boolean {
-    const ownerMetadata = readSessionOwnerMetadataView(session);
-    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
-    if (!agentId) return false;
-    const isAvailable = resolveAgentUiBehavior(agentId, resolveSessionMachineId(ownerMetadata))
-        .attachedSessionTerminal?.isAvailable;
-    return isAvailable?.({ agentId, session }) === true;
+    if (session.active !== true) return false;
+    if (resolveSessionAgentUiBehavior(session)?.attachedSessionTerminal?.supported !== true) return false;
+    const terminal = readSessionOwnerMetadataView(session)?.terminal;
+    if (!terminal || terminal.mode === undefined || terminal.mode === 'plain') return false;
+    const serviceability = terminal.controlServiceabilityV1;
+    if (serviceability?.v !== 1) return false;
+    if (serviceability.state !== 'servable' || serviceability.retired === true) return false;
+    return typeof serviceability.attachmentId === 'string' && serviceability.attachmentId.trim().length > 0;
 }
 
 export function classifyAgentSessionComposerNonSteerablePayload(opts: {
@@ -734,7 +783,7 @@ export function getNewSessionAgentInputExtraActionChips(opts: {
 export function getNewSessionRelevantInstallableDepKeys(
     ctx: NewSessionRelevantInstallableDepsContext,
 ): readonly string[] {
-    const fn = resolveAgentUiBehavior(ctx.agentId).newSession?.getRelevantInstallableDepKeys;
+    const fn = resolveAgentUiBehavior(ctx.agentId, ctx.machineId).newSession?.getRelevantInstallableDepKeys;
     return fn ? fn(ctx) : [];
 }
 
@@ -742,11 +791,17 @@ export function buildSpawnSessionExtrasFromUiState(opts: {
     agentId: AgentLookupId;
     settings: Settings;
     resumeSessionId: string;
+    /**
+     * The machine the composer is about to spawn on. An installed Agent's
+     * descriptor is a per-machine fact, so the spawn envelope is built from the
+     * declaration held by the machine that will run the Session.
+     */
+    machineId?: string | null;
     newSessionOptions?: Record<string, unknown> | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     updatedAt?: number;
 }): AgentSpawnSessionExtras {
-    const fn = resolveAgentUiBehavior(opts.agentId).payload?.buildSpawnSessionExtras;
+    const fn = resolveAgentUiBehavior(opts.agentId, opts.machineId).payload?.buildSpawnSessionExtras;
     if (!fn) return {};
     const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
     return fn({
@@ -764,9 +819,11 @@ export function buildSpawnEnvironmentVariablesFromUiState(opts: {
     agentId: AgentLookupId;
     settings: Settings;
     environmentVariables: Record<string, string> | undefined;
+    /** The machine the composer is about to spawn on; see `buildSpawnSessionExtrasFromUiState`. */
+    machineId?: string | null;
     newSessionOptions?: Record<string, unknown> | null;
 }): Record<string, string> | undefined {
-    const fn = resolveAgentUiBehavior(opts.agentId).payload?.buildSpawnEnvironmentVariables;
+    const fn = resolveAgentUiBehavior(opts.agentId, opts.machineId).payload?.buildSpawnEnvironmentVariables;
     return fn ? fn(opts) : opts.environmentVariables;
 }
 
@@ -775,7 +832,10 @@ export function buildResumeSessionExtrasFromUiState(opts: {
     settings: Settings;
     session?: Session | null;
 }): Record<string, unknown> {
-    const fn = resolveAgentUiBehavior(opts.agentId).payload?.buildResumeSessionExtras;
+    const fn = resolveAgentUiBehavior(
+        opts.agentId,
+        resolveOwningMachineIdForSession(opts.session),
+    ).payload?.buildResumeSessionExtras;
     if (!fn) return {};
     const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
     return fn({ agentId: opts.agentId, experiments, settings: opts.settings, session: opts.session });
@@ -786,7 +846,10 @@ export function buildWakeResumeExtras(opts: {
     resumeCapabilityOptions: ResumeCapabilityOptions;
     session?: Session | null;
 }): Record<string, unknown> {
-    const fn = resolveAgentUiBehavior(opts.agentId)?.payload?.buildWakeResumeExtras;
+    const fn = resolveAgentUiBehavior(
+        opts.agentId,
+        resolveOwningMachineIdForSession(opts.session),
+    )?.payload?.buildWakeResumeExtras;
     return fn ? fn(opts) : {};
 }
 
@@ -837,7 +900,10 @@ export function buildSessionHandoffSourceRecoveryResumePatch(opts: {
     agentId: AgentId;
     metadata: Record<string, unknown>;
 }): AgentSessionHandoffSourceRecoveryResumePatch {
-    const fn = resolveAgentUiBehavior(opts.agentId).sessionHandoff?.buildSourceRecoveryResumePatch;
+    const fn = resolveAgentUiBehavior(
+        opts.agentId,
+        resolveSessionMachineId(opts.metadata),
+    ).sessionHandoff?.buildSourceRecoveryResumePatch;
     return fn ? fn(opts) : {};
 }
 
@@ -849,7 +915,10 @@ export function supportsEditableSessionGoals(ctx: {
     agentId: AgentLookupId;
     session: Session;
 }): boolean {
-    const fn = resolveAgentUiBehavior(ctx.agentId).workState?.supportsEditableGoals;
+    const fn = resolveAgentUiBehavior(
+        ctx.agentId,
+        resolveOwningMachineIdForSession(ctx.session),
+    ).workState?.supportsEditableGoals;
     return fn ? fn(ctx) : false;
 }
 
@@ -862,6 +931,9 @@ export function resolveSessionGoalActionCapabilityProfile(ctx: {
     agentId: AgentLookupId;
     session: Session;
 }): GoalActionCapabilities | null {
-    const fn = resolveAgentUiBehavior(ctx.agentId).workState?.resolveGoalActionCapabilityProfile;
+    const fn = resolveAgentUiBehavior(
+        ctx.agentId,
+        resolveOwningMachineIdForSession(ctx.session),
+    ).workState?.resolveGoalActionCapabilityProfile;
     return fn ? fn(ctx) : null;
 }

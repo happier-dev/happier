@@ -85,6 +85,7 @@ vi.mock('./PluginMarketplaceSections', () => ({
     CatalogEntriesSection: 'CatalogEntriesSection',
     DevelopmentPluginsSection: 'DevelopmentPluginsSection',
     InstalledPluginsSection: 'InstalledPluginsSection',
+    PendingPluginChangesSection: 'PendingPluginChangesSection',
     PluginDiagnosticsSnapshotSection: 'PluginDiagnosticsSnapshotSection',
 }));
 vi.mock('./model/pluginDetailRoute', () => ({ buildPluginDetailRoute: (pluginId: string) => `/settings/plugins/${pluginId}` }));

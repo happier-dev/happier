@@ -313,6 +313,8 @@ describe('React Native persistent artifact store', () => {
         await first.write({
             persistentIdentity,
             bytes,
+            entryRelativePath: 'entry.js',
+            files: [{ relativePath: 'entry.js', digest: artifactDigest, byteSize: bytes.byteLength, bytes }],
         });
 
         expect(fake.writes.at(-1)).toMatch(/\/record\.v1\.json$/u);
@@ -379,7 +381,12 @@ describe('React Native persistent artifact store', () => {
             artifactDigest,
         };
         const store = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
-        await store.write({ persistentIdentity, bytes });
+        await store.write({
+            persistentIdentity,
+            bytes,
+            entryRelativePath: 'entry.js',
+            files: [{ relativePath: 'entry.js', digest: artifactDigest, byteSize: bytes.byteLength, bytes }],
+        });
 
         const manifestPath = [...fake.files.keys()].find((path) => path.endsWith('/record.v1.json'));
         if (!manifestPath) throw new Error('Fixture must contain the persistent manifest.');
@@ -488,8 +495,14 @@ describe('React Native persistent artifact store', () => {
         const accountA = { ...base, accountScope: { serverId: 'server-a', accountId: 'account-a' } };
         const accountB = { ...base, accountScope: { serverId: 'server-a', accountId: 'account-b' } };
         const store = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
-        await store.write({ persistentIdentity: accountA, bytes });
-        await store.write({ persistentIdentity: accountB, bytes });
+        const graph = (persistentIdentity: typeof accountA) => ({
+            persistentIdentity,
+            bytes,
+            entryRelativePath: 'entry.js',
+            files: [{ relativePath: 'entry.js', digest: artifactDigest, byteSize: bytes.byteLength, bytes }],
+        });
+        await store.write(graph(accountA));
+        await store.write(graph(accountB));
 
         await store.removeAccount(accountA.accountScope);
 

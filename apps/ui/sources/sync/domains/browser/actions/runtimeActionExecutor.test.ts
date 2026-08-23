@@ -7,6 +7,10 @@ import type {
     RuntimeActionIdV1,
     RuntimeActionExecuteArgs,
 } from '@happier-dev/protocol';
+import {
+    BrowserAutomationCancelActiveResultV1Schema,
+    BrowserCommandDispatchResultV1Schema,
+} from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildBrowserAdapterCapabilities } from '../adapters/capabilities';
@@ -181,13 +185,18 @@ describe('browser runtime action executor', () => {
             url: 'https://preview.happier.test/dashboard',
         } satisfies BrowserCommandV1;
 
-        await expect(execute(runtimeArgs({
+        const result = await execute(runtimeArgs({
             actionId: 'browser.navigate',
             input: command,
-        }))).resolves.toMatchObject({
+        }));
+
+        expect(BrowserCommandDispatchResultV1Schema.safeParse(result).success).toBe(true);
+        expect(result).toMatchObject({
             v: 1,
-            actionId: 'browser.navigate',
-            status: 'accepted',
+            commandId: 'command_navigate',
+            status: 'dispatched',
+            adapterKind: 'localPreview',
+            events: [],
         });
 
         const committed = commits[0];
@@ -199,6 +208,44 @@ describe('browser runtime action executor', () => {
             command,
         }]);
         expect(committed.state.viewsById.view_1?.pendingUrl).toBe('https://preview.happier.test/dashboard');
+    });
+
+    it('fails closed before local dispatch when a browser Action id carries another command kind', async () => {
+        const mod = await loadRuntimeActionExecutor();
+
+        expect(mod?.createBrowserRuntimeActionExecutor).toBeTypeOf('function');
+        if (!mod?.createBrowserRuntimeActionExecutor) return;
+
+        const state = openViewState({
+            adapterKind: 'localPreview',
+            engineKind: 'webIframe',
+            target: localPreviewTarget,
+            capabilities: localPreviewCapabilities,
+            currentUrl: 'https://preview.happier.test/',
+        });
+        const applyDispatchResult = vi.fn();
+        const execute = mod.createBrowserRuntimeActionExecutor({
+            control: {
+                readState: () => state,
+                applyDispatchResult,
+            },
+        });
+
+        await expect(execute(runtimeArgs({
+            actionId: 'browser.view.focus',
+            input: {
+                kind: 'navigate',
+                commandId: 'command_mismatched',
+                browserSessionId: 'browser_session_1',
+                viewId: 'view_1',
+                url: 'https://preview.happier.test/escaped-navigation',
+            } satisfies BrowserCommandV1,
+        }))).resolves.toEqual({
+            ok: false,
+            errorCode: 'invalid_parameters',
+            error: 'invalid_parameters',
+        });
+        expect(applyDispatchResult).not.toHaveBeenCalled();
     });
 
     it('resolves browser control from the command browser session before dispatching', async () => {
@@ -226,7 +273,7 @@ describe('browser runtime action executor', () => {
                 : null,
         });
 
-        await expect(execute(runtimeArgs({
+        const result = await execute(runtimeArgs({
             actionId: 'browser.navigate',
             input: {
                 kind: 'navigate',
@@ -235,10 +282,14 @@ describe('browser runtime action executor', () => {
                 viewId: 'view_1',
                 url: 'https://preview.happier.test/registered',
             } satisfies BrowserCommandV1,
-        }))).resolves.toMatchObject({
+        }));
+
+        expect(BrowserCommandDispatchResultV1Schema.safeParse(result).success).toBe(true);
+        expect(result).toMatchObject({
             v: 1,
-            actionId: 'browser.navigate',
-            status: 'accepted',
+            commandId: 'command_registry_navigate',
+            status: 'dispatched',
+            adapterKind: 'localPreview',
         });
 
         expect(commits[0]?.state.viewsById.view_1?.pendingUrl).toBe('https://preview.happier.test/registered');
@@ -299,6 +350,40 @@ describe('browser runtime action executor', () => {
                 status: 'succeeded',
             }),
         });
+    });
+
+    it('fails closed when browser automation has no owner evidence to project a canonical result', async () => {
+        const mod = await loadRuntimeActionExecutor();
+
+        expect(mod?.createBrowserRuntimeActionExecutor).toBeTypeOf('function');
+        if (!mod?.createBrowserRuntimeActionExecutor) return;
+
+        const controlService = createBrowserAutomationControlService({ nowMs: () => 2_000 });
+        const execute = mod.createBrowserRuntimeActionExecutor({ automation: { controlService } });
+
+        await expect(execute(runtimeArgs({
+            actionId: 'browser.automation.status',
+            input: {
+                v: 1,
+                automationRequestId: 'automation_request_without_owner',
+                browserSessionId: 'browser_session_1',
+                viewId: 'view_1',
+                navigationGeneration: 4,
+                requestedBy: 'agent',
+                requesterRef: { kind: 'session', id: 'session_1' },
+                actionKind: 'getStatus',
+                payload: {},
+                timeoutMs: 1_000,
+            },
+        }))).resolves.toEqual({
+            ok: false,
+            errorCode: 'runtime_action_disabled',
+            error: 'runtime_action_disabled:browser:browser_automation_unavailable',
+        });
+        expect(controlService.getActionTimeline({
+            browserSessionId: 'browser_session_1',
+            viewId: 'view_1',
+        })).toEqual([]);
     });
 
     it('dispatches browser automation navigation action ids through the registered automation owner', async () => {
@@ -382,6 +467,67 @@ describe('browser runtime action executor', () => {
             'goBack',
             'goForward',
         ]);
+    });
+
+    it('serializes browser.automation.cancelActive as the canonical cancellation outcome with the real count', async () => {
+        const mod = await loadRuntimeActionExecutor();
+
+        expect(mod?.createBrowserRuntimeActionExecutor).toBeTypeOf('function');
+        if (!mod?.createBrowserRuntimeActionExecutor) return;
+
+        let releaseAction: () => void = () => undefined;
+        const pendingAction = new Promise<void>((resolve) => {
+            releaseAction = resolve;
+        });
+        const controlService = createBrowserAutomationControlService({ nowMs: () => 4_000 });
+        controlService.registerOwner({
+            ownerId: 'owner_cancel_active',
+            authority: 'uiLocal',
+            browserSessionId: 'browser_session_1',
+            viewId: 'view_1',
+            navigationGeneration: 4,
+            adapterKind: 'localPreview',
+            fidelity: 'webIframe',
+            trustedInput: false,
+            supportedActions: ['waitFor'],
+            executeAction: async () => {
+                await pendingAction;
+                return { status: 'succeeded' };
+            },
+        });
+        const activeAction = controlService.executeAction({
+            v: 1,
+            automationRequestId: 'automation_request_cancel_active',
+            browserSessionId: 'browser_session_1',
+            viewId: 'view_1',
+            navigationGeneration: 4,
+            requestedBy: 'agent',
+            requesterRef: { kind: 'session', id: 'session_1' },
+            actionKind: 'waitFor',
+            payload: {},
+            timeoutMs: 1_000,
+        });
+        await Promise.resolve();
+        const execute = mod.createBrowserRuntimeActionExecutor({ automation: { controlService } });
+
+        const canceled = await execute(runtimeArgs({
+            actionId: 'browser.automation.cancelActive',
+            input: { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+        }));
+        const noActive = await execute(runtimeArgs({
+            actionId: 'browser.automation.cancelActive',
+            input: { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+        }));
+
+        expect(BrowserAutomationCancelActiveResultV1Schema.safeParse(canceled).success).toBe(true);
+        expect(canceled).toEqual({ v: 1, outcome: 'canceled', canceledCount: 1 });
+        expect(BrowserAutomationCancelActiveResultV1Schema.safeParse(noActive).success).toBe(true);
+        expect(noActive).toEqual({ v: 1, outcome: 'no_active', canceledCount: 0 });
+        await expect(activeAction).resolves.toMatchObject({
+            status: 'canceled',
+            errorCode: 'user_canceled',
+        });
+        releaseAction();
     });
 
     it('fails closed when a browser automation action id reaches an owner that does not support the action kind', async () => {
@@ -538,9 +684,16 @@ describe('browser runtime action executor', () => {
         for (const [actionId, command] of commands) {
             const result = await execute(runtimeArgs({ actionId, input: command }));
 
-            // With the seam wired the daemon command is dispatched and the action is accepted —
+            // With the seam wired the daemon command is dispatched —
             // never the browser_control_route_unavailable fail-closed of the unwired path.
-            expect(result).toMatchObject({ v: 1, actionId, status: 'accepted' });
+            expect(BrowserCommandDispatchResultV1Schema.safeParse(result).success).toBe(true);
+            expect(result).toMatchObject({
+                v: 1,
+                commandId: command.commandId,
+                status: 'dispatched',
+                adapterKind: 'chromiumSidecar',
+                events: [],
+            });
             expect(result).not.toMatchObject({ error: 'runtime_action_disabled:browser:browser_control_route_unavailable' });
             expect(sendDaemonCommand).toHaveBeenCalledWith(command);
         }

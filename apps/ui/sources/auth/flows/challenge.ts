@@ -1,7 +1,10 @@
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import sodium from '@/encryption/libsodium.lib';
 import {
+    createKeyChallengeV2SigningInput,
     createExpectedAccountKeyChallengeSigningInputV1,
+    type KeyChallengeV2Audience,
+    type KeyChallengeV2IssueResponse,
 } from '@happier-dev/protocol';
 
 export function deriveAccountSigningPublicKey(
@@ -35,6 +38,32 @@ export function authChallenge(
             : challenge;
     return {
         challenge,
+        signature: signAccountPayload(secret, signingInput),
+        publicKey: deriveAccountSigningPublicKey(secret),
+    };
+}
+
+export function authChallengeV2(
+    secret: Uint8Array,
+    params: Readonly<{
+        challenge: KeyChallengeV2IssueResponse;
+        expectedAudience: Required<KeyChallengeV2Audience>;
+        expectedAccountId?: string;
+    }>,
+) {
+    if (
+        params.challenge.audience.origin !== params.expectedAudience.origin
+        || params.challenge.audience.serverIdentityId !== params.expectedAudience.serverIdentityId
+    ) {
+        throw new Error('Authentication failed: key-challenge v2 audience mismatch.');
+    }
+    const signingInput = createKeyChallengeV2SigningInput({
+        ...params.challenge,
+        ...(params.expectedAccountId
+            ? { expectedAccountId: params.expectedAccountId }
+            : {}),
+    });
+    return {
         signature: signAccountPayload(secret, signingInput),
         publicKey: deriveAccountSigningPublicKey(secret),
     };

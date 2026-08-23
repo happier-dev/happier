@@ -156,14 +156,15 @@ describe('PluginReactNativeSurface', () => {
         expect(watchdog.readPending({ token: crashStateToken, scopeKey: crashReportScopeKey })).toEqual([pending]);
     });
 
-    it('holds cached bytes when neither the durable quarantine nor current daemon truth can clear them', async () => {
-        // A store that refuses to answer is not a store that says "nothing was
-        // quarantined". With no current daemon projection either, nothing has
-        // cleared this binding, so the cached artifact must not execute.
+    it('mounts a surface whose durable store cannot be read and that never recorded a failure', async () => {
+        // A store that cannot answer is not evidence of a crash. Containment
+        // belongs to a real recorded failure and to the daemon's disabled fact;
+        // an unreadable local store must never blank a working plugin, least of
+        // all while the daemon projection is a retained offline snapshot.
         const watchdog = createPluginReactNativeWatchdog({
             persistence: {
                 readSnapshot: () => { throw new Error('platform storage unavailable'); },
-                writeSnapshot: () => 'unavailable' as const,
+                writeSnapshot: () => { throw new Error('platform storage unavailable'); },
             },
         });
         const renderSurface = vi.fn(() => React.createElement('PluginNativeSurface', { testID: 'plugin-native-surface' }));
@@ -177,33 +178,6 @@ describe('PluginReactNativeSurface', () => {
             watchdog={watchdog}
             crashStateToken={crashStateToken}
             crashReportScopeKey={crashReportScopeKey}
-            {...({ crashStateProjectionCurrent: false } as any)}
-        />);
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(renderSurface).not.toHaveBeenCalled();
-        expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
-    });
-
-    it('lets current daemon truth recover a mount whose durable quarantine cannot be read', async () => {
-        const watchdog = createPluginReactNativeWatchdog({
-            persistence: {
-                readSnapshot: () => { throw new Error('platform storage unavailable'); },
-                writeSnapshot: () => 'unavailable' as const,
-            },
-        });
-        const renderSurface = vi.fn(() => React.createElement('PluginNativeSurface', { testID: 'plugin-native-surface' }));
-        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
-
-        const screen = await renderScreen(<PluginReactNativeSurface
-            surfaceId="surface_1"
-            renderContext={defaultRenderContext}
-            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
-            module={{ renderSurface }}
-            watchdog={watchdog}
-            crashStateToken={crashStateToken}
-            crashReportScopeKey={crashReportScopeKey}
-            {...({ crashStateProjectionCurrent: true } as any)}
         />);
         await flushHookEffects({ cycles: 2, turns: 2 });
 
@@ -214,12 +188,9 @@ describe('PluginReactNativeSurface', () => {
     it('does not forward a persisted occurrence from a retired server, machine, and Account scope to an equal token', async () => {
         let persisted: PluginReactNativeWatchdogSnapshot | null = null;
         const persistence = {
-            readSnapshot: () => persisted === null
-                ? { durability: 'absent' as const }
-                : { durability: 'available' as const, snapshot: persisted },
+            readSnapshot: () => persisted === null ? null : { snapshot: persisted },
             writeSnapshot: (snapshot: PluginReactNativeWatchdogSnapshot) => {
                 persisted = snapshot;
-                return 'available' as const;
             },
         };
         const sourceScopeKey = 'server-a\u0000machine-a\u0000account-a';

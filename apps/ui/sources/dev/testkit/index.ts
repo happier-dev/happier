@@ -32,6 +32,7 @@ export * from './mocks/virtualizedList';
 export * from './mocks/legendList';
 export * from './mocks/gestureHandler';
 export * from './mocks/modal';
+export * from './mocks/machineAdministrationTargetSelection';
 export * from './mocks/mainAppTabState';
 export * from './mocks/reactNative';
 export * from './mocks/router';

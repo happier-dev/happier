@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks, resetSettingsViewCommonModuleMockState } from '../settingsViewTestHelpers';
 import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import {
+    createMachineAdministrationTargetSelectionMock,
+    installMachineAdministrationTargetSelectionBoundary,
+} from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,6 +16,7 @@ const capture = vi.hoisted(() => ({
     items: [] as Array<Record<string, unknown>>,
     searchHeaders: [] as Array<Record<string, unknown>>,
     statusTexts: [] as Array<Record<string, unknown>>,
+    notices: [] as Array<Record<string, unknown>>,
     groupTitles: [] as Array<unknown>,
     windowWidth: 800,
     setRawSettings: vi.fn(),
@@ -20,6 +25,7 @@ const capture = vi.hoisted(() => ({
         this.items = [];
         this.searchHeaders = [];
         this.statusTexts = [];
+        this.notices = [];
         this.groupTitles = [];
         this.windowWidth = 800;
         this.setRawSettings.mockReset();
@@ -27,8 +33,45 @@ const capture = vi.hoisted(() => ({
     },
 }));
 
+const administrationTargetSelection = createMachineAdministrationTargetSelectionMock({
+    selectedMachineId: null,
+    machines: [
+        { machineId: 'machine-a', displayName: 'Machine A' },
+        { machineId: 'machine-b', displayName: 'Machine B' },
+    ],
+});
+installMachineAdministrationTargetSelectionBoundary(administrationTargetSelection);
+const administrationSelectionCalls: Array<Readonly<{
+    selectionKey: string;
+    options: unknown;
+}>> = [];
+vi.doMock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    ...administrationTargetSelection.module,
+    useMachineAdministrationTargetSelection: (selectionKey: string, options: unknown) => {
+        administrationSelectionCalls.push({ selectionKey, options });
+        return administrationTargetSelection.module.useMachineAdministrationTargetSelection(selectionKey);
+    },
+}));
+
+const daemonProjection = vi.hoisted(() => ({
+    calls: [] as Array<Readonly<{ machineId?: unknown; serverId?: unknown; enabled?: unknown }>>,
+    byMachineId: {} as Record<string, unknown>,
+    reset() {
+        this.calls = [];
+        this.byMachineId = {};
+    },
+}));
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
+}));
+
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: (params: Readonly<{ machineId?: unknown; serverId?: unknown; enabled?: unknown }>) => {
+        daemonProjection.calls.push(params);
+        const machineId = typeof params.machineId === 'string' ? params.machineId : '';
+        return daemonProjection.byMachineId[machineId] ?? { phase: 'idle', inputs: null };
+    },
 }));
 
 installSettingsViewCommonModuleMocks({
@@ -87,6 +130,13 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
     },
 }));
 
+vi.mock('@/components/ui/lists/ItemInfoNotice', () => ({
+    ItemInfoNotice: (props: Record<string, unknown>) => {
+        capture.notices.push(props);
+        return React.createElement('ItemInfoNotice', props);
+    },
+}));
+
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown> & { children?: React.ReactNode }) => {
         capture.items.push(props);
@@ -112,6 +162,9 @@ vi.mock('@/components/ui/text/Text', () => ({
 afterEach(() => {
     standardCleanup();
     capture.reset();
+    administrationTargetSelection.controller.reset();
+    administrationSelectionCalls.length = 0;
+    daemonProjection.reset();
     resetSettingsViewCommonModuleMockState();
 });
 
@@ -125,6 +178,73 @@ describe('ActionsSettingsView', () => {
         expect(capture.searchHeaders).toHaveLength(1);
         expect(capture.items.some((item) => item.testID === 'settings-actions:action:review.start')).toBe(true);
         expect(capture.items.every((item) => String(item.testID).startsWith('settings-actions:action:'))).toBe(true);
+    });
+
+    it('requires an explicit machine and never mixes contributed actions from different daemon projections', async () => {
+        capture.reset();
+        daemonProjection.byMachineId = {
+            'machine-a': {
+                phase: 'ready',
+                inputs: {
+                    pluginProjectionById: {
+                        'com.acme.a': {
+                            pluginId: 'com.acme.a',
+                            actions: [{
+                                id: 'review/a',
+                                title: 'Action from machine A',
+                                description: null,
+                                icon: null,
+                                surfaces: ['plugin'],
+                                placementBindings: [],
+                            }],
+                        },
+                    },
+                },
+            },
+            'machine-b': {
+                phase: 'ready',
+                inputs: {
+                    pluginProjectionById: {
+                        'com.acme.b': {
+                            pluginId: 'com.acme.b',
+                            actions: [{
+                                id: 'review/b',
+                                title: 'Action from machine B',
+                                description: null,
+                                icon: null,
+                                surfaces: [],
+                                placementBindings: [],
+                            }],
+                        },
+                    },
+                },
+            },
+        };
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+        expect(administrationSelectionCalls).toContainEqual({
+            selectionKey: 'actions.settings',
+            options: { allowSoleCandidate: false },
+        });
+        expect(capture.notices.some((notice) => (
+            notice.testID === 'settings-actions:contributed:machine-selection-required'
+        ))).toBe(true);
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:com.acme.a/actions/review/a')).toBe(false);
+
+        capture.items = [];
+        await act(async () => {
+            administrationTargetSelection.controller.select('machine-a');
+        });
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:com.acme.a/actions/review/a')).toBe(true);
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:com.acme.b/actions/review/b')).toBe(false);
+
+        capture.items = [];
+        await act(async () => {
+            administrationTargetSelection.controller.select('machine-b');
+        });
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:com.acme.a/actions/review/a')).toBe(false);
+        expect(capture.items.some((item) => item.testID === 'settings-actions:action:com.acme.b/actions/review/b')).toBe(true);
     });
 
     it('exposes browser recording attach in action settings now its executor is wired (§3.2)', async () => {

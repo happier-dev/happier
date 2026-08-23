@@ -29,6 +29,7 @@ const appShellState = vi.hoisted(() => ({
     interactionEnabled: true,
 }));
 const routeFocusState = vi.hoisted(() => ({ value: true }));
+const administrationTargetSelectorSpy = vi.hoisted(() => vi.fn());
 type DaemonTargetFixture = Readonly<{
     target: Readonly<{ serverIdentityId: string; machineId: string }>;
     machine: Readonly<{ id: string; daemonStateVersion: number }>;
@@ -40,6 +41,17 @@ const daemonTargetSelectionState = vi.hoisted(() => ({
         machine: { id: 'settings-machine', daemonStateVersion: 3 },
         serverId: 'settings-server',
     } as DaemonTargetFixture | null,
+}));
+/** The one administration selection this screen both writes to and names. */
+const administrationSelectionFixture = vi.hoisted(() => Object.freeze({
+    candidates: [],
+    pickerRows: [],
+    state: { kind: 'online' as const },
+    selectedTarget: { serverIdentityId: 'settings-server-identity', machineId: 'settings-machine' },
+    canExecute: true,
+    selectTarget: () => {},
+    clearTarget: () => {},
+    resolveExecutionTarget: () => daemonTargetSelectionState.value,
 }));
 
 vi.mock('expo-router', () => ({
@@ -73,9 +85,14 @@ vi.mock('@/sync/domains/machines/administration/selectionPreferences', () => ({
 }));
 
 vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
-    useMachineAdministrationTargetSelection: () => ({
-        resolveExecutionTarget: () => daemonTargetSelectionState.value,
-    }),
+    useMachineAdministrationTargetSelection: () => administrationSelectionFixture,
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: unknown) => {
+        administrationTargetSelectorSpy(props);
+        return React.createElement('MachineAdministrationTargetSelector');
+    },
 }));
 
 vi.mock('@/components/plugins/surfaces', () => ({
@@ -184,6 +201,7 @@ afterEach(() => {
     fallbackSpy.mockClear();
     stackScreenSpy.mockClear();
     routerPushSpy.mockClear();
+    administrationTargetSelectorSpy.mockClear();
 });
 
 describe('PluginSettingsPageScreen', () => {
@@ -390,6 +408,31 @@ describe('PluginSettingsPageScreen', () => {
             machineId: 'settings-machine',
             serverId: 'settings-server',
         })).toBe(false);
+    });
+
+    // A deep link lands on this page with no plugin-home context, so the machine
+    // its fields, secrets and lifecycle operations address has to be named here
+    // — by the SAME selection that produced the daemon target above, not a
+    // second copy of the decision.
+    it('names the administration machine it writes to, from the one selection its target came from', async () => {
+        const page = settingsPage();
+        appShellState.projection = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            settingsPagesById: { [page.id]: page },
+        };
+        const { PluginSettingsPageScreen } = await import('./PluginSettingsPageScreen');
+
+        await renderScreen(<PluginSettingsPageScreen pluginId="examples.descriptor-only" pageId="settings" />);
+
+        expect(administrationTargetSelectorSpy).toHaveBeenCalledWith(expect.objectContaining({
+            selection: administrationSelectionFixture,
+        }));
+        expect(latestHostProps().daemonSettingsTarget).toEqual({
+            kind: 'daemon',
+            serverIdentityId: administrationSelectionFixture.selectedTarget.serverIdentityId,
+            machineId: administrationSelectionFixture.selectedTarget.machineId,
+            serverId: 'settings-server',
+        });
     });
 
     it('fails daemon Settings closed instead of falling back to the app-shell origin with no Administration target', async () => {

@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createProviderConnectionViewFixture,
     createProviderConnectionsDescribeFixture,
+    createMachineAdministrationTargetSelectionMock,
     createProviderSettingsHarness,
     flushHookEffects,
+    installMachineAdministrationTargetSelectionBoundary,
     installProviderSettingsRpcBoundary,
     renderScreen,
     standardCleanup,
@@ -36,6 +38,8 @@ const navigationState = vi.hoisted(() => ({
 }));
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
+const administrationTarget = createMachineAdministrationTargetSelectionMock();
+installMachineAdministrationTargetSelectionBoundary(administrationTarget);
 
 function createDeferred<T>() {
     let resolve!: (value: T) => void;
@@ -91,7 +95,6 @@ vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: (props: React.Props
 vi.mock('@/components/ui/status/StatusPill', () => ({ StatusPill: (props: any) => React.createElement('StatusPill', props) }));
 vi.mock('@/components/ui/forms/Switch', () => ({ Switch: (props: any) => React.createElement('Switch', props) }));
 vi.mock('@/components/ui/forms/SearchHeader', () => ({ SearchHeader: (props: any) => React.createElement('SearchHeader', props) }));
-vi.mock('@/components/settings/providers/ProviderMachineSelector', () => ({ ProviderMachineSelector: (props: any) => React.createElement('ProviderMachineSelector', props) }));
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props) }));
 vi.mock('@/components/ui/icons/SafeIonicons', () => ({ SafeIonicons: (props: any) => React.createElement('SafeIonicons', props) }));
 vi.mock('@/components/ui/buttons/IconButton', () => ({ IconButton: (props: any) => React.createElement('IconButton', props) }));

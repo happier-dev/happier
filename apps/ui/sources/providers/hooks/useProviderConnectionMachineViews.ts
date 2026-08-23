@@ -2,6 +2,10 @@ import * as React from 'react';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
 
+import {
+    providerSettingsMachineRowKey,
+    type ProviderSettingsMachineRowV1,
+} from '@/providers/hooks/targetMachine';
 import { describeProviderConnections, providerErrorFromRpcFailure } from '@/providers/rpc/client';
 
 export type ProviderConnectionMachineViewState =
@@ -9,49 +13,64 @@ export type ProviderConnectionMachineViewState =
     | Readonly<{ status: 'success'; connection: DaemonProviderConnectionViewV1 | null }>
     | Readonly<{ status: 'error'; error: ProviderErrorV1 }>;
 
+/**
+ * Per-machine daemon facts for one Provider connection. Each row is addressed
+ * by its full `{ serverIdentityId, machineId }` tuple and requested through
+ * that row's own server profile, so a machine id shared by two profiles can
+ * never be read from the wrong daemon.
+ */
 export function useProviderConnectionMachineViews(input: Readonly<{
     enabled: boolean;
-    serverId: string | null;
     connectionId: string;
-    machineIds: readonly string[];
+    targets: readonly ProviderSettingsMachineRowV1[];
 }>) {
-    const [byMachineId, setByMachineId] = React.useState<Readonly<Record<string, ProviderConnectionMachineViewState>>>({});
+    const [byTargetKey, setByTargetKey] = React.useState<Readonly<Record<string, ProviderConnectionMachineViewState>>>({});
     const [loading, setLoading] = React.useState(false);
     const generation = React.useRef(0);
-    const machineKey = JSON.stringify([...input.machineIds].sort());
+    const targetsRef = React.useRef(input.targets);
+    targetsRef.current = input.targets;
+    const targetsKey = JSON.stringify(
+        input.targets
+            .map((row) => [providerSettingsMachineRowKey(row.target), row.serverId] as const)
+            .sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0)),
+    );
 
     const refresh = React.useCallback(async () => {
         const requestGeneration = ++generation.current;
-        if (!input.enabled || input.machineIds.length === 0) {
-            setByMachineId({});
+        const targets = targetsRef.current;
+        if (!input.enabled || targets.length === 0) {
+            setByTargetKey({});
             setLoading(false);
             return;
         }
         setLoading(true);
-        setByMachineId((current) => Object.fromEntries(input.machineIds.map((machineId) => {
-            const previous = current[machineId];
-            return [machineId, {
+        setByTargetKey((current) => Object.fromEntries(targets.map((row) => {
+            const key = providerSettingsMachineRowKey(row.target);
+            const previous = current[key];
+            return [key, {
                 status: 'loading',
                 connection: previous?.status === 'success' || previous?.status === 'loading'
                     ? previous.connection
                     : null,
             } satisfies ProviderConnectionMachineViewState];
         })));
-        const entries = await Promise.all(input.machineIds.map(async (machineId) => {
+        const entries = await Promise.all(targets.map(async (row) => {
+            const key = providerSettingsMachineRowKey(row.target);
+            const machineId = row.target.machineId;
             try {
                 const result = await describeProviderConnections({
                     machineId,
-                    serverId: input.serverId,
+                    serverId: row.serverId,
                     connectionId: input.connectionId,
                 });
-                return [machineId, result.status === 'success'
+                return [key, result.status === 'success'
                     ? {
                         status: 'success',
                         connection: result.connections.find((connection) => connection.connectionId === input.connectionId) ?? null,
                     } satisfies ProviderConnectionMachineViewState
                     : { status: 'error', error: result.error } satisfies ProviderConnectionMachineViewState] as const;
             } catch (caught) {
-                return [machineId, {
+                return [key, {
                     status: 'error',
                     error: providerErrorFromRpcFailure(caught, {
                         connectionId: input.connectionId,
@@ -61,14 +80,14 @@ export function useProviderConnectionMachineViews(input: Readonly<{
             }
         }));
         if (generation.current !== requestGeneration) return;
-        setByMachineId(Object.fromEntries(entries));
+        setByTargetKey(Object.fromEntries(entries));
         setLoading(false);
-    }, [input.connectionId, input.enabled, machineKey, input.serverId]);
+    }, [input.connectionId, input.enabled, targetsKey]);
 
     React.useEffect(() => {
         void refresh();
         return () => { generation.current += 1; };
     }, [refresh]);
 
-    return { byMachineId, loading, refresh };
+    return { byTargetKey, loading, refresh };
 }

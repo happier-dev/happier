@@ -3,15 +3,12 @@ import { View, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
-import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
-import { resolveAgentIdFromSessionMetadata } from '@/agents/registry/registryCore';
-import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { sessionAllowWithAnswers } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { Modal } from '@/modal';
-import { t, type TranslationKey } from '@/text';
+import { t } from '@/text';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -305,6 +302,33 @@ function isOpenTerminalNotice(value: unknown): boolean {
         && dialog.action === 'open_terminal';
 }
 
+/**
+ * The open-terminal notice's copy.
+ *
+ * The `happierDialog` envelope — not the Agent that produced it — is what makes
+ * this row a notice: the host already reads it to decide the notice layout and
+ * the open-terminal action, and it owns the copy. An optionless notice question
+ * carries the Agent's raw TUI prompt text, which is not presentable, so the host
+ * substitutes its own header and question. Anything else is left untouched.
+ */
+function applyOpenTerminalNoticePresentation(value: unknown): unknown {
+    if (!isRecord(value) || !Array.isArray(value.questions)) return value;
+    if (!isOpenTerminalNotice(value.happierDialog)) return value;
+    const firstQuestion = value.questions[0];
+    if (!isRecord(firstQuestion) || !Array.isArray(firstQuestion.options) || firstQuestion.options.length !== 0) {
+        return value;
+    }
+    return {
+        ...value,
+        questions: [{
+            ...firstQuestion,
+            header: t('tools.askUserQuestion.claudeDialogNotice.header'),
+            question: t('tools.askUserQuestion.claudeDialogNotice.question'),
+            options: [],
+        }],
+    };
+}
+
 function hasOpenTerminalSecondaryAction(value: unknown): boolean {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const dialog = value as Record<string, unknown>;
@@ -493,21 +517,12 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [isSubmitted, setIsSubmitted] = React.useState(false);
     const attachedSessionTerminal = useOpenAttachedSessionTerminal(sessionId ?? null);
-    // A Session keeps its identity across an Agent switch, so a historical row
-    // is PRESENTED by the Agent that produced it, not by the one running now.
-    // `null` means no divider evidence, which keeps the live-metadata behavior.
-    // Answering stays on live authority — see the submit path.
-    const historicalAgentId = useHistoricalTranscriptAgentId();
 
     // Parse input
     const rawInput = tool.input;
     const session = sessionId ? storage.getState().sessions[sessionId] : undefined;
-    const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
-    const presentationAgentId = historicalAgentId ?? resolveAgentIdFromSessionMetadata(ownerMetadata);
     const presentedInput = isLegacyAskUserQuestionInput(rawInput)
-        ? resolveAgentUiBehavior(presentationAgentId)
-            .workflow
-            ?.resolveAskUserQuestionPresentation?.({ input: rawInput, translate: (key) => t(key as TranslationKey) }) ?? rawInput
+        ? applyOpenTerminalNoticePresentation(rawInput)
         : rawInput;
     const input = normalizeAskUserQuestionInput(presentedInput);
     const questions = input?.questions;

@@ -60,10 +60,14 @@ export function createPluginSurfaceOpenSurfaceHandler(
             return createPluginSurfaceHostApiError('invalid_payload', ['plugin_surface_open_payload_invalid']);
         }
 
+        // The placement's outcome is the authoritative settlement of an
+        // outward effect (§3.5, `hostApi/outwardEffectSettlement.ts`): by the
+        // time it resolves, the destination was either opened or refused. It is
+        // deliberately NOT re-fenced against currentness here — a successful
+        // open routinely retires this very mount, and answering that with
+        // `stale_surface` told the caller nothing happened after it had, which
+        // invites a second navigation.
         const outcome = await handler(parsed.data);
-        if (isCurrent?.() === false) {
-            return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
-        }
         return outcome.ok
             ? null
             : createPluginSurfaceHostApiError(outcome.code, [outcome.reason]);

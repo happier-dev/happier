@@ -45,11 +45,17 @@ export function PluginSurfacePlacementStack(props: Readonly<{
 }>): React.ReactElement | null {
     const deviceType = useDeviceType();
     // A stack mounted inside a target scope inherits that scope's one navigation
-    // binding, so its placements advertise `openSurface` like every other
-    // contextual container. A genuinely standalone mount has no such owner, and
-    // no navigation authority is invented for it: the method stays factually
-    // uninstalled (UI-D02) rather than resolving after doing nothing.
-    const navigationBinding = usePluginSurfaceDestinationNavigationBinding();
+    // binding ONLY when the scope resolves this stack's own target. Target
+    // scopes partition the destination space, so an enclosing Session/Project
+    // resolver is not this mount's authority when the mount's public surface
+    // context says `services`: inheriting it would let a Services surface open
+    // the enclosing Session's destinations. A genuinely standalone mount, and a
+    // mismatched enclosing scope, both leave the method factually uninstalled
+    // (UI-D02) rather than resolving against the wrong target.
+    const contextualNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
+    const navigationBinding = contextualNavigationBinding?.targetKind === props.targetKind
+        ? contextualNavigationBinding
+        : null;
     const placementBinding = React.useMemo<BoundPluginSurfaceBinding | undefined>(
         () => (navigationBinding ? { openSurface: navigationBinding.openSurface } : undefined),
         [navigationBinding],

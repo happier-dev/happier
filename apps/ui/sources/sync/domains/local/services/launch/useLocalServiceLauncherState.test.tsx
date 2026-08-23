@@ -50,7 +50,6 @@ describe('useLocalServiceLauncherState', () => {
             machineId: 'machine-a',
             serverId: 'server-a',
             sessionId: 'session-a',
-            refreshIntervalMs: null,
         }));
         await flushHookEffects({ cycles: 2, turns: 2 });
 
@@ -75,7 +74,6 @@ describe('useLocalServiceLauncherState', () => {
             machineId: 'machine-a',
             sessionId: 'session-a',
             snapshotClient,
-            refreshIntervalMs: null,
         }));
         await flushHookEffects({ cycles: 2, turns: 2 });
 
@@ -104,7 +102,6 @@ describe('useLocalServiceLauncherState', () => {
             machineId: 'machine-a',
             sessionId: 'session-a',
             snapshotClient,
-            refreshIntervalMs: null,
         }));
         await flushHookEffects({ cycles: 2, turns: 2 });
         const otherSessionSnapshot = {

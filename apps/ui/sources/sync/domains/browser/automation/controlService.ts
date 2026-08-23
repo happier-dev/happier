@@ -1,6 +1,9 @@
 import {
+    browserViewKey,
+    BrowserAutomationCancelActiveResultV1Schema,
     BrowserAutomationErrorCodeV1Schema,
     redactBrowserAutomationTimelineDetails,
+    type BrowserAutomationCancelActiveResultV1,
     type BrowserAutomationErrorCodeV1,
 } from '@happier-dev/protocol';
 
@@ -29,9 +32,6 @@ export type BrowserAutomationRequest = Readonly<{
     }>;
     actionKind: string;
     timeoutMs: number;
-    leaseId?: string;
-    expectedControlEpoch?: number;
-    expectedSyntheticInputWindowMs?: number;
     payload?: Readonly<Record<string, unknown>>;
 }>;
 
@@ -83,21 +83,17 @@ export type BrowserAutomationTimelineEntry = Readonly<{
     reasonCode?: BrowserAutomationErrorCodeV1;
 }>;
 
-type BrowserAutomationLease = Readonly<{
-    leaseId: string;
-    viewKey: string;
-    requestedBy: BrowserAutomationRequesterKind;
-    requesterRef: Readonly<{ kind: string; id: string }>;
-    controlEpoch: number;
-    acquiredAtMs: number;
-    expiresAtMs: number;
-}>;
-
+/**
+ * Who drives a view. `activeAutomationRequestId` is the single-flight fact and the only
+ * concurrency arbitration; `controlEpoch` advances when a human takes over. There is deliberately
+ * no lease — one existed until 2026-08-23 with no minting path, which made every mutating verb
+ * undispatchable (G3/OE-1). Consent is the action-approval danger floor, not a lease.
+ */
 type BrowserAutomationControllerState = {
     controller: 'none' | 'human' | 'agent' | 'system';
     controlEpoch: number;
-    activeLeaseId: string | null;
     activeAutomationRequestId: string | null;
+    activeRequesterRef: Readonly<{ kind: string; id: string }> | null;
 };
 
 type ActiveAction = {
@@ -108,7 +104,6 @@ type ActiveAction = {
     startedAtMs: number;
     controlEpochBefore: number;
     navigationGenerationBefore: number;
-    expectedSyntheticUntilMs: number;
     settled: boolean;
     timeoutId: ReturnType<typeof setTimeout> | null;
     resolve: (result: BrowserAutomationResult) => void;
@@ -121,30 +116,12 @@ export type BrowserAutomationControlService = Readonly<{
     updateNavigationGeneration: (
         input: Readonly<{ browserSessionId: string; viewId: string; navigationGeneration: number }>,
     ) => void;
-    acquireLease: (
-        input: Readonly<{
-            browserSessionId: string;
-            viewId: string;
-            requestedBy: BrowserAutomationRequesterKind;
-            requesterRef: Readonly<{ kind: string; id: string }>;
-            ttlMs: number;
-        }>,
-    ) => Readonly<{ ok: true; leaseId: string; controlEpoch: number } | { ok: false; result: BrowserAutomationResult }>;
     executeAction: (request: BrowserAutomationRequest) => Promise<BrowserAutomationResult>;
     cancelActiveAction: (
         input: Readonly<{ browserSessionId: string; viewId: string; reasonCode?: BrowserAutomationErrorCodeV1 }>,
-    ) => void;
+    ) => BrowserAutomationCancelActiveResultV1;
     recordHumanInput: (
         input: Readonly<{ browserSessionId: string; viewId: string; inputKind: string; occurredAtMs: number }>,
-    ) => void;
-    recordSyntheticInput: (
-        input: Readonly<{
-            browserSessionId: string;
-            viewId: string;
-            automationRequestId: string;
-            inputKind: string;
-            occurredAtMs: number;
-        }>,
     ) => void;
     getActionTimeline: (
         input: Readonly<{ browserSessionId: string; viewId: string }>,
@@ -167,15 +144,13 @@ const MUTATING_ACTIONS = new Set([
     'focus',
     'select',
     'setValue',
+    'upload',
+    'drag',
     'evaluate',
     'startElementPicker',
     'cancelElementPicker',
 ]);
 const CLOSED_VIEW_KEY_LIMIT = 512;
-
-function viewKeyFor(input: Readonly<{ browserSessionId: string; viewId: string }>): string {
-    return `${input.browserSessionId}:${input.viewId}`;
-}
 
 function isMutatingAction(actionKind: string): boolean {
     return MUTATING_ACTIONS.has(actionKind);
@@ -183,13 +158,6 @@ function isMutatingAction(actionKind: string): boolean {
 
 function unavailableResult(status: BrowserAutomationResultStatus, errorCode: BrowserAutomationErrorCodeV1): BrowserAutomationResult {
     return { status, errorCode };
-}
-
-function requesterMatches(
-    a: Readonly<{ kind: string; id: string }>,
-    b: Readonly<{ kind: string; id: string }>,
-): boolean {
-    return a.kind === b.kind && a.id === b.id;
 }
 
 function readKnownAutomationErrorCode(error: unknown): BrowserAutomationErrorCodeV1 | null {
@@ -224,12 +192,10 @@ export function createBrowserAutomationControlService(
     input: Readonly<{ nowMs: () => number; maxTimelineEntries?: number }>,
 ): BrowserAutomationControlService {
     const maxTimelineEntries = Math.max(1, Math.min(input.maxTimelineEntries ?? 500, 500));
-    let nextLeaseSeq = 0;
     let nextTimelineSeq = 0;
     const ownersByViewKey = new Map<string, BrowserAutomationOwner>();
     const ownerIdToViewKey = new Map<string, string>();
     const controllersByViewKey = new Map<string, BrowserAutomationControllerState>();
-    const leasesById = new Map<string, BrowserAutomationLease>();
     const activeActionsByRequestId = new Map<string, ActiveAction>();
     const timelineByViewKey = new Map<string, BrowserAutomationTimelineEntry[]>();
     const closedViewKeys = new Set<string>();
@@ -251,15 +217,15 @@ export function createBrowserAutomationControlService(
         const next: BrowserAutomationControllerState = {
             controller: 'none',
             controlEpoch: 0,
-            activeLeaseId: null,
             activeAutomationRequestId: null,
+            activeRequesterRef: null,
         };
         controllersByViewKey.set(viewKey, next);
         return next;
     }
 
     function appendTimeline(active: ActiveAction, result: BrowserAutomationResult): void {
-        const viewKey = viewKeyFor(active.request);
+        const viewKey = browserViewKey(active.request);
         const controller = controllerFor(viewKey);
         nextTimelineSeq += 1;
         const finishedAtMs = now();
@@ -307,20 +273,14 @@ export function createBrowserAutomationControlService(
         if (!active.abortController.signal.aborted && result.status !== 'succeeded' && result.status !== 'failed') {
             active.abortController.abort(result.errorCode ?? result.status);
         }
-        const viewKey = viewKeyFor(active.request);
+        const viewKey = browserViewKey(active.request);
         const controller = controllerFor(viewKey);
-        const finishingLeaseStillActive = Boolean(
-            active.request.leaseId && controller.activeLeaseId === active.request.leaseId,
-        );
         if (controller.activeAutomationRequestId === active.request.automationRequestId) {
             controller.activeAutomationRequestId = null;
-        }
-        if (isMutatingAction(active.request.actionKind)) {
-            if (active.request.leaseId && finishingLeaseStillActive) {
-                leasesById.delete(active.request.leaseId);
-            }
-            if (finishingLeaseStillActive) {
-                controller.activeLeaseId = null;
+            controller.activeRequesterRef = null;
+            // A human takeover owns the view until the next action; only an agent/system action
+            // releases the controller back to `none` when it finishes.
+            if (controller.controller !== 'human') {
                 controller.controller = 'none';
             }
         }
@@ -338,11 +298,14 @@ export function createBrowserAutomationControlService(
         status: BrowserAutomationResultStatus,
         errorCode: BrowserAutomationErrorCodeV1,
         predicate: (active: ActiveAction) => boolean = () => true,
-    ): void {
+    ): number {
+        let canceledCount = 0;
         for (const active of [...activeActionsByRequestId.values()]) {
-            if (viewKeyFor(active.request) !== viewKey || !predicate(active)) continue;
+            if (browserViewKey(active.request) !== viewKey || !predicate(active)) continue;
             finishActiveAction(active, { status, errorCode });
+            canceledCount += 1;
         }
+        return canceledCount;
     }
 
     function rejectAndRecord(
@@ -358,9 +321,8 @@ export function createBrowserAutomationControlService(
             abortController: new AbortController(),
             queuedAtMs: now(),
             startedAtMs: now(),
-            controlEpochBefore: controllerFor(viewKeyFor(request)).controlEpoch,
+            controlEpochBefore: controllerFor(browserViewKey(request)).controlEpoch,
             navigationGenerationBefore: owner.navigationGeneration,
-            expectedSyntheticUntilMs: 0,
             settled: false,
             timeoutId: null,
             resolve: () => undefined,
@@ -369,24 +331,17 @@ export function createBrowserAutomationControlService(
         return unavailableResult(status, errorCode);
     }
 
-    function validateLease(request: BrowserAutomationRequest): BrowserAutomationResult | null {
+    /**
+     * Single-flight admission for a mutating action: at most one runs per view. This is the whole
+     * arbitration. It replaced a lease that no caller could mint, so the check it nominally
+     * performed never actually ran — this one does, on the real dispatch path.
+     */
+    function admitMutatingAction(request: BrowserAutomationRequest): BrowserAutomationResult | null {
         if (!isMutatingAction(request.actionKind)) return null;
-        if (!request.leaseId) return unavailableResult('policy_denied', 'lease_required');
-        const lease = leasesById.get(request.leaseId);
-        const viewKey = viewKeyFor(request);
-        if (!lease || lease.viewKey !== viewKey) return unavailableResult('policy_denied', 'lease_required');
-        if (lease.expiresAtMs < now()) {
-            leasesById.delete(request.leaseId);
-            return unavailableResult('policy_denied', 'lease_expired');
-        }
-        if (lease.requestedBy !== request.requestedBy || !requesterMatches(lease.requesterRef, request.requesterRef)) {
-            return unavailableResult('policy_denied', 'owner_mismatch');
-        }
-        const controller = controllerFor(viewKey);
-        if (request.expectedControlEpoch !== undefined && request.expectedControlEpoch !== controller.controlEpoch) {
-            return unavailableResult('stale', 'control_epoch_mismatch');
-        }
-        return null;
+        const controller = controllerFor(browserViewKey(request));
+        if (!controller.activeAutomationRequestId) return null;
+        if (controller.activeAutomationRequestId === request.automationRequestId) return null;
+        return unavailableResult('policy_denied', 'automation_busy');
     }
 
     function handleHumanInput(inputValue: Readonly<{
@@ -394,7 +349,7 @@ export function createBrowserAutomationControlService(
         viewId: string;
         occurredAtMs: number;
     }>): void {
-        const viewKey = viewKeyFor(inputValue);
+        const viewKey = browserViewKey(inputValue);
         const controller = controllerFor(viewKey);
         controller.controlEpoch += 1;
         controller.controller = 'human';
@@ -406,7 +361,7 @@ export function createBrowserAutomationControlService(
 
     return {
         registerOwner(owner) {
-            const viewKey = viewKeyFor(owner);
+            const viewKey = browserViewKey(owner);
             const existing = ownersByViewKey.get(viewKey);
             if (existing && existing.ownerId !== owner.ownerId) {
                 return { ok: false, reasonCode: 'owner_conflict' };
@@ -429,16 +384,13 @@ export function createBrowserAutomationControlService(
         },
 
         closeView(inputValue) {
-            const viewKey = viewKeyFor(inputValue);
+            const viewKey = browserViewKey(inputValue);
             closedViewKeys.add(viewKey);
             const owner = ownersByViewKey.get(viewKey);
             if (owner) {
                 ownerIdToViewKey.delete(owner.ownerId);
             }
             ownersByViewKey.delete(viewKey);
-            leasesById.forEach((lease, leaseId) => {
-                if (lease.viewKey === viewKey) leasesById.delete(leaseId);
-            });
             cancelActiveActionsForView(viewKey, 'canceled', 'view_closed');
             controllersByViewKey.delete(viewKey);
             timelineByViewKey.delete(viewKey);
@@ -454,7 +406,7 @@ export function createBrowserAutomationControlService(
         },
 
         updateNavigationGeneration(inputValue) {
-            const viewKey = viewKeyFor(inputValue);
+            const viewKey = browserViewKey(inputValue);
             const owner = ownersByViewKey.get(viewKey);
             if (owner) {
                 ownersByViewKey.set(viewKey, {
@@ -468,43 +420,8 @@ export function createBrowserAutomationControlService(
             emitChange();
         },
 
-        acquireLease(request) {
-            const viewKey = viewKeyFor(request);
-            const owner = ownersByViewKey.get(viewKey);
-            if (closedViewKeys.has(viewKey)) {
-                return { ok: false, result: unavailableResult('canceled', 'view_closed') };
-            }
-            if (!owner) {
-                return { ok: false, result: unavailableResult('canceled', 'owner_disconnected') };
-            }
-            const controller = controllerFor(viewKey);
-            if (controller.activeLeaseId || controller.activeAutomationRequestId) {
-                return { ok: false, result: unavailableResult('policy_denied', 'lease_conflict') };
-            }
-            nextLeaseSeq += 1;
-            const leaseId = `browser_automation_lease:${nextLeaseSeq}`;
-            const lease: BrowserAutomationLease = {
-                leaseId,
-                viewKey,
-                requestedBy: request.requestedBy,
-                requesterRef: request.requesterRef,
-                controlEpoch: controller.controlEpoch,
-                acquiredAtMs: now(),
-                expiresAtMs: now() + Math.max(1, request.ttlMs),
-            };
-            leasesById.set(leaseId, lease);
-            controller.activeLeaseId = leaseId;
-            controller.controller = request.requestedBy === 'system' ? 'system' : 'agent';
-            emitChange();
-            return {
-                ok: true,
-                leaseId,
-                controlEpoch: controller.controlEpoch,
-            };
-        },
-
         executeAction(request) {
-            const viewKey = viewKeyFor(request);
+            const viewKey = browserViewKey(request);
             const owner = ownersByViewKey.get(viewKey) ?? null;
             if (closedViewKeys.has(viewKey)) {
                 return Promise.resolve(rejectAndRecord(request, owner, 'canceled', 'view_closed'));
@@ -518,9 +435,14 @@ export function createBrowserAutomationControlService(
             if (!owner.supportedActions.includes(request.actionKind)) {
                 return Promise.resolve(rejectAndRecord(request, owner, 'unsupported', 'unsupported_action'));
             }
-            const leaseError = validateLease(request);
-            if (leaseError) {
-                return Promise.resolve(rejectAndRecord(request, owner, leaseError.status, leaseError.errorCode ?? 'policy_denied'));
+            const admissionError = admitMutatingAction(request);
+            if (admissionError) {
+                return Promise.resolve(rejectAndRecord(
+                    request,
+                    owner,
+                    admissionError.status,
+                    admissionError.errorCode ?? 'policy_denied',
+                ));
             }
 
             const controller = controllerFor(viewKey);
@@ -533,7 +455,6 @@ export function createBrowserAutomationControlService(
                 startedAtMs: now(),
                 controlEpochBefore: controller.controlEpoch,
                 navigationGenerationBefore: owner.navigationGeneration,
-                expectedSyntheticUntilMs: now() + (request.expectedSyntheticInputWindowMs ?? 0),
                 settled: false,
                 timeoutId: null,
                 resolve: () => undefined,
@@ -544,6 +465,7 @@ export function createBrowserAutomationControlService(
             });
             activeActionsByRequestId.set(request.automationRequestId, active);
             controller.activeAutomationRequestId = request.automationRequestId;
+            controller.activeRequesterRef = request.requesterRef;
             if (isMutatingAction(request.actionKind)) {
                 controller.controller = request.requestedBy === 'system' ? 'system' : 'agent';
             }
@@ -566,10 +488,15 @@ export function createBrowserAutomationControlService(
         },
 
         cancelActiveAction(inputValue) {
-            cancelActiveActionsForView(
-                viewKeyFor(inputValue),
+            const canceledCount = cancelActiveActionsForView(
+                browserViewKey(inputValue),
                 'canceled',
                 inputValue.reasonCode ?? 'user_canceled',
+            );
+            return BrowserAutomationCancelActiveResultV1Schema.parse(
+                canceledCount > 0
+                    ? { v: 1, outcome: 'canceled', canceledCount }
+                    : { v: 1, outcome: 'no_active', canceledCount: 0 },
             );
         },
 
@@ -578,18 +505,8 @@ export function createBrowserAutomationControlService(
             emitChange();
         },
 
-        recordSyntheticInput(inputValue) {
-            const active = activeActionsByRequestId.get(inputValue.automationRequestId);
-            if (!active) return;
-            if (viewKeyFor(active.request) !== viewKeyFor(inputValue)) return;
-            if (inputValue.occurredAtMs <= active.expectedSyntheticUntilMs) {
-                return;
-            }
-            handleHumanInput(inputValue);
-        },
-
         getActionTimeline(inputValue) {
-            return [...(timelineByViewKey.get(viewKeyFor(inputValue)) ?? [])];
+            return [...(timelineByViewKey.get(browserViewKey(inputValue)) ?? [])];
         },
 
         subscribe(listener) {
@@ -624,7 +541,6 @@ export function createBrowserAutomationControlService(
                 viewKey: key,
                 controller: controller.controller,
                 controlEpoch: controller.controlEpoch,
-                activeLeaseId: controller.activeLeaseId,
                 activeAutomationRequestId: controller.activeAutomationRequestId,
             });
             return {

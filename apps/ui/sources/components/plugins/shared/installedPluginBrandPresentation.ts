@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol';
+import { materializeHappierRenderableImage } from '@happier-dev/plugin-ui/advanced';
 
 import {
     createPluginContextualResourceReadClient,
@@ -66,6 +67,26 @@ function isCurrent(input: InstalledPluginBrandPresentationInput): boolean {
     } catch {
         return false;
     }
+}
+
+/**
+ * Admit acquired mark bytes for rendering, off the render path.
+ *
+ * The shared image owner decides the renderable type and the product size and
+ * decode ceilings, and records the platform source for exactly these bytes.
+ * Presentation can only read what an owner admitted, so bytes that never reach
+ * this call — or that a ceiling refuses — become the neutral text identity
+ * rather than a render that pays to convert them or a mark that silently fails
+ * to appear.
+ */
+function admittedBrandPresentation(
+    displayName: string,
+    bytes: Uint8Array | null | undefined,
+): InstalledPluginBrandPresentation | null {
+    if (!bytes || bytes.byteLength === 0) return null;
+    return materializeHappierRenderableImage(bytes) === null
+        ? null
+        : Object.freeze({ displayName, bytes });
 }
 
 function neutralFallback(input: InstalledPluginBrandPresentationInput): InstalledPluginBrandPresentation | null {
@@ -140,9 +161,8 @@ async function readPortableBrandPresentation(input: Readonly<{
     try {
         const bytes = await acquired.lease.readDeclaredAsset(path);
         if (!isCurrent(input.presentation)) return null;
-        return bytes && bytes.byteLength > 0
-            ? Object.freeze({ displayName: input.displayName, bytes })
-            : neutralFallback(input.presentation);
+        return admittedBrandPresentation(input.displayName, bytes)
+            ?? neutralFallback(input.presentation);
     } finally {
         acquired.lease.dispose();
     }
@@ -199,14 +219,10 @@ export async function readInstalledPluginBrandPresentation(
         });
         const resource = await client.readResource(brand.resource, { signal: input.signal });
         if (!isCurrent(input)) return null;
-        if (
-            resource.contentType !== 'image/png'
-            || resource.digest !== brand.digest
-            || resource.bytes.byteLength === 0
-        ) {
+        if (resource.contentType !== 'image/png' || resource.digest !== brand.digest) {
             return fallback;
         }
-        return Object.freeze({ displayName: installedPackage.displayName, bytes: resource.bytes });
+        return admittedBrandPresentation(installedPackage.displayName, resource.bytes) ?? fallback;
     } catch {
         // The package remains current, but its optional visual Resource did not
         // arrive through the admitted owner. Preserve its canonical text-only

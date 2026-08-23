@@ -23,11 +23,13 @@ import {
     usePluginUiClientExecutableRegistrationRevision,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
 import {
-    dispatchPluginSurfaceAction,
     type PluginSurfaceActionDispatchOutcome,
     type PluginSurfaceContributedActionDescriptorResolver,
     type PluginSurfaceContributedActionTransport,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import {
+    launchPluginSurfaceAction,
+} from '@/components/plugins/surfaces/launchPluginSurfaceAction';
 import {
     createPluginActionCurrentIntentHandler,
 } from '@/components/plugins/surfaces/pluginSurfaceFeedback';
@@ -64,7 +66,10 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
     signal?: AbortSignal;
     isCurrent?: () => boolean;
     readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
-}>): Promise<PluginSurfaceActionDispatchOutcome | PluginSurfaceOpenOutcome> {
+}>): Promise<
+    PluginSurfaceActionDispatchOutcome
+    | PluginSurfaceOpenOutcome
+> {
     const semanticAction = input.action.action;
     if (semanticAction.kind === 'openSurface') {
         return await input.openSurface({
@@ -99,7 +104,7 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
             isCurrent,
         })
         : undefined;
-    return await dispatchPluginSurfaceAction({
+    const launched = await launchPluginSurfaceAction({
         callerPluginId: input.page.pluginId,
         action: semanticAction.action,
         // Absence has one canonical RPC sentinel for a contributed Action;
@@ -136,6 +141,7 @@ export async function dispatchPluginAppPageHeaderAction(input: Readonly<{
         ...(input.signal ? { signal: input.signal } : {}),
         ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
     });
+    return launched.outcome;
 }
 
 function readHeaderActionTitle(input: Readonly<{

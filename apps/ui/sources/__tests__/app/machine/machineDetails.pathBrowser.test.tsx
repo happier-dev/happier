@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,6 +31,9 @@ const mockState = vi.hoisted(() => ({
     machineTargetSessionsState: {} as Record<string, unknown>,
     machineControlTargetBySession: {} as Record<string, { machineId: string; basePath: string }>,
     modalAlertSpy: vi.fn(),
+    navigateToSessionSpy: vi.fn(),
+    routerBackSpy: vi.fn(),
+    shouldContinueRef: { current: true },
     multiTextInputSpy: vi.fn(),
     machineSpawnNewSessionMock: vi.fn(async (_params: unknown) => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
     sessionSpawnNewActionMock: vi.fn<(input: unknown, context: unknown) => Promise<unknown>>(async (_input, _context) => ({
@@ -70,7 +73,7 @@ installMachineDetailsCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
-            router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
+            router: { back: mockState.routerBackSpy, push: vi.fn(), replace: vi.fn() },
             params: () => mockState.routeParamsRef.current,
         }).module;
     },
@@ -157,9 +160,9 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
 }));
 
-vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => () => {} }));
+vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => mockState.navigateToSessionSpy }));
 vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
-    useMountedShouldContinue: () => () => true,
+    useMountedShouldContinue: () => () => mockState.shouldContinueRef.current,
 }));
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({ useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: vi.fn() }) }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -251,6 +254,9 @@ describe('MachineDetailScreen path browser', () => {
         mockState.activeServerIdRef.current = 'server-a';
         mockState.machineSpawnNewSessionMock.mockClear();
         mockState.modalAlertSpy.mockReset();
+        mockState.navigateToSessionSpy.mockReset();
+        mockState.routerBackSpy.mockReset();
+        mockState.shouldContinueRef.current = true;
         mockState.sessionSpawnNewActionMock.mockReset();
         mockState.sessionSpawnNewActionMock.mockResolvedValue({
             ok: true,
@@ -426,6 +432,8 @@ describe('MachineDetailScreen path browser', () => {
             directory: '/Users/test',
         }), { surface: 'ui' });
         expect(mockState.machineSpawnNewSessionMock).not.toHaveBeenCalled();
+        expect(mockState.routerBackSpy).toHaveBeenCalledTimes(2);
+        expect(mockState.navigateToSessionSpy).toHaveBeenCalledWith('session-new');
     });
 
     it('shows typed update guidance when the selected machine has an older CLI', async () => {
@@ -493,6 +501,61 @@ describe('MachineDetailScreen path browser', () => {
         expect(retryInput).toEqual(expect.objectContaining({
             creationKey: (firstInput as { creationKey?: unknown })?.creationKey,
         }));
+    });
+
+    it('does not navigate, alert, or update screen state when tracked spawn settles after retirement', async () => {
+        const spawn = createDeferred<Readonly<{
+            ok: true;
+            result: Readonly<{
+                type: 'success';
+                disposition: 'created';
+                sessionId: string;
+                executionTarget: Readonly<{ serverId: string; machineId: string }>;
+                organizationPlacement: Readonly<{ folderId: null; tagIds: readonly string[] }>;
+                initialInput: Readonly<{ status: 'notRequested' }>;
+            }>;
+        }>>();
+        mockState.sessionSpawnNewActionMock.mockReturnValueOnce(spawn.promise);
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        const startButton = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        )[0];
+
+        let startPromise!: Promise<void>;
+        await act(async () => {
+            startPromise = startButton.props.onPress();
+            await Promise.resolve();
+        });
+        expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledTimes(1);
+
+        mockState.shouldContinueRef.current = false;
+        await act(async () => {
+            spawn.resolve({
+                ok: true,
+                result: {
+                    type: 'success',
+                    disposition: 'created',
+                    sessionId: 'session-detached',
+                    executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+                    organizationPlacement: { folderId: null, tagIds: [] },
+                    initialInput: { status: 'notRequested' },
+                },
+            });
+            await startPromise;
+        });
+
+        expect(mockState.routerBackSpy).not.toHaveBeenCalled();
+        expect(mockState.navigateToSessionSpy).not.toHaveBeenCalled();
+        expect(mockState.modalAlertSpy).not.toHaveBeenCalled();
+        const retiredStartButton = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        )[0];
+        expect(retiredStartButton.props.disabled).toBe(true);
     });
 
     it('lets a structurally ready machine without synthetic spawn readiness reach the spawn operation', async () => {

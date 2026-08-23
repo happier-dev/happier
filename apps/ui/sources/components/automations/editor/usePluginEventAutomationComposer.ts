@@ -48,9 +48,16 @@ import {
 import {
     createPluginEventAutomationAuthoringDraft,
     resolveCurrentPluginEventAutomationEligibleEvent,
+    supportsPluginEventAutomationObservationTransport,
     type PluginEventAutomationCreateDraft,
     type PluginEventAutomationEditTarget,
+    type PluginEventAutomationObservationDraft,
 } from './pluginEventAutomationDraft';
+import {
+    readPluginEventAutomationWebhookEndpoint,
+    type PluginEventAutomationWebhookEndpointBinding,
+    type PluginEventAutomationWebhookEndpoint,
+} from './pluginEventAutomationWebhookEndpoint';
 import type { PluginEventAutomationEditSeed } from './pluginEventAutomationEditSeed';
 import {
     readPluginEventAutomationFilterClauses,
@@ -115,8 +122,6 @@ export type PluginEventAutomationComposerModel = Readonly<{
     /** Event creation chooses exactly one durable protocol target arm. */
     targetKind: PluginEventAutomationTargetKind;
     setTargetKind: (kind: PluginEventAutomationTargetKind) => void;
-    /** An Event edit may change fields inside its arm, never arm kind. */
-    targetKindLocked: boolean;
     existingSessionOptions: readonly PluginEventAutomationExistingSessionOption[];
     selectedExistingSessionId: string | null;
     selectExistingSession: (option: PluginEventAutomationExistingSessionOption) => void;
@@ -145,6 +150,20 @@ export type PluginEventAutomationComposerModel = Readonly<{
     sourceDisplayLabel: string | null;
     sourceInstanceId: string | null;
     configureSource: () => void;
+    /**
+     * The transports the selected Event declares. The composer offers a choice
+     * only where the declaration does; it never invents an arm the Event's own
+     * source contract cannot serve.
+     */
+    availableObservationTransports: readonly PluginEventAutomationObservationDraft['kind'][];
+    observationTransport: PluginEventAutomationObservationDraft['kind'];
+    setObservationTransport: (kind: PluginEventAutomationObservationDraft['kind']) => void;
+    /**
+     * Disclosed once, by the ensure that configured the durable-push source.
+     * The user must carry the URL and secret to the provider by hand, so the
+     * composer keeps them visible until the source is reconfigured.
+     */
+    webhookEndpoint: PluginEventAutomationWebhookEndpoint | null;
     watcherCandidates: readonly PluginMachineExecutionOriginCandidateV1[];
     selectedWatcherOrigin: PluginMachineExecutionOriginV1 | null;
     selectWatcher: (candidate: PluginMachineExecutionOriginCandidateV1) => void;
@@ -262,7 +281,9 @@ function resolveCurrentEligibleEventForEditSeed(params: Readonly<{
     const matches = params.eligibleEvents.filter((candidate) => (
         sameContributionIdentity(candidate.event.identity, params.seed.eventRef)
         && candidate.event.automation.source.sourceContractVersion === params.seed.source.sourceContractVersion
-        && candidate.event.automation.source.supportedObservationTransports.includes('checkpointedPull')
+        && candidate.event.automation.source.supportedObservationTransports.includes(
+            params.seed.observation.kind,
+        )
         && sameContributionIdentity(
             candidate.setupAction.identity,
             candidate.event.automation.source.setupActionRef ?? { pluginId: '', localId: '' },
@@ -376,6 +397,53 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     selectedEventRef.current = selectedEvent;
     const [configuredSetup, setConfiguredSetup] = React.useState<PluginEventAutomationCreateDraft | null>(null);
     const [sourceStatus, setSourceStatus] = React.useState<PluginEventAutomationComposerSourceStatus>('idle');
+    const [observationTransport, setObservationTransportState] = React.useState<
+        PluginEventAutomationObservationDraft['kind']
+    >('checkpointedPull');
+    const [webhookEndpoint, setWebhookEndpoint] = React.useState<PluginEventAutomationWebhookEndpoint | null>(null);
+    // A durable-push edit re-reads its already-ensured endpoint through the
+    // canonical webhook owner. That owner keeps the endpoint's exact target
+    // materialization and public URL, so the Automation projection never
+    // duplicates them and an ordinary edit never re-ensures a credential.
+    const [seededWebhookBinding, setSeededWebhookBinding] = React.useState<
+        PluginEventAutomationWebhookEndpointBinding | null
+    >(null);
+    // The configured source, its ensured endpoint, and the one-time secret that
+    // endpoint disclosed belong to the Account they were ensured for. The
+    // composer tree stays mounted across an ordinary Account change, so
+    // aborting in-flight setup is not enough: the already-configured
+    // credential must be erased.
+    const eraseConfiguredSource = React.useCallback(() => {
+        setConfiguredSetup(null);
+        setWebhookEndpoint(null);
+        setSeededWebhookBinding(null);
+        setSourceStatus('idle');
+    }, []);
+    React.useEffect(() => {
+        const retirement = accountLifetime?.onRetire(eraseConfiguredSource);
+        return () => retirement?.dispose();
+    }, [accountLifetime, eraseConfiguredSource]);
+    // The Account the configured source belongs to. Erasing during render
+    // rather than only from the retirement callback matters: the successor
+    // Account's lifetime can be captured here before the predecessor's callback
+    // has run, and by then `isCurrent()` already names the SUCCESSOR, so a
+    // currentness check alone would keep disclosing the predecessor's
+    // credential.
+    //
+    // Only the Account is a boundary here. The endpoint is ensured against the
+    // Account plus the watcher materialization this composer selected, so a
+    // watcher change is already erased by `selectWatcher`, and an out-of-date
+    // binding already stops disclosing the credential through the presentation
+    // currentness gate. `params.serverId`/`params.machineId` are the `/new`
+    // screen's own target selections, which name neither. Erasing on those
+    // would destroy an already-disclosed ONE-TIME secret — and, on an edit,
+    // permanently strand the form, because the seed effect latches on
+    // `appliedEditSeedKeyRef` and cannot restore what it erased.
+    const [configuredSourceAccount, setConfiguredSourceAccount] = React.useState(accountLifetime);
+    if (configuredSourceAccount !== accountLifetime) {
+        setConfiguredSourceAccount(accountLifetime);
+        eraseConfiguredSource();
+    }
     const [selectedWatcherOrigin, setSelectedWatcherOrigin] = React.useState<PluginMachineExecutionOriginV1 | null>(null);
     const [filterClauses, setFilterClauses] = React.useState<readonly PluginEventAutomationFilterClauseDraft[]>([]);
     const nextFilterClauseIdRef = React.useRef(0);
@@ -454,11 +522,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         selectedExistingSessionRecord,
         settings,
     ]);
+    // Editing an Event may move it between the three approved target arms.
+    // The V3 replacement writer rewrites the whole strict recipe for future
+    // Runs, and submit re-derives the assignment and capability facts for the
+    // arm that is actually saved, so no editor-local arm lock is needed.
     const setTargetKind = React.useCallback((nextKind: PluginEventAutomationTargetKind) => {
-        if (editTarget && nextKind !== initialTargetKind) return;
         setTargetKindState(nextKind);
         advanceRevision();
-    }, [editTarget, initialTargetKind]);
+    }, []);
     const selectExistingSession = React.useCallback((option: PluginEventAutomationExistingSessionOption) => {
         const selected = existingSessionOptions.find((candidate) => (
             candidate.sessionId === option.sessionId
@@ -654,6 +725,28 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         advanceRevision();
     }, []);
 
+    const availableObservationTransports = React.useMemo<
+        readonly PluginEventAutomationObservationDraft['kind'][]
+    >(() => {
+        if (!selectedEvent) return Object.freeze(['checkpointedPull' as const]);
+        return Object.freeze((['checkpointedPull', 'durablePush'] as const)
+            .filter((kind) => supportsPluginEventAutomationObservationTransport(selectedEvent, kind)));
+    }, [selectedEvent]);
+    // A retired or replaced Event declaration must never leave the composer
+    // holding a transport its source contract no longer serves.
+    const effectiveObservationTransport = availableObservationTransports.includes(observationTransport)
+        ? observationTransport
+        : 'checkpointedPull';
+    const setObservationTransport = React.useCallback((
+        kind: PluginEventAutomationObservationDraft['kind'],
+    ) => {
+        setObservationTransportState(kind);
+        setConfiguredSetup(null);
+        setSourceStatus('idle');
+        setWebhookEndpoint(null);
+        advanceRevision();
+    }, []);
+
     const chooseEvent = React.useCallback((event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) => {
         const current = eligibleEvents.find((candidate) => sameEligibleEvent(candidate, event)) ?? null;
         if (!current) return;
@@ -662,6 +755,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setSourceStatus('idle');
         setSelectedWatcherOrigin(null);
         setFilterClauses([]);
+        setObservationTransportState('checkpointedPull');
+        setWebhookEndpoint(null);
         advanceRevision();
     }, [eligibleEvents]);
 
@@ -674,6 +769,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSourceStatus('idle');
             setSelectedWatcherOrigin(null);
             setFilterClauses([]);
+            setObservationTransportState('checkpointedPull');
+            setWebhookEndpoint(null);
         }
         advanceRevision();
     }, [editTarget]);
@@ -690,6 +787,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setSelectedWatcherOrigin(composePluginMachineExecutionOriginV1(candidate.materialization));
         setConfiguredSetup(null);
         setSourceStatus('idle');
+        setWebhookEndpoint(null);
         advanceRevision();
     }, []);
 
@@ -730,6 +828,52 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         appliedTargetSeedKeyRef.current = editSeedKey;
         advanceRevision();
     }, [editSeedKey, initialEditSeed, params.initialExistingSessionServerId]);
+    // Keyed on the exact persisted identities rather than the seed object, so
+    // a caller that rebuilds the seed on every render cannot turn this into a
+    // request storm against the endpoint owner.
+    const seededPushEndpointId = initialEditSeed?.observation.kind === 'durablePush'
+        ? initialEditSeed.observation.webhookEndpointId
+        : null;
+    const seededPushRoutingSourceInstanceId = initialEditSeed?.observation.kind === 'durablePush'
+        ? initialEditSeed.observation.webhookRoutingSourceInstanceId
+        : null;
+    const seededPushPluginId = initialEditSeed?.eventRef.pluginId ?? null;
+    React.useEffect(() => {
+        if (
+            !seededPushEndpointId
+            || !seededPushRoutingSourceInstanceId
+            || !seededPushPluginId
+            || !accountLifetime
+        ) {
+            return;
+        }
+        let alive = true;
+        const controller = new AbortController();
+        const retirement = accountLifetime.onRetire(() => controller.abort());
+        setSeededWebhookBinding(null);
+        void (async () => {
+            const result = await readPluginEventAutomationWebhookEndpoint({
+                webhookEndpointId: seededPushEndpointId,
+                expectedPluginId: seededPushPluginId,
+                expectedSourceInstanceId: seededPushRoutingSourceInstanceId,
+                accountLifetime,
+                signal: controller.signal,
+            });
+            if (!alive || controller.signal.aborted || !accountLifetime.isCurrent()) return;
+            setSeededWebhookBinding(result.kind === 'available' ? result.binding : null);
+            advanceRevision();
+        })();
+        return () => {
+            alive = false;
+            controller.abort();
+            retirement.dispose();
+        };
+    }, [
+        accountLifetime,
+        seededPushEndpointId,
+        seededPushPluginId,
+        seededPushRoutingSourceInstanceId,
+    ]);
     React.useEffect(() => {
         if (
             !initialEditSeed
@@ -743,10 +887,17 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             eligibleEvents,
             seed: initialEditSeed,
         });
-        const watcher = event
+        const seedObservation = initialEditSeed.observation;
+        // Both arms name one selected plugin materialization: the pull arm's
+        // watcher, and the push arm's endpoint target as the endpoint owner
+        // currently holds it.
+        const seededMaterializationRef = seedObservation.kind === 'checkpointedPull'
+            ? seedObservation.watcherMaterializationRef
+            : seededWebhookBinding?.targetMaterialization ?? null;
+        const watcher = event && seededMaterializationRef
             ? watcherCandidates.find((candidate) => (
                 isPluginMachineExecutionOriginCandidateSelectable(candidate)
-                && sameWatcherMaterialization(candidate.materialization, initialEditSeed.watcherMaterializationRef)
+                && sameWatcherMaterialization(candidate.materialization, seededMaterializationRef)
             )) ?? null
             : null;
         const watcherOrigin = watcher ? composePluginMachineExecutionOriginV1(watcher.materialization) : null;
@@ -755,6 +906,16 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 eligibleEvent: event,
                 setupResult: initialEditSeed.source,
                 watcherOrigin,
+                // The persisted transport is replayed exactly. A push edit
+                // reuses the endpoint it was authored with, so an ordinary
+                // prompt, filter, or target correction never re-runs the
+                // one-time credential setup.
+                observation: seedObservation.kind === 'checkpointedPull'
+                    ? { kind: 'checkpointedPull' }
+                    : {
+                        kind: 'durablePush',
+                        webhookEndpointId: seedObservation.webhookEndpointId,
+                    },
                 filter: initialEditSeed.filter,
                 maximumObservationAgeMs: initialEditSeed.maximumObservationAgeMs,
             })
@@ -778,6 +939,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 ? ''
                 : String(initialEditSeed.maximumObservationAgeMs),
         );
+        setObservationTransportState(seedObservation.kind);
+        setWebhookEndpoint(seededWebhookBinding?.endpoint ?? null);
         setConfiguredSetup(Object.freeze({
             draft: authoringDraft,
             // `createDraft` always replaces this with the current
@@ -793,6 +956,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         eligibleEvents,
         eventCatalogStatus,
         initialEditSeed,
+        seededWebhookBinding,
         watcherCandidates,
     ]);
     const setupScope = React.useMemo(
@@ -831,9 +995,15 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 setSourceStatus('unavailable');
                 return;
             }
+            if (!supportsPluginEventAutomationObservationTransport(currentEvent, effectiveObservationTransport)) {
+                setSourceStatus('unavailable');
+                return;
+            }
             setSourceStatus('settingUp');
+            setWebhookEndpoint(null);
             const configured = await configurePluginEventAutomationSetup({
                 eligibleEvent: currentEvent,
+                observationTransport: effectiveObservationTransport,
                 filter: filter.value,
                 maximumObservationAgeMs: maximumObservationAgeMs.value,
                 accountLifetime,
@@ -857,11 +1027,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 return;
             }
             setConfiguredSetup(configured.draft);
+            setWebhookEndpoint(configured.webhookEndpoint);
             setSourceStatus('configured');
             advanceRevision();
         })();
     }, [
         accountLifetime,
+        effectiveObservationTransport,
         eligibleEvents,
         filter.valid,
         filter.value,
@@ -889,6 +1061,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             eligibleEvent,
             setupResult: configuredSetup.draft.source,
             watcherOrigin: configuredSetup.draft.watcherOrigin,
+            // The transport comes from the configured setup, never from the
+            // live selector: the ensured endpoint and the persisted trigger
+            // must name one arm even if the selector moved afterwards.
+            observation: configuredSetup.draft.observation,
             filter: filter.value,
             maximumObservationAgeMs: maximumObservationAgeMs.value,
         });
@@ -919,7 +1095,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         editTarget,
         targetKind,
         setTargetKind,
-        targetKindLocked: editTarget !== null,
         existingSessionOptions,
         selectedExistingSessionId,
         selectExistingSession,
@@ -936,6 +1111,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         sourceDisplayLabel,
         sourceInstanceId,
         configureSource,
+        availableObservationTransports,
+        observationTransport: effectiveObservationTransport,
+        setObservationTransport,
+        webhookEndpoint,
         watcherCandidates,
         selectedWatcherOrigin,
         selectWatcher,
@@ -954,10 +1133,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         revision,
     }), [
         addFilterClause,
+        availableObservationTransports,
         chooseEvent,
         configureSource,
         createDraft,
         editTarget,
+        effectiveObservationTransport,
+        setObservationTransport,
+        webhookEndpoint,
         eligibleEvents,
         eventCatalogStatus,
         existingSessionAvailability,

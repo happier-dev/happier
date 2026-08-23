@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { Pressable, type PressableProps } from 'react-native';
+import { Platform, Pressable, type PressableProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { t } from '@/text';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Icon } from '@/components/ui/icons/Icon';
+import { t } from '@/text';
 
 type ModalCloseButtonProps = Readonly<{
     onPress: () => void;
@@ -14,7 +15,19 @@ type ModalCloseButtonProps = Readonly<{
 
 const stylesheet = StyleSheet.create((theme) => ({
     button: {
-        padding: 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    buttonFocused: {
+        ...(Platform.select({
+            web: {
+                outlineStyle: 'solid',
+                outlineWidth: 2,
+                outlineColor: theme.colors.border.strong,
+                outlineOffset: -2,
+            },
+            default: {},
+        })),
     },
 }));
 
@@ -23,18 +36,28 @@ export function ModalCloseButton(props: ModalCloseButtonProps) {
     const styles = stylesheet;
     const accessibilityLabel = props.accessibilityLabel ?? t('common.close');
     const size = props.size ?? 20;
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
     return (
         <Pressable
             testID={props.testID ?? 'modal-card-close'}
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
-            hitSlop={props.hitSlop ?? 10}
+            focusable
+            hitSlop={props.hitSlop}
             onPress={props.onPress}
-            style={({ pressed }) => [
-                styles.button,
-                { opacity: pressed ? 0.7 : 1 },
-            ]}
+            style={(interactionState) => {
+                const webState = interactionState as typeof interactionState & { focused?: boolean };
+                return [
+                    styles.button,
+                    {
+                        minWidth: minimumInteractiveTargetSize,
+                        minHeight: minimumInteractiveTargetSize,
+                    },
+                    webState.focused === true ? styles.buttonFocused : null,
+                    { opacity: interactionState.pressed ? 0.7 : 1 },
+                ];
+            }}
         >
             <Icon name="x" size={size} color={theme.colors.text.secondary} />
         </Pressable>

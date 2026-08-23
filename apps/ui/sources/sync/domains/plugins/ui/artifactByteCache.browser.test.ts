@@ -46,8 +46,14 @@ describe('browser Plugin UI persistent artifact store', () => {
         };
         const accountA = { ...base, accountScope: { serverId: 'server-a', accountId: 'account-a' } };
         const accountB = { ...base, accountScope: { serverId: 'server-a', accountId: 'account-b' } };
-        await store.write({ persistentIdentity: accountA, bytes });
-        await store.write({ persistentIdentity: accountB, bytes });
+        const graph = (persistentIdentity: typeof accountA) => ({
+            persistentIdentity,
+            bytes,
+            entryRelativePath: 'entry.js',
+            files: [{ relativePath: 'entry.js', digest: artifactDigest, byteSize: bytes.byteLength, bytes }],
+        });
+        await store.write(graph(accountA));
+        await store.write(graph(accountB));
 
         await expect(store.read(accountA)).resolves.toMatchObject({ bytes });
         await store.removeAccount(accountA.accountScope);
@@ -112,7 +118,12 @@ describe('browser Plugin UI persistent artifact store', () => {
             platform: 'web',
             artifactDigest,
         };
-        await store.write({ persistentIdentity, bytes });
+        await store.write({
+            persistentIdentity,
+            bytes,
+            entryRelativePath: 'entry.js',
+            files: [{ relativePath: 'entry.js', digest: artifactDigest, byteSize: bytes.byteLength, bytes }],
+        });
         const cache = await cacheStorage.open('happier-plugin-ui-artifacts-v1');
         const manifestRequest = (await cache.keys()).find((request) => request.url.endsWith('/manifest'));
         if (!manifestRequest) throw new Error('Fixture must contain the persistent manifest.');

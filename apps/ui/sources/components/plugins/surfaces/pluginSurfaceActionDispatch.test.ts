@@ -726,8 +726,11 @@ describe('plugin-surface action branch selection', () => {
                     requestCurrentIntent,
                 },
             })).resolves.toEqual({
+                // A decline is a decision, not an absence. It must NOT settle as
+                // `unavailable`: an autonomous caller reads that as a transient
+                // gap and asks the same person again.
                 ok: false,
-                code: 'unavailable',
+                code: 'denied',
                 reason: 'plugin_action_current_intent_rejected',
             });
             expect(requestCurrentIntent).toHaveBeenCalledTimes(1);

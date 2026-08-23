@@ -27,7 +27,6 @@ export type UseLocalServiceLauncherStateInput = Readonly<{
     scope?: 'workspace' | 'machine' | null;
     workspaceRoot?: string | null;
     enabled?: boolean;
-    refreshIntervalMs?: number | null;
     nowMs?: () => number;
     snapshotClient?: LocalServiceLauncherSnapshotClient;
 }>;

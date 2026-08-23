@@ -44,10 +44,12 @@ import {
 } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import {
     PluginSurfaceDestinationNavigationBindingProvider,
+    PluginSurfacePaneLaunchScope,
     usePluginSurfaceDestinationNavigationBinding,
     usePluginSurfaceDestinationNavigationBindingForScope,
     useRegisterPluginSurfaceDestinationNavigationOwner,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import { useAppScopeRightSidebarDestinationHandler } from '@/components/appShell/rightSidebar/appScopeRightSidebarNavigation';
 import {
     resolvePluginAppPages,
     selectPluginAppPagePlacements,
@@ -673,17 +675,32 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
                 />
             ))}
             <PluginSurfaceDestinationNavigationBindingProvider binding={appNavigationBinding}>
-                <AppShellPluginSurfaceNavigationOwners />
-                {props.children}
+                {/*
+                  * The app-scope pane handoff scope is app-lifetime because its
+                  * producer is: a plugin can open an app right-sidebar tab before
+                  * that route exists, and the bounded launch input has to survive
+                  * the navigation that mounts it. Cockpit routes still establish
+                  * their own narrower scope inside this one.
+                  */}
+                <PluginSurfacePaneLaunchScope>
+                    <AppShellPluginSurfaceNavigationOwners />
+                    {props.children}
+                </PluginSurfacePaneLaunchScope>
             </PluginSurfaceDestinationNavigationBindingProvider>
         </AppShellPluginUiProjectionValueProvider>
     );
 }
 
 /**
- * The app route and Settings route remain their own incumbent navigation
- * owners. This renderless bridge only registers those existing adapters with
- * the one app-target binding; it owns no router state or destination choice.
+ * The app route, Settings route and app right sidebar remain their own
+ * incumbent navigation owners. This renderless bridge only registers those
+ * existing adapters with the one app-target binding; it owns no router state or
+ * destination choice.
+ *
+ * Every app-target container registers here, at app lifetime, because that is
+ * what makes a plugin's FIRST `openSurface` reach a destination whose screen is
+ * not mounted yet. A container registered from its own leaf could only ever be
+ * opened once that leaf was already on screen.
  */
 function AppShellPluginSurfaceNavigationOwners(): null {
     const projection = useAppShellPluginUiProjection();
@@ -695,6 +712,7 @@ function AppShellPluginSurfaceNavigationOwners(): null {
     const openSettingsPage = usePluginSettingsPageDestinationHandler({
         projection: projection.pluginUiProjection,
     });
+    const openRightSidebarTab = useAppScopeRightSidebarDestinationHandler();
     const pageOwner = React.useMemo(() => ({
         container: 'appPage' as const,
         handler: openPage,
@@ -703,8 +721,13 @@ function AppShellPluginSurfaceNavigationOwners(): null {
         container: 'settingsPage' as const,
         handler: openSettingsPage,
     }), [openSettingsPage]);
+    const rightSidebarOwner = React.useMemo(() => ({
+        container: 'rightSidebarTab' as const,
+        handler: openRightSidebarTab,
+    }), [openRightSidebarTab]);
     useRegisterPluginSurfaceDestinationNavigationOwner(pageOwner, binding);
     useRegisterPluginSurfaceDestinationNavigationOwner(settingsOwner, binding);
+    useRegisterPluginSurfaceDestinationNavigationOwner(rightSidebarOwner, binding);
     return null;
 }
 

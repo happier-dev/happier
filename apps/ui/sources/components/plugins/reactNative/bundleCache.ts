@@ -68,7 +68,7 @@ export type PluginReactNativePersistentArtifactIdentity = PluginUiPersistentArti
 export type PluginReactNativePersistentArtifactRecord = PluginUiPersistentArtifactRecord
     & Readonly<{
         persistentIdentity: PluginReactNativePersistentArtifactIdentity;
-        files?: readonly PluginReactNativeCachedArtifactFile[];
+        files: readonly PluginReactNativeCachedArtifactFile[];
     }>;
 export type PluginReactNativePersistentArtifactStore = Readonly<{
     read: (
@@ -187,9 +187,9 @@ function cloneBytes(bytes: Uint8Array): Uint8Array {
 }
 
 function cloneCachedArtifactFiles(
-    files: readonly PluginReactNativeCachedArtifactFile[] | undefined,
-): readonly PluginReactNativeCachedArtifactFile[] | undefined {
-    return files?.map((file) => Object.freeze({
+    files: readonly PluginReactNativeCachedArtifactFile[],
+): readonly PluginReactNativeCachedArtifactFile[] {
+    return files.map((file) => Object.freeze({
         relativePath: file.relativePath,
         digest: file.digest,
         byteSize: file.byteSize,
@@ -207,7 +207,7 @@ function clonePersistentArtifactRecord(
             accountScope: Object.freeze({ ...record.persistentIdentity.accountScope }),
         }),
         bytes: cloneBytes(record.bytes),
-        ...(record.files ? { files: cloneCachedArtifactFiles(record.files) } : {}),
+        files: cloneCachedArtifactFiles(record.files),
     });
 }
 
@@ -228,20 +228,21 @@ function persistentRecordHasValidIntegrity(
     expected: PluginReactNativePersistentArtifactIdentity,
 ): boolean {
     if (!persistentIdentityMatches(record.persistentIdentity, expected)) return false;
+    // The record always carries the Artifact-owned exact file graph, so the
+    // declared entry supplies the entry digest. A record whose declared entry
+    // is missing from its own graph is invalid, never an entry-only record.
+    const declaredEntry = record.files.find((file) => file.relativePath === record.entryRelativePath);
+    if (!declaredEntry) return false;
     const entryIntegrity = verifyPluginUiArtifactBytesIntegrityV1({
         bytes: record.bytes,
         integrity: {
-            digest: record.entryRelativePath && record.files
-                ? record.files.find((file) => file.relativePath === record.entryRelativePath)?.digest
-                    ?? expected.artifactDigest
-                : expected.artifactDigest,
+            digest: declaredEntry.digest,
             pluginId: expected.pluginId,
             contributionId: expected.contributionId,
             artifactKind: 'reactNativeBundle',
         },
     });
     if (!entryIntegrity.ok) return false;
-    if (!record.files) return true;
     if (record.files.some((file) => {
         if (file.bytes.byteLength !== file.byteSize) return true;
         return !verifyPluginUiArtifactBytesIntegrityV1({
@@ -309,16 +310,12 @@ function adaptPluginUiPersistentArtifactStoreForReactNativeBundleCache(
                     ...record,
                     persistentIdentity: identity,
                     bytes: new Uint8Array(record.bytes),
-                    ...(record.files
-                        ? {
-                            files: Object.freeze(record.files.map((file) => Object.freeze({
-                                relativePath: file.relativePath,
-                                digest: file.digest,
-                                byteSize: file.byteSize,
-                                bytes: new Uint8Array(file.bytes),
-                            }))),
-                        }
-                        : {}),
+                    files: Object.freeze(record.files.map((file) => Object.freeze({
+                        relativePath: file.relativePath,
+                        digest: file.digest,
+                        byteSize: file.byteSize,
+                        bytes: new Uint8Array(file.bytes),
+                    }))),
                 })
                 : null;
         },
@@ -543,6 +540,12 @@ export function createPluginReactNativeBundleCache(
     const diagnosePersistentCache = options.onPersistentCacheDiagnostic;
     const retiredAccountScopes = new Set<string>();
     const quarantinedPersistentAccountScopes = new Set<string>();
+    // One exact identity whose physical deletion failed. It is retired from
+    // lookup and its owed deletion is retried on the next read for that exact
+    // key. It deliberately does not quarantine the Account: a single failed
+    // entry must never make every other cached Artifact unreadable or delete
+    // them.
+    const quarantinedPersistentArtifactKeys = new Set<string>();
     const pendingPersistentAccountCleanups = new Map<string, Promise<void>>();
     // Exact deletes and later writes for one persistent identity must share
     // ordering. An Availability A→B revoke can already be inside the storage
@@ -813,12 +816,12 @@ export function createPluginReactNativeBundleCache(
                 if (precedingRemoval) await precedingRemoval.catch(() => undefined);
                 if (!operation.isCurrent()) return;
                 await persistentStore.remove(identity);
+                quarantinedPersistentArtifactKeys.delete(key);
             } catch {
                 diagnosePersistentCache?.('plugin_ui_artifact_cache_delete_failed');
-                // The exact identity is already unreachable from its revoked
-                // lease. Reuse the cache owner's Account quarantine/cleanup
-                // lifecycle so a failed physical delete cannot re-adopt it.
-                await removePersistentArtifactsForAccount(identity.accountScope);
+                // Retire this exact identity from lookup and keep its physical
+                // deletion owed. Unrelated Account entries stay readable.
+                quarantinedPersistentArtifactKeys.add(key);
             } finally {
                 operation.release();
             }
@@ -892,6 +895,14 @@ export function createPluginReactNativeBundleCache(
                 isCurrent: () => true,
             });
             if (!persistentStore || !operation) return null;
+            if (quarantinedPersistentArtifactKeys.has(derivePluginUiPersistentArtifactKey(identity))) {
+                operation.release();
+                // Retry the owed exact deletion opportunistically at the same
+                // choke point that observed the retired identity; no timer,
+                // worker, or second cleanup owner is involved.
+                void removePersistentArtifact(identity).catch(() => undefined);
+                return null;
+            }
             try {
                 await operation.awaitPendingPersistentArtifactRemoval(identity);
                 if (!operation.isCurrent()) return null;
@@ -930,6 +941,11 @@ export function createPluginReactNativeBundleCache(
                 if (!operation.isCurrent()) return false;
                 try {
                     await persistentStore.write(clonePersistentArtifactRecord(record));
+                    // The write replaced exactly the bytes an earlier failed
+                    // deletion left behind, so this key is reachable again.
+                    quarantinedPersistentArtifactKeys.delete(
+                        derivePluginUiPersistentArtifactKey(record.persistentIdentity),
+                    );
                 } catch {
                     // A cache-store failure must not turn an otherwise admitted
                     // artifact into an executable-load failure.

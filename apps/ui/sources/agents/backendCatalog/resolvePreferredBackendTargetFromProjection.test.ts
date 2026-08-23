@@ -210,6 +210,63 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
         })).toEqual({ kind: 'backend', backendId: 'acme.review.backend' });
     });
 
+    it('restores a standalone installed Session Agent as the preferred target', () => {
+        // The current daemon V2 projection emits no parallel backend registry,
+        // so `agentsById` is the only canonical evidence that this machine
+        // offers the Agent. A target it names must stay selectable.
+        expect(resolvePreferredBackendTargetFromProjection({
+            lastUsedAgent: 'claude',
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'acme.review' },
+            defaultBuiltInAgentId: 'claude',
+            enabledAgentIds: ['claude'],
+            backendEnabledByTargetKey: {},
+            acpCatalogSettingsV1: { v: 2, backends: [] },
+            daemonMergedProjectionInputs: {
+                discoveredBackendIds: [],
+                mergedProviderProjectionById: {
+                    'acme.review': {
+                        agentId: 'acme.review',
+                        title: 'Acme Review',
+                        subtitle: 'Installed review Agent',
+                        isBuiltIn: false,
+                    },
+                },
+                mergedBackendProjectionById: {},
+                pluginProjectionById: {},
+                pluginProjectionV2: null,
+                registryDiagnostics: [],
+            },
+        })).toEqual({ kind: 'backend', backendId: 'acme.review' });
+    });
+
+    it('still refuses a settings-only configured backend the machine projection does not name', () => {
+        expect(resolvePreferredBackendTargetFromProjection({
+            lastUsedAgent: 'claude',
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'ghost-bot', configuredBackendId: 'ghost-bot' },
+            defaultBuiltInAgentId: 'claude',
+            enabledAgentIds: ['claude'],
+            backendEnabledByTargetKey: {},
+            acpCatalogSettingsV1: {
+                v: 2,
+                backends: [{ id: 'ghost-bot', name: 'ghost-bot', title: 'Ghost Bot' }],
+            },
+            daemonMergedProjectionInputs: {
+                discoveredBackendIds: [],
+                mergedProviderProjectionById: {
+                    'acme.review': {
+                        agentId: 'acme.review',
+                        title: 'Acme Review',
+                        isBuiltIn: false,
+                    },
+                },
+                mergedBackendProjectionById: {},
+                pluginProjectionById: {},
+                pluginProjectionV2: null,
+                registryDiagnostics: [],
+            },
+        } as never)).toEqual({ kind: 'backend', backendId: 'claude' });
+    });
+
     it('does not let a projected plugin settings backend hijack the built-in fallback for legacy customAcp', () => {
         expect(resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: 'customAcp',

@@ -12,9 +12,11 @@ import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCred
 import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Crea un servidor, importa JSON del host o instala un preajuste recomendado.',
@@ -812,6 +814,7 @@ export const es = {
 
 
   inbox: {
+    ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `Abrir sesión: ${session}`,
     // Inbox screen
     emptyTitle: "Estás al día",
@@ -1191,6 +1194,15 @@ export const es = {
       event: {
         watcherTitle: "Observador de eventos",
         watcherUnwatched: "Sin observador",
+        endpointTitle: "Punto final de webhook",
+        endpointObservingSince: ({ time }: { time: string }) => `Recibiendo entregas desde ${time}`,
+        sourceStatusUnreported: "Esperando el primer informe",
+        sourceCatalogStatusUnavailable: "Actualidad de la fuente no disponible",
+        watcherMachineUnknown: "Esta máquina ya no está en tu cuenta, así que este observador no puede observar eventos.",
+        watcherMachineRevoked: "Esta máquina fue revocada, así que este observador no puede observar eventos.",
+        watcherMachineReplaced: "Esta máquina fue reemplazada, así que este observador no puede observar eventos.",
+        watcherInstallationReplaced: "Esta máquina se reinstaló, así que este observador no podrá observar eventos hasta que se configure de nuevo.",
+        watcherMachineOffline: "Esta máquina está sin conexión, así que este observador no está observando eventos ahora mismo.",
       },
       actionsGroupTitle: "Acciones",
       runNowTitle: "Ejecutar ahora",
@@ -1244,6 +1256,51 @@ export const es = {
         scheduled: ({ time }: { time: string }) => `Programada: ${time}`,
         updated: ({ time }: { time: string }) => `Actualizada: ${time}`,
         error: ({ message }: { message: string }) => `Error: ${message}`,
+        attemptTitle: "Intento",
+        attempt: ({ attempt }: { attempt: number }) => `Intento ${attempt}`,
+        claimedByTitle: "Asignado a",
+        claimedAt: ({ time }: { time: string }) => `Asignado: ${time}`,
+        leaseExpires: ({ time }: { time: string }) => `La asignación caduca: ${time}`,
+        dispatchTitle: "Envío de ejecución",
+        dispatchAttempt: ({ attempt }: { attempt: number }) => `Intento de envío ${attempt}`,
+        dispatchState: {
+            notStarted: "Sin iniciar",
+            dispatchPermitted: "Envío permitido",
+            retryWaiting: "Esperando para reintentar",
+            started: "Iniciado",
+            settled: "Resuelto",
+            outcomeUnknown: "Resultado desconocido",
+        },
+        replyHandoffTitle: "Entrega de respuesta",
+        replyHandoffAttempt: ({ attempt }: { attempt: number }) => `Intento de entrega ${attempt}`,
+        replyHandoffDue: ({ time }: { time: string }) => `Próximo intento de entrega: ${time}`,
+        replyHandoffState: {
+            none: "Ninguna",
+            awaitingResult: "Esperando el resultado",
+            ready: "Lista",
+            handingOff: "Entregando",
+            accepted: "Aceptada",
+            suppressed: "Suprimida",
+            blocked: "Bloqueada",
+        },
+        nativeExecutionTitle: "Ejecución nativa",
+        nativeExecutionCall: ({ callId }: { callId: string }) => `Llamada ${callId}`,
+        nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+        historyTitle: "Qué ocurrió",
+        historyEvent: {
+            run_started: "Iniciada",
+            run_succeeded: "Completada",
+            run_failed: "Fallida",
+            run_cancelled: "Cancelada",
+            run_outcome_uncertain: "El resultado pasó a ser incierto",
+            execution_dispatch_retry_scheduled: "Reintento de envío programado",
+            unknown: "Cambio de ciclo de vida",
+        },
+        historyReason: {
+            cancelled_after_dispatch_permitted: "Cancelada después de que la ejecución externa ya estuviera autorizada",
+            dispatch_result_missing_after_lease_expiry: "La máquina que la reclamó nunca informó del resultado del envío",
+            automation_retired_after_lease_expiry: "La automatización se retiró mientras expiraba su reclamación",
+        },
       },
       runDetail: {
         title: "Detalles admitidos",
@@ -1325,6 +1382,7 @@ export const es = {
     moreActionsHint: "Abre un menú con más acciones",
     destructiveActionHint: "Esta acción es destructiva y no se puede deshacer.",
     cancel: "Cancelar",
+    decline: "Rechazar",
     submit: "Enviar",
     close: "Cerrar",
     dismissKeyboard: 'Ocultar teclado',
@@ -6273,6 +6331,15 @@ export const es = {
         },
       },
 
+      transcript: {
+
+          olderLoadFailedTitle: 'No se pudieron cargar los mensajes anteriores',
+
+          olderLoadFailedBody: 'El resto de esta conversación sigue ahí. Vuelve a intentar cargar los mensajes anteriores.',
+
+      },
+
+
       sharing: {
         title: "Compartir",
         directSharing: "Compartir directamente",
@@ -8427,18 +8494,26 @@ export const es = {
       disabledLimitSubtitle: 'Se alcanzó el límite de vistas previas públicas. Revoca un enlace existente antes de crear otro.',
       disabledNoPreviewSubtitle: 'Abre una vista previa local antes de crear un enlace público.',
       disabledReason: {
+        auditRequirementDisabled: 'El registro de auditoría de vistas previas públicas es obligatorio pero está desactivado en el servidor.',
         auditUnavailable: 'El registro de auditoría de la vista previa pública no está disponible.',
         dnsTlsUnavailable: 'Las vistas previas públicas esperan a que DNS/TLS esté listo.',
         expired: 'Este enlace de vista previa pública ha caducado.',
+        linkLifetimeUnconfigured: 'El servidor no tiene configurada la duración del enlace de vista previa pública.',
+        modeUnconfigured: 'El servidor no tiene configurado ningún modo de vista previa pública.',
         policyInvalid: 'La política de vista previa pública está incompleta.',
         previewNotEligible: 'Esta vista previa local no es apta para un enlace público.',
+        previewServerDisabled: 'Las vistas previas de servicios locales están desactivadas en el servidor.',
         publicBaseUrlUnavailable: 'La URL base de la vista previa pública no está configurada.',
+        rateLimitProfileUnconfigured: 'El servidor no tiene configurado un perfil de límite de tasa para vistas previas públicas.',
         rateLimitUnavailable: 'La limitación de frecuencia de la vista previa pública no está disponible.',
         rateLimited: 'Este enlace de vista previa pública tiene límite de frecuencia.',
         relayUnavailable: 'El relay de vista previa pública no está disponible.',
         revoked: 'Este enlace de vista previa pública fue revocado.',
         secretLinkUnavailable: 'Las vistas previas públicas con enlace secreto no están configuradas.',
+        serverDisabled: 'Las vistas previas públicas están desactivadas en el servidor.',
         sessionNotAuthorized: 'No tienes acceso para crear un enlace público para esta sesión.',
+        tunnelPortsUnconfigured: 'El servidor no permite ningún puerto de túnel.',
+        tunnelRelayDisabled: 'El relé del servidor para túneles de máquina está desactivado.',
       },
       createActionA11y: 'Crear enlace de vista previa pública',
       revokeActionA11y: 'Revocar enlace de vista previa pública',
@@ -9027,6 +9102,13 @@ export const es = {
         configureActionAccessibilityLabel: 'Configurar acción',
         approvalHelpTitle: 'Modos de aprobación',
         approvalHelpBody: '“Preguntar primero” muestra una confirmación antes de que esta acción se ejecute desde esa superficie. “Permitido” deja que la acción se ejecute desde esa superficie sin pedir aprobación.',
+        contributed: {
+            machineSelectionTitle: 'Elige una máquina para las acciones aportadas',
+            machineSelectionBody: 'Selecciona una máquina para ver y configurar las acciones declaradas por sus plugins instalados.',
+            removedDescription: 'Esta acción aportada ya no está disponible desde la máquina seleccionada. Se conservan sus ajustes guardados.',
+            removedTargetsTitle: 'Acción aportada no disponible',
+            removedTargetsBody: 'La máquina seleccionada no declara esta acción actualmente. Sus ajustes guardados permanecen aquí.',
+        },
         toolExposure: {
             title: 'Exposición de herramienta',
             footer: 'Controla si las acciones compatibles aparecen como herramientas directas o solo quedan disponibles mediante descubrimiento de acciones.',
@@ -9196,6 +9278,14 @@ export const es = {
             cli: {
                 title: 'CLI de control de sesión',
                 subtitle: 'Disponible a través de la superficie de CLI de control de sesión.',
+            },
+            api: {
+                title: 'API',
+                subtitle: 'Disponible mediante la API externa de acciones.',
+            },
+            plugin: {
+                title: 'Plugins de confianza',
+                subtitle: 'Disponible como acción para plugins de confianza.',
             },
             contextual_ui: {
                 title: 'UI contextual',
@@ -9941,7 +10031,7 @@ settingsSession: {
       loadingOlder: 'Cargando mensajes anteriores…',
       loadOlderFailed: 'No se pudo cargar el historial de voz anterior.',
       exportTitle: 'Exportar historial de voz',
-      exportSubtitle: 'Carga el historial restante dentro de los límites y guárdalo como JSON.',
+      exportSubtitle: 'Carga el historial restante y guárdalo como JSON.',
       exporting: 'Preparando la exportación…',
       exportSucceeded: 'La exportación del historial de voz está lista.',
       exportFailed: 'No se pudo exportar el historial de voz.',
@@ -10988,7 +11078,7 @@ settingsSession: {
         onDemandTitle: "Bajo demanda",
         onDemandSubtitle: "Cuando se lo pides, Voice puede leer contexto semántico limitado de esta ventana de la app o pestaña del navegador. Los comandos contextuales siguen sujetos a controles separados.",
         automaticTitle: "Automático",
-        automaticSubtitle: "Voice también recibe automáticamente metadatos básicos de navegación. El contexto detallado sigue siendo bajo demanda y los comandos contextuales siguen sujetos a controles separados.",
+        automaticSubtitle: "Voice también recibe automáticamente metadatos básicos de navegación, y abrir una sesión comparte el contexto de esa sesión según los ajustes de compartición de arriba. Los comandos contextuales siguen sujetos a controles separados.",
       },
     },
     languageTitle: "Idioma",
@@ -12890,6 +12980,7 @@ settingsSession: {
       },
     },
   },
+   ...apiTokenSettingsTranslations.es,
    settingsPlugins: {
       ...pluginWebhookAdministrationTranslations['es'],
       ...pluginAccountDataEraseTranslations.es,

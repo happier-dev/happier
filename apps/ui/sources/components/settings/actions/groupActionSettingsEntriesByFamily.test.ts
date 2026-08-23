@@ -5,7 +5,8 @@ import { groupActionSettingsEntriesByFamily } from './groupActionSettingsEntries
 
 function entry(actionId: string, title: string): ActionSettingsEntry {
     return {
-        actionId: actionId as ActionSettingsEntry['actionId'],
+        kind: 'host',
+        actionId: actionId as Extract<ActionSettingsEntry, { kind: 'host' }>['actionId'],
         title,
         description: null,
         enabled: true,

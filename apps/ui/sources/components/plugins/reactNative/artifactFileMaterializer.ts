@@ -16,7 +16,6 @@ import {
     type PluginUiPersistentArtifactIdentity,
     type PluginUiPersistentArtifactNativeStoredResource,
     type PluginUiPersistentArtifactNativeResourceStore,
-    type PluginUiPersistentArtifactRecord,
 } from '@/sync/domains/plugins/ui/artifactByteCache';
 
 const INSTALLED_ARTIFACT_DIRECTORY = 'happier-rn-installed-artifacts-v1';
@@ -143,7 +142,7 @@ function ensureVerifiedInputBytes(input: Readonly<{
 type PersistentArtifactManifestV1 = Readonly<{
     v: 1;
     identityKey: string;
-    entryRelativePath?: string;
+    entryRelativePath: string;
     files: readonly Readonly<{
         relativePath: string;
         digest: PluginUiArtifactDigestV1;
@@ -162,16 +161,6 @@ function resolvePersistentArtifactDirectoryName(identity: PluginUiPersistentArti
 
 function persistentStoredFileName(relativePath: string): string {
     return `${sha256Hex(relativePath)}.bin`;
-}
-
-function readPersistentRecordFiles(record: PluginUiPersistentArtifactRecord): readonly PluginUiPersistentArtifactFile[] {
-    if (record.files?.length) return record.files;
-    return Object.freeze([{
-        relativePath: record.entryRelativePath ?? '__entry__',
-        digest: record.persistentIdentity.artifactDigest,
-        byteSize: record.bytes.byteLength,
-        bytes: record.bytes,
-    }]);
 }
 
 function createPersistentArtifactDirectory(
@@ -218,6 +207,8 @@ function decodePersistentManifest(bytes: Uint8Array): PersistentArtifactManifest
         if (
             value.v !== 1
             || typeof value.identityKey !== 'string'
+            || typeof value.entryRelativePath !== 'string'
+            || value.entryRelativePath.length === 0
             || !Array.isArray(value.files)
             || value.files.length === 0
         ) return null;
@@ -243,9 +234,7 @@ function decodePersistentManifest(bytes: Uint8Array): PersistentArtifactManifest
         return Object.freeze({
             v: 1,
             identityKey: value.identityKey,
-            ...(typeof value.entryRelativePath === 'string'
-                ? { entryRelativePath: value.entryRelativePath }
-                : {}),
+            entryRelativePath: value.entryRelativePath,
             files: Object.freeze(files),
         });
     } catch {
@@ -310,14 +299,13 @@ export function createReactNativePersistentArtifactStore(
                         bytes,
                     }));
                 }
-                const entryPath = manifest.entryRelativePath ?? '__entry__';
-                const entry = files.find((file) => file.relativePath === entryPath);
+                const entry = files.find((file) => file.relativePath === manifest.entryRelativePath);
                 if (!entry) return discardIncompleteRecord();
                 return Object.freeze({
                     persistentIdentity: identity,
                     bytes: entry.bytes,
-                    ...(manifest.entryRelativePath ? { entryRelativePath: manifest.entryRelativePath } : {}),
-                    ...(manifest.entryRelativePath ? { files: Object.freeze(files) } : {}),
+                    entryRelativePath: manifest.entryRelativePath,
+                    files: Object.freeze(files),
                 });
             } catch {
                 return discardIncompleteRecord();
@@ -334,7 +322,7 @@ export function createReactNativePersistentArtifactStore(
                 if (!manifestFile.delete) throw new Error('plugin_ui_artifact_cache_commit_marker_delete_unavailable');
                 manifestFile.delete();
             }
-            const files = readPersistentRecordFiles(record);
+            const files = record.files;
             const manifestFiles: PersistentArtifactManifestV1['files'][number][] = [];
             for (const file of files) {
                 const storedName = persistentStoredFileName(file.relativePath);
@@ -350,7 +338,7 @@ export function createReactNativePersistentArtifactStore(
             const manifest: PersistentArtifactManifestV1 = Object.freeze({
                 v: 1,
                 identityKey: derivePluginUiPersistentArtifactKey(record.persistentIdentity),
-                ...(record.entryRelativePath ? { entryRelativePath: record.entryRelativePath } : {}),
+                entryRelativePath: record.entryRelativePath,
                 files: Object.freeze(manifestFiles),
             });
             manifestFile.write(new TextEncoder().encode(JSON.stringify(manifest)), { append: false });

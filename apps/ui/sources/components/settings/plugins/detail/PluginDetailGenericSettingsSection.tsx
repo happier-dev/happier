@@ -2,6 +2,8 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
+
+import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import {
     projectPluginSettingsContributionV2,
     readManagedServiceEndpointUrl,
@@ -1360,29 +1362,39 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                     </ItemGroup>
                 );
             })}
-            {sortedGroups.flatMap((group) => group.presentation.subagentSections.map((section) => (
-                <ItemGroup
-                    key={`${group.id}/subagents/${section.id}`}
-                    title={localizedPresentationText(section.title)}
-                    footer={localizedPresentationText(section.description) || undefined}
-                >
-                    {section.items.map((item) => (
-                        <Item
-                            key={item.id}
-                            title={localizedPresentationText(item.title)}
-                            subtitle={localizedPresentationText(item.description) || undefined}
-                            icon={(
-                                <Icon
-                                    name={(item.iconIonName ?? 'git-branch') as never}
-                                    size={29}
-                                    color={theme.colors.text.secondary}
-                                />
-                            )}
-                            onPress={() => router.push(item.route as never)}
-                        />
-                    ))}
-                </ItemGroup>
-            )))}
+            {/*
+              * A subagent item's destination is the declaring contribution's own
+              * agent settings screen, resolved by the host route owner. A
+              * plugin-target group has no such screen, so its items have no
+              * destination and are not presented.
+              */}
+            {sortedGroups.flatMap((group) => {
+                if (group.target.kind !== 'agent') return [];
+                const agentSettingsRoute = createPluginAgentSettingsRoute(group.target.agent.localId);
+                return group.presentation.subagentSections.map((section) => (
+                    <ItemGroup
+                        key={`${group.id}/subagents/${section.id}`}
+                        title={localizedPresentationText(section.title)}
+                        footer={localizedPresentationText(section.description) || undefined}
+                    >
+                        {section.items.map((item) => (
+                            <Item
+                                key={item.id}
+                                title={localizedPresentationText(item.title)}
+                                subtitle={localizedPresentationText(item.description) || undefined}
+                                icon={(
+                                    <Icon
+                                        name={(item.iconIonName ?? 'git-branch') as never}
+                                        size={29}
+                                        color={theme.colors.text.secondary}
+                                    />
+                                )}
+                                onPress={() => router.push(agentSettingsRoute as never)}
+                            />
+                        ))}
+                    </ItemGroup>
+                ));
+            })}
         </>
     );
 }

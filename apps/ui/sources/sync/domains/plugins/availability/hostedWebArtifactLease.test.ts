@@ -348,6 +348,43 @@ describe('hosted-web Artifact lease acquisition', () => {
         });
     });
 
+    it('keeps an acquired daemon-sourced lease current after its daemon materialization disappears', async () => {
+        const current = fixture({ materialized: true });
+        const fetchArtifactBytes = vi.fn(async () => current.daemonResponse);
+        const store = createPluginAccountAvailabilityReaderStore();
+        store.replace({ scope, snapshot: current.snapshot });
+        const reader = store.bind(scope);
+
+        const acquired = await acquirePluginHostedWebArtifactLease({
+            reader,
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            daemon: {
+                origin: current.origin,
+                serverId: scope.serverId,
+                fetchArtifactBytes,
+            },
+        });
+        expect(acquired).toMatchObject({ kind: 'available', lease: { sourceKind: 'daemon' } });
+        if (acquired.kind !== 'available') throw new Error('unreachable');
+
+        // The daemon that supplied the bytes goes away. The bytes are already
+        // copied, integrity-verified and in host custody, and the Account's
+        // current Artifact admission is unchanged, so the lease must survive.
+        store.replace({
+            scope,
+            snapshot: Object.freeze({
+                ...current.snapshot,
+                materializations: Object.freeze([]),
+            }),
+        });
+
+        expect(acquired.lease.isCurrent()).toBe(true);
+        await expect(acquired.lease.readFile(current.graph.entry)).resolves.toMatchObject({
+            kind: 'available',
+        });
+    });
+
     it('does not accept a React Native artifact response as hosted-web bytes', async () => {
         const current = fixture({ materialized: true });
         const wrongFamily: DaemonPluginUiArtifactBytesReadResponse = {

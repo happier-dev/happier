@@ -12,6 +12,7 @@ import {
     PluginUiHostApiWireEnvelopeV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
     PluginUiSelectActionInputResultV1Schema,
+    pluginUiHostApiWireIdentitiesEqual,
     pluginUiSelectedActionInputMatchesOperation,
     pluginUiSelectedActionInputsEqual,
     pluginUiTargetedContributionOperationKey,
@@ -39,6 +40,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { resolveNegotiatedPluginSurfaceHostApiMethods } from './negotiatedMethods';
+import { pluginSurfaceSettlementSurvivesRetirement } from './outwardEffectSettlement';
 import {
     createPluginUiHostReadyStateStore,
     pluginUiSurfaceContextsMatch,
@@ -203,17 +205,6 @@ function createBridgeError(
 function isLifecycleBridgeMessage(kind: PluginHostedWebBridgeEnvelopeV1['kind']): boolean {
     return kind === 'heightChanged'
         || kind === 'error';
-}
-
-function wireIdentitiesMatch(
-    expected: PluginUiHostApiWireIdentityV1,
-    actual: PluginUiHostApiWireIdentityV1,
-): boolean {
-    return expected.pluginId === actual.pluginId
-        && expected.pluginVersion === actual.pluginVersion
-        && expected.viewId === actual.viewId
-        && expected.generation === actual.generation
-        && expected.sessionId === actual.sessionId;
 }
 
 export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
@@ -535,7 +526,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
         const parsed = PluginUiHostApiWireEnvelopeV1Schema.safeParse(envelope.payload);
         if (!parsed.success) return createBridgeError(envelope, 'invalid_payload');
         const message = parsed.data;
-        if (!wireIdentitiesMatch(binding.identity, message.identity)) {
+        if (!pluginUiHostApiWireIdentitiesEqual(binding.identity, message.identity)) {
             return canonicalDisconnected(envelope, 'stale_surface');
         }
         if (disposed) return canonicalDisconnected(envelope, 'host_api_handler_disposed');
@@ -773,7 +764,18 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
                 }),
             );
             if (disposed || cancellation.signal.aborted) return canonicalBridgeAck(envelope);
-            if (!isCurrent()) return canonicalRequestError(envelope, message, 'stale_surface');
+            // §3.5: the ONE settlement rule, shared with the React Native
+            // carrier. A retirement observed only AFTER the owner settled an
+            // outward effect must not erase it — `openSurface` routinely causes
+            // that retirement by unmounting its own requester, and answering
+            // the navigation with `stale_surface` reported that nothing
+            // happened after something had, inviting a second navigation.
+            if (
+                !isCurrent()
+                && !pluginSurfaceSettlementSurvivesRetirement({ method: message.method, response })
+            ) {
+                return canonicalRequestError(envelope, message, 'stale_surface');
+            }
             if (response.kind === 'error') {
                 return canonicalRequestError(
                     envelope,

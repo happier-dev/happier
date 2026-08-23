@@ -98,6 +98,63 @@ describe('UI simulator runtime action executor', () => {
         expect(fetchSnapshot).not.toHaveBeenCalled();
     });
 
+    it('rejects Action ID/event and input-control kind mismatches before machine RPC dispatch', async () => {
+        const mod = await import('./runtimeActionExecutor').catch(() => null);
+
+        expect(mod?.createSimulatorPreviewRuntimeActionExecutor).toBeTypeOf('function');
+        if (!mod?.createSimulatorPreviewRuntimeActionExecutor) return;
+
+        const fetchSnapshot = vi.fn(async () => ({ ok: true as const, snapshot }));
+        const dispatchAction = vi.fn(async () => ({ ok: true as const, result: acceptedControlResult }));
+        const execute = mod.createSimulatorPreviewRuntimeActionExecutor({
+            resolveMachineId: () => 'machine_1',
+            fetchSnapshot,
+            dispatchAction,
+        });
+        const tapEvent = {
+            type: 'simulator.control.send' as const,
+            control: {
+                v: 1 as const,
+                kind: 'tap' as const,
+                streamId: 'stream_1',
+                sourceId: 'source_1',
+                eventId: 'tap_1',
+                leaseId: 'lease_1',
+                x: 0.5,
+                y: 0.5,
+            },
+        };
+        const swipeEvent = {
+            type: 'simulator.control.send' as const,
+            control: {
+                v: 1 as const,
+                kind: 'swipe' as const,
+                streamId: 'stream_1',
+                sourceId: 'source_1',
+                eventId: 'swipe_1',
+                leaseId: 'lease_1',
+                fromX: 0.1,
+                fromY: 0.1,
+                toX: 0.9,
+                toY: 0.9,
+            },
+        };
+
+        for (const args of [
+            runtimeArgs({ actionId: 'devices.simulator.lease.acquire', input: tapEvent }),
+            runtimeArgs({ actionId: 'devices.simulator.sideband.request', input: tapEvent }),
+            runtimeArgs({ actionId: 'devices.simulator.input.tap', input: swipeEvent }),
+        ]) {
+            await expect(execute(args)).resolves.toEqual({
+                ok: false,
+                errorCode: 'invalid_parameters',
+                error: 'invalid_parameters',
+            });
+        }
+        expect(fetchSnapshot).not.toHaveBeenCalled();
+        expect(dispatchAction).not.toHaveBeenCalled();
+    });
+
     it('fails closed when no machine target can be resolved for the simulator action', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 

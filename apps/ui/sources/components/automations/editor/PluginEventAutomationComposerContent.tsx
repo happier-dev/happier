@@ -238,6 +238,15 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const selectedExistingSession = props.model.existingSessionOptions.find((option) => (
         option.sessionId === props.model.selectedExistingSessionId
     )) ?? null;
+    // The one-time secret is disclosed by the ensure that configured this
+    // source. Keeping it tied to `configured` means a reconfiguration cannot
+    // leave a stale credential on screen next to a new endpoint, and requiring
+    // live source currentness means an out-of-date event/watcher binding — the
+    // shape an Account or target change leaves behind — stops disclosing it.
+    const webhookEndpoint = props.model.sourceStatus === 'configured'
+        && !sourceCurrentnessUnavailable
+        ? props.model.webhookEndpoint
+        : null;
     const existingSessionUnavailable = props.model.targetKind === 'existingSession'
         && props.model.existingSessionAvailability !== null
         && props.model.existingSessionAvailability.kind !== 'ready';
@@ -290,14 +299,12 @@ export function PluginEventAutomationComposerContent(props: Props) {
                             ['executionRun', 'automation-event-target-execution-run', 'automations.form.trigger.targetExecutionRun'],
                         ] as const).map(([kind, testID, label]) => {
                             const selected = props.model.targetKind === kind;
-                            const disabled = props.model.targetKindLocked;
                             return (
                                 <Pressable
                                     key={kind}
                                     testID={testID}
                                     accessibilityRole="button"
-                                    accessibilityState={{ selected, disabled }}
-                                    disabled={disabled}
+                                    accessibilityState={{ selected }}
                                     onPress={() => {
                                         props.model.setTargetKind(kind);
                                         setExistingSessionPickerOpen(false);
@@ -305,7 +312,6 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                     style={({ pressed }) => [
                                         styles.targetButton,
                                         selected ? styles.targetButtonSelected : null,
-                                        disabled ? styles.disabled : null,
                                         pressed ? styles.pressed : null,
                                     ]}
                                 >
@@ -573,6 +579,39 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                         </View>
                                     ) : null}
 
+                                    {props.model.availableObservationTransports.length > 1 ? (
+                                        <>
+                                            <Text style={styles.fieldLabel}>
+                                                {t('automations.form.trigger.observationTransport')}
+                                            </Text>
+                                            <View testID="automation-event-observation-transport" style={styles.targetRow}>
+                                                {props.model.availableObservationTransports.map((kind) => {
+                                                    const selected = props.model.observationTransport === kind;
+                                                    return (
+                                                        <Pressable
+                                                            key={kind}
+                                                            testID={`automation-event-observation-${kind}`}
+                                                            accessibilityRole="button"
+                                                            accessibilityState={{ selected }}
+                                                            onPress={() => props.model.setObservationTransport(kind)}
+                                                            style={({ pressed }) => [
+                                                                styles.targetButton,
+                                                                selected ? styles.targetButtonSelected : null,
+                                                                pressed ? styles.pressed : null,
+                                                            ]}
+                                                        >
+                                                            <Text numberOfLines={1} style={styles.targetButtonText}>
+                                                                {kind === 'durablePush'
+                                                                    ? t('automations.form.trigger.observationDurablePush')
+                                                                    : t('automations.form.trigger.observationCheckpointedPull')}
+                                                            </Text>
+                                                        </Pressable>
+                                                    );
+                                                })}
+                                            </View>
+                                        </>
+                                    ) : null}
+
                                     <Text style={styles.fieldLabel}>{t('automations.form.trigger.source')}</Text>
                                     <Pressable
                                         testID="automation-event-configure-source"
@@ -609,6 +648,45 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                         <Text numberOfLines={1} style={styles.optionDescription}>
                                             {props.model.sourceInstanceId}
                                         </Text>
+                                    ) : null}
+                                    {webhookEndpoint ? (
+                                        <View testID="automation-event-webhook-endpoint" style={styles.webhookEndpoint}>
+                                            <Text style={styles.webhookEndpointTitle}>
+                                                {t('automations.form.trigger.webhookEndpointTitle')}
+                                            </Text>
+                                            <Text style={styles.webhookEndpointInstructions}>
+                                                {t('automations.form.trigger.webhookEndpointInstructions')}
+                                            </Text>
+                                            <Text style={styles.fieldLabel}>
+                                                {t('automations.form.trigger.webhookEndpointUrl')}
+                                            </Text>
+                                            <Text
+                                                testID="automation-event-webhook-endpoint-url"
+                                                selectable
+                                                style={styles.webhookEndpointValue}
+                                            >
+                                                {webhookEndpoint.publicUrl}
+                                            </Text>
+                                            <Text style={styles.fieldLabel}>
+                                                {t('automations.form.trigger.webhookEndpointSecret')}
+                                            </Text>
+                                            {webhookEndpoint.oneTimeGeneratedSecret ? (
+                                                <Text
+                                                    testID="automation-event-webhook-endpoint-secret"
+                                                    selectable
+                                                    style={styles.webhookEndpointValue}
+                                                >
+                                                    {webhookEndpoint.oneTimeGeneratedSecret}
+                                                </Text>
+                                            ) : (
+                                                <Text
+                                                    testID="automation-event-webhook-endpoint-secret-lost"
+                                                    style={styles.unavailableText}
+                                                >
+                                                    {t('automations.form.trigger.webhookEndpointSecretLost')}
+                                                </Text>
+                                            )}
+                                        </View>
                                     ) : null}
 
                                     <Text style={styles.fieldLabel}>{t('settingsPlugins.eventAutomationComposer.payloadFields')}</Text>
@@ -980,6 +1058,26 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 10,
         backgroundColor: theme.colors.surface.base,
         padding: 10,
+    },
+    webhookEndpoint: {
+        gap: 6,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        borderRadius: 10,
+        backgroundColor: theme.colors.surface.base,
+        padding: 10,
+    },
+    webhookEndpointTitle: {
+        ...Typography.rowMeta(),
+        color: theme.colors.text.primary,
+    },
+    webhookEndpointInstructions: {
+        ...Typography.rowMeta(),
+        color: theme.colors.text.secondary,
+    },
+    webhookEndpointValue: {
+        ...Typography.mono(),
+        color: theme.colors.text.primary,
     },
     payloadSampleLabel: {
         ...Typography.eyebrow(),

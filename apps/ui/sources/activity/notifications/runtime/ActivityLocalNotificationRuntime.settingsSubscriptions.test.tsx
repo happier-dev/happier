@@ -27,8 +27,8 @@ vi.mock('react-native', async () => {
 
 vi.mock('@/text', () => createTextModuleMock({ translate: (key: string) => key }));
 
-vi.mock('@/desktop/window/isTauriMainWindowActivelyViewed', () => ({
-    isTauriMainWindowActivelyViewed: () => false,
+vi.mock('@/desktop/window/desktopMainWindowPresence', () => ({
+    isDesktopMainWindowFocused: () => false,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({

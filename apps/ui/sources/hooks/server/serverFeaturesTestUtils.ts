@@ -1,5 +1,7 @@
 import { vi } from 'vitest';
 
+import { DEFAULT_AUTH_KEY_CHALLENGE_CAPABILITIES } from '@/dev/testkit/fixtures/featureFixtures';
+
 import {
     DEFAULT_BROWSER_CAPABILITIES,
     DEFAULT_DEVICE_CAPABILITIES,
@@ -299,6 +301,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             auth: {
                 methods: [],
+                keyChallenge: DEFAULT_AUTH_KEY_CHALLENGE_CAPABILITIES,
                 signup: { methods: [{ id: 'anonymous', enabled: true }] },
                 login: { methods: [{ id: 'key_challenge', enabled: true }], requiredProviders: [] },
                 recovery: {

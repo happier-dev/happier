@@ -464,7 +464,7 @@ describe('current UI context Voice tool port', () => {
                 mcp: false,
                 cli: false,
                 rpc: false,
-                sdk: false,
+                api: false,
                 plugin: false,
             },
             inputHints: {
@@ -664,7 +664,7 @@ describe('current UI context Voice tool port', () => {
                 subscribe: () => () => {},
             },
             readProjection: () => null,
-            readNavigationBinding: () => ({ openSurface, registerOwner: () => () => {} }),
+            readNavigationBinding: () => ({ targetKind: 'app' as const, openSurface, registerOwner: () => () => {} }),
         });
 
         const outcome = await requireCommandInvoker(port)({ commandId: COMMAND_ID });
@@ -690,7 +690,7 @@ describe('current UI context Voice tool port', () => {
             readProjection: () => null,
             readNavigationBinding: () => {
                 current = null;
-                return { openSurface, registerOwner: () => () => {} };
+                return { targetKind: 'app' as const, openSurface, registerOwner: () => () => {} };
             },
         });
 
@@ -714,7 +714,7 @@ describe('current UI context Voice tool port', () => {
                 subscribe: () => () => {},
             },
             readProjection: () => null,
-            readNavigationBinding: () => ({ openSurface, registerOwner: () => () => {} }),
+            readNavigationBinding: () => ({ targetKind: 'app' as const, openSurface, registerOwner: () => () => {} }),
         });
 
         await expect(requireCommandInvoker(port)({ commandId: COMMAND_ID })).resolves.toEqual({ ok: true });
@@ -751,7 +751,7 @@ describe('current UI context Voice tool port', () => {
                 subscribe: () => () => {},
             },
             readProjection: () => currentProjection,
-            readNavigationBinding: () => ({ openSurface, registerOwner: () => () => {} }),
+            readNavigationBinding: () => ({ targetKind: 'app' as const, openSurface, registerOwner: () => () => {} }),
         });
 
         await fixture.composition.unload();
@@ -793,7 +793,7 @@ describe('current UI context Voice tool port', () => {
                 subscribe: () => () => {},
             },
             readProjection: () => null,
-            readNavigationBinding: () => ({ openSurface, registerOwner: () => () => {} }),
+            readNavigationBinding: () => ({ targetKind: 'app' as const, openSurface, registerOwner: () => () => {} }),
         });
 
         const pending = requireCommandInvoker(port)({ commandId: COMMAND_ID });
@@ -819,7 +819,7 @@ describe('current UI context Voice tool port', () => {
                 subscribe: () => () => {},
             },
             readProjection: () => null,
-            readNavigationBinding: () => ({ openSurface, registerOwner: () => () => {} }),
+            readNavigationBinding: () => ({ targetKind: 'app' as const, openSurface, registerOwner: () => () => {} }),
         });
 
         const failure = await requireCommandInvoker(port)({ commandId: COMMAND_ID });

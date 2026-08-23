@@ -145,6 +145,8 @@ function createAvailabilityReader() {
 
 async function loadClient(options: Readonly<{
     mutationResponse?: () => Response;
+    accountKvRead?: () => Response;
+    accountKvWrite?: (body: unknown) => Response;
 }> = {}) {
     vi.resetModules();
     let current = true;
@@ -157,6 +159,7 @@ async function loadClient(options: Readonly<{
             return { dispose: () => { retireCallbacks.delete(callback); } };
         },
     };
+    const accountKvWrites: unknown[] = [];
     const transport = vi.fn(async (path: string, _init?: RequestInit) => {
         if (path === '/v1/account/encryption/currentness') {
             return new Response(JSON.stringify({
@@ -172,6 +175,20 @@ async function loadClient(options: Readonly<{
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },
             });
+        }
+        if (path === `/v1/account/plugin-storage/${pluginId}`) {
+            if ((_init?.method ?? 'GET') === 'GET') {
+                return options.accountKvRead?.() ?? new Response(
+                    JSON.stringify({ status: 'absent' }),
+                    { status: 200, headers: { 'Content-Type': 'application/json' } },
+                );
+            }
+            const parsedBody = JSON.parse(String(_init?.body ?? 'null')) as unknown;
+            accountKvWrites.push(parsedBody);
+            return options.accountKvWrite?.(parsedBody) ?? new Response(
+                JSON.stringify({ status: 'updated', revision: 3 }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            );
         }
         if (path === '/v1/plugins/data/mutate') {
             if (options.mutationResponse) return options.mutationResponse();
@@ -223,6 +240,7 @@ async function loadClient(options: Readonly<{
             availabilityReader: createAvailabilityReader(),
         }),
         transport,
+        accountKvWrites,
         retire: () => {
             current = false;
             for (const callback of [...retireCallbacks]) callback();
@@ -231,6 +249,91 @@ async function loadClient(options: Readonly<{
 }
 
 describe('Plugin UI Data client', () => {
+    it('reaches the plugin\'s own Account KV row from a surface with no daemon in the path', async () => {
+        const { client, accountKvWrites, transport } = await loadClient();
+
+        await expect(client.accountKv.get('theme')).resolves.toBeNull();
+
+        const written = await client.accountKv.set('theme', { mode: 'dark' }, {
+            expectedVersion: 'absent',
+        });
+        expect(written).toEqual({ version: 0 });
+        expect(accountKvWrites).toEqual([{
+            expectedRevision: 'absent',
+            content: { t: 'plain', v: { v: 1, values: { theme: { version: 0, value: { mode: 'dark' } } } } },
+        }]);
+        expect(transport.mock.calls.some(([path]) => path === '/v1/plugins/data/mutate')).toBe(false);
+    });
+
+    it('applies the same per-key CAS, tombstone and paging rules the daemon scope applies', async () => {
+        const row = {
+            v: 1,
+            values: {
+                'a/1': { version: 2, value: 'one' },
+                'a/2': { version: 0, value: 'two' },
+                'b/1': { version: 5, deleted: true },
+            },
+        };
+        const { client, accountKvWrites } = await loadClient({
+            accountKvRead: () => new Response(
+                JSON.stringify({ status: 'present', revision: 9, content: { t: 'plain', v: row } }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        });
+
+        await expect(client.accountKv.get('a/1')).resolves.toEqual({ version: 2, value: 'one' });
+        await expect(client.accountKv.get('b/1')).resolves.toEqual({ version: 5, deleted: true });
+
+        // A stale writer that believes the key is absent must not resurrect it.
+        await expect(client.accountKv.set('b/1', 'revived', { expectedVersion: 'absent' }))
+            .rejects.toMatchObject({ code: 'plugin_account_kv_conflict' });
+        await expect(client.accountKv.set('a/1', 'stale', { expectedVersion: 1 }))
+            .rejects.toMatchObject({ code: 'plugin_account_kv_conflict' });
+        expect(accountKvWrites).toEqual([]);
+
+        const page = await client.accountKv.list({ prefix: 'a/', limit: 1 });
+        expect(page.items).toEqual([{ key: 'a/1', version: 2, value: 'one' }]);
+        expect(page.nextCursor).toBeDefined();
+        await expect(client.accountKv.list({ prefix: 'a/', limit: 1, cursor: page.nextCursor! }))
+            .resolves.toMatchObject({ items: [{ key: 'a/2', version: 0, value: 'two' }] });
+
+        await expect(client.accountKv.list({ prefix: '@happier/anything' }))
+            .rejects.toMatchObject({ code: 'plugin_account_kv_invalid' });
+    });
+
+    it('writes one atomic row for a transaction and reports a row-CAS conflict to the author', async () => {
+        const { client, accountKvWrites } = await loadClient({
+            accountKvWrite: () => new Response(
+                JSON.stringify({ status: 'conflict', revision: 12 }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        });
+
+        await expect(client.accountKv.transaction(async (transaction) => {
+            await transaction.set('one', 1, { expectedVersion: 'absent' });
+            await transaction.set('two', 2, { expectedVersion: 'absent' });
+            await expect(client.accountKv.set('three', 3, { expectedVersion: 'absent' }))
+                .rejects.toMatchObject({ code: 'plugin_account_kv_invalid' });
+        })).rejects.toMatchObject({ code: 'plugin_account_kv_conflict' });
+
+        expect(accountKvWrites).toHaveLength(1);
+        expect(accountKvWrites[0]).toMatchObject({
+            expectedRevision: 'absent',
+            content: {
+                t: 'plain',
+                v: { v: 1, values: { one: { version: 0, value: 1 }, two: { version: 0, value: 2 } } },
+            },
+        });
+    });
+
+    it('refuses Account KV work after the captured Account scope is retired', async () => {
+        const { client, retire } = await loadClient();
+        retire();
+
+        await expect(client.accountKv.get('theme'))
+            .rejects.toMatchObject({ code: 'plugin_account_storage_unavailable' });
+    });
+
     it('rejects a same-id local definition that differs from the admitted contract before transport', async () => {
         const { client, transport } = await loadClient();
         const collection = client.collection(forgedCollectionDefinition);

@@ -5,12 +5,17 @@ import {
     type ActionSettingsEntryStatusTarget,
 } from './resolveActionSettingsEntryStatusSummary';
 import { normalizeActionsSettings } from './normalizeActionsSettings';
+import { getActionSettingsTargetDefinition } from './actionSettingsTargets';
 
 function target(
     id: ActionSettingsEntryStatusTarget['id'],
     state: ActionSettingsEntryStatusTarget['state'] = 'on',
 ): ActionSettingsEntryStatusTarget {
-    return { id, state };
+    return {
+        id,
+        state,
+        definition: getActionSettingsTargetDefinition('review.start', id),
+    };
 }
 
 describe('resolveActionSettingsEntryStatusSummary', () => {

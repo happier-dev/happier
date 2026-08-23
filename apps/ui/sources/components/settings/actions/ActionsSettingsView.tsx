@@ -3,20 +3,27 @@ import { View, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { type ActionId, type ActionsSettingsV1 } from '@happier-dev/protocol';
+import { type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol';
 
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemInfoNotice } from '@/components/ui/lists/ItemInfoNotice';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 import {
     buildActionSettingsEntries,
+    buildActionSettingsContributedActions,
     type ActionSettingsEntry,
 } from './buildActionSettingsEntries';
 import { groupActionSettingsEntriesByFamily } from './groupActionSettingsEntriesByFamily';
@@ -135,6 +142,34 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
     const voiceEnabled = useFeatureEnabled('voice');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
+    // Contributed actions are machine-local daemon declarations. This screen deliberately opts
+    // out of the administration controller's convenient sole-machine selection: no observed
+    // daemon must be presented as an account-wide action catalog without an explicit choice.
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.actions,
+        { allowSoleCandidate: false },
+    );
+    const executionTarget = React.useMemo(() => {
+        const selectedTarget = administrationTargetSelection.selectedTarget;
+        const resolvedTarget = administrationTargetSelection.resolveExecutionTarget();
+        return selectedTarget !== null
+            && resolvedTarget !== null
+            && machineAdministrationTargetsEqual(selectedTarget, resolvedTarget.target)
+            ? resolvedTarget
+            : null;
+    }, [administrationTargetSelection]);
+    // Do not retain prior inputs through target replacement. A contribution catalog belongs to
+    // precisely one daemon, so a machine switch must remove the previous machine's rows first.
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: executionTarget?.machine.id ?? null,
+        serverId: executionTarget?.serverId ?? null,
+        enabled: executionTarget !== null,
+    });
+    const contributedActions = React.useMemo(() => (
+        executionTarget && daemonMergedProjection.inputs
+            ? buildActionSettingsContributedActions(daemonMergedProjection.inputs.pluginProjectionById)
+            : []
+    ), [daemonMergedProjection.inputs, executionTarget]);
 
     const settings = React.useMemo(() => normalizeActionsSettings(rawSettings), [rawSettings]);
     const availability = React.useMemo(() => ({
@@ -150,8 +185,9 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         query: searchQuery,
         settings,
         availability,
+        contributedActions,
         translate: t,
-    }), [availability, searchQuery, settings]);
+    }), [availability, contributedActions, searchQuery, settings]);
 
     // Group actions into runtime FAMILY sections (FINALIZATION-PLAN §3.3) so the user can scan and
     // configure each family (browser, simulator, plugins, local services, …) together. The per-row
@@ -162,11 +198,11 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         setRawSettings(normalizeActionsSettings(next));
     }, [setRawSettings]);
 
-    const handleActionEnabledChange = React.useCallback((actionId: ActionId, enabled: boolean) => {
+    const handleActionEnabledChange = React.useCallback((actionId: ActionSettingsActionId, enabled: boolean) => {
         commitSettings(setActionEnabled({ settings, actionId, enabled }));
     }, [commitSettings, settings]);
 
-    const openActionDetails = React.useCallback((actionId: ActionId) => {
+    const openActionDetails = React.useCallback((actionId: ActionSettingsActionId) => {
         router.push(`/settings/actions/${encodeURIComponent(actionId)}`);
     }, [router]);
 
@@ -215,6 +251,17 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
+            <MachineAdministrationTargetSelector
+                selection={administrationTargetSelection}
+                testIDPrefix="settings.actions.administration.target"
+            />
+            {administrationTargetSelection.selectedTarget === null ? (
+                <ItemInfoNotice
+                    testID="settings-actions:contributed:machine-selection-required"
+                    title={t('settingsActions.contributed.machineSelectionTitle')}
+                    body={t('settingsActions.contributed.machineSelectionBody')}
+                />
+            ) : null}
             <SearchHeader
                 value={searchQuery}
                 onChangeText={setSearchQuery}

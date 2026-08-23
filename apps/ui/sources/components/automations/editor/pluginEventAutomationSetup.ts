@@ -27,13 +27,30 @@ import {
 import {
     createPluginEventAutomationAuthoringDraft,
     type PluginEventAutomationCreateDraft,
+    type PluginEventAutomationObservationDraft,
 } from './pluginEventAutomationDraft';
+import {
+    ensurePluginEventAutomationWebhookEndpoint,
+    type PluginEventAutomationWebhookEndpoint,
+} from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
 
 type SetupOutcome =
-    | Readonly<{ kind: 'configured'; draft: PluginEventAutomationCreateDraft }>
+    | Readonly<{
+        kind: 'configured';
+        draft: PluginEventAutomationCreateDraft;
+        /**
+         * Present only for the durable-push arm. The server discloses the
+         * shared secret exactly once, so the composer must surface it with the
+         * public URL in the same pass that ensured the endpoint.
+         */
+        webhookEndpoint: PluginEventAutomationWebhookEndpoint | null;
+    }>
     | Readonly<{ kind: 'unavailable' }>
     | Readonly<{ kind: 'stale'; reason: 'event_retired' }>;
+
+export type PluginEventAutomationWebhookEndpointEnsurer =
+    typeof ensurePluginEventAutomationWebhookEndpoint;
 
 function sameContributionIdentity(
     left: Readonly<{ pluginId: string; localId: string }>,
@@ -145,9 +162,16 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  */
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
+    /**
+     * The transport the author chose. Durable push additionally ensures the
+     * Account webhook endpoint, because the routing source instance it is keyed
+     * on only exists once the Event setup Action has returned its source.
+     */
+    observationTransport: PluginEventAutomationObservationDraft['kind'];
     filter: AutomationEventFilterV1 | null;
     maximumObservationAgeMs: number | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
+    ensureWebhookEndpoint?: PluginEventAutomationWebhookEndpointEnsurer;
     signal?: AbortSignal;
     resolveExecutionOrigin: () => FreshPluginMachineExecutionOriginV1 | null;
     loadCurrentProjection: (params: Readonly<{
@@ -262,10 +286,25 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
             result: outcome.result,
         });
         if (source.kind !== 'available') return { kind: 'unavailable' };
+        const webhookEndpoint = params.observationTransport === 'durablePush'
+            ? await (params.ensureWebhookEndpoint ?? ensurePluginEventAutomationWebhookEndpoint)({
+                eligibleEvent: current.event,
+                origin: current.origin,
+                sourceInstanceId: source.result.sourceInstanceId,
+                accountLifetime: params.accountLifetime,
+                signal: operationScope.signal,
+            })
+            : null;
+        if (webhookEndpoint?.kind === 'unavailable' || operationScope.signal.aborted) {
+            return { kind: 'unavailable' };
+        }
         const draft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: current.event,
             setupResult: source.result,
             watcherOrigin: current.origin.origin,
+            observation: webhookEndpoint
+                ? { kind: 'durablePush', webhookEndpointId: webhookEndpoint.endpoint.webhookEndpointId }
+                : { kind: 'checkpointedPull' },
             filter: params.filter,
             maximumObservationAgeMs: params.maximumObservationAgeMs,
         });
@@ -276,6 +315,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 draft,
                 resolveFreshWatcherOrigin: params.resolveExecutionOrigin,
             }),
+            webhookEndpoint: webhookEndpoint?.endpoint ?? null,
         };
     } catch {
         return operationScope.signal.aborted || !params.accountLifetime.isCurrent()

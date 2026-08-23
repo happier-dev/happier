@@ -231,7 +231,7 @@ function projectedActionToDefinition(
             mcp: action.surfaces.includes('mcp'),
             cli: action.surfaces.includes('cli'),
             rpc: false,
-            sdk: false,
+            api: false,
             plugin: action.surfaces.includes('plugin'),
         },
         inputHints: presentation.inputHints,

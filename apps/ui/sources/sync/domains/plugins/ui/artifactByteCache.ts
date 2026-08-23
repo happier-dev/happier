@@ -19,11 +19,17 @@ export type PluginUiPersistentArtifactFile = Readonly<{
     bytes: Uint8Array;
 }>;
 
+/**
+ * One persisted Artifact record is always the Artifact-owned exact file graph:
+ * every declared file plus the declared entry path. `bytes` is the entry
+ * file's bytes, retained so a reader does not have to re-resolve the entry.
+ * There is deliberately no single-file/entry-only shape beside this contract.
+ */
 export type PluginUiPersistentArtifactRecord = Readonly<{
     persistentIdentity: PluginUiPersistentArtifactIdentity;
     bytes: Uint8Array;
-    entryRelativePath?: string;
-    files?: readonly PluginUiPersistentArtifactFile[];
+    entryRelativePath: string;
+    files: readonly PluginUiPersistentArtifactFile[];
 }>;
 
 /**

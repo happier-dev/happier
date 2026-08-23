@@ -12,9 +12,11 @@ import { voiceExternalCredentialApprovalTranslations } from './voiceExternalCred
 import { voiceLocalCredentialTranslations } from './voiceLocalCredentialTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Crea un server, importa il JSON dell’host o installa un preset consigliato.',
@@ -810,6 +812,7 @@ export const it = {
 
 
   inbox: {
+    ...actionOperationInboxTranslations,
     openSession: ({ session }: { session: string }) => `Apri sessione: ${session}`,
     // Inbox screen
     emptyTitle: "Sei aggiornato",
@@ -1189,6 +1192,15 @@ export const it = {
       event: {
         watcherTitle: "Osservatore degli eventi",
         watcherUnwatched: "Nessun osservatore",
+        endpointTitle: "Endpoint webhook",
+        endpointObservingSince: ({ time }: { time: string }) => `Riceve consegne da ${time}`,
+        sourceStatusUnreported: "In attesa del primo rapporto",
+        sourceCatalogStatusUnavailable: "Attualità della sorgente non disponibile",
+        watcherMachineUnknown: "Questa macchina non è più nel tuo account, quindi questo osservatore non può osservare eventi.",
+        watcherMachineRevoked: "Questa macchina è stata revocata, quindi questo osservatore non può osservare eventi.",
+        watcherMachineReplaced: "Questa macchina è stata sostituita, quindi questo osservatore non può osservare eventi.",
+        watcherInstallationReplaced: "Questa macchina è stata reinstallata, quindi questo osservatore non potrà osservare eventi finché non verrà riconfigurato.",
+        watcherMachineOffline: "Questa macchina è offline, quindi questo osservatore al momento non sta osservando eventi.",
       },
       actionsGroupTitle: "Azioni",
       runNowTitle: "Esegui ora",
@@ -1243,6 +1255,51 @@ export const it = {
         scheduled: ({ time }: { time: string }) => `Pianificata: ${time}`,
         updated: ({ time }: { time: string }) => `Aggiornata: ${time}`,
         error: ({ message }: { message: string }) => `Errore: ${message}`,
+        attemptTitle: "Tentativo",
+        attempt: ({ attempt }: { attempt: number }) => `Tentativo ${attempt}`,
+        claimedByTitle: "Preso in carico da",
+        claimedAt: ({ time }: { time: string }) => `Preso in carico: ${time}`,
+        leaseExpires: ({ time }: { time: string }) => `La presa in carico scade: ${time}`,
+        dispatchTitle: "Dispatch di esecuzione",
+        dispatchAttempt: ({ attempt }: { attempt: number }) => `Tentativo di dispatch ${attempt}`,
+        dispatchState: {
+            notStarted: "Non avviato",
+            dispatchPermitted: "Dispatch consentito",
+            retryWaiting: "In attesa di riprovare",
+            started: "Avviato",
+            settled: "Concluso",
+            outcomeUnknown: "Esito sconosciuto",
+        },
+        replyHandoffTitle: "Consegna della risposta",
+        replyHandoffAttempt: ({ attempt }: { attempt: number }) => `Tentativo di consegna ${attempt}`,
+        replyHandoffDue: ({ time }: { time: string }) => `Prossimo tentativo di consegna: ${time}`,
+        replyHandoffState: {
+            none: "Nessuna",
+            awaitingResult: "In attesa del risultato",
+            ready: "Pronta",
+            handingOff: "In consegna",
+            accepted: "Accettata",
+            suppressed: "Soppressa",
+            blocked: "Bloccata",
+        },
+        nativeExecutionTitle: "Esecuzione nativa",
+        nativeExecutionCall: ({ callId }: { callId: string }) => `Chiamata ${callId}`,
+        nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+        historyTitle: "Che cosa è successo",
+        historyEvent: {
+            run_started: "Avviata",
+            run_succeeded: "Riuscita",
+            run_failed: "Fallita",
+            run_cancelled: "Annullata",
+            run_outcome_uncertain: "Esito diventato incerto",
+            execution_dispatch_retry_scheduled: "Nuovo tentativo di invio pianificato",
+            unknown: "Cambio di ciclo di vita",
+        },
+        historyReason: {
+            cancelled_after_dispatch_permitted: "Annullata dopo che l’esecuzione esterna era già stata autorizzata",
+            dispatch_result_missing_after_lease_expiry: "La macchina che l’aveva presa in carico non ha mai riportato l’esito dell’invio",
+            automation_retired_after_lease_expiry: "L’automazione è stata ritirata mentre la sua presa in carico scadeva",
+        },
       },
       runDetail: {
         title: "Dettagli ammessi",
@@ -1323,6 +1380,7 @@ export const it = {
     moreActionsHint: "Apre un menu con altre azioni",
     destructiveActionHint: "Questa azione è distruttiva e non può essere annullata.",
     cancel: "Annulla",
+    decline: "Rifiuta",
     submit: "Invia",
     close: "Chiudi",
     dismissKeyboard: 'Nascondi tastiera',
@@ -6618,6 +6676,15 @@ export const it = {
         },
       },
 
+      transcript: {
+
+          olderLoadFailedTitle: 'Impossibile caricare i messaggi precedenti',
+
+          olderLoadFailedBody: 'Il resto di questa conversazione è ancora qui. Riprova a caricare i messaggi precedenti.',
+
+      },
+
+
       sharing: {
         title: "Condivisione",
         directSharing: "Condivisione diretta",
@@ -8765,18 +8832,26 @@ export const it = {
       disabledLimitSubtitle: 'Limite delle anteprime pubbliche raggiunto. Revoca un link esistente prima di crearne un altro.',
       disabledNoPreviewSubtitle: 'Apri un’anteprima locale prima di creare un link pubblico.',
       disabledReason: {
+        auditRequirementDisabled: 'La registrazione di audit delle anteprime pubbliche è obbligatoria ma è disattivata sul server.',
         auditUnavailable: 'Il registro di audit dell’anteprima pubblica non è disponibile.',
         dnsTlsUnavailable: 'Le anteprime pubbliche attendono che DNS/TLS sia pronto.',
         expired: 'Questo link di anteprima pubblica è scaduto.',
+        linkLifetimeUnconfigured: 'Sul server non è configurata la durata del link di anteprima pubblica.',
+        modeUnconfigured: 'Sul server non è configurata alcuna modalità di anteprima pubblica.',
         policyInvalid: 'La policy dell’anteprima pubblica è incompleta.',
         previewNotEligible: 'Questa anteprima locale non è idonea per un link pubblico.',
+        previewServerDisabled: 'Le anteprime dei servizi locali sono disattivate sul server.',
         publicBaseUrlUnavailable: 'L’URL base dell’anteprima pubblica non è configurato.',
+        rateLimitProfileUnconfigured: 'Sul server non è configurato alcun profilo di limite di frequenza per le anteprime pubbliche.',
         rateLimitUnavailable: 'Il rate limiting dell’anteprima pubblica non è disponibile.',
         rateLimited: 'Questo link di anteprima pubblica è limitato dal rate limit.',
         relayUnavailable: 'Il relay dell’anteprima pubblica non è disponibile.',
         revoked: 'Questo link di anteprima pubblica è stato revocato.',
         secretLinkUnavailable: 'Le anteprime pubbliche con link segreto non sono configurate.',
+        serverDisabled: 'Le anteprime pubbliche sono disattivate sul server.',
         sessionNotAuthorized: 'Non hai accesso per creare un link pubblico per questa sessione.',
+        tunnelPortsUnconfigured: 'Il server non consente alcuna porta di tunnel.',
+        tunnelRelayDisabled: 'Il relay del server per i tunnel delle macchine è disattivato.',
       },
       createActionA11y: 'Crea link di anteprima pubblica',
       revokeActionA11y: 'Revoca link di anteprima pubblica',
@@ -9365,6 +9440,13 @@ export const it = {
         configureActionAccessibilityLabel: "Configura azione",
         approvalHelpTitle: "Modalità di approvazione",
         approvalHelpBody: "“Chiedi prima” mostra una conferma prima che questa azione venga eseguita da quella superficie. “Consentito” permette l’esecuzione da quella superficie senza richiesta di approvazione.",
+        contributed: {
+            machineSelectionTitle: 'Scegli una macchina per le azioni fornite',
+            machineSelectionBody: 'Seleziona una macchina per visualizzare e configurare le azioni dichiarate dai plugin installati.',
+            removedDescription: 'Questa azione fornita non è più disponibile dalla macchina selezionata. Le impostazioni salvate vengono conservate.',
+            removedTargetsTitle: 'Azione fornita non disponibile',
+            removedTargetsBody: 'Questa azione non è attualmente dichiarata dalla macchina selezionata. Le impostazioni salvate restano disponibili qui.',
+        },
         toolExposure: {
             title: "Esposizione strumento",
             footer: "Controlla se le azioni idonee compaiono come strumenti diretti o restano disponibili solo tramite individuazione delle azioni.",
@@ -9534,6 +9616,14 @@ export const it = {
             cli: {
                 title: "CLI di controllo sessione",
                 subtitle: "Disponibile tramite la superficie CLI di controllo sessione.",
+            },
+            api: {
+                title: 'API',
+                subtitle: 'Disponibile tramite l’API esterna delle azioni.',
+            },
+            plugin: {
+                title: 'Plugin attendibili',
+                subtitle: 'Disponibile come azione per i plugin attendibili.',
             },
             contextual_ui: {
                 title: "UI contestuale",
@@ -10276,7 +10366,7 @@ settingsSession: {
       loadingOlder: 'Caricamento messaggi meno recenti…',
       loadOlderFailed: 'Impossibile caricare la cronologia vocale precedente.',
       exportTitle: 'Esporta cronologia vocale',
-      exportSubtitle: 'Carica la cronologia rimanente entro i limiti e salvala come JSON.',
+      exportSubtitle: 'Carica la cronologia rimanente e salvala come JSON.',
       exporting: 'Preparazione esportazione…',
       exportSucceeded: 'L’esportazione della cronologia vocale è pronta.',
       exportFailed: 'Impossibile esportare la cronologia vocale.',
@@ -11319,7 +11409,7 @@ settingsSession: {
         onDemandTitle: "Su richiesta",
         onDemandSubtitle: "Quando lo chiedi, la voce può leggere il contesto semantico limitato di questa finestra dell’app o scheda del browser. I comandi contestuali restano soggetti a controlli separati.",
         automaticTitle: "Automatico",
-        automaticSubtitle: "La voce riceve automaticamente anche i metadati di navigazione di base. Il contesto dettagliato resta su richiesta e i comandi contestuali restano soggetti a controlli separati.",
+        automaticSubtitle: "La voce riceve automaticamente anche i metadati di navigazione di base e l'apertura di una sessione ne condivide il contesto in base alle impostazioni di condivisione qui sopra. I comandi contestuali restano soggetti a controlli separati.",
       },
     },
     languageTitle: "Lingua",
@@ -12892,6 +12982,7 @@ settingsSession: {
       },
     },
   },
+   ...apiTokenSettingsTranslations.it,
    settingsPlugins: {
       ...pluginWebhookAdministrationTranslations['it'],
       ...pluginAccountDataEraseTranslations.it,

@@ -14,8 +14,16 @@ import {
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     PluginSurfaceDestinationNavigationBindingProvider,
+    PluginSurfacePaneLaunchScope,
+    usePluginSurfaceDestinationNavigationBinding,
     usePluginSurfaceDestinationNavigationBindingForScope,
+    useRegisterPluginSurfaceDestinationNavigationOwner,
+    type PluginSurfaceDestinationNavigationBinding,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import {
+    APP_RIGHT_SIDEBAR_PANE_SCOPE_ID,
+    useAppScopeRightSidebarDestinationHandler,
+} from './appScopeRightSidebarNavigation';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,6 +34,30 @@ const paneScopeSeed = vi.hoisted(() => ({
     activeTabId: null as string | null,
     selectedDestination: null as unknown,
 }));
+/**
+ * AppPane state is app-lifetime shared state keyed by scope id, not per-hook
+ * component state. The app-scope right-sidebar navigation owner and the sidebar
+ * leaf read the SAME scope from different places in the tree, so this boundary
+ * mock has to share it the way the real provider does.
+ */
+type PaneRightState = Readonly<{
+    isOpen: boolean;
+    activeTabId: string | null;
+    selectedDestination: unknown;
+    tabState: Readonly<Record<string, unknown>>;
+}>;
+const paneScopeStore = vi.hoisted(() => {
+    const scopes = new Map<string, unknown>();
+    const listeners = new Set<() => void>();
+    return {
+        scopes,
+        listeners,
+        commit(scopeId: string, next: unknown) {
+            scopes.set(scopeId, next);
+            for (const listener of [...listeners]) listener();
+        },
+    };
+});
 const accountLifetimeState = vi.hoisted(() => ({
     lifetime: null as ActiveServerAccountScopeLifetime | null,
 }));
@@ -91,14 +123,46 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
     }),
 }));
 
+const routerState = vi.hoisted(() => ({ pathname: '/settings/plugins' }));
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ pathname: () => routerState.pathname }).module;
+});
+
+function readPaneRight(scopeId: string): PaneRightState {
+    return (paneScopeStore.scopes.get(scopeId) as PaneRightState | undefined) ?? {
+        isOpen: true,
+        activeTabId: paneScopeSeed.activeTabId,
+        selectedDestination: paneScopeSeed.selectedDestination,
+        tabState: {},
+    };
+}
+
+// The app-lifetime navigation owner writes selection through the AppPane
+// dispatch owner, above any mounted pane host.
+vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
+    useOptionalAppPaneContext: () => ({
+        dispatch: (action: Readonly<{ type: string; scopeId: string; destination?: unknown }>) => {
+            if (action.type !== 'selectRightDestination') return;
+            paneScopeStore.commit(action.scopeId, {
+                ...readPaneRight(action.scopeId),
+                isOpen: true,
+                selectedDestination: action.destination,
+            });
+        },
+    }),
+}));
+
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => {
-        const [right, setRight] = React.useState(() => ({
-            isOpen: true,
-            activeTabId: paneScopeSeed.activeTabId,
-            selectedDestination: paneScopeSeed.selectedDestination,
-            tabState: {},
-        }));
+    useAppPaneScope: (scopeId: string) => {
+        const [, refresh] = React.useReducer((revision: number) => revision + 1, 0);
+        React.useEffect(() => {
+            paneScopeStore.listeners.add(refresh);
+            return () => { paneScopeStore.listeners.delete(refresh); };
+        }, []);
+        const right = readPaneRight(scopeId);
+        const commit = (next: PaneRightState) => { paneScopeStore.commit(scopeId, next); };
         return {
             scopeState: {
                 right,
@@ -106,15 +170,15 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
                 bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             },
             openRight: ({ tabId }: Readonly<{ tabId?: string }> = {}) => {
-                setRight((previous) => ({
-                    ...previous,
+                commit({
+                    ...right,
                     isOpen: true,
-                    activeTabId: tabId ?? previous.activeTabId,
-                    selectedDestination: tabId ? { kind: 'builtin', id: tabId } : previous.selectedDestination,
-                }));
+                    activeTabId: tabId ?? right.activeTabId,
+                    selectedDestination: tabId ? { kind: 'builtin', id: tabId } : right.selectedDestination,
+                });
             },
             selectRightDestination: (destination: unknown) => {
-                setRight((previous) => ({ ...previous, isOpen: true, selectedDestination: destination }));
+                commit({ ...right, isOpen: true, selectedDestination: destination });
             },
         };
     },
@@ -238,9 +302,25 @@ function projectionWith(...placements: readonly PluginUiSurfacePlacementProjecti
     };
 }
 
-/** Mirrors the shell's single app-target navigation-binding boundary. */
+/**
+ * Mirrors the shell's app-target navigation boundary: the one binding, the
+ * app-lifetime pane handoff scope, and the app-lifetime `rightSidebarTab`
+ * owner. The sidebar leaf below it registers nothing of its own.
+ */
+function AppScopeRightSidebarNavigationOwner(): null {
+    const binding = usePluginSurfaceDestinationNavigationBinding();
+    const handler = useAppScopeRightSidebarDestinationHandler();
+    const owner = React.useMemo(() => ({
+        container: 'rightSidebarTab' as const,
+        handler,
+    }), [handler]);
+    useRegisterPluginSurfaceDestinationNavigationOwner(owner, binding);
+    return null;
+}
+
 function AppTargetNavigationScope(props: React.PropsWithChildren<Readonly<{
     projection: PluginUiProjectionModel;
+    onBinding?: (binding: PluginSurfaceDestinationNavigationBinding) => void;
 }>>): React.ReactElement {
     const binding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: Object.values(props.projection.surfacePlacementsById),
@@ -248,9 +328,14 @@ function AppTargetNavigationScope(props: React.PropsWithChildren<Readonly<{
         targetKind: 'app',
         accountLifetime: accountLifetimeState.lifetime,
     });
+    const { onBinding } = props;
+    React.useEffect(() => { onBinding?.(binding); }, [binding, onBinding]);
     return (
         <PluginSurfaceDestinationNavigationBindingProvider binding={binding}>
-            {props.children}
+            <PluginSurfacePaneLaunchScope>
+                <AppScopeRightSidebarNavigationOwner />
+                {props.children}
+            </PluginSurfacePaneLaunchScope>
         </PluginSurfaceDestinationNavigationBindingProvider>
     );
 }
@@ -315,6 +400,9 @@ describe('AppScopeRightSidebar', () => {
         mountedSurfaceProps.length = 0;
         paneScopeSeed.activeTabId = null;
         paneScopeSeed.selectedDestination = null;
+        paneScopeStore.scopes.clear();
+        paneScopeStore.listeners.clear();
+        routerState.pathname = '/settings/plugins';
         accountLifetimeState.lifetime = createTestAccountLifetime('account-a').lifetime;
     });
 
@@ -323,7 +411,7 @@ describe('AppScopeRightSidebar', () => {
 
         const screen = await renderScreen(
             <AppScopeRightSidebar
-                scopeId="scope1"
+                scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 pluginUiProjection={projectionWith(appSidebarPlacement)}
                 platform="web"
                 testID="app-scope-right-sidebar"
@@ -339,7 +427,7 @@ describe('AppScopeRightSidebar', () => {
 
         const screen = await renderScreen(
             <AppScopeRightSidebar
-                scopeId="scope1"
+                scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 pluginUiProjection={projectionWith(appSidebarPlacement)}
                 platform="web"
             />,
@@ -354,7 +442,7 @@ describe('AppScopeRightSidebar', () => {
 
         const screen = await renderScreen(
             <AppScopeRightSidebar
-                scopeId="scope1"
+                scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 requestedDestination={{ pluginId: 'acme.preview', localId: 'detail-panel' }}
                 pluginUiProjection={projectionWith(
                     withSelectedContributionOrigin(appSidebarPlacement, {
@@ -387,7 +475,7 @@ describe('AppScopeRightSidebar', () => {
         await renderScreen(
             <AppTargetNavigationScope projection={projection}>
                 <AppScopeRightSidebar
-                    scopeId="scope1"
+                    scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                     pluginUiProjection={projection}
                     platform="web"
                 />
@@ -407,7 +495,7 @@ describe('AppScopeRightSidebar', () => {
 
         const screen = await renderScreen(
             <AppScopeRightSidebar
-                scopeId="scope1"
+                scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 pluginUiProjection={projectionWith()}
                 platform="web"
                 testID="app-scope-right-sidebar-empty"
@@ -424,7 +512,7 @@ describe('AppScopeRightSidebar', () => {
 
         const screen = await renderScreen(
             <AppScopeRightSidebar
-                scopeId="scope1"
+                scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 pluginUiProjection={projectionWith()}
                 projectionPhase="establishing"
                 platform="web"
@@ -440,7 +528,7 @@ describe('AppScopeRightSidebar', () => {
 
         await screen.update(
             <AppScopeRightSidebar
-                scopeId="scope1"
+                scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 pluginUiProjection={projectionWith()}
                 projectionPhase="current"
                 platform="web"
@@ -458,7 +546,7 @@ describe('AppScopeRightSidebar', () => {
 
         const screen = await renderScreen(
             <AppScopeRightSidebar
-                scopeId="scope1"
+                scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 pluginUiProjection={projectionWith({
                     ...appSidebarPlacement,
                     availability: { state: 'fallback', reason: 'feature_disabled', diagnostics: ['feature_disabled'] },
@@ -490,7 +578,7 @@ describe('AppScopeRightSidebar', () => {
             return renderScreen(
                 <AppTargetNavigationScope projection={projection}>
                     <AppScopeRightSidebar
-                        scopeId="scope1"
+                        scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                         pluginUiProjection={projection}
                         platform="web"
                         testID="app-scope-right-sidebar-launch"
@@ -557,7 +645,7 @@ describe('AppScopeRightSidebar', () => {
             await renderScreen(
                 <AppTargetNavigationScope projection={projection}>
                     <AppScopeRightSidebar
-                        scopeId="scope1"
+                        scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                         pluginUiProjection={projection}
                         platform="web"
                     />
@@ -570,7 +658,7 @@ describe('AppScopeRightSidebar', () => {
                     caller.api.openSurface({ pluginId: 'acme.preview', localId: 'detail-panel' }, { itemId: 'missing-origin' }),
                 ).rejects.toMatchObject({
                     code: 'unavailable',
-                    diagnostics: ['plugin_surface_open_origin_unavailable'],
+                    diagnostics: [{ code: 'plugin_surface_open_origin_unavailable', severity: 'error' }],
                 });
             });
 
@@ -590,7 +678,7 @@ describe('AppScopeRightSidebar', () => {
                     caller.api.openSurface({ pluginId: 'acme.preview', localId: 'detail-panel' }, oversize),
                 ).rejects.toMatchObject({
                     code: 'invalid_payload',
-                    diagnostics: ['plugin_surface_open_payload_invalid'],
+                    diagnostics: [{ code: 'plugin_surface_open_payload_invalid', severity: 'error' }],
                 });
             });
 
@@ -619,7 +707,7 @@ describe('AppScopeRightSidebar', () => {
                 return (
                     <AppTargetNavigationScope projection={projection}>
                         <AppScopeRightSidebar
-                            scopeId="scope1"
+                            scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                             pluginUiProjection={projection}
                             platform="web"
                             testID="app-scope-right-sidebar-launch"
@@ -661,7 +749,7 @@ describe('AppScopeRightSidebar', () => {
                 return (
                     <AppTargetNavigationScope projection={projection}>
                         <AppScopeRightSidebar
-                            scopeId="scope1"
+                            scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                             pluginUiProjection={projection}
                             platform="web"
                         />
@@ -713,12 +801,101 @@ describe('AppScopeRightSidebar', () => {
                     caller.api.openSurface({ pluginId: 'acme.preview', localId: 'missing-panel' }),
                 ).rejects.toMatchObject({
                     code: 'unavailable',
-                    diagnostics: ['plugin_surface_open_destination_unknown'],
+                    diagnostics: [{ code: 'plugin_surface_open_destination_unknown', severity: 'error' }],
                 });
             });
 
             expect(latestMountFor('detail-panel')).toBeNull();
             expect(latestMountFor('app-panel')).toBeTruthy();
+        });
+    });
+
+    // The whole point of an app-target container: the sidebar route is NOT
+    // mounted yet. While the opener lived on the sidebar leaf, this exact first
+    // open answered `plugin_surface_open_destination_owner_unavailable` because
+    // the route that would have installed the resolver had never been entered.
+    describe('app-lifetime rightSidebarTab navigation owner', () => {
+        function coldProjection(): PluginUiProjectionModel {
+            return projectionWith(
+                withSelectedContributionOrigin(appSidebarPlacement, {
+                    generation: 1,
+                    machineId: 'machine-a',
+                    materializationId: 'install-a',
+                }),
+                withSelectedContributionOrigin(appDetailPlacement, {
+                    generation: 1,
+                    machineId: 'machine-a',
+                    materializationId: 'install-a',
+                }),
+            );
+        }
+
+        it('opens an app right-sidebar destination before that route has ever mounted, then stays idempotent', async () => {
+            const { AppScopeRightSidebar } = await import('./AppScopeRightSidebar');
+            const { router } = await import('expo-router');
+            const projection = coldProjection();
+            let binding: PluginSurfaceDestinationNavigationBinding | null = null;
+
+            // Cold app: the shell boundary is up, no sidebar route is mounted.
+            const screen = await renderScreen(
+                <AppTargetNavigationScope
+                    projection={projection}
+                    onBinding={(next) => { binding = next; }}
+                />,
+            );
+            expect(binding).not.toBeNull();
+            expect(latestMountFor('detail-panel')).toBeNull();
+
+            await act(async () => {
+                await expect(binding!.openSurface({
+                    destination: { pluginId: 'acme.preview', localId: 'detail-panel' },
+                    input: { itemId: 'cold-open' },
+                })).resolves.toEqual({ ok: true });
+            });
+
+            expect(router.push).toHaveBeenCalledWith('/settings/plugins/panels');
+            expect(paneScopeStore.scopes.get(APP_RIGHT_SIDEBAR_PANE_SCOPE_ID)).toMatchObject({
+                selectedDestination: {
+                    kind: 'plugin',
+                    destination: { pluginId: 'acme.preview', localId: 'detail-panel' },
+                },
+            });
+
+            // The route now mounts and renders the destination the open selected,
+            // together with the launch input that rode across the navigation.
+            routerState.pathname = '/settings/plugins/panels';
+            await act(async () => {
+                screen.tree.update(
+                    <AppTargetNavigationScope
+                        projection={projection}
+                        onBinding={(next) => { binding = next; }}
+                    >
+                        <AppScopeRightSidebar
+                            scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
+                            pluginUiProjection={projection}
+                            platform="web"
+                            testID="app-scope-right-sidebar-cold"
+                        />
+                    </AppTargetNavigationScope>,
+                );
+            });
+
+            expect(screen.findByTestId('plugin-host-renderer-detail-panel')).toBeTruthy();
+            expect(latestMountFor('detail-panel')?.launchInput).toEqual({ itemId: 'cold-open' });
+
+            // A second open of the same destination remains a single owner and a
+            // single truthful success; it must not double-register or re-navigate.
+            const pushCallsBeforeReopen = (router.push as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+            await act(async () => {
+                await expect(binding!.openSurface({
+                    destination: { pluginId: 'acme.preview', localId: 'detail-panel' },
+                    input: { itemId: 'reopened' },
+                })).resolves.toEqual({ ok: true });
+            });
+
+            expect(latestMountFor('detail-panel')?.launchInput).toEqual({ itemId: 'reopened' });
+            expect((router.push as unknown as { mock: { calls: unknown[] } }).mock.calls.length)
+                .toBe(pushCallsBeforeReopen);
         });
     });
 });

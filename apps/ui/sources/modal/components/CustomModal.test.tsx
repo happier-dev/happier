@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, renderScreen } from '@/dev/testkit';
 import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
 import { ModalCardFrame } from './card/ModalCardFrame';
 import { useModalCardChrome } from './card/useModalCardChrome';
@@ -160,6 +160,130 @@ describe('CustomModal', () => {
 
         expect(onRequestClose).toHaveBeenCalledTimes(1);
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('allows a shared dismissal guard that returns void', async () => {
+        const onClose = vi.fn();
+        const onRequestClose = vi.fn();
+        const onDismissRequest = vi.fn();
+        const screen = await renderCustomModal({
+            type: 'custom',
+            component: ChromeModal,
+            props: { label: 'guarded' },
+            onDismissRequest,
+            onRequestClose,
+            chrome: {
+                kind: 'card',
+                title: 'Guarded modal',
+            },
+        }, onClose);
+
+        act(() => {
+            screen.findByType(ModalCardFrame).props.onClose();
+        });
+
+        expect(onDismissRequest).toHaveBeenCalledExactlyOnceWith('shared');
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the modal open when a shared dismissal guard vetoes header and base-modal closes', async () => {
+        const onClose = vi.fn();
+        const onRequestClose = vi.fn();
+        const onDismissRequest = vi.fn(() => false);
+        const screen = await renderCustomModal({
+            type: 'custom',
+            component: ChromeModal,
+            props: { label: 'guarded' },
+            onDismissRequest,
+            onRequestClose,
+            chrome: {
+                kind: 'card',
+                title: 'Guarded modal',
+            },
+        }, onClose);
+
+        act(() => {
+            screen.findByType(ModalCardFrame).props.onClose();
+            screen.findByType('BaseModal').props.onClose();
+        });
+
+        expect(onDismissRequest).toHaveBeenCalledTimes(2);
+        expect(onDismissRequest).toHaveBeenNthCalledWith(1, 'shared');
+        expect(onDismissRequest).toHaveBeenNthCalledWith(2, 'shared');
+        expect(onRequestClose).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('deduplicates async shared dismissal guards until their decision settles', async () => {
+        const decision = createDeferred<boolean>();
+        const onClose = vi.fn();
+        const onDismissRequest = vi.fn(() => decision.promise);
+        const screen = await renderCustomModal({
+            type: 'custom',
+            component: ChromeModal,
+            props: { label: 'guarded' },
+            onDismissRequest,
+            chrome: {
+                kind: 'card',
+                title: 'Guarded modal',
+            },
+        }, onClose);
+
+        act(() => {
+            screen.findByType('BaseModal').props.onClose();
+            screen.findByType(ModalCardFrame).props.onClose();
+        });
+
+        expect(onDismissRequest).toHaveBeenCalledExactlyOnceWith('shared');
+        expect(onClose).not.toHaveBeenCalled();
+
+        await act(async () => {
+            decision.resolve(true);
+            await decision.promise;
+        });
+
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the modal open when an async dismissal guard rejects', async () => {
+        const onClose = vi.fn();
+        const onDismissRequest = vi.fn(() => Promise.reject(new Error('dismissal decision failed')));
+        const screen = await renderCustomModal({
+            type: 'custom',
+            component: ChromeModal,
+            props: { label: 'guarded' },
+            onDismissRequest,
+        }, onClose);
+
+        act(() => {
+            screen.findByType('BaseModal').props.onClose();
+        });
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(onDismissRequest).toHaveBeenCalledExactlyOnceWith('shared');
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('routes injected content completion through the dismissal guard as an action', async () => {
+        const onClose = vi.fn();
+        const onDismissRequest = vi.fn(() => false);
+        const screen = await renderCustomModal({
+            type: 'custom',
+            component: ChromeModal,
+            props: { label: 'guarded' },
+            onDismissRequest,
+        }, onClose);
+
+        act(() => {
+            screen.findByType(ChromeModal).props.onClose();
+        });
+
+        expect(onDismissRequest).toHaveBeenCalledExactlyOnceWith('action');
+        expect(onClose).not.toHaveBeenCalled();
     });
 
     it('lets a non-dismissible custom modal close only through its component action', async () => {

@@ -193,9 +193,15 @@ const projection: PluginUiProjectionModel = {
 };
 
 function createHandle(input: Readonly<{ frameOrigin?: string }> = {}) {
-    const dispose = vi.fn();
     let current = true;
     const revokeListeners = new Set<() => void>();
+    // The canonical native Artifact handle's `dispose` IS its registration
+    // revoke: after it runs the token is tombstoned and `isCurrent()` is false.
+    const dispose = vi.fn(() => {
+        if (!current) return;
+        current = false;
+        for (const listener of [...revokeListeners]) listener();
+    });
     return {
         handle: {
             token: 'hpat_frame_token',
@@ -433,10 +439,16 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
         });
         expect(frameProps.at(-1)?.nativeArtifactLoadState).toBe('ready');
 
+        expect(native.dispose).not.toHaveBeenCalled();
+
         const loadError = frameProps.at(-1)?.onNativeArtifactLoadError as ((event: unknown) => void) | undefined;
         await act(async () => {
             loadError?.({ nativeEvent: { code: 'hosted_web_artifact_load_failed' } });
         });
+        // The failed mount is retired synchronously with the transition off it,
+        // so no late guest/bridge work can settle through the dead frame.
+        expect(native.dispose).toHaveBeenCalled();
+        expect(native.handle.isCurrent()).toBe(false);
         expect(screen.findByTestId('plugin-hosted-web-frame-error')).toBeTruthy();
         expect(screen.findByTestId('plugin-hosted-web-frame-error-diagnostic-hosted_web_artifact_load_failed')).toBeTruthy();
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
@@ -714,6 +726,9 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
         frameMountCount = 0;
         frameUnmountCount = 0;
         const artifact = createHandle();
+        // Production supplies one stable adoption per bound target; a fresh
+        // adoption object per render would retire the live handle.
+        const artifactAdoption = createNativeArtifactAdoption(artifact.handle);
         const bridgeSurface: PluginUiSurfaceContextV1 = {
             ...surfaceContext,
             platform: 'ios',
@@ -753,7 +768,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
                     translations: {},
                     targetedContributions: canonicalTargetedContributions,
                 }}
-                nativeArtifactAdoption={createNativeArtifactAdoption(artifact.handle)}
+                nativeArtifactAdoption={artifactAdoption}
                 mountInstanceKey="stable-artifact-target"
                 launchInput={launchInput}
             />
@@ -776,6 +791,9 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
         frameMountCount = 0;
         frameUnmountCount = 0;
         const artifact = createHandle();
+        // Production supplies one stable adoption per bound target; a fresh
+        // adoption object per render would retire the live handle.
+        const artifactAdoption = createNativeArtifactAdoption(artifact.handle);
         const identity = {
             pluginId: 'acme.preview',
             pluginVersion: '1.2.3',
@@ -814,7 +832,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
                     translations: {},
                     targetedContributions: canonicalTargetedContributions,
                 }}
-                nativeArtifactAdoption={createNativeArtifactAdoption(artifact.handle)}
+                nativeArtifactAdoption={artifactAdoption}
                 mountInstanceKey="stable-context-target"
             />
         );
@@ -837,6 +855,9 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
         frameMountCount = 0;
         frameUnmountCount = 0;
         const artifact = createHandle();
+        // Production supplies one stable adoption per bound target; a fresh
+        // adoption object per render would retire the live handle.
+        const artifactAdoption = createNativeArtifactAdoption(artifact.handle);
         const identity = {
             pluginId: 'acme.preview',
             pluginVersion: '1.2.3',
@@ -874,7 +895,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
                     translations: { 'preview.frame.title': translation },
                     targetedContributions: canonicalTargetedContributions,
                 }}
-                nativeArtifactAdoption={createNativeArtifactAdoption(artifact.handle)}
+                nativeArtifactAdoption={artifactAdoption}
                 mountInstanceKey="stable-native-handler-target"
             />
         );
@@ -903,6 +924,9 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
             hostMessages.length = 0;
             attachmentTeardownCount = 0;
             const artifact = createHandle();
+        // Production supplies one stable adoption per bound target; a fresh
+        // adoption object per render would retire the live handle.
+        const artifactAdoption = createNativeArtifactAdoption(artifact.handle);
             const dataHandle = vi.fn();
             const dataDispose = vi.fn();
             let dataSignal: AbortSignal | undefined;
@@ -959,7 +983,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
                         targetedContributions: canonicalTargetedContributions,
                     }}
                     createCollectionUiQueryBridge={() => ({ handle: dataHandle, dispose: dataDispose })}
-                    nativeArtifactAdoption={createNativeArtifactAdoption(artifact.handle)}
+                    nativeArtifactAdoption={artifactAdoption}
                 />,
             );
 

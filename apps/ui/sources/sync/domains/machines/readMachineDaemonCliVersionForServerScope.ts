@@ -21,6 +21,6 @@ export function readMachineDaemonCliVersionForServerScope(params: Readonly<{
         : activeServerId
             ? params.state.machineListByServerId?.[serverId]?.find((candidate) => candidate.id === machineId)
             : undefined;
-    const version = machine?.daemonState?.startedWithCliVersion;
+    const version = machine?.daemonState?.cliVersion;
     return typeof version === 'string' && version.trim().length > 0 ? version.trim() : null;
 }

@@ -11,6 +11,7 @@ import {
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { machineCapabilitiesDetect } from '@/sync/ops/capabilities';
 import { sync } from '@/sync/sync';
 
@@ -180,20 +181,31 @@ export async function submitPluginEventAutomation(params: Readonly<{
 
     const credentials = sync.getCredentials();
     if (!credentials) return unavailable('account');
+    // The caller's fence is keyed on the launch target, so an Account switch on
+    // the same server is invisible to it. Every step below writes through the
+    // CURRENT Account while the credential and encryption mode admitted here
+    // belong to the Account captured now, so both must stay current together.
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) return unavailable('account');
+    const isCurrent = (): boolean => params.isCurrent() && accountLifetime.isCurrent();
+
     const encryptionMode = await fetchAccountEncryptionMode(credentials);
-    if (encryptionMode.mode !== 'plain') return unavailable('account');
+    if (encryptionMode.mode !== 'plain' || !isCurrent()) return unavailable('account');
 
     const currentDefinition = params.editTarget
         ? await sync.refreshAutomationDefinitionDetail(params.editTarget.automationId)
         : null;
     if (
         (params.editTarget && !isCurrentPluginEventAutomationDefinition(currentDefinition, params.editTarget))
-        || !params.isCurrent()
+        || !isCurrent()
     ) {
         return unavailable('edit');
     }
+    // AUTO-19/r0.28: a V3 patch replaces the whole strict recipe for future
+    // Runs, so an edit may move an Automation between the three approved
+    // target arms. Already-admitted Runs keep the recipe they were frozen
+    // with; only later admission uses the arm saved here.
     const currentTarget = params.editTarget ? readCurrentTarget(currentDefinition) : null;
-    if (params.editTarget && currentTarget?.kind !== params.targetKind) return unavailable('edit');
 
     const metadata = params.metadata ?? (currentDefinition?.detail.kind === 'available'
         ? {
@@ -205,12 +217,18 @@ export async function submitPluginEventAutomation(params: Readonly<{
     if (!metadata) return unavailable('metadata');
 
     const targetInput = params.targetKind === 'newSession'
-        ? { newSessionSpawn: params.buildNewSessionSpawn(readCurrentNewSessionSpawn(currentDefinition)) }
+        ? {
+            newSessionSpawn: params.buildNewSessionSpawn(
+                // Only an unchanged new-session arm has a current spawn to
+                // refine; a switched arm starts from the composer's own input.
+                currentTarget?.kind === 'newSession' ? readCurrentNewSessionSpawn(currentDefinition) : null,
+            ),
+        }
         : params.targetKind === 'executionRun'
             ? { executionRun: params.buildExecutionRun() }
             : {};
     const target = params.resolveTarget(targetInput);
-    if (!target || !params.isCurrent()) return unavailable('target');
+    if (!target || !isCurrent()) return unavailable('target');
 
     if (target.target.kind === 'executionRun') {
         const serverId = normalizeServerId(params.executionTargetServerId);
@@ -236,7 +254,7 @@ export async function submitPluginEventAutomation(params: Readonly<{
     if (!executionRecipe) return unavailable('target');
 
     const preflightWatcherOrigin = params.draft.resolveFreshWatcherOrigin();
-    if (!preflightWatcherOrigin || !params.isCurrent()) return unavailable('watcher');
+    if (!preflightWatcherOrigin || !isCurrent()) return unavailable('watcher');
     const projection = await loadDaemonMergedProjectionInputs({
         machineId: preflightWatcherOrigin.machineTarget.target.machineId,
         serverId: preflightWatcherOrigin.machineTarget.serverId,
@@ -253,7 +271,7 @@ export async function submitPluginEventAutomation(params: Readonly<{
             !== freshWatcherOrigin.machineTarget.target.serverIdentityId
         || preflightWatcherOrigin.machineTarget.target.machineId
             !== freshWatcherOrigin.machineTarget.target.machineId
-        || !params.isCurrent()
+        || !isCurrent()
     ) {
         return unavailable('watcher');
     }
@@ -261,7 +279,9 @@ export async function submitPluginEventAutomation(params: Readonly<{
     // Editing the retained new-session arm preserves the server's existing
     // multi-machine topology. The other two arms resolve exactly one current
     // machine at submit time and therefore own one matching assignment.
-    const assignments = params.editTarget && target.target.kind === 'newSession'
+    const assignments = params.editTarget
+        && target.target.kind === 'newSession'
+        && currentTarget?.kind === 'newSession'
         ? readCurrentAssignments(currentDefinition)
         : [{ machineId: target.assignmentMachineId, enabled: true, priority: 100 }];
     if (!assignments) return unavailable('definition');
@@ -281,14 +301,14 @@ export async function submitPluginEventAutomation(params: Readonly<{
             ...definitionInput,
             expectedTemplateVersion: params.editTarget.expectedTemplateVersion,
         });
-        if (!patch || !params.isCurrent()) return unavailable('definition');
+        if (!patch || !isCurrent()) return unavailable('definition');
         await sync.updatePluginEventAutomationDefinition(params.editTarget.automationId, patch);
         await sync.refreshAutomations();
         return { kind: 'updated', automationId: params.editTarget.automationId };
     }
 
     const create = buildPluginEventAutomationDefinitionCreateRequest(definitionInput);
-    if (!create || !params.isCurrent()) return unavailable('definition');
+    if (!create || !isCurrent()) return unavailable('definition');
     await sync.createPluginEventAutomationDefinition(create);
     await sync.refreshAutomations();
     return { kind: 'created' };

@@ -1,6 +1,8 @@
 import {
     ACTION_ID_FAMILIES_V1,
+    BrowserAutomationCancelActiveResultV1Schema,
     BrowserAutomationActionRequestV1Schema,
+    BrowserCommandDispatchResultV1Schema,
     BrowserCommandV1Schema,
     createUnavailableRuntimeActionExecutor,
     getActionSpec,
@@ -80,13 +82,6 @@ export type CreateBrowserRuntimeActionExecutorInput = Readonly<{
 type RuntimeBrowserViewInput = Readonly<{
     browserSessionId: string;
     viewId: string;
-}>;
-
-type BrowserRuntimeControlAcceptedResult = Readonly<{
-    v: 1;
-    actionId: RuntimeActionIdV1;
-    status: 'accepted';
-    effects: readonly BrowserControlCommandEffect[];
 }>;
 
 const BROWSER_CONTROL_ACTION_IDS = new Set<string>(ACTION_ID_FAMILIES_V1.browser_control);
@@ -186,7 +181,7 @@ function serializeAutomationActionResult(
         viewId: request.viewId,
     })].reverse().find((candidate) => candidate.automationRequestId === request.automationRequestId);
     if (!entry) {
-        return result;
+        return browserRuntimeActionDisabledResult('browser_automation_unavailable');
     }
     return {
         v: 1,
@@ -204,6 +199,25 @@ function serializeAutomationActionResult(
         diagnostics: {},
         resultSummary: readRecord(entry.resultSummary),
     };
+}
+
+function serializeBrowserControlActionResult(
+    command: BrowserCommandV1,
+    state: BrowserControlState,
+    result: BrowserControlCommandDispatchResult,
+): unknown | null {
+    const viewId = 'viewId' in command ? command.viewId : null;
+    const adapterKind = viewId
+        ? result.state.viewsById[viewId]?.adapterKind ?? state.viewsById[viewId]?.adapterKind
+        : undefined;
+    if (!adapterKind) return null;
+    return BrowserCommandDispatchResultV1Schema.parse({
+        v: 1,
+        commandId: command.commandId,
+        status: 'dispatched',
+        adapterKind,
+        events: [],
+    });
 }
 
 async function executeBrowserControlAction(
@@ -241,13 +255,13 @@ async function executeBrowserControlAction(
         return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
     }
 
+    const serializedResult = serializeBrowserControlActionResult(command.data, state, result);
+    if (!serializedResult) {
+        return browserRuntimeActionDisabledResult('browser_adapter_unavailable');
+    }
+
     await control.applyDispatchResult(result);
-    return {
-        v: 1,
-        actionId: args.actionId,
-        status: 'accepted',
-        effects: result.effects,
-    } satisfies BrowserRuntimeControlAcceptedResult;
+    return serializedResult;
 }
 
 async function executeBrowserAutomationAction(
@@ -281,12 +295,7 @@ async function executeBrowserAutomationAction(
         if (!controlService) {
             return browserRuntimeActionDisabledResult('browser_automation_unavailable');
         }
-        controlService.cancelActiveAction(viewInput);
-        return {
-            v: 1,
-            actionId: args.actionId,
-            status: 'accepted',
-        };
+        return BrowserAutomationCancelActiveResultV1Schema.parse(controlService.cancelActiveAction(viewInput));
     }
 
     const request = BrowserAutomationActionRequestV1Schema.safeParse(parsed.input);

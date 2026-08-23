@@ -678,4 +678,80 @@ describe('getResolvedBackendCatalogEntries', () => {
 
         expect(entries).toEqual([]);
     });
+    it('makes a standalone installed Session Agent selectable from the current agents projection', () => {
+        // The daemon's V2 projection carries no parallel backend registry, so an
+        // installed Agent that contributes no configured/settings backend reaches
+        // the client only through `agentsById`. `enabledAgentIds` is the closed
+        // bundled seed and can never name it.
+        const entries = getResolvedBackendCatalogEntries({
+            enabledAgentIds: ['claude'],
+            acpCatalogSettingsV1: { v: 2, backends: [] },
+            collapseConfiguredBackendProviderSentinels: true,
+            mergedBackendProjectionById: {},
+            mergedProviderProjectionById: {
+                'acme.review': {
+                    agentId: 'acme.review',
+                    title: 'Acme Review',
+                    subtitle: 'Installed review Agent',
+                    channel: 'plugin' as const,
+                    isBuiltIn: false,
+                },
+            },
+            discoveredBackendIds: [],
+        });
+
+        expect(entries).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                backendTarget: { kind: 'backend', backendId: 'acme.review' },
+                backendTargetKey: 'backend:acme.review',
+                kind: 'pluginBackend',
+                agentId: 'acme.review',
+                backendId: 'acme.review',
+                builtInAgentId: null,
+                catalogAgentId: null,
+                title: 'Acme Review',
+                subtitle: 'Installed review Agent',
+            }),
+        ]));
+    });
+
+    it('omits an installed Session Agent the user disabled', () => {
+        const entries = getResolvedBackendCatalogEntries({
+            enabledAgentIds: ['claude'],
+            acpCatalogSettingsV1: { v: 2, backends: [] },
+            collapseConfiguredBackendProviderSentinels: true,
+            backendEnabledByTargetKey: { 'backend:acme.review': false },
+            mergedBackendProjectionById: {},
+            mergedProviderProjectionById: {
+                'acme.review': {
+                    agentId: 'acme.review',
+                    title: 'Acme Review',
+                    channel: 'plugin' as const,
+                    isBuiltIn: false,
+                },
+            },
+            discoveredBackendIds: [],
+        });
+
+        expect(entries.map((entry) => entry.backendTargetKey)).not.toContain('backend:acme.review');
+        expect(entries.map((entry) => entry.backendTargetKey)).toContain('backend:claude');
+    });
+
+    it('does not resurrect a bundled Agent the enabled seed filtered out', () => {
+        // The bundled seed owns bundled selection policy. Projecting a bundled
+        // Agent must not be a second way into the picker.
+        const entries = getResolvedBackendCatalogEntries({
+            enabledAgentIds: ['claude'],
+            acpCatalogSettingsV1: { v: 2, backends: [] },
+            collapseConfiguredBackendProviderSentinels: true,
+            mergedBackendProjectionById: {},
+            mergedProviderProjectionById: {
+                claude: { agentId: 'claude', title: 'Claude', isBuiltIn: true },
+                codex: { agentId: 'codex', title: 'Codex', isBuiltIn: true },
+            },
+            discoveredBackendIds: [],
+        });
+
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual(['backend:claude']);
+    });
 });

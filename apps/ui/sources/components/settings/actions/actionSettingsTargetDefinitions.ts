@@ -1,7 +1,9 @@
 import {
+    ActionIdSchema,
     getActionSpec,
+    parseQualifiedPluginActionId,
     type ActionId,
-    type ActionSpec,
+    type ActionSettingsActionId,
     type ActionSurfaces,
     type ActionUiPlacement,
     type ActionsSettingsV1,
@@ -16,9 +18,17 @@ export type ActionSettingsTargetId =
     | 'agent'
     | 'voice'
     | 'cli'
+    | 'api'
+    | 'plugin'
     | 'contextual_ui';
 
-export type ActionSettingsSurface = NonNullable<ActionsSettingsV1['actions'][ActionId]>['disabledSurfaces'][number];
+export type ActionSettingsSurface = NonNullable<ActionsSettingsV1['actions'][ActionSettingsActionId]>['disabledSurfaces'][number];
+
+export type ActionSettingsTargetSource = Readonly<{
+    surfaces: Partial<ActionSurfaces>;
+    placements: readonly ActionUiPlacement[];
+    slash?: unknown;
+}>;
 
 type ActionSettingsTargetBase = Readonly<{
     id: ActionSettingsTargetId;
@@ -173,6 +183,24 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         category: 'integrations',
     },
     {
+        id: 'api',
+        kind: 'surface',
+        surface: 'api',
+        titleKey: 'settingsActions.targets.api.title',
+        subtitleKey: 'settingsActions.targets.api.subtitle',
+        icon: 'terminal',
+        category: 'integrations',
+    },
+    {
+        id: 'plugin',
+        kind: 'surface',
+        surface: 'plugin',
+        titleKey: 'settingsActions.targets.plugin.title',
+        subtitleKey: 'settingsActions.targets.plugin.subtitle',
+        icon: 'cube',
+        category: 'integrations',
+    },
+    {
         id: 'contextual_ui',
         kind: 'surface',
         surface: 'ui',
@@ -183,19 +211,19 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
     },
 ] as const;
 
-function isPlacementSupported(spec: ActionSpec, placement: ActionUiPlacement): boolean {
+function isPlacementSupported(spec: ActionSettingsTargetSource, placement: ActionUiPlacement): boolean {
     return spec.placements.includes(placement);
 }
 
-function isSurfaceSupported(spec: ActionSpec, surface: ActionSettingsSurface): boolean {
+function isSurfaceSupported(spec: ActionSettingsTargetSource, surface: ActionSettingsSurface): boolean {
     return spec.surfaces[surface] === true;
 }
 
-function shouldExposeContextualUi(spec: ActionSpec): boolean {
+function shouldExposeContextualUi(spec: ActionSettingsTargetSource): boolean {
     return spec.surfaces.ui === true && spec.placements.length === 0;
 }
 
-function buildSyntheticSlashCommandTarget(spec: ActionSpec): ActionSettingsTargetDefinition | null {
+function buildSyntheticSlashCommandTarget(spec: ActionSettingsTargetSource): ActionSettingsTargetDefinition | null {
     if (isPlacementSupported(spec, 'slash_command')) {
         return null;
     }
@@ -213,7 +241,7 @@ function buildSyntheticSlashCommandTarget(spec: ActionSpec): ActionSettingsTarge
     };
 }
 
-export function listActionSettingsTargetDefinitions(spec: ActionSpec): readonly ActionSettingsTargetDefinition[] {
+export function listActionSettingsTargetDefinitions(spec: ActionSettingsTargetSource): readonly ActionSettingsTargetDefinition[] {
     const placementTargets = PLACEMENT_TARGETS.filter((target) => isPlacementSupported(spec, target.placement));
     const surfaceTargets = SURFACE_TARGETS.filter((target) => target.id !== 'contextual_ui' && isSurfaceSupported(spec, target.surface));
     const syntheticTargets: ActionSettingsTargetDefinition[] = [];
@@ -234,12 +262,38 @@ export function listActionSettingsTargetDefinitions(spec: ActionSpec): readonly 
 }
 
 export function getActionSettingsTargetDefinition(actionId: ActionId, targetId: ActionSettingsTargetId): ActionSettingsTargetDefinition {
-    const spec = getActionSpec(actionId);
-    const target = listActionSettingsTargetDefinitions(spec).find((entry) => entry.id === targetId);
+    const target = listActionSettingsTargetDefinitions(getActionSpec(actionId)).find((entry) => entry.id === targetId);
     if (!target) {
         throw new Error(`Unsupported action settings target: ${actionId}:${targetId}`);
     }
     return target;
+}
+
+/**
+ * The UI has already resolved a target from its current host or contributed
+ * descriptor. Reuse that definition for dynamic contributed ids; only host
+ * callers without a descriptor may consult the static Action catalog.
+ */
+export function resolveActionSettingsTargetDefinition(params: Readonly<{
+    actionId: ActionSettingsActionId;
+    targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
+}>): ActionSettingsTargetDefinition {
+    if (params.target) return params.target;
+    const hostActionId = ActionIdSchema.safeParse(params.actionId);
+    if (hostActionId.success) {
+        return getActionSettingsTargetDefinition(hostActionId.data, params.targetId);
+    }
+
+    // Contributed rows always carry their daemon-derived target definition. The direct API and
+    // trusted-plugin surfaces are nevertheless stable broad surfaces, so settings writes for a
+    // qualified id can still be restored before that daemon contribution is available again.
+    if (parseQualifiedPluginActionId(params.actionId)) {
+        const target = SURFACE_TARGETS.find((candidate) => candidate.id === params.targetId);
+        if (target) return target;
+    }
+
+    throw new Error(`Unsupported action settings target: ${params.actionId}:${params.targetId}`);
 }
 
 export function getActionSettingsTargetContext(target: ActionSettingsTargetDefinition):

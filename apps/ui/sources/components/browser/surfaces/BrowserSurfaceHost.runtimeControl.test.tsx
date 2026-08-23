@@ -155,8 +155,10 @@ describe('BrowserSurfaceHost runtime control registration', () => {
 
         expect(result).toMatchObject({
             v: 1,
-            actionId: 'browser.navigate',
-            status: 'accepted',
+            commandId: 'command_surface_navigate',
+            status: 'dispatched',
+            adapterKind: 'localPreview',
+            events: [],
         });
         const shell = screen.findByTestId('browser-surface');
         expect(shell?.props.state.viewsById[viewId]?.pendingUrl).toBe('https://preview.happier.test/surface');
@@ -245,7 +247,13 @@ describe('BrowserSurfaceHost runtime control registration', () => {
         });
         await flushHookEffects();
 
-        expect(result).toMatchObject({ v: 1, actionId: 'browser.navigate', status: 'accepted' });
+        expect(result).toMatchObject({
+            v: 1,
+            commandId: 'command_sidecar_navigate',
+            status: 'dispatched',
+            adapterKind: 'chromiumSidecar',
+            events: [],
+        });
         expect(result).not.toMatchObject({ error: 'runtime_action_disabled:browser:browser_control_route_unavailable' });
         expect(sendDaemonCommand).toHaveBeenCalledWith(command);
     });

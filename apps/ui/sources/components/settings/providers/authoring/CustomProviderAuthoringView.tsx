@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
 
 import { CustomProviderAdvancedFields } from '@/components/settings/providers/CustomProviderAdvancedFields';
-import { ProviderMachineSelector } from '@/components/settings/providers/ProviderMachineSelector';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ProviderManualModelsField } from '@/components/settings/providers/ProviderManualModelsField';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
@@ -14,7 +14,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import type { CustomProviderDraft } from '@/providers/authoring/state';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
 import { ProviderErrorItems } from '../ProviderErrorItems';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -24,7 +24,7 @@ const styles = StyleSheet.create(() => ({
 }));
 
 export type CustomProviderAuthoringViewModel = Readonly<{
-    targetMachines: readonly Machine[];
+    targetSelection: MachineAdministrationTargetSelectionV1;
     machineId: string;
     currentMachineName: string;
     draft: CustomProviderDraft;
@@ -51,7 +51,6 @@ export type CustomProviderAuthoringViewModel = Readonly<{
 }>;
 
 export type CustomProviderAuthoringViewActions = Readonly<{
-    onSelectMachine: (machineId: string) => void;
     onPresetOpenChange: (open: boolean) => void;
     onCredentialOpenChange: (open: boolean) => void;
     onPresetSelect: (preset: string) => void;
@@ -75,9 +74,10 @@ export function CustomProviderAuthoringView(props: Readonly<{
     const { draft } = model;
     return (
         <ItemList testID="settings-provider-authoring" style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
-            {model.targetMachines.length > 1 ? <ItemGroup title={t('settingsProviders.detail.targetMachine')}>
-                <ProviderMachineSelector machines={model.targetMachines} selectedId={model.machineId} onSelect={actions.onSelectMachine} />
-            </ItemGroup> : null}
+            <MachineAdministrationTargetSelector
+                selection={model.targetSelection}
+                testIDPrefix="settings.providers.administration.target"
+            />
             <ItemGroup title={t('settingsProviders.authoring.compatibilityTitle')} footer={t('settingsProviders.authoring.compatibilityFooter')}>
                 <Item
                     title={t('settingsProviders.authoring.advancedSetup')}

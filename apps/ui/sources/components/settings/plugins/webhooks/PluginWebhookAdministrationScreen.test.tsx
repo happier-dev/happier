@@ -11,6 +11,11 @@ import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/tes
 import type { PluginWebhookAdministrationHttpClient } from '@/sync/api/plugins/webhooks/endpointActions';
 
 const resolveExecutionOrigin = vi.hoisted(() => vi.fn(() => null));
+const useFeatureEnabledMock = vi.hoisted(() => vi.fn<(featureId: string) => boolean>(() => true));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: useFeatureEnabledMock,
+}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -56,6 +61,8 @@ vi.mock('@/modal', async () => {
 afterEach(() => {
     standardCleanup();
     resolveExecutionOrigin.mockClear();
+    useFeatureEnabledMock.mockReset();
+    useFeatureEnabledMock.mockReturnValue(true);
 });
 
 function createClient(): PluginWebhookAdministrationHttpClient {
@@ -132,6 +139,19 @@ describe('PluginWebhookAdministrationScreen', () => {
         expect(screen.getTextContent()).toContain('omittedCount=0');
         expect(screen.getTextContent()).not.toContain('rawBody');
         expect(screen.getTextContent()).not.toContain('providerDeliveryId');
+    });
+
+    it('renders the unavailable state without reading status when the server webhook feature is off', async () => {
+        useFeatureEnabledMock.mockImplementation((featureId) => featureId !== 'plugins.webhooks');
+        const client = createClient();
+        const { PluginWebhookAdministrationScreen } = await import('./PluginWebhookAdministrationScreen');
+        const screen = await renderScreen(<PluginWebhookAdministrationScreen client={client} />);
+
+        expect(useFeatureEnabledMock).toHaveBeenCalledWith('plugins.webhooks');
+        expect(client.readStatus).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('settingsPlugins.webhookAdministration.unavailableTitle');
+        expect(screen.getTextContent()).toContain('settingsPlugins.webhookAdministration.unavailableSubtitle');
+        expect(screen.findAllByTestId('settings.plugins.webhooks.refresh')).toHaveLength(0);
     });
 
     it('replays a dead letter with its displayed revision and refreshes current status', async () => {

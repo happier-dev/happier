@@ -55,6 +55,19 @@ type EnvironmentDescriptor = Readonly<{
     agentExtra?: RuntimeDescriptorAgentExtraDescriptor;
 }>;
 
+type BackendTransportDescriptor = Readonly<{
+    providerId: string;
+    runtimeDescriptorOutputKey: string;
+    legacyModeOutputKey?: string;
+    backendMode: Readonly<{
+        values: readonly string[];
+        aliases?: Readonly<Record<string, string>>;
+        legacyExperimentalValue?: string;
+    }>;
+    runtimeHandleFields: readonly string[];
+    agentExtra?: RuntimeDescriptorAgentExtraDescriptor;
+}>;
+
 type SourceOptionDescriptor = Readonly<{
     key: string;
     labelKey: string;
@@ -1201,16 +1214,147 @@ function createSessionHandoffBehavior(
     };
 }
 
+function readBackendTransportDescriptor(
+    value: unknown,
+    diagnostics: UiProjectionDiagnostic[],
+): BackendTransportDescriptor | null {
+    if (!isRecord(value)) return null;
+    const providerId = readString(value.providerId);
+    const runtimeDescriptorOutputKey = readString(value.runtimeDescriptorOutputKey) ?? 'runtimeDescriptorV1';
+    const legacyModeOutputKey = readString(value.legacyModeOutputKey);
+    const backendMode = isRecord(value.backendMode) ? value.backendMode : null;
+    const backendModeValues = readStringArray(backendMode?.values);
+    const runtimeHandleFields = readStringArray(value.runtimeHandleFields);
+    if (!providerId || backendModeValues.length === 0 || runtimeHandleFields.length === 0) {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR',
+            'payload.backendTransport',
+            'Backend transport descriptors require a provider id, backend-mode values, and runtime-handle fields.',
+        ));
+        return null;
+    }
+
+    const aliases = readStringRecord(backendMode?.aliases);
+    const legacyExperimentalValue = readString(backendMode?.legacyExperimentalValue);
+    const agentExtraConfig = isRecord(value.agentExtra) ? value.agentExtra : null;
+    const agentExtraOwner = readString(agentExtraConfig?.owner);
+    const agentExtraSchemaId = readString(agentExtraConfig?.schemaId);
+    const agentExtraVersion = typeof agentExtraConfig?.v === 'number'
+        && Number.isInteger(agentExtraConfig.v)
+        && agentExtraConfig.v > 0
+        ? agentExtraConfig.v
+        : null;
+    return {
+        providerId,
+        runtimeDescriptorOutputKey,
+        ...(legacyModeOutputKey ? { legacyModeOutputKey } : {}),
+        backendMode: {
+            values: backendModeValues,
+            ...(aliases ? { aliases } : {}),
+            ...(legacyExperimentalValue ? { legacyExperimentalValue } : {}),
+        },
+        runtimeHandleFields,
+        ...(agentExtraOwner && agentExtraSchemaId && agentExtraVersion
+            ? {
+                agentExtra: {
+                    owner: agentExtraOwner,
+                    schemaId: agentExtraSchemaId,
+                    v: agentExtraVersion,
+                    runtimeHandleFields,
+                },
+            }
+            : {}),
+    };
+}
+
+function normalizeBackendTransportMode(
+    value: unknown,
+    descriptor: BackendTransportDescriptor,
+): string | null {
+    const raw = normalizeOptionalString(value);
+    if (!raw) return null;
+    const resolved = descriptor.backendMode.aliases?.[raw] ?? raw;
+    return descriptor.backendMode.values.includes(resolved) ? resolved : null;
+}
+
+/**
+ * The declared half of an Agent's spawn/resume transport. The host owns the
+ * canonical `runtimeDescriptorV1` shape and reads the incoming descriptor
+ * through the protocol-generated canonical reader, so an Agent only declares
+ * its backend-mode vocabulary and which runtime-handle fields travel with it.
+ */
+function createBackendTransportPayloadBehavior(
+    descriptor: BackendTransportDescriptor,
+): NonNullable<AgentUiBehavior['payload']> {
+    return {
+        buildBackendTransportFields: ({ agentId, providerMode, legacyExperimentalMode, runtimeDescriptorV1, providerSessionId }) => {
+            if (agentId !== descriptor.providerId) return {};
+            if (!isSupportedRuntimeDescriptorProviderId(descriptor.providerId)) return {};
+
+            const projected = readSessionMetadataRuntimeDescriptor(
+                { runtimeDescriptorV1 },
+                descriptor.providerId,
+            );
+            const projectedMode = normalizeBackendTransportMode(projected?.runtimeKind, descriptor);
+            const resolvedMode = projectedMode
+                ?? normalizeBackendTransportMode(providerMode, descriptor)
+                ?? (legacyExperimentalMode === true ? descriptor.backendMode.legacyExperimentalValue ?? null : null);
+            if (!resolvedMode) return {};
+
+            const projectedRecord = projected as Readonly<Record<string, unknown>> | null;
+            const agentPayload: Record<string, unknown> = projectedRecord
+                ? { backendMode: projectedMode ?? resolvedMode }
+                : {
+                    backendMode: resolvedMode,
+                    ...(normalizeOptionalString(providerSessionId)
+                        ? { providerSessionId: normalizeOptionalString(providerSessionId) }
+                        : {}),
+                };
+            if (projectedRecord) {
+                for (const field of descriptor.runtimeHandleFields) {
+                    if (field === 'backendMode') continue;
+                    const value = normalizeOptionalString(projectedRecord[field]);
+                    if (value) agentPayload[field] = value;
+                }
+            }
+
+            const runtimeDescriptor = {
+                v: 1,
+                agentId: descriptor.providerId,
+                agent: attachRuntimeDescriptorAgentExtra(agentPayload, descriptor.agentExtra),
+            } satisfies RuntimeDescriptorV1;
+
+            const fields: {
+                runtimeDescriptorV1?: RuntimeDescriptorV1;
+                [key: string]: unknown;
+            } = {};
+            const legacyMode = projectedRecord ? projectedMode : resolvedMode;
+            if (descriptor.legacyModeOutputKey && legacyMode) {
+                fields[descriptor.legacyModeOutputKey] = legacyMode;
+            }
+            fields[descriptor.runtimeDescriptorOutputKey] = runtimeDescriptor;
+            return fields;
+        },
+    };
+}
+
 export function createDescriptorAdapterBehavior(ctx: BehaviorDescriptorContext): AgentUiBehavior {
     const payload = isRecord(ctx.descriptor.payload) ? ctx.descriptor.payload : null;
     const environmentDescriptor = readEnvironmentDescriptor(payload?.environmentVariables, ctx.diagnostics);
+    const backendTransportDescriptor = payload?.backendTransport === undefined
+        ? null
+        : readBackendTransportDescriptor(payload.backendTransport, ctx.diagnostics);
     const externalSessions = createExternalSessionsBehavior(ctx.descriptor);
     const newSession = createNewSessionBehavior(ctx.descriptor, environmentDescriptor);
     const sessionHandoff = createSessionHandoffBehavior(ctx.descriptor, environmentDescriptor);
+    const payloadBehavior: AgentUiBehavior['payload'] = {
+        ...(environmentDescriptor ? createPayloadBehavior(environmentDescriptor) : {}),
+        ...(backendTransportDescriptor ? createBackendTransportPayloadBehavior(backendTransportDescriptor) : {}),
+    };
     return {
         ...(externalSessions ? { externalSessions } : {}),
         ...(newSession ? { newSession } : {}),
         ...(sessionHandoff ? { sessionHandoff } : {}),
-        ...(environmentDescriptor ? { payload: createPayloadBehavior(environmentDescriptor) } : {}),
+        ...(Object.keys(payloadBehavior).length > 0 ? { payload: payloadBehavior } : {}),
     };
 }

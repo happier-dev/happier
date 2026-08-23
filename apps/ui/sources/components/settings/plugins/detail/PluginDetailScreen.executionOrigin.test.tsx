@@ -13,6 +13,18 @@ const fixture = vi.hoisted(() => ({
     snapshots: [] as readonly unknown[],
 }));
 const mutateAccountSettingsMock = vi.hoisted(() => vi.fn());
+const administrationTargetSelectorSpy = vi.hoisted(() => vi.fn());
+/** The plugins.home administration selection: a DIFFERENT fact from the origin. */
+const administrationTargetSelection = vi.hoisted(() => Object.freeze({
+    candidates: [],
+    pickerRows: [],
+    state: { kind: 'online' as const },
+    selectedTarget: { serverIdentityId: 'srv_admin', machineId: 'machine-admin' },
+    canExecute: true,
+    selectTarget: () => {},
+    clearTarget: () => {},
+    resolveExecutionTarget: () => null,
+}));
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 
 const ORIGIN_A = {
@@ -142,6 +154,13 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: (...args: readonly unknown[]) => machineRpcWithServerScopeMock(...args),
 }));
 
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Readonly<Record<string, unknown>>) => {
+        administrationTargetSelectorSpy(props);
+        return React.createElement('MachineAdministrationTargetSelector');
+    },
+}));
+
 vi.mock('./PluginDetailActionsSection', () => ({ PluginDetailActionsSection: 'PluginDetailActionsSection' }));
 vi.mock('./PluginDetailContributionsSection', () => ({ PluginDetailContributionsSection: 'PluginDetailContributionsSection' }));
 vi.mock('./PluginDetailDiagnosticsSection', () => ({ PluginDetailDiagnosticsSection: 'PluginDetailDiagnosticsSection' }));
@@ -170,6 +189,7 @@ vi.mock('../model/usePluginSettingsScreenState', () => ({
         }]]),
         isPluginActionInFlight: () => false,
         isDaemonSettingsTargetCurrent: () => true,
+        administrationTargetSelection,
         pluginProjectionById: {},
         pluginProjectionV2: null,
         readOnlySnapshotNotice: null,
@@ -202,6 +222,7 @@ describe('PluginDetailScreen execution-origin ownership', () => {
         });
         machineRpcWithServerScopeMock.mockReset();
         machineRpcWithServerScopeMock.mockResolvedValue(availableLogResponse());
+        administrationTargetSelectorSpy.mockClear();
     });
 
     afterEach(() => {
@@ -270,5 +291,17 @@ describe('PluginDetailScreen execution-origin ownership', () => {
             machineId: 'machine-b',
             serverId: 'server-profile-b',
         }));
+
+        // Execution origin moved A -> B, but the administration target this
+        // screen's Settings, Secrets and lifecycle operations address is a
+        // SEPARATE preference and must be presented as itself rather than
+        // silently inherited from — or collapsed into — the origin.
+        expect(administrationTargetSelectorSpy).toHaveBeenCalledWith(expect.objectContaining({
+            selection: administrationTargetSelection,
+            testIDPrefix: 'settings.plugins.detail.administration.target',
+        }));
+        expect(administrationTargetSelection.selectedTarget).not.toMatchObject({
+            machineId: ORIGIN_B.materializationRef.machineId,
+        });
     });
 });

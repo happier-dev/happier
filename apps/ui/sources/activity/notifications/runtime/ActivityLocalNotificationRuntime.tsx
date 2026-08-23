@@ -11,7 +11,7 @@ import {
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';
 import { localSettingsParse, type LocalSettings } from '@/sync/domains/settings/localSettings';
-import { isTauriMainWindowActivelyViewed } from '@/desktop/window/isTauriMainWindowActivelyViewed';
+import { isDesktopMainWindowFocused } from '@/desktop/window/desktopMainWindowPresence';
 import { storage, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
@@ -71,7 +71,7 @@ function isSessionActivelyViewedForLocalNotification(sessionId: string): boolean
         return true;
     }
 
-    return isTauriMainWindowActivelyViewed();
+    return isDesktopMainWindowFocused();
 }
 
 function useActivityLocalNotificationLocalSettings(): Partial<LocalSettings> {

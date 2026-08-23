@@ -115,14 +115,7 @@ type PluginReactNativeSurfaceProps = Readonly<{
     crashReportScopeKey?: string;
     /** Daemon-owned disabled fact for that exact binding/epoch. */
     crashStateDisabled?: boolean;
-    /**
-     * Whether the projection carrying `crashStateDisabled` is the daemon's
-     * current truth rather than a retained offline snapshot. Absent means the
-     * host does not track projection currentness for this mount, which is read
-     * as current so an untracking host keeps its existing behavior.
-     */
-    crashStateProjectionCurrent?: boolean;
-    /** The surface reports only its already-durable UI pending occurrence. */
+    /** The surface reports only an occurrence its watchdog actually recorded. */
     reportFailure?: (failure: PluginReactNativePendingFailure) => Promise<ReactNativeCrashReportResult>;
     /** Explicit same-digest recovery remains a daemon operation. */
     resetCrashState?: () => Promise<ReactNativeCrashReportResult>;
@@ -543,18 +536,11 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     const pendingFailures = props.crashStateToken && crashReportScopeKey
         ? watchdog.readPending({ token: props.crashStateToken, scopeKey: crashReportScopeKey })
         : Object.freeze([]);
+    // Containment follows a real recorded failure and nothing else. A store
+    // that cannot be read is not evidence of a crash, so it never blanks a
+    // working mount; the daemon remains the only owner of counts, thresholds,
+    // disablement and reset.
     const pendingQuarantine = pendingFailures.length > 0;
-    // A durable quarantine this UI cannot read or write is not an empty one.
-    // While the local store cannot speak and the daemon projection behind this
-    // binding is a retained offline snapshot rather than current truth, nothing
-    // has cleared the cached artifact, so it stays contained. The daemon
-    // remains the only owner of counts, thresholds, disablement and reset: its
-    // current truth is exactly what releases the mount again.
-    const unreconciledQuarantine = props.crashStateToken !== undefined
-        && crashReportScopeKey !== undefined
-        && watchdog.readDurability() === 'unavailable'
-        && props.crashStateProjectionCurrent === false;
-    const quarantineHeld = pendingQuarantine || unreconciledQuarantine;
     const crashDisabled = props.crashStateDisabled === true || daemonReportedDisabled;
     React.useLayoutEffect(() => {
         // A daemon-issued replacement/reset token is the only event that can
@@ -763,7 +749,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             || !props.load
             || !loadPolicy.canLoad
             || cachedModule !== null
-            || quarantineHeld
+            || pendingQuarantine
             || crashDisabled
         ) {
             return undefined;
@@ -835,7 +821,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         props.module,
         recordDaemonCrashFailure,
         reusesProcessGlobalModule,
-        quarantineHeld,
+        pendingQuarantine,
         crashDisabled,
     ]);
 
@@ -858,11 +844,11 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     ]);
 
     const handleRetry = React.useCallback(() => {
-        if (retrying || quarantineHeld || crashDisabled) {
+        if (retrying || pendingQuarantine || crashDisabled) {
             return;
         }
         retryCurrentMountLocalFailure();
-    }, [crashDisabled, quarantineHeld, retryCurrentMountLocalFailure, retrying]);
+    }, [crashDisabled, pendingQuarantine, retryCurrentMountLocalFailure, retrying]);
 
     const handleCrash = React.useCallback((surfaceId: string, error: Error) => {
         recordDaemonCrashFailure('render_error', error);
@@ -1038,7 +1024,6 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         ...loadPolicy.diagnostics,
         ...loadFailureDiagnostics,
         ...(pendingQuarantine ? ['crash_reconciliation_pending'] : []),
-        ...(unreconciledQuarantine ? ['crash_quarantine_truth_unavailable'] : []),
         ...(crashDisabled ? ['crash_threshold_reached'] : []),
         ...(canonicalRenderContextDiagnostic ? [canonicalRenderContextDiagnostic] : []),
     ]);
@@ -1047,7 +1032,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         && (Boolean(props.load) || isPluginReactNativeSurfaceModule(props.module));
     const shouldOfferRetry = canRetryCurrentArtifact
         && loadFailed
-        && !quarantineHeld
+        && !pendingQuarantine
         && !crashDisabled;
     const shouldOfferCrashReset = crashDisabled
         && props.resetCrashState !== undefined
@@ -1077,7 +1062,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         props.decision.state !== 'load'
         || loadFailed
         || !loadPolicy.canLoad
-        || quarantineHeld
+        || pendingQuarantine
         || crashDisabled
     ) {
         return (

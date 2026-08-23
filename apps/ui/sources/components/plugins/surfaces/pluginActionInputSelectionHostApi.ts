@@ -31,6 +31,7 @@ import {
     type PluginSurfaceHostApiMethodHandler,
     type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
+import type { PluginSurfaceContributedActionDescriptorResolver } from './pluginSurfaceActionDispatch';
 
 /**
  * The controller lifetime consumes the same exact daemon facts as target-scoped
@@ -195,6 +196,13 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
     /** Exact mounted projection used only to resolve Action presentation text. */
     pluginUiProjection?: PluginUiProjectionModel | null;
     targetedContributions?: PluginUiTargetedContributionsV1 | null;
+    /**
+     * The mount's current raw V2 Action resolver. The generic controller needs
+     * it to read an admitted operation's declared execution realm: without it
+     * an unknown target reads as daemon-owned and a client Action's form is
+     * presented before its executable registration has committed.
+     */
+    resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
     host: PluginContributedActionHostFacts;
     isCurrent: () => boolean;
     present?: typeof presentActionInputForm;
@@ -255,6 +263,9 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
                 pluginProjectionById,
                 targetedContributions,
                 pluginUiProjection: selectionFacts.pluginUiProjection,
+                ...(input.resolveContributedAction
+                    ? { resolveContributedAction: input.resolveContributedAction }
+                    : {}),
                 host: {
                     ...input.host,
                     ...(signal ? { signal } : {}),

@@ -283,7 +283,13 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
         integration: ExternalSessionsIntegrationDescriptor,
         status: PluginSessionHookInstallationStatusV1,
     ) => void;
-    startRequest?: () => () => boolean;
+    /**
+     * Marks one integration's preview round trip as the current one for THAT
+     * integration and returns its currentness test. Rows are independently pressable,
+     * so a single shared revision let row B's preview silently finish row A's with no
+     * confirmation, error or result.
+     */
+    startRequest?: (integrationKey: string) => () => boolean;
     isCurrentScope?: () => boolean;
 }>): ExternalSessionsIntegrationOperations {
     const transport = params.transport ?? machineExternalSessionsHookManagementTransport;
@@ -320,7 +326,7 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
                     'external_session_hook_install_preview_unavailable',
                 );
             }
-            const requestIsCurrent = params.startRequest?.() ?? (() => true);
+            const requestIsCurrent = params.startRequest?.(integration.key) ?? (() => true);
             const previewResult =
                 await loadExternalSessionsIntegrationInventoryPage({
                     machineId: integration.machineId,
@@ -458,6 +464,7 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
     const isExecutionTargetCurrentRef = React.useRef(params.isExecutionTargetCurrent);
     isExecutionTargetCurrentRef.current = params.isExecutionTargetCurrent;
     const requestRevisionRef = React.useRef(0);
+    const previewRevisionByIntegrationKeyRef = React.useRef(new Map<string, number>());
     const nextCursorRef = React.useRef<string | null>(null);
     const seenCursorsRef = React.useRef(new Set<string>());
     const nonInstallationCountByAgentStateRef = React.useRef(new Map<string, number>());
@@ -489,11 +496,15 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
             loadMorePromiseRef.current = null;
             setHasMoreInventory(false);
             setLoadingMoreInventory(false);
+            // Only a ROOT inventory request may move the inventory's own status. A
+            // targeted recheck is row-local work: `operations` is gated on an actionable
+            // inventory, so a global `loading` here strips the actions off every
+            // unrelated row for the duration of one row's round trip.
+            setInventoryState((current) => ({
+                status: 'loading',
+                diagnosticCodes: current.diagnosticCodes,
+            }));
         }
-        setInventoryState((current) => ({
-            status: 'loading',
-            diagnosticCodes: current.diagnosticCodes,
-        }));
         const agent = integration
             ? {
                 agent: integration.agent,
@@ -521,11 +532,19 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
         ) return;
         const refreshed = result.integrations;
         if (result.status === 'error' && refreshed.length === 0) {
-            setInventoryState({
-                status: 'error',
-                diagnosticCodes: result.diagnosticCodes,
-            });
-            return;
+            if (!integration) {
+                setInventoryState({
+                    status: 'error',
+                    diagnosticCodes: result.diagnosticCodes,
+                });
+                return;
+            }
+            // A row-local recheck that fails is that row's failure. Throwing hands it to
+            // the caller's existing per-row failure path instead of retiring the whole
+            // inventory behind a global retry.
+            throw new Error(
+                result.diagnosticCodes[0] ?? 'external_session_hook_status_unavailable',
+            );
         }
         if (!integration) {
             nextCursorRef.current = result.nextCursor;
@@ -548,18 +567,8 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
             const next = [...retained, ...refreshed];
             return next;
         });
-        setInventoryState((current) => (
-            intent === 'installation_recheck'
-            && current.diagnosticCodes.length > 0
-                ? {
-                    status: 'partial',
-                    diagnosticCodes: current.diagnosticCodes,
-                }
-                : {
-                    status: result.status,
-                    diagnosticCodes: result.diagnosticCodes,
-                }
-        ));
+        // The refreshed row is merged above; the inventory's own status describes the
+        // root listing and is not restated from one row's result.
     }, [enabled, params.machineId, params.serverId, params.transport, targetScopeSignature]);
 
     const loadMoreInventory = React.useCallback((): Promise<void> => {
@@ -706,14 +715,19 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
         ));
     }, []);
 
-    const startRequest = React.useCallback(() => {
-        const requestRevision = ++requestRevisionRef.current;
-        return () => requestRevisionRef.current === requestRevision;
+    const startRequest = React.useCallback((integrationKey: string) => {
+        const revisions = previewRevisionByIntegrationKeyRef.current;
+        const requestRevision = (revisions.get(integrationKey) ?? 0) + 1;
+        revisions.set(integrationKey, requestRevision);
+        // Scope changes stay fenced by `isCurrentScope`; this only decides which of one
+        // integration's own overlapping preview round trips may still act.
+        return () => previewRevisionByIntegrationKeyRef.current.get(integrationKey) === requestRevision;
     }, []);
 
     React.useEffect(() => {
         if (!enabled || !params.machineId || isExecutionTargetCurrentRef.current?.() === false) {
             requestRevisionRef.current += 1;
+            previewRevisionByIntegrationKeyRef.current = new Map();
             nextCursorRef.current = null;
             seenCursorsRef.current = new Set();
             nonInstallationCountByAgentStateRef.current = new Map();

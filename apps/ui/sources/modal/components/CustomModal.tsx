@@ -1,6 +1,10 @@
 import React from 'react';
 import { BaseModal } from './BaseModal';
-import { CustomModalConfig, type CustomModalChromeConfig } from '../types';
+import {
+    CustomModalConfig,
+    type CustomModalChromeConfig,
+    type CustomModalDismissReason,
+} from '../types';
 import { ModalCardFrame } from './card/ModalCardFrame';
 
 interface CustomModalProps {
@@ -9,6 +13,13 @@ interface CustomModalProps {
     showBackdrop?: boolean;
     visible: boolean;
     zIndexBase?: number;
+}
+
+function isPromiseLikeDismissDecision(value: unknown): value is PromiseLike<boolean | void> {
+    return typeof value === 'object'
+        && value !== null
+        && 'then' in value
+        && typeof value.then === 'function';
 }
 
 function areViewportMarginsEqual(a: unknown, b: unknown): boolean {
@@ -107,31 +118,74 @@ function mergeChromeConfig(
 export function CustomModal({ config, onClose, showBackdrop = true, visible, zIndexBase }: CustomModalProps) {
     const Component = config.component;
     const dismissible = config.dismissible !== false;
+    const dismissalPendingRef = React.useRef(false);
     const [chromeOverride, setChromeOverride] = React.useState<CustomModalChromeConfig | null | undefined>(undefined);
     const effectiveChrome = chromeOverride === undefined ? config.chrome : chromeOverride;
     const chrome = effectiveChrome?.kind === 'card' ? effectiveChrome : null;
     const accessibilityLabel = config.accessibilityLabel
         ?? (typeof chrome?.title === 'string' ? chrome.title : undefined);
 
+    const completeDismiss = React.useCallback((notifyRequestClose: boolean) => {
+        if (notifyRequestClose) {
+            try {
+                config.onRequestClose?.();
+            } catch {
+                // A legacy dismissal observer cannot prevent closure.
+            }
+        }
+        onClose();
+    }, [config.onRequestClose, onClose]);
+
+    const requestDismiss = React.useCallback((reason: CustomModalDismissReason, notifyRequestClose: boolean) => {
+        const dismissalGuard = config.onDismissRequest;
+        if (!dismissalGuard) {
+            completeDismiss(notifyRequestClose);
+            return;
+        }
+        if (dismissalPendingRef.current) {
+            return;
+        }
+
+        let decision: boolean | void | PromiseLike<boolean | void>;
+        try {
+            decision = dismissalGuard(reason);
+        } catch {
+            // A guard error leaves the modal open.
+            return;
+        }
+
+        if (!isPromiseLikeDismissDecision(decision)) {
+            if (decision !== false) {
+                completeDismiss(notifyRequestClose);
+            }
+            return;
+        }
+
+        dismissalPendingRef.current = true;
+        void Promise.resolve(decision)
+            .then((allowed) => {
+                if (allowed !== false) {
+                    completeDismiss(notifyRequestClose);
+                }
+            })
+            .catch(() => {
+                // A rejected guard leaves the modal open without an unhandled rejection.
+            })
+            .finally(() => {
+                dismissalPendingRef.current = false;
+            });
+    }, [completeDismiss, config.onDismissRequest]);
+
     const handleSharedDismiss = React.useCallback(() => {
         if (!dismissible) {
             return;
         }
-        try {
-            config.onRequestClose?.();
-        } catch {
-            // ignore
-        }
-        onClose();
-    }, [config.onRequestClose, dismissible, onClose]);
+        requestDismiss('shared', true);
+    }, [dismissible, requestDismiss]);
 
     const handleComponentClose = React.useCallback(() => {
-        if (dismissible) {
-            handleSharedDismiss();
-            return;
-        }
-        onClose();
-    }, [dismissible, handleSharedDismiss, onClose]);
+        requestDismiss('action', dismissible);
+    }, [dismissible, requestDismiss]);
 
     const setChrome = React.useCallback((nextChrome: CustomModalChromeConfig | null) => {
         setChromeOverride((prevOverride) => {

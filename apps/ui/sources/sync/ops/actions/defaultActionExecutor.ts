@@ -5,7 +5,6 @@ import {
   createActionExecutor,
   isActionEnabledByActionsSettings,
   isApprovalRequiredByActionsSettings,
-  readSessionProviderBindingMetadataV1,
   SessionModelTransitionRequestV1Schema,
   SessionModelTransitionResultV1Schema,
   type ActionExecutorDeps,
@@ -17,7 +16,10 @@ import {
   type SessionSpawnNewInputV2,
   type SessionSpawnNewResultV1,
 } from '@happier-dev/protocol';
-import { resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents';
+import {
+    resolveAmbientProviderConnectionForModelIntent,
+    resolveModelSelectionIntentFromSessionMetadata,
+} from '@happier-dev/agents';
 import {
   createModelIntentMetadataCasCandidate,
   runModelIntentAtAuthoritativeDisposition,
@@ -71,7 +73,7 @@ import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/
 import { completeSessionForkNavigation } from '@/sync/domains/sessionFork/completeSessionForkNavigation';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
+import { resolveSessionStorageAuthority } from '@/sync/domains/session/sessionStorageKind';
 import {
   isRequestedSessionModeSupported,
   isSessionModeActionAvailable,
@@ -85,8 +87,19 @@ import {
 } from './defaultRuntimeActionExecutor';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/settings/accountPluginDataEraseAction';
+import { signOutEverywhere } from '@/sync/api/account/signOutEverywhere';
+import {
+    createCurrentAccountApiToken,
+    listCurrentAccountApiTokens,
+    revokeAllCurrentAccountApiTokens,
+    revokeCurrentAccountApiToken,
+} from '@/sync/api/account/apiTokens';
 
   type OpenSessionOptions = Readonly<{ serverId?: string | null }>;
+
+function projectSessionInteractionRpcResult(result: unknown): unknown {
+  return result === undefined || result === null ? { ok: true } : result;
+}
 
   export function createDefaultActionExecutor(opts?: Readonly<{
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
@@ -150,6 +163,26 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
     ...createUiExecutionRunActionDeps(),
     runtimeActionExecute: createDefaultRuntimeActionExecutor(opts?.runtimeActions),
     accountPluginDataEraseAction: async ({ input, signal }) => await executeAccountPluginDataEraseAction(
+      input,
+      signal ? { signal } : undefined,
+    ),
+    accountSessionsSignOutEverywhereAction: async ({ input, signal }) => await signOutEverywhere(
+      input,
+      signal ? { signal } : undefined,
+    ),
+    accountApiTokensCreateAction: async ({ input, signal }) => await createCurrentAccountApiToken(
+      input,
+      signal ? { signal } : undefined,
+    ),
+    accountApiTokensListAction: async ({ input, signal }) => await listCurrentAccountApiTokens(
+      input,
+      signal ? { signal } : undefined,
+    ),
+    accountApiTokensRevokeAction: async ({ input, signal }) => await revokeCurrentAccountApiToken(
+      input,
+      signal ? { signal } : undefined,
+    ),
+    accountApiTokensRevokeAllAction: async ({ input, signal }) => await revokeAllCurrentAccountApiTokens(
       input,
       signal ? { signal } : undefined,
     ),
@@ -308,7 +341,19 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
       const session = stateAny?.sessions?.[sid] ?? null;
       const metadata = session ? readSessionOwnerMetadataView(session) : null;
       const sourceMachineId = resolveSessionMachineId(sid, metadata);
-      const sessionStorageMode = getSessionStorageKind(session);
+      // Which storage the target imports into is an EFFECT, not a rendering, so
+      // it is proven from the owner view rather than projected leniently: an
+      // owner view this device has not received, or a link it cannot resolve,
+      // is not evidence that the transcript is hosted with us.
+      const storageAuthority = resolveSessionStorageAuthority(session);
+      if (!storageAuthority.ok) {
+        return {
+          ok: false,
+          errorCode: storageAuthority.errorCode,
+          errorMessage: storageAuthority.errorCode,
+        };
+      }
+      const sessionStorageMode = storageAuthority.storageKind;
 
       return await completeSessionHandoffOp({
         sessionId: sid,
@@ -402,12 +447,12 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
       const request = decision === 'allow'
         ? { id: reqId, approved: true }
         : { id: reqId, approved: false };
-      return await sessionRpcWithServerScope({
+      return projectSessionInteractionRpcResult(await sessionRpcWithServerScope({
         sessionId,
         serverId,
         method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: request,
-      });
+      }));
     },
     sessionPermissionRemoteAction: async (args) => {
       const rejectUnavailable = (
@@ -450,7 +495,7 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', sessionId };
       }
       const approved = decision ? decision === 'approve' : true;
-      return await sessionRpcWithServerScope({
+      return projectSessionInteractionRpcResult(await sessionRpcWithServerScope({
         sessionId,
         serverId,
         method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
@@ -461,7 +506,7 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
           ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
           ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
         },
-      });
+      }));
     },
     sessionModeSet: async ({ sessionId, modeId }) => {
       const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
@@ -506,16 +551,25 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
           ownerMetadata,
           agentTargetKey,
         );
+        let resolvedProviderConnectionId: string | null;
+        if (hasExplicitProviderConnectionId) {
+          resolvedProviderConnectionId = providerConnectionId ?? null;
+        } else {
+          const ambient = resolveAmbientProviderConnectionForModelIntent({
+            metadata: ownerMetadata,
+            agentTargetKey,
+            sessionActive: candidateSession.active === true,
+          });
+          // Unreadable Session Provider state is not a native selection. Refuse
+          // before the transition RPC or the inactive metadata CAS runs.
+          if (ambient.status === 'unreadable') return { refusal: ambient.code } as const;
+          resolvedProviderConnectionId = ambient.providerConnectionId;
+        }
         const parsed = SessionModelTransitionRequestV1Schema.safeParse({
           v: 1,
           selection: {
             agentTargetKey,
-            providerConnectionId: hasExplicitProviderConnectionId
-              ? providerConnectionId ?? null
-              : candidateSession.active === true
-                ? readSessionProviderBindingMetadataV1(ownerMetadata)
-                  ?.connectionId ?? null
-                : currentIntent?.selection?.providerConnectionId ?? null,
+            providerConnectionId: resolvedProviderConnectionId,
             modelId: normalizedModelId,
           },
         });
@@ -528,6 +582,13 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
           : null;
       };
       const initialRequest = resolveRequest(session);
+      if (initialRequest && 'refusal' in initialRequest) {
+        return {
+          ok: false,
+          errorCode: initialRequest.refusal,
+          error: initialRequest.refusal,
+        };
+      }
       if (!initialRequest) {
         return {
           ok: false,
@@ -651,6 +712,13 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
             };
           }
           const currentRequest = resolveRequest(currentSession);
+          if (currentRequest && 'refusal' in currentRequest) {
+            return {
+              ok: false,
+              errorCode: currentRequest.refusal,
+              error: currentRequest.refusal,
+            };
+          }
           if (!currentRequest) {
             return {
               ok: false,
@@ -847,6 +915,7 @@ import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/sett
   const executor = createActionExecutor(deps);
 
   return {
+    prepare: async (actionId, input, context) => await executor.prepare(actionId, input, context),
     execute: async (actionId, input, context) => await executor.execute(actionId, input, context),
   };
 }

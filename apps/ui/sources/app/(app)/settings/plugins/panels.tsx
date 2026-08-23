@@ -1,4 +1,5 @@
 import { AppScopeRightSidebar } from '@/components/appShell/rightSidebar/AppScopeRightSidebar';
+import { APP_RIGHT_SIDEBAR_PANE_SCOPE_ID } from '@/components/appShell/rightSidebar/appScopeRightSidebarNavigation';
 import { useLocalSearchParams } from 'expo-router';
 
 export default function PluginAppPanelsSettingsRoute() {
@@ -10,7 +11,7 @@ export default function PluginAppPanelsSettingsRoute() {
         : undefined;
     return (
         <AppScopeRightSidebar
-            scopeId="settings:plugins:panels"
+            scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
             requestedDestination={requestedDestination}
             testID="settings.plugins.appPanels.host"
         />

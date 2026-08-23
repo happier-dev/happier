@@ -131,10 +131,10 @@ function persistentScopeIsCurrent(scope: PluginHostedWebArtifactLeasePersistentS
 }
 
 function readPersistentFile(record: PluginUiPersistentArtifactRecord, relativePath: string): Uint8Array | null {
-    const file = record.files?.find((candidate) => candidate.relativePath === relativePath);
-    if (file) return new Uint8Array(file.bytes);
-    if (record.entryRelativePath === relativePath) return new Uint8Array(record.bytes);
-    return null;
+    // The record always carries the exact declared file graph, so its files are
+    // the only lookup; there is no entry-only record to fall back to.
+    const file = record.files.find((candidate) => candidate.relativePath === relativePath);
+    return file ? new Uint8Array(file.bytes) : null;
 }
 
 function createPersistentSource(input: Readonly<{
@@ -482,21 +482,18 @@ export async function acquirePluginHostedWebArtifactLease(
         return Object.freeze({ kind: 'unavailable', code: 'artifact_graph_mismatch' });
     }
 
-    const requiresExactDaemonCurrentness = acquired.lease.sourceKind === 'daemon' && input.daemon !== undefined;
+    // Daemon provenance gates ACQUISITION only: `createDaemonSource` proves the
+    // exact origin before every byte it hands over. Once those bytes are copied
+    // and integrity-verified into host custody, the Account's current Artifact
+    // admission (owned by the generic lease) plus Account cache custody are the
+    // authorities. A daemon blip must not blank verified content the user is
+    // already looking at.
     const requiresPersistentCurrentness = input.persistent !== undefined;
-    const lease = requiresExactDaemonCurrentness || requiresPersistentCurrentness
+    const lease = requiresPersistentCurrentness
         ? wrapLeaseCurrentness({
             lease: acquired.lease,
             reader: input.reader,
-            isAdditionalCurrent: () => (
-                (!requiresPersistentCurrentness || persistentScopeIsCurrent(input.persistent))
-                && (!requiresExactDaemonCurrentness || exactDaemonOriginIsCurrent({
-                    reader: input.reader,
-                    origin: input.daemon!.origin,
-                    artifact: acquired.lease.artifact,
-                    identity: input.cacheIdentity,
-                }))
-            ),
+            isAdditionalCurrent: () => persistentScopeIsCurrent(input.persistent),
         })
         : acquired.lease;
     if (!lease.isCurrent()) {

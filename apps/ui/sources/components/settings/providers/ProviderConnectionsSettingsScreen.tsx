@@ -19,21 +19,19 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Switch } from '@/components/ui/forms/Switch';
-import { ProviderMachineSelector } from '@/components/settings/providers/ProviderMachineSelector';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import {
     presentProviderConnection,
     PROVIDER_CONNECTION_STATUS_KEY,
 } from '@/providers/connection/presentation';
-import { listProviderSettingsTargetMachines, resolveProviderSettingsTargetMachine } from '@/providers/hooks/targetMachine';
+import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
-import { useAllMachines, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -57,21 +55,8 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
     const { theme } = useUnistyles();
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
     const localDiscoveryEnabled = useFeatureEnabled('providers.localDiscovery');
-    const machines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    const activeServer = useActiveServerSnapshot();
-    const serverId = typeof activeServer.serverId === 'string' ? activeServer.serverId : null;
-    const [preferredMachineId, setPreferredMachineId] = React.useState<string | null>(null);
-    const eligibleMachineIds = React.useMemo(() => new Set(listProviderSettingsTargetMachines({
-        serverId, machines, machineListByServerId,
-    }).map((machine) => machine.id)), [machineListByServerId, machines, serverId]);
-    const targetMachines = React.useMemo(
-        () => machines.filter((machine) => eligibleMachineIds.has(machine.id)),
-        [eligibleMachineIds, machines],
-    );
-    const machineId = React.useMemo(() => resolveProviderSettingsTargetMachine({
-        serverId, preferredMachineId, machines, machineListByServerId,
-    }), [machineListByServerId, machines, preferredMachineId, serverId]);
+    const providerTarget = useProviderSettingsTarget();
+    const { machineId, resolveCurrentTarget, serverId } = providerTarget;
     const { data, error, loading, refresh } = useProviderConnections({
         enabled, machineId, serverId,
     });
@@ -86,7 +71,7 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
     const navigateWithFocusReturn = useNavigationFocusReturn({
         ready: !enabled || (!loading && (data !== null || error !== null || machineId === null)),
     });
-    const mutation = useProviderConnectionMutation({ serverId, refresh });
+    const mutation = useProviderConnectionMutation({ resolveTarget: resolveCurrentTarget, refresh });
     const [searchQuery, setSearchQuery] = React.useState('');
     const [discoverySelectionError, setDiscoverySelectionError] = React.useState<ProviderErrorV1 | null>(null);
     const [optimisticEnabledByConnectionId, setOptimisticEnabledByConnectionId] = React.useState<Readonly<Record<string, boolean>>>({});
@@ -245,11 +230,10 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
     return (
         <ItemList testID="settings-providers-screen" style={{ paddingTop: 0 }}>
             {showSearch ? <SearchHeader testID="settings-providers-search" value={searchQuery} onChangeText={setSearchQuery} placeholder={t('settingsProviders.searchPlaceholder')} /> : null}
-            {machineId && targetMachines.length > 1 ? (
-                <ItemGroup title={t('settingsProviders.detail.targetMachine')}>
-                    <ProviderMachineSelector machines={targetMachines} selectedId={machineId} onSelect={setPreferredMachineId} />
-                </ItemGroup>
-            ) : null}
+            <MachineAdministrationTargetSelector
+                selection={providerTarget.selection}
+                testIDPrefix="settings.providers.administration.target"
+            />
             {!machineId ? (
                 <ItemGroup title={t('settingsProviders.title')}>
                     <Item mode="info" title={t('settingsProviders.noMachine')} subtitle={t('settingsProviders.noMachineDescription')} />

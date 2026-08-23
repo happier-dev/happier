@@ -1,12 +1,24 @@
 import * as React from 'react';
-import { Animated, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View, type LayoutChangeEvent } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import {
+    INSTRUMENT_DURATIONS,
+    staggerDelayForIndex,
+    useMotionPreferences,
+} from '@/components/instrument';
 import { Item } from '@/components/ui/lists/Item';
+import { StatusDot } from '@/components/ui/status/StatusDot';
+import { Typography } from '@/constants/Typography';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
+
+const DOT_SIZE = 8;
+const HALO_SIZE = 16;
+/** How far a row travels on entrance. Small enough to read as settling, not as a slide-in. */
+const ENTRANCE_TRAVEL_PX = 6;
 
 function detailForRow(row: BrowserLaunchpadRow, openDisabled: boolean): string {
     if (openDisabled && !row.disabledReason) {
@@ -29,78 +41,55 @@ function detailForRow(row: BrowserLaunchpadRow, openDisabled: boolean): string {
     }
 }
 
+/**
+ * A launcher row's subtitle is an ADDRESS for the two sources that carry one — a `host:port` for a
+ * detected local service, a URL for a recent. Setting those in mono is what turns the section from
+ * a list of names into a board you can scan by port; prose subtitles (plugin descriptions) stay in
+ * the row's own face.
+ */
+function subtitleIsAddress(row: BrowserLaunchpadRow): boolean {
+    return row.sourceKind === 'localService' || row.sourceKind === 'recent';
+}
+
 const stylesheet = StyleSheet.create((theme) => ({
-    dotWrap: {
-        width: 14,
-        height: 14,
+    halo: {
+        width: HALO_SIZE,
+        height: HALO_SIZE,
+        borderRadius: HALO_SIZE / 2,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    halo: {
-        position: 'absolute',
-        width: 14,
-        height: 14,
-        borderRadius: 7,
-        backgroundColor: theme.colors.status.connected,
+    haloLive: {
+        // The same soft success tint the services pane already computes for a live row, so the two
+        // surfaces read as one status vocabulary rather than two greens.
+        backgroundColor: theme.colors.state.success.background,
     },
-    dotLive: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: theme.colors.status.connected,
-    },
-    dotStale: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: theme.colors.text.tertiary,
+    monoSubtitle: {
+        ...Typography.mono(),
     },
 }));
 
 /**
- * Live/stale status dot for a launcher row. Running-section rows are live and pulse a soft halo;
- * everything else (recents, managed-but-not-running, unavailable/stale) shows a dim static dot.
- * Honors reduced-motion: the halo holds steady instead of animating.
+ * Live/stale status dot for a launcher row.
+ *
+ * The pulse itself belongs to the canonical {@link StatusDot} (which owns the web stepped-CSS vs
+ * native `Animated.loop` split, reduced motion, the hidden/backgrounded pause, and the
+ * "an unnamed colour is decoration" accessibility rule). This wrapper only supplies the row's
+ * liveness tone and the halo.
  */
 function BrowserTargetStatusDot(props: Readonly<{ live: boolean; testID: string }>): React.ReactElement {
-    const reducedMotion = useReducedMotionPreference();
-    const pulse = React.useRef(new Animated.Value(0)).current;
-
-    React.useEffect(() => {
-        if (!props.live || reducedMotion) {
-            pulse.setValue(0);
-            return;
-        }
-        const animation = Animated.loop(
-            Animated.sequence([
-                Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-                Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
-            ]),
-        );
-        animation.start();
-        return () => animation.stop();
-    }, [props.live, pulse, reducedMotion]);
-
-    if (!props.live) {
-        return (
-            <View style={stylesheet.dotWrap}>
-                <View testID={`${props.testID}-dot-stale`} style={stylesheet.dotStale} />
-            </View>
-        );
-    }
-
+    const { theme } = useUnistyles();
     return (
-        <View style={stylesheet.dotWrap}>
-            <Animated.View
-                style={[
-                    stylesheet.halo,
-                    {
-                        opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.28, 0] }),
-                        transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
-                    },
-                ]}
+        <View style={[stylesheet.halo, props.live ? stylesheet.haloLive : null]}>
+            <StatusDot
+                testID={props.live ? `${props.testID}-dot-live` : `${props.testID}-dot-stale`}
+                color={props.live ? theme.colors.state.success.foreground : theme.colors.text.tertiary}
+                size={DOT_SIZE}
+                isPulsing={props.live}
+                accessibilityLabel={props.live
+                    ? t('browserLaunchpad.status.ready')
+                    : t('browserLaunchpad.status.recent')}
             />
-            <View testID={`${props.testID}-dot-live`} style={stylesheet.dotLive} />
         </View>
     );
 }
@@ -109,28 +98,65 @@ function BrowserTargetStatusDot(props: Readonly<{ live: boolean; testID: string 
 // does not re-render the card on every preview poll — the launchpad stops flickering.
 export const BrowserTargetCard = React.memo(function BrowserTargetCard(props: Readonly<{
     row: BrowserLaunchpadRow;
-    onOpenTarget?: (row: BrowserLaunchpadRow) => void;
+    onOpenTarget?: (row: BrowserLaunchpadRow, originX: number | null) => void;
     openDisabled?: boolean;
+    /** Position within its section; drives the staggered entrance. */
+    entranceIndex?: number;
+    /** Injected by `ItemGroup` when it clones its rows. Forwarded so grouped rows keep dividers. */
+    showDivider?: boolean;
     testID: string;
 }>): React.ReactElement {
+    const motion = useMotionPreferences();
     const disabled = Boolean(props.openDisabled || props.row.disabledReason || !props.row.target);
     const live = props.row.section === 'running' && !disabled;
+
+    // Entrance plays once per mount. `staggerDelayForIndex` is the kit's shared step and cap, so a
+    // long section stops waiting rather than accumulating an unbounded delay.
+    const entrance = useSharedValue(0);
+    React.useEffect(() => {
+        const delay = staggerDelayForIndex(props.entranceIndex ?? 0);
+        if (motion.entrance.kind === 'crossfade') {
+            entrance.value = withDelay(delay, withTiming(1, { duration: INSTRUMENT_DURATIONS.crossfadeMinimal }));
+            return;
+        }
+        entrance.value = withDelay(delay, withSpring(1, motion.springs.standard));
+        // Entrance is a mount-time contract; re-running it on a preference change would replay it
+        // under the user's cursor.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const entranceStyle = useAnimatedStyle(() => ({
+        opacity: entrance.value,
+        transform: [{ translateY: (1 - entrance.value) * ENTRANCE_TRAVEL_PX }],
+    }));
+
+    // The row's horizontal centre, handed to the shell so the load sweep can start where the user
+    // actually pressed instead of at the left edge of the frame.
+    const originXRef = React.useRef<number | null>(null);
+    const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { x, width } = event.nativeEvent.layout;
+        originXRef.current = x + (width / 2);
+    }, []);
+
     return (
-        <Item
-            testID={props.testID}
-            title={props.row.title}
-            subtitle={props.row.subtitle}
-            detail={detailForRow(props.row, props.openDisabled === true)}
-            detailTestID={disabled ? `${props.testID}-disabled` : `${props.testID}-available`}
-            leftElement={<BrowserTargetStatusDot live={live} testID={props.testID} />}
-            disabled={disabled}
-            mode="interactive"
-            showChevron={!disabled}
-            onPress={() => {
-                if (!disabled) {
-                    props.onOpenTarget?.(props.row);
-                }
-            }}
-        />
+        <Animated.View style={entranceStyle} onLayout={handleLayout}>
+            <Item
+                testID={props.testID}
+                title={props.row.title}
+                subtitle={props.row.subtitle}
+                subtitleStyle={subtitleIsAddress(props.row) ? stylesheet.monoSubtitle : undefined}
+                detail={detailForRow(props.row, props.openDisabled === true)}
+                detailTestID={disabled ? `${props.testID}-disabled` : `${props.testID}-available`}
+                leftElement={<BrowserTargetStatusDot live={live} testID={props.testID} />}
+                disabled={disabled}
+                mode="interactive"
+                showChevron={!disabled}
+                showDivider={props.showDivider}
+                onPress={() => {
+                    if (!disabled) {
+                        props.onOpenTarget?.(props.row, originXRef.current);
+                    }
+                }}
+            />
+        </Animated.View>
     );
 });

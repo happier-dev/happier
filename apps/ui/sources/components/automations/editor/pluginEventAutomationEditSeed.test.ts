@@ -24,6 +24,9 @@ function isAvailablePluginEventDefinition(
 
 function eventDefinition(params: Readonly<{
     envelopeSourceSelectorId?: string;
+    observation?:
+        | Readonly<{ kind: 'checkpointedPull' }>
+        | Readonly<{ kind: 'durablePush'; webhookEndpointId: string; webhookRoutingSourceInstanceId?: string | null }>;
     mentions?: readonly Readonly<{ kind: string; ref: string; token: string; label?: string }>[];
     filter?: { v: 1; all: Array<{ op: 'eq'; field: string; value: string }> } | null;
     target?:
@@ -66,6 +69,7 @@ function eventDefinition(params: Readonly<{
             },
         },
     };
+    const observation = params.observation ?? { kind: 'checkpointedPull' as const };
     const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111');
     const envelopeSourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
         params.envelopeSourceSelectorId ?? sourceSelectorId,
@@ -80,15 +84,21 @@ function eventDefinition(params: Readonly<{
             eventRef: { pluginId: 'acme.github', localId: 'repository-updated' },
             sourceSelectorId,
             sourceContractVersion: 3,
-            observation: {
-                kind: 'checkpointedPull',
-                watcher: {
-                    machineId: 'watcher-machine',
-                    machineInstallationId: 'watcher-installation',
-                    pluginId: 'acme.github',
-                    materializationId: 'github-materialization',
+            observation: observation.kind === 'durablePush'
+                ? {
+                    kind: 'durablePush',
+                    webhookEndpointId: observation.webhookEndpointId,
+                    observationStartsAt: 1_700_000_000_000,
+                }
+                : {
+                    kind: 'checkpointedPull',
+                    watcher: {
+                        machineId: 'watcher-machine',
+                        machineInstallationId: 'watcher-installation',
+                        pluginId: 'acme.github',
+                        materializationId: 'github-materialization',
+                    },
                 },
-            },
         },
         targetType: target.kind,
         existingSessionId: target.kind === 'existingSession' ? target.sessionId : null,
@@ -111,6 +121,13 @@ function eventDefinition(params: Readonly<{
             definition: {
                 v: 1,
                 sourceInstanceId: 'repository:42',
+                ...(observation.kind === 'durablePush'
+                    && observation.webhookRoutingSourceInstanceId !== null
+                    ? {
+                        webhookRoutingSourceInstanceId:
+                            observation.webhookRoutingSourceInstanceId ?? 'github:installation:2200',
+                    }
+                    : {}),
                 sourceConfig: { repository: 'acme/widgets' },
                 displayLabel: 'acme/widgets',
                 filter: params.filter === undefined
@@ -182,10 +199,13 @@ describe('readPluginEventAutomationEditSeed', () => {
                 sourceConfig: { repository: 'acme/widgets' },
                 displayLabel: 'acme/widgets',
             },
-            watcherMaterializationRef: {
-                machineId: 'watcher-machine',
-                pluginId: 'acme.github',
-                materializationId: 'github-materialization',
+            observation: {
+                kind: 'checkpointedPull',
+                watcherMaterializationRef: {
+                    machineId: 'watcher-machine',
+                    pluginId: 'acme.github',
+                    materializationId: 'github-materialization',
+                },
             },
             filter: { v: 1, all: [{ op: 'eq', field: '/action', value: 'opened' }] },
             maximumObservationAgeMs: 60_000,
@@ -245,6 +265,72 @@ describe('readPluginEventAutomationEditSeed', () => {
 
         expect(seed?.mentions).toEqual([sessionMention]);
         expect(readPluginEventAutomationEditSeed(eventDefinition())?.mentions).toEqual([]);
+    });
+
+    it('hydrates a durable-push definition so an endpoint-backed Automation keeps ordinary editing', () => {
+        const seed = readPluginEventAutomationEditSeed(eventDefinition({
+            observation: {
+                kind: 'durablePush',
+                webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ',
+                webhookRoutingSourceInstanceId: 'github:installation:2200',
+            },
+        }));
+
+        expect(seed?.observation).toEqual({
+            kind: 'durablePush',
+            webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ',
+            webhookRoutingSourceInstanceId: 'github:installation:2200',
+        });
+        expect(seed?.prompt).toBe('Review {{input}}');
+        expect(seed?.target).toMatchObject({ kind: 'newSession' });
+    });
+
+    it('fails closed when a durable-push definition retains no endpoint routing source instance', () => {
+        expect(readPluginEventAutomationEditSeed(eventDefinition({
+            observation: {
+                kind: 'durablePush',
+                webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ',
+                webhookRoutingSourceInstanceId: null,
+            },
+        }))).toBeNull();
+    });
+
+    it('fails closed when a checkpointed-pull definition still retains push routing state', () => {
+        const pushRouted = eventDefinition({
+            observation: {
+                kind: 'durablePush',
+                webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAQ',
+            },
+        });
+        const contradictory = {
+            ...pushRouted,
+            detail: {
+                ...pushRouted.detail,
+                value: {
+                    ...pushRouted.detail.value,
+                    trigger: {
+                        ...pushRouted.detail.value.trigger,
+                        observation: {
+                            kind: 'checkpointedPull' as const,
+                            watcher: {
+                                machineId: 'watcher-machine',
+                                machineInstallationId: 'watcher-installation',
+                                pluginId: 'acme.github',
+                                materializationId: 'github-materialization',
+                            },
+                        },
+                    },
+                },
+            },
+        } as AutomationDefinition;
+
+        expect(readPluginEventAutomationEditSeed(contradictory)).toBeNull();
+    });
+
+    it('fails closed when a durable-push definition carries a non-canonical endpoint identity', () => {
+        expect(readPluginEventAutomationEditSeed(eventDefinition({
+            observation: { kind: 'durablePush', webhookEndpointId: 'not-an-endpoint-id' },
+        }))).toBeNull();
     });
 
     it('fails closed when the private envelope is bound to a different source selector', () => {

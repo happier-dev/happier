@@ -62,13 +62,23 @@ describe('resolveMachineAdministrationTargetState', () => {
         expect(reordered).toEqual(first);
     });
 
-    it('selects the sole portable candidate without treating array position as authority', () => {
+    it('selects the sole portable candidate by default without treating array position as authority', () => {
         const only = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a' });
 
         expect(resolveMachineAdministrationTargetState({
             storedTarget: null,
             candidates: [only],
         })).toEqual({ kind: 'online', target: only.target, machine: only });
+    });
+
+    it('leaves a sole candidate unselected when its consumer requires an explicit choice', () => {
+        const only = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a' });
+
+        expect(resolveMachineAdministrationTargetState({
+            storedTarget: null,
+            candidates: [only],
+            allowSoleCandidate: false,
+        })).toEqual({ kind: 'unselected', candidates: [only] });
     });
 
     it('does not initialize an unavailable sole candidate as an executable target', () => {

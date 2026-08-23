@@ -1,3 +1,5 @@
+import { browserViewKey } from '@happier-dev/protocol';
+
 import type { BrowserRecordingAttachAdapter } from './runtimeAttachExecutor';
 
 type BrowserRecordingAttachRegistration = Readonly<{
@@ -6,7 +8,7 @@ type BrowserRecordingAttachRegistration = Readonly<{
 }>;
 
 /**
- * UX-7: keyed by `${browserSessionId}:${viewId}` so each live view owns its own recording-attach
+ * UX-7: keyed by the canonical `browserViewKey` so each live view owns its own recording-attach
  * slot. The previous registry held a single unkeyed slot — a second view's owner overwrote the
  * first (cross-view misrouting). A `Map` lets every mounted view coexist.
  *
@@ -17,10 +19,6 @@ type BrowserRecordingAttachRegistration = Readonly<{
  * fail closed instead of misrouting.
  */
 const registrations = new Map<string, BrowserRecordingAttachRegistration>();
-
-function registryKey(input: Readonly<{ browserSessionId: string; viewId: string }>): string {
-    return `${input.browserSessionId}:${input.viewId}`;
-}
 
 /**
  * Registers the active UI recording-attach adapter (the recording-state owner that applies
@@ -36,7 +34,7 @@ export function registerBrowserRecordingAttachAdapter(
     }>,
 ): () => void {
     const token = Symbol('browserRecordingAttachAdapter');
-    const key = registryKey(input);
+    const key = browserViewKey(input);
     registrations.set(key, { token, adapter: input.adapter });
     return () => {
         if (registrations.get(key)?.token === token) {
@@ -49,7 +47,7 @@ export function readRegisteredBrowserRecordingAttachAdapter(
     input?: Readonly<{ browserSessionId: string; viewId: string }>,
 ): BrowserRecordingAttachAdapter | null {
     if (input) {
-        return registrations.get(registryKey(input))?.adapter ?? null;
+        return registrations.get(browserViewKey(input))?.adapter ?? null;
     }
     // No view key available (recording-attach action input is recordingId-scoped, not view-scoped):
     // resolve the sole owner deterministically; null when ambiguous so we never silently misroute.

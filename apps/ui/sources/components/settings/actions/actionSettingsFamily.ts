@@ -1,7 +1,10 @@
 import {
     ACTION_ID_FAMILIES_V1,
+    parseQualifiedPluginActionId,
     type ActionId,
     type ActionIdFamilyV1,
+    type ActionSettingsActionId,
+    type QualifiedPluginActionId,
 } from '@happier-dev/protocol';
 
 import type { TranslationKey } from '@/text';
@@ -92,10 +95,19 @@ function buildActionIdFamilyIndex(): ReadonlyMap<ActionId, ActionSettingsFamily>
 
 const ACTION_ID_FAMILY_INDEX = buildActionIdFamilyIndex();
 
+function isQualifiedContributedActionId(
+    actionId: ActionSettingsActionId,
+): actionId is QualifiedPluginActionId {
+    return parseQualifiedPluginActionId(actionId) !== null;
+}
+
 /**
  * Resolve the coarse user-facing settings family for an action id. Unclassified ids fold into
  * `general` (never undefined) so the grouped list stays exhaustive.
  */
-export function resolveActionSettingsFamily(actionId: ActionId): ActionSettingsFamily {
+export function resolveActionSettingsFamily(actionId: ActionSettingsActionId): ActionSettingsFamily {
+    if (isQualifiedContributedActionId(actionId)) {
+        return 'plugins';
+    }
     return ACTION_ID_FAMILY_INDEX.get(actionId) ?? 'general';
 }

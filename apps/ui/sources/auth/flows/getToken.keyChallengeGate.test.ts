@@ -19,12 +19,32 @@ import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
 } from '@happier-dev/protocol';
 import { HappyError } from '@/utils/errors/errors';
+import {
+    setActiveServerId,
+    upsertServerProfile,
+} from '@/sync/domains/server/serverProfiles';
 
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
         status,
         headers: { 'Content-Type': 'application/json' },
     });
+}
+
+function keyChallengeV2Capabilities(serverIdentityId: string) {
+    return {
+        auth: {
+            methods: [],
+            keyChallenge: { v2: true },
+            signup: { methods: [] },
+            login: { methods: [], requiredProviders: [] },
+            recovery: { providerReset: { providers: [] } },
+            ui: { autoRedirect: { enabled: false, providerId: null } },
+            providers: {},
+            misconfig: [],
+        },
+        serverIdentity: { serverIdentityId },
+    };
 }
 
 describe('authGetToken key-challenge gate', () => {
@@ -265,5 +285,89 @@ describe('authGetToken key-challenge gate', () => {
         expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
         expect(mocks.serverFetch.mock.calls[0]?.[0])
             .toBe('/v1/features');
+    });
+
+    it('refuses a mismatched v2 audience before signing or redeeming', async () => {
+        const profile = upsertServerProfile({
+            serverUrl: 'https://selected.example.test/api',
+            name: 'Selected test server',
+        });
+        setActiveServerId(profile.id);
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    features: {
+                        auth: { login: { keyChallenge: { enabled: true } } },
+                        sharing: { contentKeys: { enabled: false } },
+                    },
+                    capabilities: keyChallengeV2Capabilities('srv_selected'),
+                }),
+            )
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    challengeId: 'challenge-123',
+                    nonce: 'nonce-abc',
+                    issuedAt: '2026-08-22T12:00:00.000Z',
+                    expiresAt: '2026-08-22T12:05:00.000Z',
+                    audience: {
+                        origin: 'https://attacker.example.test',
+                        serverIdentityId: 'srv_attacker',
+                    },
+                }),
+            );
+
+        await expect(authGetToken(new Uint8Array(32))).rejects.toThrow(/audience/i);
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual([
+            '/v1/features',
+            '/v1/auth/challenge',
+        ]);
+    });
+
+    it('redeems a negotiated v2 challenge without sending the legacy assertion', async () => {
+        const profile = upsertServerProfile({
+            serverUrl: 'https://selected.example.test/api',
+            name: 'Selected test server',
+        });
+        setActiveServerId(profile.id);
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    features: {
+                        auth: { login: { keyChallenge: { enabled: true } } },
+                        sharing: { contentKeys: { enabled: false } },
+                    },
+                    capabilities: keyChallengeV2Capabilities('srv_selected'),
+                }),
+            )
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    challengeId: 'challenge-123',
+                    nonce: 'nonce-abc',
+                    issuedAt: '2026-08-22T12:00:00.000Z',
+                    expiresAt: '2026-08-22T12:05:00.000Z',
+                    audience: {
+                        origin: 'https://selected.example.test',
+                        serverIdentityId: 'srv_selected',
+                    },
+                }),
+            )
+            .mockResolvedValueOnce(jsonResponse({ token: 'v2-token' }));
+
+        await expect(authGetToken(new Uint8Array(32).fill(6))).resolves.toBe('v2-token');
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual([
+            '/v1/features',
+            '/v1/auth/challenge',
+            '/v1/auth',
+        ]);
+        const authRequest = mocks.serverFetch.mock.calls[2]?.[1] as RequestInit | undefined;
+        const body = JSON.parse(String(authRequest?.body)) as Record<string, unknown>;
+        expect(body).toMatchObject({
+            challengeId: 'challenge-123',
+            publicKey: expect.any(String),
+            signature: expect.any(String),
+        });
+        expect(body).not.toHaveProperty('challenge');
     });
 });

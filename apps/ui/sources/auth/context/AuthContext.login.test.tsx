@@ -433,6 +433,40 @@ describe('AuthContext.login', () => {
         }
     });
 
+    it('awaits an authorized asynchronous pre-mutation callback before deleting local credentials', async () => {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const token = buildTokenWithSub('server-test');
+        await TokenStorage.setCredentials({ token });
+        const { AuthProvider, getCurrentAuth } = await import('./AuthContext');
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => { release = resolve; });
+        const beforeMutation = vi.fn(async () => await pending);
+        const screen = await renderScreen(
+            React.createElement(AuthProvider, {
+                initialCredentials: { token },
+                children: React.createElement(React.Fragment, null),
+            }),
+        );
+
+        try {
+            const auth = getCurrentAuth();
+            if (!auth) throw new Error('Expected current auth to be set');
+            const logout = auth.logout({ beforeMutation });
+            await vi.waitFor(() => expect(beforeMutation).toHaveBeenCalledTimes(1));
+
+            expect(await TokenStorage.getCredentials()).toEqual({ token });
+            expect(getCurrentAuth()?.isAuthenticated).toBe(true);
+
+            await act(async () => {
+                release();
+                await logout;
+            });
+            expect(getCurrentAuth()?.isAuthenticated).toBe(false);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('blocks different-token replacement and unproven same-token keyed replacement', async () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });

@@ -35,6 +35,12 @@ vi.mock('@/text', async () => {
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
+// The platform accessibility adapter (native AccessibilityInfo / a web live region).
+const announceAccessibilityMessageSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
+    announceAccessibilityMessage: (message: string) => announceAccessibilityMessageSpy(message),
+}));
+
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
@@ -660,6 +666,113 @@ describe('ExternalSessionsIntegrationSection', () => {
 
         await screen.pressByTestIdAsync('settings-external-sessions-inventory-status');
         expect(retryInventory).toHaveBeenCalledOnce();
+    });
+
+    it('announces the new stable status when a successful action removes the pressed control', async () => {
+        announceAccessibilityMessageSpy.mockClear();
+        const {
+            ExternalSessionsIntegrationSection,
+        } = await import('./ExternalSessionsIntegrationSection');
+        const operations = {
+            reviewAndInstall: vi.fn(async () => {}),
+            disable: vi.fn(async () => {}),
+            enable: vi.fn(async () => {}),
+            uninstall: vi.fn(async () => {}),
+            checkAgain: vi.fn(async () => {}),
+        };
+        const enabledRow = integration('installation-1', 'installed_enabled', {
+            installationId: 'installation-1',
+        });
+
+        const screen = await renderSettingsView(
+            <ExternalSessionsIntegrationSection
+                integrations={[enabledRow]}
+                machineId="machine-1"
+                agent={null}
+                operations={operations}
+                inventoryState={{ status: 'ready', diagnosticCodes: [] }}
+            />,
+        );
+
+        const disableAction = screen.findByTestId(
+            'settings-external-sessions-action-installation-1-disable',
+        );
+        expect(disableAction).toBeTruthy();
+        await act(async () => {
+            await disableAction!.props.onPress();
+        });
+
+        // Nothing has changed yet, so there is nothing to announce.
+        expect(announceAccessibilityMessageSpy).not.toHaveBeenCalled();
+
+        // The mutation lands: the pressed Disable row is replaced by Enable, so the
+        // control the user was on disappears with no spoken result.
+        const disabledRow = integration('installation-1', 'installed_disabled', {
+            installationId: 'installation-1',
+        });
+        await act(async () => {
+            screen.tree.update(
+                <ExternalSessionsIntegrationSection
+                    integrations={[disabledRow]}
+                    machineId="machine-1"
+                    agent={null}
+                    operations={operations}
+                    inventoryState={{ status: 'ready', diagnosticCodes: [] }}
+                />,
+            );
+        });
+
+        expect(announceAccessibilityMessageSpy).toHaveBeenCalledWith(
+            'Acme Reviewer · externalSessions.settingsIntegrationStatusDisabled',
+        );
+    });
+
+    it('does not announce anything when an action leaves the row unchanged', async () => {
+        announceAccessibilityMessageSpy.mockClear();
+        const {
+            ExternalSessionsIntegrationSection,
+        } = await import('./ExternalSessionsIntegrationSection');
+        const operations = {
+            reviewAndInstall: vi.fn(async () => {}),
+            disable: vi.fn(async () => {}),
+            enable: vi.fn(async () => {}),
+            uninstall: vi.fn(async () => {}),
+            checkAgain: vi.fn(async () => {}),
+        };
+        const row = integration('installation-1', 'installed_enabled', {
+            installationId: 'installation-1',
+        });
+
+        const screen = await renderSettingsView(
+            <ExternalSessionsIntegrationSection
+                integrations={[row]}
+                machineId="machine-1"
+                agent={null}
+                operations={operations}
+                inventoryState={{ status: 'ready', diagnosticCodes: [] }}
+            />,
+        );
+
+        await act(async () => {
+            await screen.findByTestId(
+                'settings-external-sessions-action-installation-1-check_again',
+            )!.props.onPress();
+        });
+        await act(async () => {
+            screen.tree.update(
+                <ExternalSessionsIntegrationSection
+                    integrations={[integration('installation-1', 'installed_enabled', {
+                        installationId: 'installation-1',
+                    })]}
+                    machineId="machine-1"
+                    agent={null}
+                    operations={operations}
+                    inventoryState={{ status: 'ready', diagnosticCodes: [] }}
+                />,
+            );
+        });
+
+        expect(announceAccessibilityMessageSpy).not.toHaveBeenCalled();
     });
 
     it('keeps action rows mounted but disabled while Check again refreshes inventory', async () => {

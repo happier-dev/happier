@@ -1,61 +1,84 @@
-import * as React from 'react';
-import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { afterEach, describe, expect, it } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { renderScreen } from '@/dev/testkit';
+import {
+    createProviderConnectionViewFixture,
+    createProviderConnectionsDescribeFixture,
+    createProviderSettingsHarness,
+    flushHookEffects,
+    installProviderSettingsRpcBoundary,
+    renderHook,
+    standardCleanup,
+} from '@/dev/testkit';
+import type { ProviderSettingsMachineRowV1 } from '@/providers/hooks/targetMachine';
 
-const describeProviderConnections = vi.hoisted(() => vi.fn());
-vi.mock('@/providers/rpc/client', () => ({
-    describeProviderConnections,
-    providerErrorFromRpcFailure: (_caught: unknown, context: Readonly<Record<string, unknown>>) =>
-        createProviderErrorV1('provider_endpoint_unavailable', context),
-}));
+const providerHarness = createProviderSettingsHarness();
+installProviderSettingsRpcBoundary(providerHarness);
 
-import { useProviderConnectionMachineViews } from './useProviderConnectionMachineViews';
+function row(
+    serverIdentityId: string,
+    machineId: string,
+    serverId: string,
+): ProviderSettingsMachineRowV1 {
+    return { target: { serverIdentityId, machineId }, serverId, displayName: machineId, online: true };
+}
 
 describe('useProviderConnectionMachineViews', () => {
-    it('projects the effective endpoint independently from each target daemon', async () => {
-        describeProviderConnections.mockImplementation(async ({ machineId }: { machineId: string }) => ({
-            status: 'success',
-            connections: [{ connectionId: 'pc_a', endpoints: [{ baseUrl: `http://${machineId}.localhost:11434/` }] }],
-        }));
-        const result: { current: ReturnType<typeof useProviderConnectionMachineViews> | null } = { current: null };
-        function Harness() {
-            result.current = useProviderConnectionMachineViews({
-                enabled: true, serverId: 'server-a', connectionId: 'pc_a', machineIds: ['machine-a', 'machine-b'],
-            });
-            return React.createElement('View');
-        }
-        await renderScreen(<Harness />);
-        await act(async () => {});
-        expect(result.current?.byMachineId['machine-a']).toMatchObject({
-            status: 'success',
-            connection: { endpoints: [{ baseUrl: 'http://machine-a.localhost:11434/' }] },
-        });
-        expect(result.current?.byMachineId['machine-b']).toMatchObject({
-            status: 'success',
-            connection: { endpoints: [{ baseUrl: 'http://machine-b.localhost:11434/' }] },
-        });
+    afterEach(() => {
+        providerHarness.reset();
+        standardCleanup();
     });
 
-    it('keeps a failed machine read distinct from an absent connection', async () => {
-        describeProviderConnections.mockImplementation(async ({ machineId }: { machineId: string }) => machineId === 'machine-a'
-            ? { status: 'error', error: createProviderErrorV1('provider_not_enabled_on_machine', { machineId }) }
-            : { status: 'success', connections: [] });
-        const result: { current: ReturnType<typeof useProviderConnectionMachineViews> | null } = { current: null };
-        function Harness() {
-            result.current = useProviderConnectionMachineViews({
-                enabled: true, serverId: 'server-a', connectionId: 'pc_a', machineIds: ['machine-a', 'machine-b'],
-            });
-            return React.createElement('View');
-        }
-        await renderScreen(<Harness />);
-        await act(async () => {});
-        expect(result.current?.byMachineId['machine-a']).toEqual({
-            status: 'error',
-            error: createProviderErrorV1('provider_not_enabled_on_machine', { machineId: 'machine-a' }),
-        });
-        expect(result.current?.byMachineId['machine-b']).toEqual({ status: 'success', connection: null });
+    it('reads each machine through its own server profile when two profiles share a machine id', async () => {
+        // The same machine id exists on two server profiles. Routing both rows
+        // through one server would answer for the wrong daemon's Account.
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async (request) => (
+            createProviderConnectionsDescribeFixture({
+                connections: [createProviderConnectionViewFixture({
+                    connectionId: 'pc_a',
+                    displayName: `on ${request.serverId}`,
+                })],
+            })
+        ));
+        const { useProviderConnectionMachineViews } = await import('./useProviderConnectionMachineViews');
+        const targets = [
+            row('srv_a', 'machine-shared', 'server-a'),
+            row('srv_b', 'machine-shared', 'server-b'),
+        ];
+        const rendered = await renderHook(() => useProviderConnectionMachineViews({
+            enabled: true,
+            connectionId: 'pc_a',
+            targets,
+        }));
+        await flushHookEffects({ cycles: 2, turns: 3 });
+
+        const requestedServerIds = providerHarness.state.requests
+            .filter((request) => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE)
+            .map((request) => request.serverId)
+            .sort();
+        expect(requestedServerIds).toEqual(['server-a', 'server-b']);
+
+        const byTargetKey = rendered.getCurrent().byTargetKey;
+        expect(Object.keys(byTargetKey).sort()).toEqual([
+            'srv_a\u0000machine-shared',
+            'srv_b\u0000machine-shared',
+        ]);
+        const first = byTargetKey['srv_a\u0000machine-shared'];
+        const second = byTargetKey['srv_b\u0000machine-shared'];
+        expect(first?.status === 'success' ? first.connection?.displayName : null).toBe('on server-a');
+        expect(second?.status === 'success' ? second.connection?.displayName : null).toBe('on server-b');
+    });
+
+    it('issues no read and holds no rows when there is no addressable machine', async () => {
+        const { useProviderConnectionMachineViews } = await import('./useProviderConnectionMachineViews');
+        const rendered = await renderHook(() => useProviderConnectionMachineViews({
+            enabled: true,
+            connectionId: 'pc_a',
+            targets: [],
+        }));
+        await flushHookEffects({ cycles: 2, turns: 3 });
+
+        expect(providerHarness.state.requests).toEqual([]);
+        expect(rendered.getCurrent().byTargetKey).toEqual({});
     });
 });

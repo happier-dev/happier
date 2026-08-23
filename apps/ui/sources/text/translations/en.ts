@@ -6,9 +6,11 @@ import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
 import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { apiTokenSettingsTranslations } from './apiTokenSettingsTranslations';
 import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
 import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
 import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
+import { actionOperationInboxTranslations } from './actionOperationInboxTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Create a server, import host JSON, or install a recommended preset.',
@@ -691,6 +693,7 @@ export const en = {
 
 
     inbox: {
+        ...actionOperationInboxTranslations,
         openSession: ({ session }: { session: string }) => `Open session: ${session}`,
         // Inbox screen
         emptyTitle: "You're all caught up",
@@ -1084,6 +1087,14 @@ export const en = {
                 sourceUnavailable: 'Source setup is unavailable. Check the Event source and try again.',
                 chooseWatcher: 'Choose an observation watcher',
                 noEligibleWatchers: 'No current watcher is available for this Event source.',
+                observationTransport: 'HOW EVENTS ARRIVE',
+                observationCheckpointedPull: 'Poll for changes',
+                observationDurablePush: 'Webhook',
+                webhookEndpointTitle: 'Add this webhook in GitHub',
+                webhookEndpointInstructions: 'Open your repository settings, add a webhook with this payload URL and secret, choose "application/json", and select the events you want. Happier only receives deliveries after you save it there.',
+                webhookEndpointUrl: 'PAYLOAD URL',
+                webhookEndpointSecret: 'SECRET (SHOWN ONCE)',
+                webhookEndpointSecretLost: 'This endpoint already exists and its secret was shown once. Rotate the credential from the webhook settings to get a new one.',
                 eventFilter: 'EVENT FILTER (OPTIONAL)',
                 eventFilterPlaceholder: '{"v":1,"all":[…]}',
                 eventFilterInvalid: 'Enter a valid Event filter.',
@@ -1175,6 +1186,15 @@ export const en = {
             event: {
                 watcherTitle: 'Observation watcher',
                 watcherUnwatched: 'Unwatched',
+                endpointTitle: 'Webhook endpoint',
+                endpointObservingSince: ({ time }: { time: string }) => `Receiving deliveries since ${time}`,
+                sourceStatusUnreported: 'Waiting for the first report',
+                sourceCatalogStatusUnavailable: 'Source currentness unavailable',
+                watcherMachineUnknown: 'This machine is no longer in your account, so this watcher cannot observe events.',
+                watcherMachineRevoked: 'This machine was revoked, so this watcher cannot observe events.',
+                watcherMachineReplaced: 'This machine was replaced, so this watcher cannot observe events.',
+                watcherInstallationReplaced: 'This machine was reinstalled, so this watcher cannot observe events until it is set up again.',
+                watcherMachineOffline: 'This machine is offline, so this watcher is not observing events right now.',
             },
             actionsGroupTitle: 'Actions',
             runNowTitle: 'Run now',
@@ -1225,6 +1245,51 @@ export const en = {
                 scheduled: ({ time }: { time: string }) => `Scheduled: ${time}`,
                 updated: ({ time }: { time: string }) => `Updated: ${time}`,
                 error: ({ message }: { message: string }) => `Error: ${message}`,
+                attemptTitle: 'Attempt',
+                attempt: ({ attempt }: { attempt: number }) => `Attempt ${attempt}`,
+                claimedByTitle: 'Claimed by',
+                claimedAt: ({ time }: { time: string }) => `Claimed: ${time}`,
+                leaseExpires: ({ time }: { time: string }) => `Claim lease expires: ${time}`,
+                dispatchTitle: 'Execution dispatch',
+                dispatchAttempt: ({ attempt }: { attempt: number }) => `Dispatch attempt ${attempt}`,
+                dispatchState: {
+                    notStarted: 'Not started',
+                    dispatchPermitted: 'Dispatch permitted',
+                    retryWaiting: 'Waiting to retry',
+                    started: 'Started',
+                    settled: 'Settled',
+                    outcomeUnknown: 'Outcome unknown',
+                },
+                replyHandoffTitle: 'Reply handoff',
+                replyHandoffAttempt: ({ attempt }: { attempt: number }) => `Handoff attempt ${attempt}`,
+                replyHandoffDue: ({ time }: { time: string }) => `Next handoff attempt: ${time}`,
+                replyHandoffState: {
+                    none: 'None',
+                    awaitingResult: 'Awaiting result',
+                    ready: 'Ready',
+                    handingOff: 'Handing off',
+                    accepted: 'Accepted',
+                    suppressed: 'Suppressed',
+                    blocked: 'Blocked',
+                },
+                nativeExecutionTitle: 'Native execution',
+                nativeExecutionCall: ({ callId }: { callId: string }) => `Call ${callId}`,
+                nativeExecutionSidechain: ({ sidechainId }: { sidechainId: string }) => `Sidechain ${sidechainId}`,
+                historyTitle: 'What happened',
+                historyEvent: {
+                    run_started: 'Started',
+                    run_succeeded: 'Succeeded',
+                    run_failed: 'Failed',
+                    run_cancelled: 'Cancelled',
+                    run_outcome_uncertain: 'Outcome became uncertain',
+                    execution_dispatch_retry_scheduled: 'Dispatch retry scheduled',
+                    unknown: 'Lifecycle change',
+                },
+                historyReason: {
+                    cancelled_after_dispatch_permitted: 'Cancelled after the external execution had already been permitted',
+                    dispatch_result_missing_after_lease_expiry: 'The claiming machine never reported the dispatch result',
+                    automation_retired_after_lease_expiry: 'The automation was retired while its claim lease expired',
+                },
             },
             runDetail: {
                 title: 'Admitted details',
@@ -1301,6 +1366,7 @@ export const en = {
 	        moreActionsHint: 'Opens a menu with more actions',
         destructiveActionHint: 'This action is destructive and cannot be undone.',
 	        cancel: 'Cancel',
+	        decline: 'Decline',
 	        submit: 'Submit',
 	        close: 'Close',
 	        dismissKeyboard: 'Dismiss keyboard',
@@ -4261,6 +4327,8 @@ export const en = {
             configureManagedDescription: 'Choose the connected account or group used by future sessions. Happier starts the service when a session needs it.',
             subscriptionPolicyTitle: 'Subscription routing is experimental',
             subscriptionPolicyDescription: 'Upstream policy or enforcement may change and make subscription-backed routing stop working. Happier surfaces the rejection and does not silently use another credential.',
+            accountScopeMismatchTitle: 'Connected accounts live on the active server',
+            accountScopeMismatchDescription: 'This provider is managed on a machine from another server. Switch to that server to choose its connected account or group.',
             editManagedDefaults: 'Edit managed session defaults',
             editManagedDefaultsDescription: 'Change the connected account or group for future sessions. Existing sessions keep their saved selection.',
             purposeTargetTitle: 'Connected-account target',
@@ -6538,6 +6606,11 @@ export const en = {
             },
         },
 
+        transcript: {
+            olderLoadFailedTitle: 'Couldn’t load older messages',
+            olderLoadFailedBody: 'The rest of this conversation is still here. Try loading the older messages again.',
+        },
+
         sharing: {
             title: 'Sharing',
             directSharing: 'Direct sharing',
@@ -8554,18 +8627,26 @@ export const en = {
             disabledLimitSubtitle: 'Public preview limit reached. Revoke an existing link before creating another.',
             disabledNoPreviewSubtitle: 'Open a local preview before creating a public link.',
             disabledReason: {
+                auditRequirementDisabled: 'Public preview audit logging is required but turned off on the server.',
                 auditUnavailable: 'Public preview audit logging is unavailable.',
                 dnsTlsUnavailable: 'Public previews are waiting for DNS/TLS to be ready.',
                 expired: 'This public preview link has expired.',
+                linkLifetimeUnconfigured: 'No public preview link lifetime is configured on the server.',
+                modeUnconfigured: 'No public preview mode is configured on the server.',
                 policyInvalid: 'Public preview policy is incomplete.',
                 previewNotEligible: 'This local preview is not eligible for a public link.',
+                previewServerDisabled: 'Local service previews are turned off on the server.',
                 publicBaseUrlUnavailable: 'Public preview base URL is not configured.',
+                rateLimitProfileUnconfigured: 'No public preview rate limit profile is configured on the server.',
                 rateLimitUnavailable: 'Public preview rate limiting is unavailable.',
                 rateLimited: 'This public preview link is rate limited.',
                 relayUnavailable: 'Public preview relay is unavailable.',
                 revoked: 'This public preview link was revoked.',
                 secretLinkUnavailable: 'Secret-link public previews are not configured.',
+                serverDisabled: 'Public previews are turned off on the server.',
                 sessionNotAuthorized: 'You do not have access to create a public link for this session.',
+                tunnelPortsUnconfigured: 'The server allows no tunnel ports.',
+                tunnelRelayDisabled: 'The server relay for machine tunnels is turned off.',
             },
             createActionA11y: 'Create public preview link',
             revokeActionA11y: 'Revoke public preview link',
@@ -9168,6 +9249,13 @@ export const en = {
         configureActionAccessibilityLabel: 'Configure action',
         approvalHelpTitle: 'Approval modes',
         approvalHelpBody: '"Ask first" shows a confirmation before this action runs from that surface. "Allowed" lets the action run from that surface without an approval prompt.',
+        contributed: {
+            machineSelectionTitle: 'Choose a machine for contributed actions',
+            machineSelectionBody: 'Select a machine to view and configure actions declared by its installed plugins.',
+            removedDescription: 'This contributed action is no longer available from the selected machine. Its saved settings are retained.',
+            removedTargetsTitle: 'Contributed action unavailable',
+            removedTargetsBody: 'This action is not currently declared by the selected machine. Its saved settings remain available here.',
+        },
         toolExposure: {
             title: 'Tool exposure',
             footer: 'Controls whether eligible actions appear as direct tools or stay available through action discovery only.',
@@ -9397,6 +9485,14 @@ export const en = {
             cli: {
                 title: 'Session control CLI',
                 subtitle: 'Available through the session control CLI surface.',
+            },
+            api: {
+                title: 'API',
+                subtitle: 'Available through the external Action API.',
+            },
+            plugin: {
+                title: 'Trusted plugins',
+                subtitle: 'Available to trusted plugins as an action.',
             },
             contextual_ui: {
                 title: 'Contextual UI',
@@ -10132,7 +10228,7 @@ settingsSession: {
             loadingOlder: 'Loading older messages…',
             loadOlderFailed: 'Older Voice History could not be loaded.',
             exportTitle: 'Export Voice History',
-            exportSubtitle: 'Load the remaining bounded history and save it as JSON.',
+            exportSubtitle: 'Load the remaining history and save it as JSON.',
             exporting: 'Preparing export…',
             exportSucceeded: 'Voice History export is ready.',
             exportFailed: 'Voice History could not be exported.',
@@ -11280,7 +11376,7 @@ settingsSession: {
                 onDemandTitle: 'On demand',
                 onDemandSubtitle: 'When you ask, Voice can read bounded semantic context from this app window or browser tab. Contextual commands remain separately gated.',
                 automaticTitle: 'Automatic',
-                automaticSubtitle: 'Voice also receives basic navigation metadata automatically. Detailed context stays on demand, and contextual commands remain separately gated.',
+                automaticSubtitle: 'Voice also receives basic navigation metadata automatically, and opening a session shares that session context using the sharing settings above. Contextual commands remain separately gated.',
             },
         },
         diagnostics: {
@@ -13272,6 +13368,7 @@ settingsSession: {
             },
         },
     },
+   ...apiTokenSettingsTranslations.en,
    settingsPlugins: {
       ...pluginWebhookAdministrationTranslations['en'],
       ...pluginAccountDataEraseTranslations.en,

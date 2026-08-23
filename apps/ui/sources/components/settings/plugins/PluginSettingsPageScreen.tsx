@@ -10,9 +10,11 @@ import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugi
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
-import type { ScopedPluginSettingsDaemonTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
+import {
+    useScopedPluginSettingsDaemonTargetBinding,
+} from '@/sync/domains/machines/administration/scopedPluginSettingsTarget';
 import {
     resolveAdmittedPluginSettingsPage,
     type ResolvedPluginSettingsPageDestination,
@@ -28,35 +30,15 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
     const { theme } = useUnistyles();
     const router = useRouter();
     const appShell = useAppShellPluginUiProjection();
-    const daemonTargetSelection = useMachineAdministrationTargetSelection(
+    // One administration-target owner for every plugin Settings surface. A
+    // deep-linked page addresses the same machine the plugin home and detail
+    // screens administer, through the same currentness fence, and the selector
+    // below names it so the reader can see which machine they are editing.
+    const administration = useScopedPluginSettingsDaemonTargetBinding(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins,
     );
-    const daemonExecutionTarget = daemonTargetSelection.resolveExecutionTarget();
-    const daemonSettingsTarget = React.useMemo<ScopedPluginSettingsDaemonTarget | null>(() => {
-        if (!daemonExecutionTarget) return null;
-        return Object.freeze({
-            kind: 'daemon',
-            serverIdentityId: daemonExecutionTarget.target.serverIdentityId,
-            machineId: daemonExecutionTarget.machine.id,
-            serverId: daemonExecutionTarget.serverId,
-        });
-    }, [
-        daemonExecutionTarget?.machine.id,
-        daemonExecutionTarget?.serverId,
-        daemonExecutionTarget?.target.serverIdentityId,
-    ]);
-    const isDaemonSettingsTargetCurrent = React.useCallback((target: ScopedPluginSettingsDaemonTarget): boolean => {
-        const current = daemonTargetSelection.resolveExecutionTarget();
-        return current !== null
-            && daemonExecutionTarget !== null
-            && current.target.serverIdentityId === daemonExecutionTarget.target.serverIdentityId
-            && current.machine.id === daemonExecutionTarget.machine.id
-            && current.serverId === daemonExecutionTarget.serverId
-            && current.machine.daemonStateVersion === daemonExecutionTarget.machine.daemonStateVersion
-            && target.serverIdentityId === daemonExecutionTarget.target.serverIdentityId
-            && target.machineId === daemonExecutionTarget.machine.id
-            && target.serverId === daemonExecutionTarget.serverId;
-    }, [daemonExecutionTarget, daemonTargetSelection]);
+    const daemonSettingsTarget = administration.target;
+    const isDaemonSettingsTargetCurrent = administration.isTargetCurrent;
     const locale = getPreferredLanguage();
     const appTargetBinding = usePluginSurfaceDestinationNavigationBinding();
     const binding = React.useMemo<BoundPluginSurfaceBinding>(
@@ -119,6 +101,16 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
     return (
         <>
             <Stack.Screen options={{ title: destination.title }} />
+            {/*
+              * The administration target is a different fact from the plugin's
+              * execution origin, and a deep link arrives with neither on
+              * screen. Name the machine this page's fields, secrets and
+              * lifecycle operations address before the fields themselves.
+              */}
+            <MachineAdministrationTargetSelector
+                selection={administration.selection}
+                testIDPrefix="settings.plugins.page.administration.target"
+            />
             <PluginSurfaceFocusEligibilityProvider active={isFocused}>
                 <PluginSettingsPageHost
                     page={destination.page}
