@@ -417,6 +417,10 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     const onTerminalInjectionFailure = vi.fn(async () => (
       { action: 'claimed_pending_delivery' as const }
     ));
+    let resolveFirstInjectionAttempt: (() => void) | undefined;
+    const firstInjectionAttempted = new Promise<void>((resolve) => {
+      resolveFirstInjectionAttempt = resolve;
+    });
     let subscribedHook: ((data: SessionHookData) => void) | undefined;
     let pendingPullCount = 0;
     const handle: TerminalHostHandle = {
@@ -432,6 +436,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     };
     const injectUserPrompt = vi.fn<TerminalHostAdapter['injectUserPrompt']>(async () => {
       if (injectUserPrompt.mock.calls.length === 1) {
+        resolveFirstInjectionAttempt?.();
         return {
           status: 'failed',
           reason: 'timeout',
@@ -492,7 +497,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     });
 
     try {
-      await waitUntil(() => injectUserPrompt.mock.calls.length === 1);
+      await firstInjectionAttempted;
       const hook = subscribedHook;
       if (!hook) throw new Error('Claude session hook subscription was not registered before injection');
       hook({
@@ -521,7 +526,12 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
       })}\n`);
       await waitUntil(() => onPromptAcceptedByProvider.mock.calls.length === 1);
       await waitUntil(() => injectUserPrompt.mock.calls.length === 2);
-      expect(onTerminalInjectionFailure).not.toHaveBeenCalled();
+      expect(onTerminalInjectionFailure).toHaveBeenCalledOnce();
+      expect(onTerminalInjectionFailure).toHaveBeenCalledWith(expect.objectContaining({
+        failureState: 'failed_ambiguous',
+        phase: 'after_write_before_enter',
+        userMessageLocalIds: ['late-exact-pending-local'],
+      }));
       expect(onPromptAcceptedByProvider).toHaveBeenCalledWith({
         message: prompt,
         maxUserMessageSeq: null,
