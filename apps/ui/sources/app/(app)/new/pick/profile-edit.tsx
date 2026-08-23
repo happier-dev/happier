@@ -9,9 +9,9 @@ import { t } from '@/text';
 import { ProfileEditForm } from '@/components/profiles/edit';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { layout } from '@/components/ui/layout/layout';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { DEFAULT_PROFILES, getBuiltInProfile, getBuiltInProfileNameKey, resolveProfileById } from '@/sync/domains/profiles/profileUtils';
-import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/domains/profiles/profileMutations';
+import { buildProfileSaveSettingsDelta, convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit, type ProfileSecretBindings } from '@/sync/domains/profiles/profileMutations';
 import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { PopoverScope } from '@/components/ui/popover';
@@ -21,6 +21,7 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
@@ -38,8 +39,10 @@ export default React.memo(function ProfileEditScreen() {
     const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
     const screenWidth = useWindowDimensions().width;
     const headerHeight = useHeaderHeight();
-    const [profiles, setProfiles] = useSettingMutable('profiles');
+    const profiles = useSetting('profiles');
+    const secretBindingsByProfileId = useSetting('secretBindingsByProfileId');
     const [, setLastUsedProfile] = useSettingMutable('lastUsedProfile');
+    const applySettings = useApplySettings();
     const [isDirty, setIsDirty] = React.useState(false);
     const isDirtyRef = React.useRef(false);
     const saveRef = React.useRef<(() => boolean) | null>(null);
@@ -131,7 +134,7 @@ export default React.memo(function ProfileEditScreen() {
         tag: 'ProfileEditScreen.beforeRemove',
     });
 
-    const handleSave = (savedProfile: AIBackendProfile): boolean => {
+    const handleSave = (savedProfile: AIBackendProfile, profileSecretBindings: ProfileSecretBindings): boolean => {
         if (!savedProfile.name || savedProfile.name.trim() === '') {
             Modal.alert(t('common.error'), t('profiles.nameRequired'));
             return false;
@@ -167,13 +170,17 @@ export default React.memo(function ProfileEditScreen() {
             return false;
         }
 
-        const existingIndex = profiles.findIndex((p: AIBackendProfile) => p.id === profileToSave.id);
-        const isNewProfile = existingIndex < 0;
-        const updatedProfiles = existingIndex >= 0
-            ? profiles.map((p: AIBackendProfile, idx: number) => idx === existingIndex ? { ...profileToSave, updatedAt: Date.now() } : p)
-            : [...profiles, profileToSave];
-
-        setProfiles(updatedProfiles);
+        const isNewProfile = !profiles.some((profile) => profile.id === profileToSave.id);
+        profileToSave = {
+            ...profileToSave,
+            updatedAt: Date.now(),
+        };
+        applySettings(buildProfileSaveSettingsDelta({
+            profiles,
+            secretBindingsByProfileId,
+            profile: profileToSave,
+            profileSecretBindings,
+        }));
 
         // Update last used profile for convenience in other screens.
         if (isNewProfile) {

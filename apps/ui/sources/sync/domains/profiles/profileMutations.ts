@@ -1,6 +1,32 @@
 import { randomUUID } from '@/platform/randomUUID';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
+export type ProfileSecretBindings = Readonly<Record<string, string>>;
+
+export function buildProfileSaveSettingsDelta(input: Readonly<{
+    profiles: ReadonlyArray<AIBackendProfile>;
+    secretBindingsByProfileId: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    profile: AIBackendProfile;
+    profileSecretBindings: ProfileSecretBindings;
+}>): Readonly<{
+    profiles: AIBackendProfile[];
+    secretBindingsByProfileId: Record<string, Readonly<Record<string, string>>>;
+}> {
+    const existingIndex = input.profiles.findIndex((profile) => profile.id === input.profile.id);
+    const profiles = existingIndex >= 0
+        ? input.profiles.map((profile, index) => index === existingIndex ? input.profile : profile)
+        : [...input.profiles, input.profile];
+
+    const secretBindingsByProfileId = { ...input.secretBindingsByProfileId };
+    if (Object.keys(input.profileSecretBindings).length === 0) {
+        delete secretBindingsByProfileId[input.profile.id];
+    } else {
+        secretBindingsByProfileId[input.profile.id] = { ...input.profileSecretBindings };
+    }
+
+    return { profiles, secretBindingsByProfileId };
+}
+
 export function createEmptyCustomProfile(): AIBackendProfile {
     return {
         id: randomUUID(),

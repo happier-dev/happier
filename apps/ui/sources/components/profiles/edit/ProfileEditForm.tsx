@@ -62,7 +62,7 @@ export interface ProfileEditFormProps {
      * Return true when the profile was successfully saved.
      * Return false when saving failed (e.g. validation error).
      */
-    onSave: (profile: AIBackendProfile) => boolean;
+    onSave: (profile: AIBackendProfile, secretBindings: Readonly<Record<string, string>>) => boolean;
     onCancel: () => void;
     onDirtyChange?: (isDirty: boolean) => void;
     containerStyle?: ViewStyle;
@@ -91,7 +91,7 @@ export function ProfileEditForm({
     const directSessionsEnabled = useFeatureEnabled('sessions.direct');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const [secrets, setSecrets] = useSettingMutable('secrets');
-    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
+    const secretBindingsByProfileId = useSetting('secretBindingsByProfileId');
     const routeMachine = machineId;
     const [previewMachineId, setPreviewMachineId] = React.useState<string | null>(routeMachine);
 
@@ -276,6 +276,9 @@ export function ProfileEditForm({
         }
         return map;
     });
+    const [secretBindingsDraft, setSecretBindingsDraft] = React.useState<Record<string, string>>(() => ({
+        ...(secretBindingsByProfileId[profile.id] ?? {}),
+    }));
 
     const usedRequirementVarNames = React.useMemo(() => {
         const set = new Set<string>();
@@ -303,36 +306,23 @@ export function ProfileEditForm({
         });
     }, [usedRequirementVarNames]);
 
-    // Prune default secret bindings when the requirement var name is no longer used or no longer uses the vault.
+    // Prune draft default secret bindings when the requirement var name is no longer used or no longer uses the vault.
     React.useEffect(() => {
-        const existing = secretBindingsByProfileId[profile.id];
-        if (!existing) return;
-
-        let changed = false;
-        const nextBindings: Record<string, string> = {};
-        for (const [envVarName, secretId] of Object.entries(existing)) {
-            const req = sourceRequirementsByName[envVarName];
-            const keep = usedRequirementVarNames.has(envVarName) && Boolean(req?.useSecretVault);
-            if (keep) {
-                if (typeof secretId === 'string') {
+        setSecretBindingsDraft((existing) => {
+            let changed = false;
+            const nextBindings: Record<string, string> = {};
+            for (const [envVarName, secretId] of Object.entries(existing)) {
+                const req = sourceRequirementsByName[envVarName];
+                const keep = usedRequirementVarNames.has(envVarName) && Boolean(req?.useSecretVault);
+                if (keep) {
                     nextBindings[envVarName] = secretId;
                 } else {
                     changed = true;
                 }
-            } else {
-                changed = true;
             }
-        }
-        if (!changed) return;
-
-        const out = { ...secretBindingsByProfileId };
-        if (Object.keys(nextBindings).length === 0) {
-            delete out[profile.id];
-        } else {
-            out[profile.id] = nextBindings;
-        }
-        setSecretBindingsByProfileId(out);
-    }, [profile.id, secretBindingsByProfileId, setSecretBindingsByProfileId, sourceRequirementsByName, usedRequirementVarNames]);
+            return changed ? nextBindings : existing;
+        });
+    }, [sourceRequirementsByName, usedRequirementVarNames]);
 
     const derivedEnvVarRequirements = React.useMemo<NonNullable<AIBackendProfile['envVarRequirements']>>(() => {
         const out = Object.entries(sourceRequirementsByName)
@@ -347,10 +337,10 @@ export function ProfileEditForm({
     }, [sourceRequirementsByName, usedRequirementVarNames]);
 
     const getDefaultSecretNameForSourceVar = React.useCallback((sourceVarName: string): string | null => {
-        const id = secretBindingsByProfileId[profile.id]?.[sourceVarName] ?? null;
+        const id = secretBindingsDraft[sourceVarName] ?? null;
         if (!id) return null;
         return secrets.find((s: SavedSecret) => s.id === id)?.name ?? null;
-    }, [profile.id, secretBindingsByProfileId, secrets]);
+    }, [secretBindingsDraft, secrets]);
 
     const openDefaultSecretModalForSourceVar = React.useCallback((sourceVarName: string) => {
         const normalized = sourceVarName.trim().toUpperCase();
@@ -363,23 +353,18 @@ export function ProfileEditForm({
             envVarRequirements: derivedEnvVarRequirements,
         };
 
-        const defaultSecretId = secretBindingsByProfileId[profile.id]?.[normalized] ?? null;
+        const defaultSecretId = secretBindingsDraft[normalized] ?? null;
 
         const setDefaultSecretId = (id: string | null) => {
-            const existing = secretBindingsByProfileId[profile.id] ?? {};
-            const nextBindings = { ...existing };
-            if (!id) {
-                delete nextBindings[normalized];
-            } else {
-                nextBindings[normalized] = id;
-            }
-            const out = { ...secretBindingsByProfileId };
-            if (Object.keys(nextBindings).length === 0) {
-                delete out[profile.id];
-            } else {
-                out[profile.id] = nextBindings;
-            }
-            setSecretBindingsByProfileId(out);
+            setSecretBindingsDraft((existing) => {
+                const nextBindings = { ...existing };
+                if (!id) {
+                    delete nextBindings[normalized];
+                } else {
+                    nextBindings[normalized] = id;
+                }
+                return nextBindings;
+            });
         };
 
         const handleResolve = (result: SecretRequirementModalResult) => {
@@ -406,7 +391,7 @@ export function ProfileEditForm({
             onRequestClose: () => handleResolve({ action: 'cancel' } as SecretRequirementModalResult),
             closeOnBackdrop: true,
         });
-    }, [derivedEnvVarRequirements, name, profile, secretBindingsByProfileId, secrets, setSecretBindingsByProfileId, setSecrets]);
+    }, [derivedEnvVarRequirements, name, profile, secretBindingsDraft, secrets, setSecrets]);
 
     const updateSourceRequirement = React.useCallback((
         sourceVarName: string,
@@ -427,20 +412,14 @@ export function ProfileEditForm({
 
         // If the vault is disabled (or requirement removed), drop any default secret binding immediately.
         if (next === null || next.useSecretVault !== true) {
-            const existing = secretBindingsByProfileId[profile.id];
-            if (existing && (normalized in existing)) {
+            setSecretBindingsDraft((existing) => {
+                if (!(normalized in existing)) return existing;
                 const nextBindings = { ...existing };
                 delete nextBindings[normalized];
-                const out = { ...secretBindingsByProfileId };
-                if (Object.keys(nextBindings).length === 0) {
-                    delete out[profile.id];
-                } else {
-                    out[profile.id] = nextBindings;
-                }
-                setSecretBindingsByProfileId(out);
-            }
+                return nextBindings;
+            });
         }
-    }, [profile.id, secretBindingsByProfileId, setSecretBindingsByProfileId]);
+    }, []);
 
     const compatibleBackendEntries = React.useMemo(() => {
         return resolvedBackendEntries.filter((entry) => compatibilityByTargetKeyState[entry.targetKey] === true);
@@ -536,7 +515,7 @@ export function ProfileEditForm({
             requiresMachineLogin,
             derivedEnvVarRequirements,
             // Bindings are settings-level but edited here; include for dirty tracking.
-            secretBindings: secretBindingsByProfileId[profile.id] ?? null,
+            secretBindings: secretBindingsDraft,
         });
     }
 
@@ -550,7 +529,7 @@ export function ProfileEditForm({
             authMode,
             requiresMachineLogin,
             derivedEnvVarRequirements,
-            secretBindings: secretBindingsByProfileId[profile.id] ?? null,
+            secretBindings: secretBindingsDraft,
         });
         return currentSnapshot !== initialSnapshotRef.current;
     }, [
@@ -562,8 +541,7 @@ export function ProfileEditForm({
         name,
         derivedEnvVarRequirements,
         requiresMachineLogin,
-        secretBindingsByProfileId,
-        profile.id,
+        secretBindingsDraft,
     ]);
 
     React.useEffect(() => {
@@ -661,7 +639,7 @@ export function ProfileEditForm({
             compatibilityByTargetKey,
             compatibility: {},
             updatedAt: Date.now(),
-        });
+        }, secretBindingsDraft);
     }, [
         compatibilityByTargetKeyState,
         defaultPermissionModesByTargetKey,
@@ -675,6 +653,7 @@ export function ProfileEditForm({
         authMode,
         effectiveAuthMode,
         machineLoginRequirement.selectableTargetKey,
+        secretBindingsDraft,
         supportedDirectBackendEntries,
     ]);
 

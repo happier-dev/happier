@@ -15,13 +15,14 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
-import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/domains/profiles/profileMutations';
+import { buildProfileSaveSettingsDelta, convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit, type ProfileSecretBindings } from '@/sync/domains/profiles/profileMutations';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 
 interface ProfileManagerProps {
     onProfileSelect?: (profile: AIBackendProfile | null) => void;
@@ -45,6 +46,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     const saveRef = React.useRef<(() => boolean) | null>(null);
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
+    const applySettings = useApplySettings();
 
     const openSecretModal = React.useCallback((profile: AIBackendProfile, envVarName?: string) => {
         const requiredSecretNames = getRequiredSecretEnvVarNames(profile);
@@ -250,7 +252,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
         return isProfileEnabled(profile, profileEnabledById) ? null : t('common.disabled');
     }, [profileEnabledById]);
 
-    function handleSaveProfile(profile: AIBackendProfile): boolean {
+    function handleSaveProfile(profile: AIBackendProfile, profileSecretBindings: ProfileSecretBindings): boolean {
         // Profile validation - ensure name is not empty
         if (!profile.name || profile.name.trim() === '') {
             Modal.alert(t('common.error'), t('profiles.nameRequired'));
@@ -266,21 +268,21 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
             })
             .filter((name): name is string => Boolean(name));
 
+        let profileToSave = profile;
+
         // For built-in profiles, create a new custom profile instead of modifying the built-in
         if (isBuiltIn) {
-            const newProfile = convertBuiltInProfileToCustom(profile);
-            const hasBuiltInNameConflict = builtInNames.includes(newProfile.name.trim());
+            profileToSave = convertBuiltInProfileToCustom(profile);
+            const hasBuiltInNameConflict = builtInNames.includes(profileToSave.name.trim());
 
             // Check for duplicate names (excluding the new profile)
             const isDuplicate = profiles.some((p: AIBackendProfile) =>
-                p.name.trim() === newProfile.name.trim()
+                p.name.trim() === profileToSave.name.trim()
             );
             if (isDuplicate || hasBuiltInNameConflict) {
                 Modal.alert(t('common.error'), t('profiles.duplicateName'));
                 return false;
             }
-
-            setProfiles([...profiles, newProfile]);
         } else {
             // Handle custom profile updates
             // Check for duplicate names (excluding current profile if editing)
@@ -293,23 +295,18 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 return false;
             }
 
-            const existingIndex = profiles.findIndex((p: AIBackendProfile) => p.id === profile.id);
-            let updatedProfiles: AIBackendProfile[];
-
-            if (existingIndex >= 0) {
-                // Update existing profile
-                updatedProfiles = [...profiles];
-                updatedProfiles[existingIndex] = {
-                    ...profile,
-                    updatedAt: Date.now(),
-                };
-            } else {
-                // Add new profile
-                updatedProfiles = [...profiles, profile];
-            }
-
-            setProfiles(updatedProfiles);
+            profileToSave = {
+                ...profile,
+                updatedAt: Date.now(),
+            };
         }
+
+        applySettings(buildProfileSaveSettingsDelta({
+            profiles,
+            secretBindingsByProfileId,
+            profile: profileToSave,
+            profileSecretBindings,
+        }));
 
         closeEditor();
         return true;
