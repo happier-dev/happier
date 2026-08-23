@@ -167,7 +167,15 @@ function resolveAttentionCandidate(params: Readonly<{
     if (!reason && !retainedReason) return null;
     if (!reason && placement.kind === 'working') return null;
 
-    const resolvedReason = reason ?? retainedReason;
+    // Standing is the band's FLOOR, so it must not pre-empt retention. Retention
+    // worked because opening a promoted row left the live placement with no
+    // reason at all; standing turns that into a reason, so without this the
+    // floor fires the moment `unread` clears and reason priority drops the row
+    // to the bottom of the band under the reader. Every earned reason still
+    // wins over a retained one — only the floor yields.
+    const resolvedReason = reason === 'standing' && retainedReason
+        ? retainedReason
+        : reason ?? retainedReason;
     if (!resolvedReason) return null;
     return {
         item: params.item,

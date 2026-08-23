@@ -1412,6 +1412,87 @@ describe('computeVisibleSessionListIndex', () => {
         });
     });
 
+    // Retention holds the row the user is READING in place, and it worked only
+    // because opening an unread row left the live placement with no reason at
+    // all. Standing turns "no reason" into a reason, so the floor fires the
+    // instant `unread` clears — and since reason priority is the primary sort,
+    // the kept row drops to the bottom of the band under the reader instead of
+    // waiting for them to navigate away.
+    it('holds a kept unread row at its attention position while it is open, releasing it to the standing floor on navigation', () => {
+        const groupKey = 'server:s1:day:2026-02-17';
+        const source: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey },
+            { type: 'session', sessionId: 'existing-ready', serverId: 's1', section: 'inactive', groupKey, groupKind: 'date' },
+            { type: 'session', sessionId: 'selected-unread', serverId: 's1', section: 'inactive', groupKey, groupKind: 'date' },
+            { type: 'session', sessionId: 'other-unread', serverId: 's1', section: 'inactive', groupKey, groupKind: 'date' },
+        ];
+        const selectedUnread = makeSessionRow('selected-unread', {
+            seq: 742,
+            hasUnreadMessages: true,
+            meaningfulActivityAt: 200,
+            latestReadyEventSeq: 110,
+            latestReadyEventAt: 100,
+            lastViewedSessionSeq: 738,
+        });
+        const readRows = {
+            's1:existing-ready': makeSessionRow('existing-ready', {
+                latestReadyEventSeq: 50,
+                latestReadyEventAt: 50,
+                lastViewedSessionSeq: 1,
+            }),
+            's1:selected-unread': { ...selectedUnread, lastViewedSessionSeq: 742, hasUnreadMessages: false },
+            's1:other-unread': makeSessionRow('other-unread', {
+                seq: 500,
+                hasUnreadMessages: true,
+                meaningfulActivityAt: 150,
+                latestReadyEventSeq: 100,
+                latestReadyEventAt: 40,
+                lastViewedSessionSeq: 101,
+            }),
+        };
+        const common = {
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            sessionListOrderingModeV1: 'custom' as const,
+            presentation: { enabled: false, presentation: 'grouped' as const, selectedServerIds: [] },
+        };
+        const standingPolicy = {
+            defaultStanding: false,
+            overridesBySessionKey: { 's1:selected-unread': true },
+        };
+        const summarizeAttention = (items: ReadonlyArray<SessionListIndexItem>) => items
+            .filter((item): item is Extract<SessionListIndexItem, { type: 'session' }> => item.type === 'session' && item.groupKind === 'attention')
+            .map((item) => `${item.sessionId}:${item.attentionPromotionReason ?? 'none'}`);
+
+        const retained = computeVisibleSessionListIndex({
+            ...common,
+            resolveSessionRow: makeResolver(readRows),
+            attentionPromotion: {
+                mode: 'global',
+                standingPolicy,
+                retainedPlacements: [{ key: 's1:selected-unread', reason: 'unread' }],
+            },
+        })!;
+        expect(summarizeAttention(retained)).toEqual([
+            'existing-ready:ready',
+            'selected-unread:unread',
+            'other-unread:unread',
+        ]);
+
+        const released = computeVisibleSessionListIndex({
+            ...common,
+            resolveSessionRow: makeResolver(readRows),
+            attentionPromotion: { mode: 'global', standingPolicy },
+        })!;
+        expect(summarizeAttention(released)).toEqual([
+            'existing-ready:ready',
+            'other-unread:unread',
+            'selected-unread:standing',
+        ]);
+    });
+
     it('promotes completed turns even when stale thinking flags remain', () => {
         const groupKey = 'server:s1:day:2026-02-17';
         const source: SessionListIndexItem[] = [
