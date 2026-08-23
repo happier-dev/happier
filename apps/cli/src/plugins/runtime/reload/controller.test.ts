@@ -25,6 +25,7 @@ function createRuntimeRegistry(
         publishDeclaredEventSubscriptions?: () => void;
         retireLiveSubscriptionConsumers?: () => void;
         applyResourceSessionAccessWitness?: ResolvedExecutablePluginRuntimeRegistry['applyResourceSessionAccessWitness'];
+        currentGlobalExternalSessionsTarget?: ResolvedExecutablePluginRuntimeRegistry['currentGlobalExternalSessionsTarget'];
         additionalPluginDiagnostics?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
     }>,
 ): ResolvedExecutablePluginRuntimeRegistry {
@@ -70,6 +71,12 @@ function createRuntimeRegistry(
         createAgentInvocationServices: async () => createUnavailablePluginServices(),
         ...(params?.applyResourceSessionAccessWitness
             ? { applyResourceSessionAccessWitness: params.applyResourceSessionAccessWitness }
+            : {}),
+        ...(params?.currentGlobalExternalSessionsTarget
+            ? {
+                currentGlobalExternalSessionsTarget:
+                    params.currentGlobalExternalSessionsTarget,
+            }
             : {}),
         dispose: params?.dispose ?? (async () => {}),
     };
@@ -161,6 +168,57 @@ describe('createPluginReloadController', () => {
             'publish',
             'start:replacement',
         ]);
+    });
+
+    it('retargets a long-lived current-global External Sessions holder at registry publication', async () => {
+        const activations: string[] = [];
+        const initialOwner = { label: 'G' } as unknown as
+            NonNullable<ReturnType<NonNullable<
+                ResolvedExecutablePluginRuntimeRegistry['currentGlobalExternalSessionsTarget']
+            >['resolveCurrent']>>;
+        const replacementOwner = { label: 'H' } as unknown as typeof initialOwner;
+        const initialRegistry = createRuntimeRegistry('initial', {
+            currentGlobalExternalSessionsTarget: {
+                resolveCurrent: () => initialOwner,
+                activateConfiguredSources: async (agentId) => {
+                    activations.push(`G:${agentId ?? '*'}`);
+                },
+            },
+        });
+        const replacementRegistry = createRuntimeRegistry('replacement', {
+            currentGlobalExternalSessionsTarget: {
+                resolveCurrent: () => replacementOwner,
+                activateConfiguredSources: async (agentId) => {
+                    activations.push(`H:${agentId ?? '*'}`);
+                },
+            },
+        });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => initialRegistry,
+        });
+        // An unchanged long-lived plugin context captures this once, before any
+        // publication, and never captures a registry-local owner again.
+        const captured = controller.currentGlobalExternalSessions;
+
+        expect(captured.resolveCurrent()).toBeNull();
+        const initialLease = await controller.acquireRuntimeRegistry();
+        await initialLease.release();
+        expect(captured.resolveCurrent()).toBe(initialOwner);
+        await captured.activateConfiguredSources('codex');
+
+        await controller.adoptPreparedRuntimeRegistry({
+            registry: replacementRegistry,
+            changedPluginIds: ['peer.agent'],
+            durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
+        });
+
+        expect(captured.resolveCurrent()).toBe(replacementOwner);
+        await captured.activateConfiguredSources('codex');
+        expect(activations).toEqual(['G:codex', 'H:codex']);
+
+        await controller.shutdown();
+        expect(captured.resolveCurrent()).toBeNull();
     });
 
     it('cuts shared-broker declared handlers over exactly at registry publication while predecessor disposal is lease-delayed', async () => {

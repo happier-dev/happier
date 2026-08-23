@@ -63,6 +63,7 @@ describe('live Runner Agent generation retention', () => {
       pluginId: string,
       immutableGenerationId: string,
     ) => ({
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId,
@@ -417,6 +418,7 @@ describe('live Runner Agent generation retention', () => {
       attachedGenerationId,
     );
     const attachedRecord = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.runner-attachment',
@@ -596,6 +598,7 @@ describe('live Runner Agent generation retention', () => {
       await mkdir(retainedRoot, { recursive: true });
       await writeFile(join(retainedRoot, 'runtime.mjs'), runtimeBytes, 'utf8');
       await writeFile(join(retainedRoot, 'plugin-generation.v1.json'), JSON.stringify({
+        sourceProvenance: 'registryCustodied',
         t: 'happier_plugin_generation_v1',
         schemaVersion: 1,
         pluginId: 'acme.pre-marker',
@@ -705,6 +708,7 @@ describe('live Runner Agent generation retention', () => {
       providerGenerationId,
     );
     const providerRecord = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.provider',

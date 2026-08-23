@@ -4,20 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { TsconfigRaw } from 'esbuild';
 import ts from 'typescript';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
-
-async function realpathNearestExistingAncestor(targetPath: string): Promise<string> {
-  let candidatePath = targetPath;
-  while (true) {
-    try {
-      return await realpath(candidatePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
-      const parentPath = dirname(candidatePath);
-      if (parentPath === candidatePath) throw error;
-      candidatePath = parentPath;
-    }
-  }
-}
+import { realpathNearestExistingAncestor } from './physicalAncestorPath';
 
 function formatConfigDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
   return diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')).join('; ');

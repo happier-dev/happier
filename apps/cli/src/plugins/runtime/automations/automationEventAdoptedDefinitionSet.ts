@@ -23,6 +23,7 @@ import {
   isValidPluginJsonSchemaValue,
   readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1,
   freezeAutomationRunPluginEventExecutionRecipeV1,
+  sameAutomationAccountContentIdentityV1,
   sealAutomationEventTriggerEvidenceEnvelopeV1,
   sealAutomationRunPluginEventTriggerEvidenceEnvelopeV1,
   type AutomationEventSourceDefinitionV1,
@@ -153,6 +154,12 @@ type AdoptedSnapshot = Readonly<{
   revision: string;
   storedDefinitionScope: string | undefined;
   eventDeclarationRelease: AutomationEventDeclarationReleaseV1;
+  /**
+   * The one Account crypto/currentness witness every definition in this
+   * snapshot was opened under. Admission requires the Account content identity
+   * it names before sealing new evidence against these definitions.
+   */
+  accountCurrentness: AutomationAccountCurrentnessWitnessV1;
   definitions: readonly AutomationEventAdoptedDefinitionV1[];
   definitionsByAdmissionKey: ReadonlyMap<string, AutomationEventAdoptedDefinitionSnapshotRecordV1>;
 }>;
@@ -405,7 +412,14 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     caller: PluginMachineMaterializationRefV1,
     signal?: AbortSignal,
   ): Promise<boolean>;
-  revalidateAccountContent(signal?: AbortSignal): Promise<boolean>;
+  /**
+   * The one Account crypto/currentness owner for this set. A refresh attempt
+   * resolves it once and reuses that immutable snapshot; every other path
+   * resolves a fresh one at its own boundary.
+   */
+  resolveAccountEncryption(
+    signal?: AbortSignal,
+  ): Promise<AvailableAutomationAccountEncryptionV1 | null>;
   readStoredDefinitions(params: Readonly<{
     caller: PluginMachineMaterializationRefV1;
     input: AutomationEventSourcesListInputV1;
@@ -415,13 +429,11 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   projectStoredDefinition(params: Readonly<{
     storedDefinition: AutomationEventStoredDefinitionProjectionV1;
     eventDeclarationRelease: AutomationEventDeclarationReleaseV1;
+    accountEncryption: AvailableAutomationAccountEncryptionV1;
     signal?: AbortSignal;
   }>): Promise<
     AutomationEventAdoptedDefinitionV1 | AutomationEventAdoptedDefinitionForAdmissionV1 | null
   >;
-  resolveAdmissionAccountEncryption?(
-    signal: AbortSignal,
-  ): Promise<AvailableAutomationAccountEncryptionV1 | null>;
 }>): AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 {
   const pageSize = params.pageSize ?? MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE;
   let adopted: AdoptedSnapshot | null = null;
@@ -429,18 +441,55 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
   // retained definition snapshot.
   let adoptedSnapshotRefresh: AdoptedSnapshotRefresh | null = null;
 
-  async function isCurrent(signal: AbortSignal): Promise<boolean> {
-    if (signal.aborted || params.generationSignal.aborted || !params.isGenerationCurrent()) return false;
+  function isGenerationCurrent(signal: AbortSignal): boolean {
+    return !signal.aborted && !params.generationSignal.aborted && params.isGenerationCurrent();
+  }
+
+  /**
+   * Generation and caller-materialization currentness only. Both are local
+   * comparisons against the host's current admitted generation, so they carry
+   * no remote cost and stay on every per-definition step.
+   */
+  async function isCallerCurrent(signal: AbortSignal): Promise<boolean> {
+    if (!isGenerationCurrent(signal)) return false;
     try {
       if (!await params.revalidateCallerMaterialization(params.caller, signal)) return false;
-      if (signal.aborted || params.generationSignal.aborted || !params.isGenerationCurrent()) return false;
-      return await params.revalidateAccountContent(signal)
-        && !signal.aborted
-        && !params.generationSignal.aborted
-        && params.isGenerationCurrent();
     } catch {
       return false;
     }
+    return isGenerationCurrent(signal);
+  }
+
+  /**
+   * Caller currentness plus one fresh Account crypto/currentness reading. When
+   * `expected` is supplied, the reading must still name the same Account
+   * content identity — the mode and key the caller already opened content
+   * under. The Account change version advances for unrelated Account writes,
+   * so it is deliberately not part of that comparison.
+   */
+  async function isCurrent(
+    signal: AbortSignal,
+    expected?: AutomationAccountCurrentnessWitnessV1,
+  ): Promise<boolean> {
+    return await readCurrentAccountEncryption(signal, expected) !== null;
+  }
+
+  async function readCurrentAccountEncryption(
+    signal: AbortSignal,
+    expected?: AutomationAccountCurrentnessWitnessV1,
+  ): Promise<AvailableAutomationAccountEncryptionV1 | null> {
+    if (!await isCallerCurrent(signal)) return null;
+    let encryption: AvailableAutomationAccountEncryptionV1 | null;
+    try {
+      encryption = await params.resolveAccountEncryption(signal);
+    } catch {
+      return null;
+    }
+    if (encryption === null || !isGenerationCurrent(signal)) return null;
+    return expected === undefined
+      || sameAutomationAccountContentIdentityV1(encryption.witness, expected)
+      ? encryption
+      : null;
   }
 
   function listInput(paramsForPage: Readonly<{
@@ -459,6 +508,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     revision: string,
     storedDefinitionScope: string | undefined,
     eventDeclarationRelease: AutomationEventDeclarationReleaseV1,
+    accountCurrentness: AutomationAccountCurrentnessWitnessV1,
     definitions: readonly (
       AutomationEventAdoptedDefinitionV1 | AutomationEventAdoptedDefinitionForAdmissionV1
     )[],
@@ -495,6 +545,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       revision,
       storedDefinitionScope,
       eventDeclarationRelease,
+      accountCurrentness,
       definitions: immutableDefinitions,
       definitionsByAdmissionKey,
     };
@@ -504,7 +555,13 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     callerSignal = createEmptySignal(),
   ): Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1> {
     const signal = AbortSignal.any([params.generationSignal, callerSignal]);
-    if (!await isCurrent(signal)) return { kind: 'discarded', reason: 'notCurrent' };
+    // One immutable Account crypto/currentness snapshot for the whole attempt.
+    // The adopted catalog publishes atomically, so nothing built under it is
+    // observable before the closing recheck admits it; re-reading the Account
+    // once per definition bought no guarantee the boundary rechecks do not.
+    const attemptAccountEncryption = await readCurrentAccountEncryption(signal);
+    if (attemptAccountEncryption === null) return { kind: 'discarded', reason: 'notCurrent' };
+    const attemptAccountCurrentness = attemptAccountEncryption.witness;
 
     let cursor: string | undefined;
     let expectedRevision: string | undefined;
@@ -542,7 +599,10 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           ? { kind: 'discarded', reason: 'notCurrent' }
           : { kind: 'discarded', reason: 'unavailable' };
       }
-      if (!await isCurrent(signal)) return { kind: 'discarded', reason: 'notCurrent' };
+      // Page boundary: the attempt's Account content identity must still hold.
+      if (!await isCurrent(signal, attemptAccountCurrentness)) {
+        return { kind: 'discarded', reason: 'notCurrent' };
+      }
 
       if (result.kind === 'cursorStale') {
         return isCanonicalUnsignedRevision(result.currentRevision)
@@ -621,12 +681,13 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           projected = await params.projectStoredDefinition({
             storedDefinition,
             eventDeclarationRelease: result.eventDeclarationRelease,
+            accountEncryption: attemptAccountEncryption,
             signal,
           });
         } catch {
           return { kind: 'discarded', reason: 'unavailable' };
         }
-        if (!await isCurrent(signal)) return { kind: 'discarded', reason: 'notCurrent' };
+        if (!await isCallerCurrent(signal)) return { kind: 'discarded', reason: 'notCurrent' };
         if (projected === null) return { kind: 'discarded', reason: 'invalidPage' };
         const projectedDefinition = isDefinitionPreparedForAdmission(projected)
           ? projected.definition
@@ -663,11 +724,16 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       }
 
       if (result.nextCursor === null) {
-        if (!await isCurrent(signal)) return { kind: 'discarded', reason: 'notCurrent' };
+        // Closing boundary: admit the candidate only while the Account content
+        // identity every definition was opened under is still current.
+        if (!await isCurrent(signal, attemptAccountCurrentness)) {
+          return { kind: 'discarded', reason: 'notCurrent' };
+        }
         const snapshot = buildSnapshot(
           expectedRevision,
           expectedStoredDefinitionScope,
           expectedEventDeclarationRelease!,
+          attemptAccountCurrentness,
           candidate,
         );
         if (snapshot === null) return { kind: 'discarded', reason: 'invalidPage' };
@@ -1007,13 +1073,14 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         : null;
       if (params.transport.kind === 'durablePush' && webhookInvocationReference === null) return null;
 
-      let accountEncryption: AvailableAutomationAccountEncryptionV1 | null;
-      try {
-        accountEncryption = await params.resolveAdmissionAccountEncryption?.(signal) ?? null;
-      } catch {
-        return null;
-      }
-      if (accountEncryption === null || !await isCurrent(signal)) return null;
+      // A fresh exact server witness for this admission request, admitted only
+      // while it still names the Account content identity this snapshot's
+      // definitions were adopted under.
+      const accountEncryption = await readCurrentAccountEncryption(
+        signal,
+        snapshot.accountCurrentness,
+      );
+      if (accountEncryption === null) return null;
 
       if (accountEncryption.witness.mode === 'plain') {
         const initialAccountCurrentness = accountEncryption.witness;

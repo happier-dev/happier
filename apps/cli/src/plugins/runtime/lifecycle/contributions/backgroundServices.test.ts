@@ -93,7 +93,7 @@ describe('background service runner host', () => {
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: { backgroundServices: [{ id: 'indexer' }] },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) {
             throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         }
@@ -171,7 +171,7 @@ describe('background service runner host', () => {
             contributes: {
                 backgroundServices: [{ id: 'gateway-supervisor' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) {
             throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         }
@@ -294,7 +294,7 @@ describe('background service runner host', () => {
             contributes: {
                 backgroundServices: [{ id: 'account-state-supervisor' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) {
             throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         }
@@ -415,7 +415,7 @@ describe('background service runner host', () => {
                 optional: [],
             },
             contributes: { backgroundServices: [{ id: 'gateway-supervisor' }] },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) {
             throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         }

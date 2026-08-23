@@ -34,7 +34,7 @@ export type InspectPluginSourceResult =
       errorMessage: string;
     }>;
 
-function inferPluginSourceInspectionKind(locator: string): PluginSourceInspectionKind {
+export function inferPluginSourceInspectionKind(locator: string): PluginSourceInspectionKind {
   const normalizedLocator = locator.trim();
   if (!normalizedLocator) {
     return 'path';
@@ -232,7 +232,10 @@ export async function inspectPluginSource(params: Readonly<{
         archivePath: candidateArchivePath,
       });
       stagedCandidate = staged;
-      const resolvedSource = await resolveLocalPathPluginSource({ locator: staged.rootPath });
+      const resolvedSource = await resolveLocalPathPluginSource({
+        locator: staged.rootPath,
+        installedSourceKind: 'archive',
+      });
       if (!resolvedSource.ok) {
         return {
           ok: false,

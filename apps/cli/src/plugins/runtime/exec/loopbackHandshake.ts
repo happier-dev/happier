@@ -3,6 +3,7 @@ import type { ExecLengthPrefixedByteOrderV1 } from './privateContract';
 import {
     PluginExecClientError,
     createPluginExecClientAbortError,
+    createPluginExecClientProtocolError,
 } from './errors';
 
 const LENGTH_PREFIX_BYTES = 4;
@@ -22,10 +23,6 @@ type ReadHandshakeFrameParams = Readonly<{
     signal?: AbortSignal;
     readStderrPreview?: () => string | undefined;
 }>;
-
-function createProtocolError(message: string, cause?: unknown, stderrPreview?: string): PluginExecClientError {
-    return new PluginExecClientError('PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', message, { cause, stderrPreview });
-}
 
 function toBuffer(chunk: unknown): Buffer {
     if (Buffer.isBuffer(chunk)) {
@@ -118,7 +115,7 @@ export async function readLoopbackHandshakeFrame(params: ReadHandshakeFrameParam
             }
             const frameLength = readFrameLength(buffer, params.byteOrder);
             if (frameLength > maxFrameBytes) {
-                fail(createProtocolError('Loopback WebSocket handshake response exceeded the configured size limit', undefined, stderrPreview()));
+                fail(createPluginExecClientProtocolError('Loopback WebSocket handshake response exceeded the configured size limit', undefined, stderrPreview()));
                 return;
             }
             const totalLength = LENGTH_PREFIX_BYTES + frameLength;
@@ -137,11 +134,11 @@ export async function readLoopbackHandshakeFrame(params: ReadHandshakeFrameParam
         }
 
         function onEnd(): void {
-            fail(createProtocolError('Loopback WebSocket handshake stdout ended before a complete response frame', undefined, stderrPreview()));
+            fail(createPluginExecClientProtocolError('Loopback WebSocket handshake stdout ended before a complete response frame', undefined, stderrPreview()));
         }
 
         function onError(error: unknown): void {
-            fail(createProtocolError('Loopback WebSocket handshake stdout failed', error, stderrPreview()));
+            fail(createPluginExecClientProtocolError('Loopback WebSocket handshake stdout failed', error, stderrPreview()));
         }
 
         function onAbort(): void {

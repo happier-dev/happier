@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import type { PluginAgentCliMetadata } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,12 +12,22 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { createNativeAgentCliAuthSpec } from './agentCliMetadata';
 
+const AUTH_PROBE_ENV_KEYS = [
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'COPILOT_GITHUB_TOKEN',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'HAPPIER_COPILOT_CLI_AUTH_PROBE_TIMEOUT_MS',
+    'PATH',
+] as const;
+
 const tempDirs = new Set<string>();
-let envScope = createEnvKeyScope(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const);
+let envScope = createEnvKeyScope(AUTH_PROBE_ENV_KEYS);
 
 afterEach(async () => {
     envScope.restore();
-    envScope = createEnvKeyScope(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const);
+    envScope = createEnvKeyScope(AUTH_PROBE_ENV_KEYS);
     for (const dir of tempDirs) {
         await removeTempDir(dir);
     }
@@ -173,4 +183,75 @@ describe('native Agent CLI auth metadata projection', () => {
             source: 'command',
         });
     });
+
+    it.each(['envOnly', 'piEnvOnly'] as const)(
+        'resolves %s probes from the declared env vars alone',
+        async (parser) => {
+            const spec = createNativeAgentCliAuthSpec(metadata(parser, {
+                envVars: ['ANTHROPIC_API_KEY'],
+            }));
+
+            envScope.patch({ ANTHROPIC_API_KEY: undefined });
+            await expect(spec.detectAuthStatus?.({ resolvedPath: '/usr/local/bin/acme' })).resolves.toEqual({
+                state: 'logged_out',
+                reason: 'missing_credentials',
+            });
+
+            envScope.patch({ ANTHROPIC_API_KEY: 'sk-declared' });
+            await expect(spec.detectAuthStatus?.({ resolvedPath: '/usr/local/bin/acme' })).resolves.toEqual({
+                state: 'logged_in',
+                method: 'api_key_env',
+                source: 'env',
+            });
+        },
+    );
+
+    it('detects declared GitHub token env vars before probing gh', async () => {
+        envScope.patch({
+            COPILOT_GITHUB_TOKEN: undefined,
+            GH_TOKEN: 'gh-token',
+            GITHUB_TOKEN: undefined,
+        });
+        const spec = createNativeAgentCliAuthSpec(metadata('copilotGhAuth', {
+            envVars: ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
+        }));
+
+        await expect(spec.detectAuthStatus?.({ resolvedPath: '/usr/local/bin/copilot' })).resolves.toEqual({
+            state: 'logged_in',
+            method: 'api_key_env',
+            source: 'env',
+        });
+    });
+
+    // The `gh` probe is slower than the 1.5s default on cold GitHub CLI installs, so the
+    // declared timeout must stay operator-tunable through the documented env key.
+    it.skipIf(process.platform === 'win32')(
+        'honors the operator gh auth probe timeout override',
+        async () => {
+            const root = await createTempDir('happier-native-agent-copilot-auth-', tmpdir());
+            tempDirs.add(root);
+            await writeExecutableShim({
+                dir: root,
+                fileName: 'gh',
+                contents: '#!/bin/sh\nsleep 2\nprintf gh-oauth-token\n',
+            });
+            envScope.patch({
+                COPILOT_GITHUB_TOKEN: undefined,
+                GH_TOKEN: undefined,
+                GITHUB_TOKEN: undefined,
+                HAPPIER_COPILOT_CLI_AUTH_PROBE_TIMEOUT_MS: '20_000',
+                PATH: `${root}${delimiter}${process.env.PATH ?? ''}`,
+            });
+            const spec = createNativeAgentCliAuthSpec(metadata('copilotGhAuth', {
+                envVars: ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
+            }));
+
+            await expect(spec.detectAuthStatus?.({ resolvedPath: '/usr/local/bin/copilot' })).resolves.toEqual({
+                state: 'logged_in',
+                method: 'oauth_cli',
+                source: 'command',
+            });
+        },
+        30_000,
+    );
 });

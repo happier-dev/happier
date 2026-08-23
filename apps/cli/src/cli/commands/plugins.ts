@@ -11,6 +11,7 @@ import {
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import {
+  hasFlag,
   hasFlagValue,
   readCommandPositionals,
   readFlagValue,
@@ -80,6 +81,10 @@ import {
   type PluginDevelopmentSourceRequest,
 } from '@/plugins/authoring/sourceObserver';
 import { runPluginAuthorDoctor } from '@/plugins/authoring/doctor';
+import {
+  diagnoseInstalledPluginGenerations,
+  type InstalledPluginGenerationReport,
+} from '@/plugins/store/registry/installedGenerationDiagnosis';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import {
   requestPluginDevelopmentChange,
@@ -131,6 +136,7 @@ type PluginsCommandDeps = Readonly<{
     prerequisiteLocators?: readonly string[];
   }>) => Promise<PackedPluginTestResult>;
   runPluginAuthorDoctor?: typeof runPluginAuthorDoctor;
+  diagnoseInstalledPluginGenerations?: typeof diagnoseInstalledPluginGenerations;
   inspectPluginDevelopmentSource?: typeof inspectPluginDevelopmentSource;
   startPluginDevelopmentSourceObserver?: typeof startPluginDevelopmentSourceObserver;
   requestDevelopmentChange?: (
@@ -187,6 +193,7 @@ function usage(): string {
       { label: 'happier plugins author typecheck|build|test <path> [--json]', description: 'Run managed author typecheck, build, or test checks' },
       { label: 'happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>] [--json]', description: 'Validate and package a local plugin into an installable archive' },
       { label: 'happier plugins doctor [path] [--json]', description: 'Evaluate and diagnose a code-defined plugin author module' },
+      { label: 'happier plugins doctor --installed [<pluginId>] [--json]', description: 'Inspect installed immutable plugin generations for missing, escaped, non-regular, drifted, or unloadable files' },
       { label: 'happier plugins reload [developmentPluginId] [--json]', description: 'Reapply the development source registered for this directory, or one explicit plugin id' },
       { label: 'happier plugins change status|approve|reject <pendingChangeId> [--json]', description: 'Rejoin or explicitly decide a daemon-lifetime pending plugin change by its issued id' },
       { label: 'happier plugins logs <pluginId> [--machine <id>] [--generation <id>] [--correlation <id>] [--cursor <byteOffset>] [--limit <1-500>] [--follow] [--json]', description: 'Read canonical structured logs from one exact current daemon' },
@@ -917,14 +924,42 @@ async function printPluginChangeDecisionResult(
   await reportPluginChangeFailure(args, 'plugins_change_decision', result);
 }
 
+/**
+ * One unknown-nested-operation owner for every `plugins` dispatch level. A
+ * missing or help operation is a help request and stays successful; an operation
+ * the author actually typed and this surface does not implement is a structured
+ * failure in both the JSON and human envelopes.
+ */
+async function reportUnknownPluginsSubcommand(
+  args: readonly string[],
+  kind: string,
+  message: string,
+): Promise<void> {
+  if (wantsJson(args)) {
+    await printJsonEnvelope({ ok: false, kind, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
+    return;
+  }
+  console.error(errorFrame('Error:', [message]));
+  console.log(usage());
+  process.exitCode = 1;
+}
+
 async function runPluginsChangeCommand(
   args: readonly string[],
   deps: PluginsCommandDeps,
   runtime: PluginsCommandRuntime,
 ): Promise<void> {
   const changeSubcommand = String(args[1] ?? '').trim();
-  if (changeSubcommand !== 'status' && changeSubcommand !== 'approve' && changeSubcommand !== 'reject') {
+  if (!changeSubcommand || changeSubcommand === 'help' || changeSubcommand === '--help' || changeSubcommand === '-h') {
     console.log(usage());
+    return;
+  }
+  if (changeSubcommand !== 'status' && changeSubcommand !== 'approve' && changeSubcommand !== 'reject') {
+    await reportUnknownPluginsSubcommand(
+      args,
+      `plugins_change_${changeSubcommand}`,
+      `Unknown plugins change subcommand: ${changeSubcommand}`,
+    );
     return;
   }
   const pendingChangeId = readCommandPositionals(args, { startIndex: 2 })[0] ?? null;
@@ -1967,11 +2002,23 @@ async function runPluginsAuthorCommand(
   deps: PluginsCommandDeps,
 ): Promise<void> {
   const rawOperation = String(args[1] ?? '').trim();
+  if (!rawOperation || rawOperation === 'help' || rawOperation === '--help' || rawOperation === '-h') {
+    console.log(usage());
+    return;
+  }
+  if (!isPluginAuthorOperation(rawOperation)) {
+    await reportUnknownPluginsSubcommand(
+      args,
+      `plugins_author_${rawOperation}`,
+      `Unknown plugins author subcommand: ${rawOperation}`,
+    );
+    return;
+  }
   const projectRoot = readCommandPositionals(args, {
     startIndex: 2,
     valueFlags: ['--sdk-registry'],
   })[0] ?? null;
-  if (!isPluginAuthorOperation(rawOperation) || !projectRoot) {
+  if (!projectRoot) {
     console.log(usage());
     return;
   }
@@ -2269,10 +2316,88 @@ async function runPluginsPackCommand(args: readonly string[]): Promise<void> {
   console.log(out.render());
 }
 
+function renderInstalledGenerationReport(report: InstalledPluginGenerationReport): readonly string[] {
+  const lines: string[] = [];
+  const header = `${report.pluginId}@${report.immutableGenerationId}`;
+  if (report.diagnostics.length === 0) {
+    lines.push(`${ok('healthy')} ${header} ${dim(`(${report.inspectedFileCount} files)`)}`);
+    return lines;
+  }
+  lines.push(`${fail('unhealthy')} ${header} ${dim(`(${report.inspectedFileCount} files)`)}`);
+  for (const diagnostic of report.diagnostics) {
+    lines.push(`  ${diagnostic.relativePath ? `${diagnostic.relativePath}: ` : ''}${diagnostic.message}`);
+  }
+  if (report.repair === 'reinstall') {
+    lines.push(`  ${dim('Repair:')} reinstall this plugin with ${cmd(`happier plugins install <source>`)}, or restore the retained prior version with ${cmd(`happier plugins rollback ${report.pluginId}`)}.`);
+  }
+  return lines;
+}
+
+async function runPluginsInstalledDoctorCommand(
+  args: readonly string[],
+  deps: PluginsCommandDeps,
+): Promise<void> {
+  const requestedPluginId = readCommandPositionals(args, { startIndex: 1 })[0];
+  const result = await (deps.diagnoseInstalledPluginGenerations ?? diagnoseInstalledPluginGenerations)({
+    paths: resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir }),
+    ...(requestedPluginId ? { pluginId: requestedPluginId } : {}),
+  });
+
+  if (wantsJson(args)) {
+    if (result.ok) {
+      await printJsonEnvelope({
+        ok: true,
+        kind: 'plugins_doctor_installed',
+        data: { plugins: result.plugins },
+      });
+      return;
+    }
+    await printJsonEnvelope({
+      ok: false,
+      kind: 'plugins_doctor_installed',
+      error: {
+        code: result.unknownPluginId
+          ? 'plugin_installed_generation_absent'
+          : 'plugin_installed_generation_unhealthy',
+        ...(result.unknownPluginId ? { pluginId: result.unknownPluginId } : {}),
+        plugins: result.plugins,
+      },
+    }, { exitCode: 1 });
+    return;
+  }
+
+  if (result.unknownPluginId) {
+    console.error(errorFrame('Error:', [
+      `No installed plugin generation is committed for '${result.unknownPluginId}'.`,
+    ]));
+    process.exitCode = 1;
+    return;
+  }
+
+  const out = createOutputBuilder();
+  out.line(sectionTitle('Installed plugin generations'));
+  if (result.plugins.length === 0) {
+    out.line(neutral('(no installed plugin generations)'));
+  }
+  for (const report of result.plugins) {
+    for (const line of renderInstalledGenerationReport(report)) out.line(line);
+  }
+  if (result.ok) {
+    console.log(out.render());
+    return;
+  }
+  console.error(out.render());
+  process.exitCode = 1;
+}
+
 async function runPluginsDoctorCommand(
   args: readonly string[],
   deps: PluginsCommandDeps,
 ): Promise<void> {
+  if (hasFlag(args, '--installed')) {
+    await runPluginsInstalledDoctorCommand(args, deps);
+    return;
+  }
   const locator = readCommandPositionals(args, { startIndex: 1 })[0] ?? process.cwd();
   const result = await (deps.runPluginAuthorDoctor ?? runPluginAuthorDoctor)({ locator });
   if (wantsJson(args)) {
@@ -3091,14 +3216,11 @@ export async function handlePluginsCommand(
         return;
       }
 
-      if (wantsJson(args)) {
-        await printJsonEnvelope({ ok: false, kind: `plugins_marketplace_sources_${marketplaceSourcesSubcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
-        return;
-      }
-
-      console.error(errorFrame('Error:', [`Unknown plugins marketplace sources subcommand: ${marketplaceSourcesSubcommand}`]));
-      console.log(usage());
-      process.exitCode = 1;
+      await reportUnknownPluginsSubcommand(
+        args,
+        `plugins_marketplace_sources_${marketplaceSourcesSubcommand}`,
+        `Unknown plugins marketplace sources subcommand: ${marketplaceSourcesSubcommand}`,
+      );
       return;
     }
 
@@ -3117,25 +3239,19 @@ export async function handlePluginsCommand(
       return;
     }
 
-    if (wantsJson(args)) {
-      await printJsonEnvelope({ ok: false, kind: `plugins_marketplace_${marketplaceSubcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
-      return;
-    }
-
-    console.error(errorFrame('Error:', [`Unknown plugins marketplace subcommand: ${marketplaceSubcommand}`]));
-    console.log(usage());
-    process.exitCode = 1;
+    await reportUnknownPluginsSubcommand(
+      args,
+      `plugins_marketplace_${marketplaceSubcommand}`,
+      `Unknown plugins marketplace subcommand: ${marketplaceSubcommand}`,
+    );
     return;
   }
 
-  if (wantsJson(args)) {
-    await printJsonEnvelope({ ok: false, kind: `plugins_${subcommand}`, error: { code: 'unknown_subcommand' } }, { exitCode: 1 });
-    return;
-  }
-
-  console.error(errorFrame('Error:', [`Unknown plugins subcommand: ${subcommand}`]));
-  console.log(usage());
-  process.exitCode = 1;
+  await reportUnknownPluginsSubcommand(
+    args,
+    `plugins_${subcommand}`,
+    `Unknown plugins subcommand: ${subcommand}`,
+  );
 }
 
 export async function handlePluginsCliCommand(context: CommandContext): Promise<void> {

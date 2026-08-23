@@ -1,15 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-    PluginError,
-    type JsonValue,
-    type PluginInvocationContext,
-} from '@happier-dev/plugin-sdk';
-import {
+    buildQualifiedPluginContributionKey,
+    createPluginContributionIdentity,
     PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
     PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '@happier-dev/protocol';
+import {
+    PluginError,
+    type ActionOperationDeclarationV1,
+    type JsonValue,
+    type PluginInvocationContext,
+} from '@happier-dev/plugin-sdk';
 
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
+import {
+    createResolvedContributionRegistry,
+} from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+    buildPluginContributionRegistry,
+} from '@/plugins/projection/registry/normalize/package';
+import type { ResolvedActionContribution } from '@/plugins/projection/registry/types';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { PluginTargetActivationFact } from '@/plugins/runtime/lifecycle/activation/facts';
 import {
@@ -73,6 +84,7 @@ function manifest(params: Readonly<{
     inputSchema?: Readonly<Record<string, unknown>>;
     resultSchema?: Readonly<Record<string, unknown>>;
     availability?: Readonly<Record<string, unknown>>;
+    operation?: ActionOperationDeclarationV1;
 }> = {}) {
     const surfaces = params.surfaces ?? ['cli'];
     const rawManifest = createPluginManifestV2Fixture({
@@ -83,6 +95,7 @@ function manifest(params: Readonly<{
             actions: [{
                 id: 'run', title: 'Run', description: 'Run', scopes: ['global'], surfaces,
                 execution: { target: 'daemon' },
+                ...(params.operation ? { operation: params.operation } : {}),
                 placementBindings: ['commandPalette'], dangerLevel: params.dangerLevel ?? 'safe',
                 ...(params.dangerLevel
                     && params.dangerLevel !== 'safe'
@@ -394,25 +407,41 @@ function registry(params: Readonly<{
     trustPolicy?: 'local_trusted' | 'prompt' | 'untrusted';
 }> = {}) {
     const pluginManifest = params.pluginManifest ?? manifest();
-    return {
-        actions: [{
-            provenance: 'external',
-            source: { kind: 'path' },
-            pluginId: 'acme.alpha',
-            definition: {
-                kindVersion: 1, id: 'run', title: 'Run', description: null, safety: 'safe',
-                dangerLevel: 'safe',
-                placements: [], slash: null, bindings: null, examples: null,
-                surfaces: { ui: false, voice: false, agent: false, mcp: false, cli: true, rpc: false, sdk: false, plugin: false },
-                execution: { target: 'daemon' },
-                inputHints: null, inputSchema: {},
-            },
-        }],
+    const activation = activationTarget(pluginManifest, params.trustPolicy);
+    const loadedPlugin = {
+        pluginId: activation.pluginId,
+        pluginRootPath: '/tmp',
+        manifestPath: activation.manifestPath,
+        daemonEntryPath: activation.daemonEntryPath,
+        devDaemonEntryPath: null,
+        sourceSpec: activation.sourceSpec,
+        manifest: pluginManifest,
+    } satisfies LoadedPlugin;
+    const normalizedAction = buildPluginContributionRegistry({
+        loadedPlugins: [loadedPlugin],
+    }).actions[0];
+    if (!normalizedAction) throw new Error('Expected normalized Action fixture');
+    const resolvedAction: ResolvedActionContribution = {
+        provenance: 'external',
+        source: { kind: 'path' },
+        ...normalizedAction,
+    };
+    const resolved = createResolvedContributionRegistry({
+        actions: [resolvedAction],
         materializationIdsByPluginId: {
             'acme.alpha': 'materialization-alpha-current',
         },
-        activationTargets: [activationTarget(pluginManifest, params.trustPolicy)],
-    } as unknown as ResolvedContributionRegistry;
+        activationTargets: [activation],
+    });
+    const localId = pluginManifest.contributes.actions[0]?.id;
+    if (!localId) throw new Error('Expected one manifest Action fixture');
+    const actionRegistryKey = buildQualifiedPluginContributionKey(
+        createPluginContributionIdentity({ pluginId: 'acme.alpha', localId }),
+    );
+    if (!resolved.actionsById?.has(actionRegistryKey)) {
+        throw new Error(`Expected normalized Action '${actionRegistryKey}'`);
+    }
+    return resolved;
 }
 
 function authorizationFacts(overrides: Readonly<{
@@ -441,15 +470,11 @@ function authorizationFacts(overrides: Readonly<{
 }
 
 function registryWithHostAccess() {
-    const base = registry();
     const pluginManifest = manifest({
         hostAccess: { required: [{ id: 'api', capability: 'network', reason: 'API', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }], methods: ['GET'] } }], optional: [] },
         actionHostAccess: ['api'],
     });
-    return {
-        actions: [base.actions[0]!],
-        activationTargets: [activationTarget(pluginManifest)],
-    } as unknown as ResolvedContributionRegistry;
+    return registry({ pluginManifest });
 }
 
 function fact(overrides: Partial<PluginTargetActivationFact> = {}): PluginTargetActivationFact {
@@ -523,6 +548,41 @@ describe('buildTargetActionInvocationRegistry', () => {
             input: {},
             surface: 'cli',
         })).resolves.toEqual({ status: 'executed', value: { ok: true } });
+    });
+
+    it('carries tracked operation metadata through the resolved registry to the target handler', async () => {
+        const update = vi.fn();
+        const target = buildRegistry({
+            contributes: registry({
+                pluginManifest: manifest({
+                    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+                }),
+            }),
+            targetRegistrations: [{
+                pluginId: 'acme.alpha',
+                generation: '7',
+                registration: {
+                    family: 'actions',
+                    localId: 'run',
+                    value: async (_input: JsonValue, context: PluginInvocationContext) => {
+                        context.operation?.update({ label: 'Working' });
+                        return { ok: true };
+                    },
+                },
+            }],
+            targetActivationFacts: [fact()],
+        });
+
+        await expect(target.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: {},
+            surface: 'cli',
+            operationProgress: {
+                update,
+            },
+        })).resolves.toEqual({ status: 'executed', value: { ok: true } });
+        expect(update).toHaveBeenCalledWith({ label: 'Working' });
     });
 
     it('provides a declared Connected Accounts service to the Action handler', async () => {
@@ -637,23 +697,7 @@ describe('buildTargetActionInvocationRegistry', () => {
                 ),
             }),
         };
-        const contributes = {
-            actions: [],
-            activationTargets: [{
-                provenance: 'external',
-                source: { kind: 'path' },
-                pluginId: 'acme.alpha',
-                manifestPath: '/tmp/plugin.json',
-                daemonEntryPath: '/tmp/plugin.js',
-                sourceSpec: {
-                    kind: 'path',
-                    locator: '/tmp',
-                    trustPolicy: 'local_trusted',
-                    installPolicy: 'link',
-                },
-                manifest: pluginManifest,
-            }],
-        } as unknown as ResolvedContributionRegistry;
+        const contributes = registry({ pluginManifest });
         const handler = vi.fn(async (
             _input: import('@happier-dev/plugin-sdk').JsonValue,
             context: import('@happier-dev/plugin-sdk').PluginInvocationContext,

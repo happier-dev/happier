@@ -64,7 +64,7 @@ describe('Telegram chat Automation Event source', () => {
                 mcp: false,
                 plugin: true,
                 rpc: false,
-                sdk: false,
+                api: false,
                 ui: false,
                 voice: false,
             });

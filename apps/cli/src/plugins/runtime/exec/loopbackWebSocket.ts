@@ -22,6 +22,7 @@ import type {
 import {
     PluginExecClientError,
     createPluginExecClientAbortError,
+    createPluginExecClientProtocolError,
     sanitizeExecDiagnosticText,
 } from './errors';
 import { createPluginProtocolCallbackQueue } from './callbackQueue';
@@ -100,10 +101,6 @@ const DEFAULT_MAX_BUFFERED_BYTES = 1024 * 1024;
 const DEFAULT_SHUTDOWN_GRACE_MS = 250;
 const SAFE_ORIGIN_FORM_PATH_PATTERN = /^\/[A-Za-z0-9\-._~!$&'()*+,;=:@/%]*(?:\?[A-Za-z0-9\-._~!$&'()*+,;=:@/%?]*)?$/;
 
-function createProtocolError(message: string, cause?: unknown, stderrPreview?: string): PluginExecClientError {
-    return new PluginExecClientError('PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', message, { cause, stderrPreview });
-}
-
 function createBackpressureError(stderrPreview?: string): PluginExecClientError {
     return new PluginExecClientError(
         'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED',
@@ -180,10 +177,10 @@ function isSafeAbsolutePath(path: string): boolean {
 
 function validateHeader(header: ExecLoopbackWebSocketHeaderV1): void {
     if (!/^[!#$%&'*+\-.^_\x60|~0-9A-Za-z]+$/.test(header.name)) {
-        throw createProtocolError('Loopback WebSocket header name is invalid');
+        throw createPluginExecClientProtocolError('Loopback WebSocket header name is invalid');
     }
     if (/[\r\n]/.test(header.value)) {
-        throw createProtocolError('Loopback WebSocket header value is invalid');
+        throw createPluginExecClientProtocolError('Loopback WebSocket header value is invalid');
     }
 }
 
@@ -201,7 +198,7 @@ function validateEndpoint(
     if (typeof endpoint.url === 'string' && endpoint.url.trim().length > 0) {
         const parsed = new URL(endpoint.url);
         if (parsed.username || parsed.password) {
-            throw createProtocolError('Loopback WebSocket endpoint URL must not include credentials');
+            throw createPluginExecClientProtocolError('Loopback WebSocket endpoint URL must not include credentials');
         }
         protocol = parsed.protocol.replace(/:$/, '');
         host = parsed.hostname;
@@ -210,16 +207,16 @@ function validateEndpoint(
     }
 
     if (protocol !== 'ws') {
-        throw createProtocolError('Loopback WebSocket endpoint must use ws protocol');
+        throw createPluginExecClientProtocolError('Loopback WebSocket endpoint must use ws protocol');
     }
     if (!isLoopbackHost(host)) {
-        throw createProtocolError('Loopback WebSocket endpoint host must be loopback-only');
+        throw createPluginExecClientProtocolError('Loopback WebSocket endpoint host must be loopback-only');
     }
     if (typeof port !== 'number' || !Number.isInteger(port) || port < 1024 || port > 65535) {
-        throw createProtocolError('Loopback WebSocket endpoint port must be an integer user-space port');
+        throw createPluginExecClientProtocolError('Loopback WebSocket endpoint port must be an integer user-space port');
     }
     if (!isSafeAbsolutePath(path)) {
-        throw createProtocolError('Loopback WebSocket endpoint path must be a safe absolute path/query form');
+        throw createPluginExecClientProtocolError('Loopback WebSocket endpoint path must be a safe absolute path/query form');
     }
     for (const header of headers) {
         validateHeader(header);
@@ -343,7 +340,7 @@ async function writeHandshakeFrames(
     for (const frame of handshake.requestFrames) {
         const payloadLength = typeof frame === 'string' ? Buffer.byteLength(frame) : frame.byteLength;
         if (payloadLength > maxFrameBytes) {
-            throw createProtocolError('Loopback WebSocket handshake request exceeded the configured size limit');
+            throw createPluginExecClientProtocolError('Loopback WebSocket handshake request exceeded the configured size limit');
         }
         await process.handle.writeStdin(encodeLoopbackHandshakeFrame(frame, handshake.byteOrder));
     }
@@ -375,7 +372,7 @@ function toExecClientError(
     if (isPluginError(error) && error.code === 'plugin_websocket_backpressure_exceeded') {
         return createBackpressureError(readStderrPreview());
     }
-    return createProtocolError('Loopback WebSocket transport failed', error, readStderrPreview());
+    return createPluginExecClientProtocolError('Loopback WebSocket transport failed', error, readStderrPreview());
 }
 
 function closeError(
@@ -387,7 +384,7 @@ function closeError(
     if (close.diagnostic?.code === 'plugin_websocket_backpressure_exceeded') {
         return createBackpressureError(readStderrPreview());
     }
-    return createProtocolError('Loopback WebSocket transport closed unexpectedly', close, readStderrPreview());
+    return createPluginExecClientProtocolError('Loopback WebSocket transport closed unexpectedly', close, readStderrPreview());
 }
 
 async function openSharedLoopbackWebSocket(
@@ -508,7 +505,7 @@ function createJsonClient(params: Readonly<{
         try {
             value = JSON.parse(text);
         } catch (error) {
-            throw createProtocolError('Loopback WebSocket message was not valid JSON', error, params.readStderrPreview());
+            throw createPluginExecClientProtocolError('Loopback WebSocket message was not valid JSON', error, params.readStderrPreview());
         }
         let firstFailure: unknown;
         for (const listener of [...subscribers]) {
@@ -539,7 +536,7 @@ function createJsonClient(params: Readonly<{
                 failClient(failure.cause);
                 return;
             }
-            failClient(createProtocolError(
+            failClient(createPluginExecClientProtocolError(
                 'Loopback WebSocket subscriber failed',
                 failure.cause,
                 params.readStderrPreview(),
@@ -557,12 +554,12 @@ function createJsonClient(params: Readonly<{
                     return;
                 }
                 if (result.kind !== 'text') {
-                    failClient(createProtocolError('Loopback WebSocket received an unsupported message type', undefined, params.readStderrPreview()));
+                    failClient(createPluginExecClientProtocolError('Loopback WebSocket received an unsupported message type', undefined, params.readStderrPreview()));
                     return;
                 }
                 const bytes = Buffer.byteLength(result.text, 'utf8');
                 if (bytes > params.maxMessageBytes) {
-                    failClient(createProtocolError('Loopback WebSocket message exceeded the configured size limit', undefined, params.readStderrPreview()));
+                    failClient(createPluginExecClientProtocolError('Loopback WebSocket message exceeded the configured size limit', undefined, params.readStderrPreview()));
                     return;
                 }
                 deliveryQueue.enqueue(bytes, () => deliverMessage(result.text));
@@ -587,7 +584,7 @@ function createJsonClient(params: Readonly<{
             if (options?.signal?.aborted) throw createPluginExecClientAbortError();
             const text = JSON.stringify(message);
             if (Buffer.byteLength(text, 'utf8') > params.maxMessageBytes) {
-                throw createProtocolError('Loopback WebSocket message exceeded the configured size limit', undefined, params.readStderrPreview());
+                throw createPluginExecClientProtocolError('Loopback WebSocket message exceeded the configured size limit', undefined, params.readStderrPreview());
             }
             try {
                 await params.connection.send({ kind: 'text', text }, options);

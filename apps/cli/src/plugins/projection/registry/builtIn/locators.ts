@@ -8,6 +8,7 @@ import { readTargetedContributionPointSemanticRefs } from '@happier-dev/plugin-s
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { readGeneratedPluginUiArtifactsManifestSync } from '@/plugins/install/ui/generatedArtifacts';
 import { ingestCanonicalPluginManifest } from '../../../manifest/ingest';
+import { pluginSourceProvenanceForKind } from '../../../manifest/sourceProvenance';
 
 export type BundledPluginLocator = Readonly<{
     pluginId: string;
@@ -55,6 +56,7 @@ export function loadBundledPluginLocators(
 
         const ingestion = ingestCanonicalPluginManifest(locator.manifest, {
             manifestAuthority: 'bundled_first_party',
+            sourceProvenance: pluginSourceProvenanceForKind('bundled'),
         });
         if (!ingestion.ok) {
             throw new Error(

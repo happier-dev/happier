@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -1880,6 +1880,171 @@ describe('bundlePluginDaemonRuntime', () => {
       expect(flatBytes.toString('utf8')).toContain('same-external');
     } finally {
       await rm(parentRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('emits the same daemon bytes from two checkouts at different absolute paths', async () => {
+    // esbuild labels every bundled module with its path relative to the build working
+    // directory, which is the staged root. A module resolved outside it — every canonical
+    // workspace package — was therefore labelled by walking up to the filesystem root,
+    // stamping the author's checkout path into the shipped bundle.
+    const stagedRoots: string[] = [];
+    const buildCheckout = async (checkoutRoot: string): Promise<ReadonlyMap<string, Buffer>> => {
+      const packagesRoot = join(checkoutRoot, 'packages');
+      const sourceRoot = join(packagesRoot, 'plugin');
+      const sdkRoot = join(packagesRoot, 'fixture-sdk');
+      const protocolRoot = join(packagesRoot, 'fixture-protocol');
+      // The real pack stages into a temp directory unrelated to the checkout, so every
+      // workspace module is labelled by walking out of the staged root entirely.
+      const stagedRoot = await mkdtemp(join(tmpdir(), 'happier-bundle-staged-'));
+      stagedRoots.push(stagedRoot);
+
+      await mkdir(join(sdkRoot, 'dist'), { recursive: true });
+      await mkdir(join(protocolRoot, 'dist'), { recursive: true });
+      await mkdir(join(protocolRoot, 'node_modules', 'fixture-external'), { recursive: true });
+      await mkdir(join(protocolRoot, 'node_modules', 'fixture-cjs'), { recursive: true });
+      await mkdir(sourceRoot, { recursive: true });
+
+      await writeFile(join(sdkRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/fixture-sdk',
+        version: '1.0.0',
+        type: 'module',
+        exports: './dist/index.js',
+      }), 'utf8');
+      await writeFile(
+        join(sdkRoot, 'dist', 'index.js'),
+        "import { protocol } from '@happier-dev/fixture-protocol';\nexport const sdk = `sdk:${protocol}`;\n",
+        'utf8',
+      );
+      await writeFile(join(protocolRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/fixture-protocol',
+        version: '1.0.0',
+        type: 'module',
+        exports: './dist/index.js',
+      }), 'utf8');
+      await writeFile(
+        join(protocolRoot, 'dist', 'index.js'),
+        [
+          "import { external } from 'fixture-external';",
+          "import commonJsDependency from 'fixture-cjs';",
+          'export const protocol = `protocol:${external}:${commonJsDependency.commonJs}`;',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      await writeFile(join(protocolRoot, 'node_modules', 'fixture-external', 'package.json'), JSON.stringify({
+        name: 'fixture-external',
+        version: '1.0.0',
+        type: 'module',
+        exports: './index.js',
+      }), 'utf8');
+      await writeFile(
+        join(protocolRoot, 'node_modules', 'fixture-external', 'index.js'),
+        "export const external = 'same-external';\n",
+        'utf8',
+      );
+      // A CommonJS dependency makes esbuild wrap the module in `__commonJS({ "<path>"(…) {…} })`,
+      // where the same path esbuild writes into the `// <path>` comment is also emitted as an
+      // executable string literal. Both carry the build machine's layout.
+      await writeFile(join(protocolRoot, 'node_modules', 'fixture-cjs', 'package.json'), JSON.stringify({
+        name: 'fixture-cjs',
+        version: '1.0.0',
+        main: './index.js',
+      }), 'utf8');
+      await writeFile(
+        join(protocolRoot, 'node_modules', 'fixture-cjs', 'index.js'),
+        "module.exports = { commonJs: 'same-commonjs' };\n",
+        'utf8',
+      );
+      await writeFile(join(sourceRoot, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+      await writeFile(join(sourceRoot, 'index.ts'), [
+        "import { sdk } from '@happier-dev/fixture-sdk';",
+        'export const result = `${sdk}`;',
+        '',
+      ].join('\n'), 'utf8');
+      // A second entrypoint sharing the workspace closure makes esbuild split it into a
+      // content-hashed chunk. esbuild derives that chunk's FILE NAME from the bytes it emits,
+      // before any post-processing runs, and every importing output names the chunk in an
+      // executable import specifier — so a label that still carried the checkout path would
+      // survive relabelling as a divergent file name.
+      await writeFile(join(sourceRoot, 'runner.ts'), [
+        "import { sdk } from '@happier-dev/fixture-sdk';",
+        'export function createRuntime() { return `runner:${sdk}`; }',
+        '',
+      ].join('\n'), 'utf8');
+
+      const staged = await stagePluginDaemonRuntime({
+        sourceRootPath: sourceRoot,
+        sourceEntryPath: join(sourceRoot, 'index.ts'),
+        stagedRootPath: stagedRoot,
+        daemonEntrypoint: './dist/index.js',
+        sessionRunnerFactories: [{
+          localAgentId: 'fixture',
+          locator: { module: './runner', export: 'createRuntime', runtimeApiVersion: 1 },
+          normalizedModulePath: 'runner.ts',
+          loadMode: 'source-ts',
+        }],
+        canonicalWorkspacePackageRoots: Object.freeze({
+          '@happier-dev/fixture-sdk': sdkRoot,
+          '@happier-dev/fixture-protocol': protocolRoot,
+        }),
+      });
+      return new Map(await Promise.all(staged.outputRelativePaths.map(
+        async (relativePath) => [
+          relativePath,
+          await readFile(join(stagedRoot, ...relativePath.split('/'))),
+        ] as const,
+      )));
+    };
+
+    // Two checkouts differing in both absolute prefix and depth: a bundle that records
+    // where it was built cannot produce the same bytes from both.
+    const shallowCheckout = await mkdtemp(join(tmpdir(), 'happier-bundle-checkout-a-'));
+    const deepCheckoutParent = await mkdtemp(join(tmpdir(), 'happier-bundle-checkout-b-'));
+    const deepCheckout = join(deepCheckoutParent, 'nested', 'deeper', 'still');
+    await mkdir(deepCheckout, { recursive: true });
+
+    try {
+      const shallowOutputs = await buildCheckout(shallowCheckout);
+      const deepOutputs = await buildCheckout(deepCheckout);
+      const shallowSource = [...shallowOutputs.values()].map((bytes) => bytes.toString('utf8')).join('\n');
+      const deepSource = [...deepOutputs.values()].map((bytes) => bytes.toString('utf8')).join('\n');
+
+      expect(shallowSource).toContain('same-external');
+      expect(shallowSource).toContain('same-commonjs');
+      // Emitted file names carry the chunk content hash, so comparing the name lists first
+      // distinguishes a divergent chunk identity from divergent chunk bytes.
+      expect([...shallowOutputs.keys()]).toEqual([...deepOutputs.keys()]);
+      expect([...shallowOutputs.keys()].filter((path) => path.includes('/.happier-chunks/'))).not.toEqual([]);
+      for (const [relativePath, bytes] of shallowOutputs) {
+        expect(deepOutputs.get(relativePath)).toEqual(bytes);
+      }
+      for (const bytes of shallowOutputs.values()) {
+        for (const line of bytes.toString('utf8').split('\n')) {
+          if (line.startsWith('// ')) {
+            expect(line).not.toMatch(/^\/\/ (?:\.\.\/|\/|[A-Za-z]:[\\/])/u);
+            continue;
+          }
+          // esbuild's module-registry keys are executable strings, not comments: a bundle that
+          // strips only the comments still ships the build machine's layout inside `__commonJS`.
+          expect(line).not.toMatch(/^\s*"(?:\.\.\/|\/|[A-Za-z]:[\\/])[^"]*"\(/u);
+        }
+      }
+      // A label that escapes the staged root only as far as a shared ancestor still names the
+      // checkout by its own directory, so assert on that unique segment rather than the whole
+      // absolute path — which a sibling temp root elides.
+      for (const checkoutSegment of [basename(shallowCheckout), basename(deepCheckoutParent)]) {
+        expect(shallowSource).not.toContain(checkoutSegment);
+        expect(deepSource).not.toContain(checkoutSegment);
+      }
+      expect(shallowSource).not.toContain(shallowCheckout);
+      expect(deepSource).not.toContain(deepCheckout);
+      expect(shallowSource).toContain('// fixture-protocol/node_modules/fixture-external/index.js');
+      expect(shallowSource).toContain('"fixture-protocol/node_modules/fixture-cjs/index.js"(');
+    } finally {
+      await rm(shallowCheckout, { recursive: true, force: true });
+      await rm(deepCheckoutParent, { recursive: true, force: true });
+      await Promise.all(stagedRoots.map((stagedRoot) => rm(stagedRoot, { recursive: true, force: true })));
     }
   });
 

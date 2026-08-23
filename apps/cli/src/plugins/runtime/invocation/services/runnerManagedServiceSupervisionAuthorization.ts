@@ -193,6 +193,7 @@ export async function authorizeRunnerManagedProviderServerSupervision(
             ...generation.record.manifestRelativePath.split('/'),
         ),
         manifestAuthority: scope.manifestAuthority,
+        sourceProvenance: generation.record.sourceProvenance,
     });
     const provider = manifest.ok
         ? manifest.manifest.contributes.providers.find(

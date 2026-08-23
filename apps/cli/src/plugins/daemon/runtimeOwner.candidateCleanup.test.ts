@@ -4,6 +4,10 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  createCurrentGlobalExternalSessionsRouter,
+} from '@/session/external/currentGlobalRouting';
+
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 
@@ -112,6 +116,9 @@ function createReloadController(): PluginReloadController {
     }),
     subscribe: vi.fn(() => () => undefined),
     publishDurableRunningSessionDisposition: vi.fn(),
+    currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+      () => null,
+    ),
     subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
   };
 }

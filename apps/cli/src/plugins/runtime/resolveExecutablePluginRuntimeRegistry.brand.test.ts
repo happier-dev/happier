@@ -90,7 +90,7 @@ async function resolveFixtureRuntimeInputs(fixture: Readonly<{
         admitted.rootPath,
         ...admitted.record.manifestRelativePath.split('/'),
     );
-    const immutableManifest = await readPluginManifest({
+    const immutableManifest = await readPluginManifest({ sourceProvenance: 'registryCustodied',
         manifestPath,
         manifestAuthority: 'external',
         enforceEngineCompatibility: true,

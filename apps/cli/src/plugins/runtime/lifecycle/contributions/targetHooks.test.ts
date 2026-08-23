@@ -28,7 +28,7 @@ function target(params: Readonly<{
     daemonEntryPath?: string | null;
     devDaemonEntryPath?: string | null;
 }> = {}): ActivationTarget {
-    const ingested = ingestCanonicalPluginManifest(KIMI_PLUGIN_MANIFEST, {
+    const ingested = ingestCanonicalPluginManifest(KIMI_PLUGIN_MANIFEST, { sourceProvenance: 'localSource',
         manifestAuthority: 'bundled_first_party',
         enforceEngineCompatibility: false,
     });

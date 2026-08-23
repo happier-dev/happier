@@ -659,6 +659,110 @@ describe('handlePluginsCommand', () => {
     }
   });
 
+  it('routes plugins doctor --installed through the installed-generation owner, not the author evaluator', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const output = captureConsoleJsonOutput();
+    const runPluginAuthorDoctor = vi.fn();
+    const diagnoseInstalledPluginGenerations = vi.fn(async () => ({
+      ok: false as const,
+      plugins: [{
+        pluginId: 'acme.plugin',
+        immutableGenerationId: 'generation-a',
+        inspectedFileCount: 2,
+        diagnostics: [{
+          code: 'plugin_installed_generation_file_missing' as const,
+          message: 'Installed plugin generation file is missing from the immutable generation root: daemon.mjs',
+          relativePath: 'daemon.mjs',
+        }],
+        repair: 'reinstall' as const,
+      }],
+    }));
+    try {
+      await handlePluginsCommand(['doctor', '--installed', 'acme.plugin', '--json'], {
+        runPluginAuthorDoctor,
+        diagnoseInstalledPluginGenerations,
+      });
+
+      expect(runPluginAuthorDoctor).not.toHaveBeenCalled();
+      expect(diagnoseInstalledPluginGenerations).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId: 'acme.plugin' }),
+      );
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'plugins_doctor_installed',
+        error: {
+          code: 'plugin_installed_generation_unhealthy',
+          plugins: [{
+            pluginId: 'acme.plugin',
+            immutableGenerationId: 'generation-a',
+            repair: 'reinstall',
+            diagnostics: [{ code: 'plugin_installed_generation_file_missing' }],
+          }],
+        },
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('prints installed-generation repair guidance naming the real recovery command', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const failing = captureConsoleText();
+    try {
+      await handlePluginsCommand(['doctor', '--installed'], {
+        diagnoseInstalledPluginGenerations: vi.fn(async () => ({
+          ok: false as const,
+          plugins: [{
+            pluginId: 'acme.plugin',
+            immutableGenerationId: 'generation-a',
+            inspectedFileCount: 2,
+            diagnostics: [{
+              code: 'plugin_installed_generation_manifest_unloadable' as const,
+              message: 'plugin_manifest_invalid: runtime: Invalid input',
+              relativePath: '.happier-plugin/plugin.json',
+            }],
+            repair: 'reinstall' as const,
+          }],
+        })),
+      });
+
+      const text = failing.text();
+      expect(text).toContain('acme.plugin');
+      expect(text).toContain('.happier-plugin/plugin.json');
+      expect(text).toContain('happier plugins install');
+      expect(process.exitCode).toBe(1);
+    } finally {
+      failing.restore();
+      process.exitCode = previousExitCode;
+    }
+
+    const healthy = captureConsoleText();
+    try {
+      await handlePluginsCommand(['doctor', '--installed'], {
+        diagnoseInstalledPluginGenerations: vi.fn(async () => ({
+          ok: true as const,
+          plugins: [{
+            pluginId: 'acme.plugin',
+            immutableGenerationId: 'generation-a',
+            inspectedFileCount: 2,
+            diagnostics: [],
+          }],
+        })),
+      });
+
+      expect(healthy.text()).toContain('acme.plugin');
+      expect(healthy.text()).not.toContain('happier plugins install');
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      healthy.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it('prints the resolved author source location for doctor diagnostics on the human surface', async () => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -720,6 +824,48 @@ describe('handlePluginsCommand', () => {
         error: { code: 'unknown_subcommand' },
       });
       expect(process.exitCode).toBe(1);
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it.each([
+    ['change', ['change', 'bogus', 'pending-1', '--json'], 'plugins_change_bogus'],
+    ['author', ['author', 'bogus', '/tmp/plugin-root', '--json'], 'plugins_author_bogus'],
+  ])('reports an unknown plugins %s operation as a structured failure', async (_label, args, kind) => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const output = captureConsoleJsonOutput();
+    try {
+      await handlePluginsCommand(args as string[]);
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind,
+        error: { code: 'unknown_subcommand' },
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it.each([
+    ['change', ['change']],
+    ['change help', ['change', '--help']],
+    ['author', ['author']],
+    ['author help', ['author', 'help']],
+  ])('keeps the plugins %s help path successful', async (_label, args) => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const output = captureConsoleText();
+    try {
+      await handlePluginsCommand(args as string[]);
+
+      expect(output.text()).toContain('happier plugins');
+      expect(process.exitCode).toBeUndefined();
     } finally {
       output.restore();
       process.exitCode = previousExitCode;

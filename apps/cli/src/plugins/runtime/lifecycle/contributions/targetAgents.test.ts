@@ -385,6 +385,14 @@ const HOST_MINTED_SPAWN_SPEC: ManagedServiceSpec = Object.freeze({
     }),
 });
 
+const USER_OWNED_ATTACH_SPEC: ManagedServiceSpec = Object.freeze({
+    id: 'fixture-server/attach',
+    mode: Object.freeze({
+        kind: 'attach' as const,
+        baseUrl: 'http://127.0.0.1:4096',
+    }),
+});
+
 function declaringExternalSessionsRegistration(
     resolveManagedEndpointService:
         NonNullable<AgentExternalSessionsContribution['resolveManagedEndpointService']>,
@@ -564,6 +572,158 @@ describe('contribution-owned External Sessions managed endpoint', () => {
         });
         expect(runnerEndpointRead).toHaveBeenCalledOnce();
         expect(managed.supervise).not.toHaveBeenCalled();
+    });
+
+    it('never supervises the contribution-owned service for passive observation', async () => {
+        // Acquiring the contribution-owned endpoint is active: it spawns and
+        // retains the agent's server for the whole generation. Passive
+        // observation carries no user demand for that, so it stays on the
+        // Session-runner endpoint host and fails closed when there is none.
+        const managed = createManagedServicesDouble();
+        const observedReads: unknown[] = [];
+        const observation = createObservationContribution({
+            acquire: async (request) => {
+                observedReads.push(
+                    await request.managedEndpointRead({ pathAndQuery: '/global/event' })
+                        .then(() => 'read')
+                        .catch((error: unknown) => error),
+                );
+                return { dispose() {} };
+            },
+        });
+        const registry = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [{
+                ...observationRegistration({ observation }),
+                registration: {
+                    family: 'agents',
+                    localId: 'assistant',
+                    value: {
+                        externalSessions: Object.freeze({
+                            ...externalSessionsContribution,
+                            resolveManagedEndpointService: () => HOST_MINTED_SPAWN_SPEC,
+                        }),
+                        externalSessionObservation: observation,
+                    },
+                } as ContributionRuntimeRegistration,
+            }],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            createAgentInvocationServices: managed.createAgentInvocationServices,
+            onDuplicate: vi.fn(),
+        });
+        const lease = registry.get('assistant')?.externalSessionObservation;
+        if (!lease) throw new Error('Expected observation lease');
+        const managedEndpointSource = Object.freeze({
+            kind: 'opencode',
+            baseUrl: 'http://127.0.0.1:4096',
+        });
+
+        const acquired = await lease.observeResource({
+            resourceKey: 'resource-1',
+            managedEndpointSource,
+            signal: new AbortController().signal,
+            emit() {},
+            requestReconcile() {},
+            requestTranscriptRefresh() {},
+        });
+        await acquired.dispose();
+        await lease.reconcileResource({
+            purpose: 'observation_evidence',
+            resourceKey: 'resource-1',
+            links: [{
+                linkKey: 'link-1',
+                linkedSource: {
+                    source: managedEndpointSource,
+                    remoteSessionId: 'session-1',
+                    linkData: {},
+                },
+            }],
+            signal: new AbortController().signal,
+        });
+
+        expect(managed.supervise).not.toHaveBeenCalled();
+        expect(managed.supervisedSpecs).toEqual([]);
+        expect(observedReads).toEqual([expect.any(Error)]);
+
+        // The same contribution keeps its owned endpoint for explicit demand.
+        const externalSessions = registry.get('assistant')?.externalSessions;
+        if (!externalSessions) throw new Error('Expected External Sessions lease');
+        await externalSessions.listCandidates({
+            source: { kind: 'opencodeServer', managedEndpoint: true },
+            maxItems: 50,
+            maxSerializedBytes: 1_048_576,
+            deadlineAtMs: Date.now() + 15_000,
+            signal: new AbortController().signal,
+        });
+        expect(managed.supervisedSpecs).toEqual([HOST_MINTED_SPAWN_SPEC]);
+    });
+
+    it('follows a user-owned attached server passively without owning a process', async () => {
+        // Passive following of a server the user already runs starts nothing,
+        // so refusing it removed a real capability. Only an owned spawn stays
+        // out of the passive path.
+        const managed = createManagedServicesDouble({
+            respond: () => Object.freeze({
+                ok: true,
+                status: 200,
+                statusText: 'OK',
+                headers: Object.freeze({ 'x-observed': 'attached' }),
+                body: null,
+            }),
+        });
+        const observedStatuses: unknown[] = [];
+        const observation = createObservationContribution({
+            acquire: async (request) => {
+                observedStatuses.push(
+                    await request.managedEndpointRead({ pathAndQuery: '/global/event' })
+                        .then((response) => response.status)
+                        .catch((error: unknown) => error),
+                );
+                return { dispose() {} };
+            },
+        });
+        const registry = createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations: [{
+                ...observationRegistration({ observation }),
+                registration: {
+                    family: 'agents',
+                    localId: 'assistant',
+                    value: {
+                        externalSessions: Object.freeze({
+                            ...externalSessionsContribution,
+                            resolveManagedEndpointService: () => USER_OWNED_ATTACH_SPEC,
+                        }),
+                        externalSessionObservation: observation,
+                    },
+                } as ContributionRuntimeRegistration,
+            }],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            createAgentInvocationServices: managed.createAgentInvocationServices,
+            onDuplicate: vi.fn(),
+        });
+        const lease = registry.get('assistant')?.externalSessionObservation;
+        if (!lease) throw new Error('Expected observation lease');
+
+        const acquired = await lease.observeResource({
+            resourceKey: 'resource-1',
+            managedEndpointSource: Object.freeze({
+                kind: 'opencode',
+                baseUrl: 'http://127.0.0.1:4096',
+            }),
+            signal: new AbortController().signal,
+            emit() {},
+            requestReconcile() {},
+            requestTranscriptRefresh() {},
+        });
+        await acquired.dispose();
+
+        expect(observedStatuses).toEqual([200]);
+        expect(managed.supervisedSpecs).toEqual([USER_OWNED_ATTACH_SPEC]);
     });
 
     it('declares no owned service for a source that names the user\'s own server', async () => {

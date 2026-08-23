@@ -7,6 +7,7 @@ import type {
 import {
     PluginExecClientError,
     createPluginExecClientAbortError,
+    createPluginExecClientProtocolError,
 } from './errors';
 import { createPluginProtocolCallbackQueue } from './callbackQueue';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
@@ -35,10 +36,6 @@ export type FramedBytesProcessClient = Readonly<{
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 const LENGTH_PREFIX_BYTES = 4;
-
-function createProtocolError(message: string, cause?: unknown, stderrPreview?: string): PluginExecClientError {
-    return new PluginExecClientError('PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', message, { cause, stderrPreview });
-}
 
 function createClosedError(): PluginExecClientError {
     return new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'Plugin exec client stream is closed');
@@ -156,7 +153,7 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
             }
             const frameLength = buffer.readUInt32BE(0);
             if (frameLength > maxFrameBytes) {
-                failClient(createProtocolError('Framed-bytes frame exceeded the configured size limit', undefined, readStderrPreview()));
+                failClient(createPluginExecClientProtocolError('Framed-bytes frame exceeded the configured size limit', undefined, readStderrPreview()));
                 return;
             }
             const totalLength = LENGTH_PREFIX_BYTES + frameLength;
@@ -182,14 +179,14 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
             return;
         }
         if (buffer.byteLength > 0) {
-            failClient(createProtocolError('Framed-bytes stream ended with a trailing partial frame', undefined, readStderrPreview()));
+            failClient(createPluginExecClientProtocolError('Framed-bytes stream ended with a trailing partial frame', undefined, readStderrPreview()));
             return;
         }
         settleClosed();
     }
 
     function onError(error: unknown): void {
-        failClient(createProtocolError('Framed-bytes stream failed', error, readStderrPreview()));
+        failClient(createPluginExecClientProtocolError('Framed-bytes stream failed', error, readStderrPreview()));
     }
 
     if (params.framing === 'contentLength') {
@@ -197,8 +194,8 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
             enqueueFrame(frame);
         }, {
             maxFrameBytes,
-            onError: (error) => failClient(createProtocolError('Framed-bytes content-length reader failed', error, readStderrPreview())),
-            onTrailingPartialFrame: () => failClient(createProtocolError('Framed-bytes stream ended with a trailing partial frame', undefined, readStderrPreview())),
+            onError: (error) => failClient(createPluginExecClientProtocolError('Framed-bytes content-length reader failed', error, readStderrPreview())),
+            onTrailingPartialFrame: () => failClient(createPluginExecClientProtocolError('Framed-bytes stream ended with a trailing partial frame', undefined, readStderrPreview())),
         });
     } else {
         stdout.on('data', onData);
@@ -223,7 +220,7 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
                 throw createPluginExecClientAbortError();
             }
             if (frame.byteLength > maxFrameBytes) {
-                throw createProtocolError('Framed-bytes frame exceeded the configured size limit', undefined, readStderrPreview());
+                throw createPluginExecClientProtocolError('Framed-bytes frame exceeded the configured size limit', undefined, readStderrPreview());
             }
             await params.write(params.framing === 'contentLength'
                 ? encodeContentLengthFrame(frame)

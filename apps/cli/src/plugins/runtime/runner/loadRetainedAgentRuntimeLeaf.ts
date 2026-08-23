@@ -8,13 +8,16 @@ import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime
 import type {
     AgentExternalSessionsContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import type { PluginAgentAcpTransport } from '@happier-dev/protocol';
+
 import {
-    isReservedHappierPluginId,
-    type PluginAgentAcpTransport,
-} from '@happier-dev/protocol';
+    BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
+} from '@/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
+import { resolveBundledImmutablePluginArtifact } from '../../store/registry/generationStore';
 
 import type { PluginStorePaths } from '../../store/paths';
 import { readPluginManifest } from '../../manifest/read';
+import { resolveContributedAgentRoutingId } from '../../projection/registry/agentRoutingIdentity';
 import {
     snapshotAgentExternalSessionsThroughRegistrationScope,
 } from '../api/registrationRightsHost';
@@ -187,9 +190,18 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
         record: generation.record,
     });
     const hostDeclarativeAcpBinding = 'kind' in binding;
+    // First-party authority for a host-declarative binding comes from host
+    // custody of this exact generation, never from the plugin's own id: an
+    // installed plugin may legitimately carry a `happier.*` id while it is
+    // developed from a local working tree, and this authority reaches the
+    // managed-service invocation owner as `provenance: 'first_party'`.
     const manifestAuthority = hostDeclarativeAcpBinding
         ? (
-            isReservedHappierPluginId(binding.pluginId)
+            resolveBundledImmutablePluginArtifact({
+                bundledArtifacts: BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
+                pluginId: binding.pluginId,
+                immutableGenerationId: binding.immutableGenerationId,
+            })
                 ? 'bundled_first_party'
                 : 'external'
         )
@@ -220,6 +232,7 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             ...generation.record.manifestRelativePath.split('/'),
         ),
         manifestAuthority,
+        sourceProvenance: generation.record.sourceProvenance,
     });
     const declaredAgent = manifest.ok
         ? manifest.manifest.contributes.agents.find(
@@ -248,7 +261,15 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             );
         }
         const expectedAgentIdentity = Object.freeze({
-            agentId: declaredAgent.id,
+            // `agentId` is the host routing id, which is qualified for an
+            // installed Agent; only `localAgentId` is the manifest-local id.
+            agentId: resolveContributedAgentRoutingId({
+                pluginId: manifest.manifest.id,
+                localId: declaredAgent.id,
+                provenance: manifestAuthority === 'bundled_first_party'
+                    ? 'first_party'
+                    : 'external',
+            }),
             qualifiedAgentId:
                 `${manifest.manifest.id}/agents/${declaredAgent.id}`,
             localAgentId: declaredAgent.id,

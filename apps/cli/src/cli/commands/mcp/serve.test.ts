@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import type { McpCommandDeps } from './deps';
 import { runMcpServeCommand } from './serve';
 import { disableMcpStdioConsolePatch } from '@/mcp/server/mcpStdioConsolePatch';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { withCliApiToken } from '@/auth/cliApiToken';
+import { reloadConfiguration, configuration } from '@/configuration';
+import { readStoredCredentials } from '@/persistence';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 const env = process.env;
 
@@ -279,6 +285,52 @@ describe('happier mcp serve (env hardening)', () => {
       pluginToolCatalog: [],
     });
     expect(connectMcpStdio).toHaveBeenCalledOnce();
+  });
+
+  it('inherits the selected API Token through the canonical credential reader without rewriting saved credentials', async () => {
+    await withTempDir('happier-cli-mcp-api-token-', async (homeDir) => {
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      delete process.env.HAPPIER_SERVER_URL;
+      delete process.env.HAPPIER_LOCAL_SERVER_URL;
+      delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+      delete process.env.HAPPIER_WEBAPP_URL;
+      delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+      reloadConfiguration();
+      await mkdir(dirname(configuration.privateKeyFile), { recursive: true });
+      const stored = JSON.stringify({ token: 'stored-session-bearer' });
+      await writeFile(configuration.privateKeyFile, stored, 'utf8');
+
+      const token = 'hap_v1_mcp_token_secret';
+      const createExternalMcpServer = vi.fn(() => ({
+        mcp: { connect: async () => {} } as any,
+        toolNames: [],
+      }));
+
+      try {
+        await withCliApiToken(token, async () => await runMcpServeCommand(['serve'], {
+          readStoredCredentials,
+          ensureMachineIdForCredentials: async () => ({ machineId: 'machine_1' }),
+          bootstrapAccountSettingsContext: async () => ({ settings: { actionsSettingsV1: null } }) as any,
+          createExternalMcpServer,
+          connectMcpStdio: async () => {},
+          updateAccountSettingsV2WithRetry: async () => ({} as any),
+          detectProviderMcpServers: async () => ({} as any),
+          probeMcpStdioServerTools: async () => ({} as any),
+          randomUUID: () => 'uuid',
+          nowMs: () => 0,
+        }));
+
+        expect(createExternalMcpServer).toHaveBeenCalledWith({
+          credentials: { token, encryption: null },
+          defaultSessionId: null,
+          pluginToolCatalog: [],
+        });
+        await expect(readFile(configuration.privateKeyFile, 'utf8')).resolves.toBe(stored);
+      } finally {
+        disableMcpStdioConsolePatch();
+        reloadConfiguration();
+      }
+    });
   });
 
   it('clears env server-selection overrides before fetching account settings', async () => {

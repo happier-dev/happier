@@ -9,11 +9,14 @@ import {
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import {
+  inferPluginSourceInspectionKind,
   inspectPluginSource,
   type InspectPluginSourceResult,
 } from '@/plugins/store/install/source';
+import { resolvePluginAuthoringSource } from '@/plugins/authoring/sourceModule';
 import { removeInstalledPlugin, type RemoveInstalledPluginResult } from '@/plugins/store/install/remove';
 import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
+import type { PluginChangeRequest } from '@/plugins/daemon/changeContract';
 import { resolvePluginSource } from '@/plugins/discovery/sources/resolve';
 import type { ResolvedPluginSource } from '@/plugins/discovery/sources/resolve';
 import {
@@ -337,6 +340,48 @@ export async function readInstalledPluginCatalogEntry(params: Readonly<{
   return entries.find((entry) => entry.pluginId === params.pluginId) ?? null;
 }
 
+/**
+ * The one client-side commit path for an install the daemon owns. Both the
+ * manifest-rooted and code-defined sources reach the registry through it, so
+ * the committed plugin identity always comes from the daemon's own result
+ * rather than from a second client-side resolution of the same source.
+ */
+async function submitPluginInstallChange(params: Readonly<{
+  request: Extract<
+    PluginChangeRequest,
+    Readonly<{ kind: 'installPath' | 'installArchive' }>
+  >;
+  happyHomeDir?: string;
+}>): Promise<InstallPluginFromLocatorResult> {
+  const change = await requestUserPluginChange({
+    request: params.request,
+    approval: 'none',
+  });
+  if (change.kind !== 'committed') {
+    return {
+      ok: false,
+      diagnostics: [pluginChangeDiagnostic(change)],
+      change,
+    };
+  }
+
+  const entry = await readInstalledPluginCatalogEntry({
+    pluginId: change.pluginId,
+    ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
+  });
+  if (!entry) {
+    return {
+      ok: false,
+      diagnostics: [{
+        code: 'plugin_source_missing',
+        message: `Daemon committed plugin '${change.pluginId}', but its installed catalog entry is not yet readable.`,
+      }],
+      change,
+    };
+  }
+  return { ok: true, alreadyInstalled: false, entry, change };
+}
+
 export async function installPluginFromLocator(params: Readonly<{
   locator: string;
   happyHomeDir?: string;
@@ -349,6 +394,33 @@ export async function installPluginFromLocator(params: Readonly<{
   const happyHomeDir = stateStore.paths.happyHomeDir;
   if (!happyHomeDir) {
     throw new Error('Plugin state store resolved without a happyHomeDir');
+  }
+  if (inferPluginSourceInspectionKind(params.locator) === 'path') {
+    const authoringSource = await resolvePluginAuthoringSource(params.locator);
+    if (authoringSource.ok && authoringSource.kind === 'code') {
+      // A code-defined author source carries no on-disk manifest, and only the
+      // daemon may evaluate one — inside an owned immutable generation behind
+      // its integrity fence. Submitting the canonical installPath request keeps
+      // that evaluation with its single owner instead of pre-judging the source
+      // against a manifest that legitimately does not exist.
+      if (params.dryRun) {
+        return {
+          ok: false,
+          diagnostics: [{
+            code: 'plugin_source_kind_unsupported',
+            message: `A dry-run install preview is unavailable for the code-defined plugin source at '${params.locator}': only the daemon may evaluate it.`,
+          }],
+        };
+      }
+      return await submitPluginInstallChange({
+        request: {
+          kind: 'installPath',
+          locator: params.locator,
+          development: params.dev === true,
+        },
+        ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
+      });
+    }
   }
   const installResult = await inspectPluginSource({
     happyHomeDir,
@@ -408,35 +480,12 @@ export async function installPluginFromLocator(params: Readonly<{
   }
 
   if (!params.dryRun && !(params.skipIfInstalled && installResult.alreadyInstalled)) {
-    const change = await requestUserPluginChange({
+    return await submitPluginInstallChange({
       request: installResult.sourceKind === 'archive'
         ? { kind: 'installArchive', locator: params.locator }
         : { kind: 'installPath', locator: params.locator, development: params.dev === true },
-      approval: 'none',
+      ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
     });
-    if (change.kind !== 'committed') {
-      return {
-        ok: false,
-        diagnostics: [pluginChangeDiagnostic(change)],
-        change,
-      };
-    }
-
-    const entry = await readInstalledPluginCatalogEntry({
-      pluginId: installResult.pluginId,
-      happyHomeDir: params.happyHomeDir,
-    });
-    if (!entry) {
-      return {
-        ok: false,
-        diagnostics: [{
-          code: 'plugin_source_missing',
-          message: `Daemon committed plugin '${installResult.pluginId}', but its installed catalog entry is not yet readable.`,
-        }],
-        change,
-      };
-    }
-    return { ok: true, alreadyInstalled: false, entry, change };
   }
 
   return {

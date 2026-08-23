@@ -18,6 +18,7 @@ import { projectLoadedPluginContributes } from '@/plugins/projection/registry/re
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
 
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import type { AccountPluginDataStorageHostDependencies } from './context/accountPluginDataStorage';
@@ -275,7 +276,10 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
                             '../../../../../packages/plugins/channels/',
                             import.meta.url,
                         )),
-                        record: channelsArtifact.record,
+                        record: {
+                            ...channelsArtifact.record,
+                            sourceProvenance: pluginSourceProvenanceForKind('bundled'),
+                        },
                     })],
                 ]),
             });

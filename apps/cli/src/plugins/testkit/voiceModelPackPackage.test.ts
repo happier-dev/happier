@@ -8,7 +8,7 @@ import { ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_ROOT } from './voiceModelPackPackage
 
 describe('Zipformer Voice model-pack fixture contract', () => {
   it('declares only the Linux x64 host proven by the external-pack vertical', async () => {
-    const result = await readPluginManifest({
+    const result = await readPluginManifest({ sourceProvenance: 'registryCustodied',
       manifestPath: join(ZIPFORMER_VOICE_MODEL_PACK_FIXTURE_ROOT, '.happier-plugin', 'plugin.json'),
     });
 

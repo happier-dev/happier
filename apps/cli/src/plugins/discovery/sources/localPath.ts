@@ -1,11 +1,15 @@
 import { realpath, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 
-import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
+import {
+  type PluginSourceKindV1,
+  type PluginSourceSpecV1,
+} from '@happier-dev/protocol';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { resolveLocalPluginSourceManifestAuthority } from '@/plugins/manifest/bundledFirstPartyAuthority';
 import { readPluginManifest } from '@/plugins/manifest/read';
+import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
 import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
@@ -86,6 +90,14 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
    * silently re-defaulting to `external`.
    */
   inheritedManifestAuthority?: 'external' | 'bundled_first_party';
+  /**
+   * Source kind of the installed record whose materialized bytes this path
+   * holds. A published artifact is unpacked onto the filesystem before it is
+   * read, so the path alone cannot say where the bytes came from — only the
+   * record can. Absent means the locator is a path a person named directly,
+   * which is a working tree on this machine by construction.
+   */
+  installedSourceKind?: PluginSourceKindV1;
 }>): Promise<ResolvedLocalPathPluginSource> {
   const rawLocator = String(params.locator ?? '').trim();
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//u.test(rawLocator)) {
@@ -125,7 +137,8 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
   const { pluginRootPath, manifestPath } = resolveManifestLocation(canonicalPath, pathStat.isFile());
   const manifestAuthority = params.inheritedManifestAuthority
     ?? await resolveLocalPluginSourceManifestAuthority({ pluginRootPath });
-  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority });
+  const sourceProvenance = pluginSourceProvenanceForKind(params.installedSourceKind);
+  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance });
   if (!manifestRead.ok) {
     return manifestRead;
   }

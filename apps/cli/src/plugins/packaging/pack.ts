@@ -163,7 +163,13 @@ async function createPackOperationSource(locator: string): Promise<
   // replica owns that tree and can remove process-created sibling directories.
   // Package-root dependency preparation stays scoped to this copied project;
   // unpublished SDKs use the existing supplied-registry seam.
-  const operationParentPath = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-source-'));
+  // Canonicalize the copy root: the operation maps its resolved paths back to
+  // the author tree with `relative(operationRootPath, ...)`, and every path the
+  // copy resolves is already canonical. `tmpdir()` is a symlink on macOS, so an
+  // uncanonicalized copy root makes that mapping escape the package root.
+  const operationParentPath = await realpath(
+    await mkdtemp(join(tmpdir(), 'happier-plugin-pack-source-')),
+  );
   const operationRootPath = join(operationParentPath, 'package');
   try {
     await mkdir(operationRootPath);

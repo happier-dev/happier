@@ -4,6 +4,7 @@ import { buildPluginContributionRegistry } from './normalize/package';
 import { loadBundledPluginLocators } from './builtIn/locators';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPlugins';
 import { collectNormalizedRegistryIntrospectionCandidates } from '@/plugins/projection/introspection/normalizedRegistry';
+import { resolveContributedAgentRoutingId } from './agentRoutingIdentity';
 import { projectManifestAgentContribution } from './projectManifestAgentContribution';
 
 import type {
@@ -491,27 +492,40 @@ export function projectLoadedPluginContributes(
     }
 
     for (const contribution of pluginRegistry.agents) {
-        const agentId = contribution.definition.id;
+        const localId = contribution.definition.id;
+        // Durable Agent identity is `{pluginId, localId}`; two plugins declaring
+        // the same natural local id are distinct Agents, so the uniqueness rule
+        // is over the routing id the projection assigns, not the local id.
+        const agentId = resolveContributedAgentRoutingId({
+            pluginId: contribution.pluginId,
+            localId,
+            provenance: params.provenance,
+        });
         if (knownAgentIds.has(agentId)) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin agent '${agentId}' collides with an existing agent id`,
+                message: `Plugin agent '${contribution.pluginId}/${localId}' collides with an existing agent routing id '${agentId}'`,
             });
             continue;
         }
 
         knownAgentIds.add(agentId);
-        const pluginHostAccess = loadResult.loadedPlugins.find((plugin) => (
+        const loadedPlugin = loadResult.loadedPlugins.find((plugin) => (
             plugin.pluginId === contribution.pluginId
-        ))?.manifest.hostAccess;
+        ));
+        const pluginHostAccess = loadedPlugin?.manifest.hostAccess;
         if (!pluginHostAccess) {
-            throw new Error(`Missing cold-manifest host access for Agent '${contribution.pluginId}/${agentId}'`);
+            throw new Error(`Missing cold-manifest host access for Agent '${contribution.pluginId}/${localId}'`);
         }
         agentCandidates.push(projectManifestAgentContribution({
             definition: contribution.definition,
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            // The Agent's declared CLI system-tool binding names a tool from the
+            // same plugin's `systemTools` family, so the registry projection is
+            // the one place that can resolve it.
+            systemTools: loadedPlugin?.manifest.contributes.systemTools ?? [],
             sourceSpec: contribution.sourceSpec,
             hostAccess: pluginHostAccess,
             manifestPath: contribution.manifestPath,

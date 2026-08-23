@@ -119,7 +119,12 @@ async function canApplyAutomaticNpmUpdate(params: Readonly<{
   ) {
     return false;
   }
-  const previous = await readPluginManifest({ manifestPath: existing.source.manifestPath });
+  // The incumbent record was admitted under the same npm distribution this
+  // update is authorized against, so it is registry-custodied by construction.
+  const previous = await readPluginManifest({
+    manifestPath: existing.source.manifestPath,
+    sourceProvenance: 'registryCustodied',
+  });
   if (
     !previous.ok
     || previous.manifest.id !== params.candidate.id

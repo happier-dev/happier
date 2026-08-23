@@ -6,6 +6,10 @@ import type {
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 import type { ResourceSessionAccessWitness } from '../invocation/services/resources';
+import {
+    createCurrentGlobalExternalSessionsRouter,
+    type CurrentGlobalExternalSessionsRouter,
+} from '@/session/external/currentGlobalRouting';
 import { projectPluginFailureText } from '../lifecycle/utils';
 import {
     createReloadControllerTargetedContributionsService,
@@ -140,6 +144,13 @@ export type PluginReloadController = Readonly<{
      * expose it and runtime construction must consume that one owner.
      */
     getTargetedContributionsOwner?: () => StableTargetedContributionsOwner;
+    /**
+     * The controller-lifetime public current-global External Sessions router.
+     * Long-lived plugin contexts capture it once and keep resolving whichever
+     * registry is published now, so an unchanged plugin that survives a peer
+     * Agent replacement never keeps routing into its predecessor generation.
+     */
+    currentGlobalExternalSessions: CurrentGlobalExternalSessionsRouter;
     /** Publishes the authenticated mutation cause immediately after its durable commit. */
     publishDurableRunningSessionDisposition: (
         event: PluginRunningSessionDispositionEvent,
@@ -224,6 +235,13 @@ export function createPluginReloadController(params?: Readonly<{
 }>): PluginReloadController {
     let controller!: PluginReloadController;
     let targetedContributionsOwner: StableTargetedContributionsOwner | null = null;
+    // Publication (`activeRegistry = registry`) is already the one atomic swap,
+    // so the router reads it rather than owning a second retargeting step.
+    const currentGlobalExternalSessions = createCurrentGlobalExternalSessionsRouter(
+        () => (shutdownStarted
+            ? null
+            : activeRegistry?.currentGlobalExternalSessionsTarget ?? null),
+    );
     let generation = 0;
     let activeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     let lastResult: PluginReloadResult | null = null;
@@ -784,6 +802,7 @@ export function createPluginReloadController(params?: Readonly<{
             };
         },
         getTargetedContributionsOwner,
+        currentGlobalExternalSessions,
         publishDurableRunningSessionDisposition(event) {
             notifyRunningSessionDispositionListeners(Object.freeze({
                 durableRevision: event.durableRevision,

@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+    ActionOperationProgressV1Schema,
     createPluginActionInvocation,
     PluginHostAccessRequestV2Schema,
     type PluginActionPresentUserGatePolicy,
 } from '@happier-dev/protocol';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
 import type {
+    ActionOperationDeclarationV1,
     MessageActionAvailableSnapshotV1,
     PluginActionAvailabilityV2,
     PluginActionConfirmationV2,
@@ -17,6 +19,7 @@ import type {
 import {
     PluginError,
     type JsonValue,
+    type PluginActionOperationProgressUpdateV1,
     type PluginInvocationCaller,
     type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
@@ -67,6 +70,16 @@ export type TargetActionDefinition = Readonly<{
     hostAccessRequests?: readonly TargetActionHostAccessRequest[];
     availability?: PluginActionAvailabilityV2 | null;
     confirmation?: PluginActionConfirmationV2;
+    operation?: ActionOperationDeclarationV1;
+}>;
+
+/**
+ * Invocation-bound bridge to the daemon's canonical operation runner. The
+ * runner owns start and terminal state; this registry can only forward
+ * plugin-authored progress while the handler remains unsettled.
+ */
+export type TargetActionOperationProgressPort = Readonly<{
+    update(progress: PluginActionOperationProgressUpdateV1): void;
 }>;
 
 export type TargetActionInvocationRegistration = Readonly<{
@@ -107,7 +120,7 @@ type TargetActionConnectedAccountOperationBinding = Readonly<{
     dispose(): void;
 }>;
 
-type InvokeTargetActionParams = Readonly<{
+export type InvokeTargetActionParams = Readonly<{
     pluginId: string;
     localId: string;
     input: unknown;
@@ -138,7 +151,71 @@ type InvokeTargetActionParams = Readonly<{
     signal?: AbortSignal;
     facts?: ContributionPolicyFacts;
     requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
+    /** Current host Action-settings enablement for this exact qualified target Action. */
+    isEnabledByActionSettings?: () => boolean;
+    /** Current host Action-settings policy for this exact qualified target Action. */
+    isApprovalRequiredByActionSettings?: () => boolean;
+    /** Present only when the daemon operation runner already owns this invocation. */
+    operationProgress?: TargetActionOperationProgressPort;
 }>;
+
+export type TargetActionInvocationPreparation = Readonly<
+    | { kind: 'settled'; result: TargetActionInvocationResult }
+    | {
+        kind: 'ready';
+        run(options?: Readonly<{
+            operationProgress?: TargetActionOperationProgressPort;
+        }>): Promise<TargetActionInvocationResult>;
+    }
+>;
+
+function projectPluginOperationProgress(
+    update: PluginActionOperationProgressUpdateV1,
+): PluginActionOperationProgressUpdateV1 {
+    const hasCurrent = update.current !== undefined;
+    const hasTotal = update.total !== undefined;
+    const hasPhase = update.phase !== undefined;
+    if (hasCurrent || hasTotal) {
+        if (!hasCurrent || !hasTotal) {
+            throw new TypeError('Determinate operation progress requires current and total');
+        }
+        const candidate = {
+            kind: 'determinate' as const,
+            current: update.current,
+            total: update.total,
+            ...(update.label === undefined ? {} : { label: update.label }),
+        };
+        const parsed = ActionOperationProgressV1Schema.safeParse(candidate);
+        if (!parsed.success || parsed.data.kind !== 'determinate') {
+            throw new TypeError('Invalid determinate operation progress');
+        }
+        return Object.freeze({
+            current: parsed.data.current,
+            total: parsed.data.total,
+            ...(parsed.data.label === undefined ? {} : { label: parsed.data.label }),
+        });
+    }
+    if (hasPhase) {
+        if (update.label === undefined) {
+            throw new TypeError('Phase operation progress requires a label');
+        }
+        const parsed = ActionOperationProgressV1Schema.safeParse({
+            kind: 'phase',
+            phase: update.phase,
+            label: update.label,
+        });
+        if (!parsed.success || parsed.data.kind !== 'phase') {
+            throw new TypeError('Invalid phase operation progress');
+        }
+        return Object.freeze({ phase: parsed.data.phase, label: parsed.data.label });
+    }
+    const parsed = ActionOperationProgressV1Schema.safeParse({
+        kind: 'indeterminate',
+        ...(update.label === undefined ? {} : { label: update.label }),
+    });
+    if (!parsed.success) throw new TypeError('Invalid indeterminate operation progress');
+    return Object.freeze(parsed.data.label === undefined ? {} : { label: parsed.data.label });
+}
 
 function actionKey(pluginId: string, localId: string): string {
     return `${pluginId}\u0000${localId}`;
@@ -222,6 +299,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         pluginId: string,
         localId: string,
     ): PluginActionPresentUserGatePolicy | null;
+    prepare(params: InvokeTargetActionParams): Promise<TargetActionInvocationPreparation>;
     invoke(params: InvokeTargetActionParams): Promise<TargetActionInvocationResult>;
     refresh(): void;
     dispose(): void;
@@ -263,6 +341,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 ...(registration.definition.inputSchema === undefined ? {} : { inputSchema: registration.definition.inputSchema }),
                 ...(registration.definition.resultSchema === undefined ? {} : { resultSchema: registration.definition.resultSchema }),
                 ...(registration.definition.availability === undefined ? {} : { availability: registration.definition.availability }),
+                ...(registration.definition.operation === undefined
+                    ? {}
+                    : { operation: Object.freeze({ ...registration.definition.operation }) }),
             });
             const storedRegistration = Object.freeze({ ...registration, definition });
             const lifecycle = params.resolveGenerationLifecycle?.(registration.pluginId);
@@ -319,6 +400,10 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
     ): Promise<TargetActionInvocationResult> {
         const { registration } = indexed;
         let actionHandlerInvocation: PluginActionHandlerInvocation | undefined = 'notStarted';
+        const operationProgress = registration.definition.operation
+            ? invocation.operationProgress
+            : undefined;
+        let operationSettled = false;
         const result = await indexed.invocation.invoke(invocation.input, {
             ...(invocation.signal ? { signal: invocation.signal } : {}),
             ...(params.revalidateConnectedAccountActionFormInput
@@ -466,6 +551,16 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         ...(seed.caller ? { caller: seed.caller } : {}),
                         ...(seed.session ? { session: seed.session } : {}),
                         ...(seed.messageAction ? { messageAction: seed.messageAction } : {}),
+                        ...(registration.definition.operation?.progress === 'reported' && operationProgress
+                            ? {
+                                operation: Object.freeze({
+                                    update: (progress: PluginActionOperationProgressUpdateV1): void => {
+                                        if (operationSettled || lifetime.signal.aborted) return;
+                                        operationProgress.update(projectPluginOperationProgress(progress));
+                                    },
+                                }),
+                            }
+                            : {}),
                         signal: seed.signal,
                         services,
                         ui: createPluginInvocationPresentation({
@@ -488,6 +583,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 }
             },
         });
+        operationSettled = true;
         if (result.status === 'executed' || actionHandlerInvocation === undefined) {
             return result;
         }
@@ -518,16 +614,26 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 },
             }
             : {}),
-        async invoke(invocation): Promise<TargetActionInvocationResult> {
+        async prepare(invocation: InvokeTargetActionParams): Promise<TargetActionInvocationPreparation> {
             const key = actionKey(invocation.pluginId, invocation.localId);
             const indexed = actionsByKey.get(key);
-            if (!indexed) return unavailable('plugin_action_handler_missing', 'No committed target action registration exists');
+            if (!indexed) return Object.freeze({
+                kind: 'settled' as const,
+                result: unavailable('plugin_action_handler_missing', 'No committed target action registration exists'),
+            });
             if (generationController.signal.aborted) {
-                return unavailable('plugin_action_generation_retired', 'Plugin action generation is no longer current');
+                return Object.freeze({
+                    kind: 'settled' as const,
+                    result: unavailable('plugin_action_generation_retired', 'Plugin action generation is no longer current'),
+                });
             }
             if (params.resolveGenerationLifecycle?.(indexed.registration.pluginId).isCurrent() === false) {
-                return unavailable('plugin_action_generation_retired', 'Plugin action generation is no longer current');
+                return Object.freeze({
+                    kind: 'settled' as const,
+                    result: unavailable('plugin_action_generation_retired', 'Plugin action generation is no longer current'),
+                });
             }
+            let operationProgress = invocation.operationProgress;
             const correlationId = randomUUID();
             const lifetime = createPluginInvocationLifetime(invocation.signal);
             const diagnosticScope = Object.freeze({
@@ -546,6 +652,14 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         facts: invocation.facts,
                     }),
                 });
+                let approvalRequiredByActionSettings = false;
+                try {
+                    approvalRequiredByActionSettings = invocation
+                        .isApprovalRequiredByActionSettings?.() === true;
+                } catch {
+                    // A failed host settings re-read cannot authorize a plugin Action.
+                    approvalRequiredByActionSettings = true;
+                }
                 const action = {
                     qualifiedId: `${registration.pluginId}/actions/${registration.localId}`,
                     pluginId: registration.pluginId, localId: registration.localId,
@@ -554,6 +668,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(registration.definition.confirmation === undefined
                         ? {}
                         : { confirmation: registration.definition.confirmation }),
+                    ...(approvalRequiredByActionSettings
+                        ? { approvalRequiredByActionSettings: true as const }
+                        : {}),
                     hostAccess: (registration.definition.hostAccessRequests ?? []).map(({ request, required }) => ({
                         id: request.id,
                         required,
@@ -579,6 +696,19 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     const current = actionsByKey.get(key);
                     if (!current || current.registration.generation !== action.generation) {
                         return unavailable('plugin_action_generation_retired', 'Plugin action generation is no longer current');
+                    }
+                    try {
+                        if (invocation.isEnabledByActionSettings?.() === false) {
+                            return unavailable(
+                                'plugin_action_unavailable',
+                                'Plugin action is disabled by Action settings',
+                            );
+                        }
+                    } catch {
+                        return unavailable(
+                            'plugin_action_unavailable',
+                            'Plugin action settings are unavailable',
+                        );
                     }
                     if (invocation.isMountedCallerCurrent) {
                         let mountedCallerCurrent = false;
@@ -610,7 +740,10 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     }
                     return await invokeHandler(
                         current,
-                        invocation,
+                        Object.freeze({
+                            ...invocation,
+                            ...(operationProgress ? { operationProgress } : {}),
+                        }),
                         serviceBinding,
                         correlationId,
                         lifetime,
@@ -625,16 +758,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     }
                     : {}),
             });
-            try {
-                return await executor.execute({
-                    pluginId: invocation.pluginId, localId: invocation.localId, input: invocation.input,
-                    surface: invocation.surface,
-                    ...(invocation.invocationSurface ? { invocationSurface: invocation.invocationSurface } : {}),
-                    ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}),
-                    ...(invocation.signal ? { signal: invocation.signal } : {}),
-                    ...(invocation.requestCurrentIntent ? { requestCurrentIntent: invocation.requestCurrentIntent } : {}),
-                });
-            } finally {
+            const complete = (): void => {
                 try {
                     params.completeDiagnosticScope?.(diagnosticScope);
                 } catch {
@@ -642,7 +766,43 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 } finally {
                     lifetime.complete();
                 }
+            };
+            const prepared = await executor.prepare({
+                    pluginId: invocation.pluginId, localId: invocation.localId, input: invocation.input,
+                    surface: invocation.surface,
+                    ...(invocation.invocationSurface ? { invocationSurface: invocation.invocationSurface } : {}),
+                    ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}),
+                    ...(invocation.signal ? { signal: invocation.signal } : {}),
+                    ...(invocation.requestCurrentIntent ? { requestCurrentIntent: invocation.requestCurrentIntent } : {}),
+            });
+            if (prepared.kind === 'settled') {
+                complete();
+                return prepared;
             }
+            let runPromise: Promise<TargetActionInvocationResult> | null = null;
+            return Object.freeze({
+                kind: 'ready' as const,
+                run(options?: Readonly<{
+                    operationProgress?: TargetActionOperationProgressPort;
+                }>): Promise<TargetActionInvocationResult> {
+                    if (runPromise) return runPromise;
+                    operationProgress = options?.operationProgress ?? operationProgress;
+                    runPromise = prepared.run().finally(complete);
+                    return runPromise;
+                },
+            });
+        },
+        async invoke(invocation): Promise<TargetActionInvocationResult> {
+            const prepared = await (this as Readonly<{
+                prepare(input: InvokeTargetActionParams): Promise<TargetActionInvocationPreparation>;
+            }>).prepare(invocation);
+            return prepared.kind === 'settled'
+                ? prepared.result
+                : await prepared.run({
+                    ...(invocation.operationProgress
+                        ? { operationProgress: invocation.operationProgress }
+                        : {}),
+                });
         },
         refresh() {
             if (generationController.signal.aborted || !params.readActions) return;

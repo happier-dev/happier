@@ -167,7 +167,7 @@ function action(params: Readonly<{
             mcp: contributionSurfaces.includes('mcp'),
             cli: contributionSurfaces.includes('cli'),
             rpc: false,
-            sdk: false,
+            api: false,
             plugin: contributionSurfaces.includes('plugin'),
         },
         inputHints: params.inputHints ?? null,

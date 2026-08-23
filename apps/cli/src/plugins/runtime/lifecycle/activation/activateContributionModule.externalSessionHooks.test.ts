@@ -189,7 +189,7 @@ function externalSessionManifest(
                     : {}),
             }],
         },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!result.ok) {
         throw new Error(result.diagnostics.map(({ message }) => message).join('\n'));
     }
@@ -757,7 +757,7 @@ describe('real-loader External Session hook aggregate conformance', () => {
                     runtime: { apiVersion: 1 },
                     entrypoints: { daemon: './daemon.js' },
                     contributes: {},
-                })
+                }, { sourceProvenance: 'registryCustodied' })
                 : { ok: true as const, manifest: createManifest() };
             if (!manifest.ok) throw new Error('Expected valid manifest fixture');
             const result = await activateContributionModule({

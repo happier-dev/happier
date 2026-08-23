@@ -346,8 +346,9 @@ describe('buildSharedDeps', () => {
         repoRoot,
         workspaceNames: ['plugins-pi'],
         includeRuntimeDependencies: true,
-        prepareGeneratedCompilerInputsImpl: async () => {
-          publicationEvents.push('prepare-generated-compiler-inputs');
+        generatedCompilerInputMode: 'check',
+        prepareGeneratedCompilerInputsImpl: async (options: { mode?: string }) => {
+          publicationEvents.push(`prepare-generated-compiler-inputs:${options.mode}`);
           return true;
         },
         stampPath: resolve(repoRoot, '.project', 'tmp', 'runtime-only-stamp.json'),
@@ -395,7 +396,7 @@ describe('buildSharedDeps', () => {
         ['protocol', 'plugins-pi'],
       ]);
       expect(publicationEvents).toEqual([
-        'prepare-generated-compiler-inputs',
+        'prepare-generated-compiler-inputs:check',
         'publish-generated-runtime',
         'shared-lock:start',
         'sync-bundled-dist:protocol,plugins-pi',

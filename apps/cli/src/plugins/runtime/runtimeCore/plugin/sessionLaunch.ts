@@ -15,9 +15,13 @@ import {
     resolveSessionModelSelectionInputRefV1,
     SessionModelSelectionResolutionError,
     SessionModelSelectionV1Schema,
+    SessionCreationCorrespondenceV1Schema,
+    SessionCreationTagV1Schema,
     type BackendTargetRefV2Input,
     type AcpConfigOptionOverridesV1,
     type AgentSessionStartupInstructionsV1,
+    type SessionCreationCorrespondenceV1,
+    type SessionCreationTagV1,
     type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 import type { PluginSessionLaunchResultCandidate } from './sessionMetadata';
@@ -29,6 +33,8 @@ import {
 
 export type PluginSessionBindingInput = Readonly<{
     credentials: StoredCredentials;
+    sessionCreationTag?: SessionCreationTagV1;
+    sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
     bootstrap: Readonly<{
         workingDirectory?: string;
         target?: BackendTargetRefV2Input;
@@ -79,7 +85,10 @@ export type PluginSessionLaunchParams = Readonly<{
     sessionId: string;
     directory: string;
     metadata: Readonly<Record<string, unknown>>;
-}> & PluginSessionBindingInput;
+}> & Omit<
+    PluginSessionBindingInput,
+    'sessionCreationTag' | 'sessionCreationCorrespondence'
+>;
 
 export type PluginSessionLaunchHandler = (
     params: PluginSessionLaunchParams,
@@ -87,6 +96,8 @@ export type PluginSessionLaunchHandler = (
 
 export type PluginHostSessionRuntimeOptions = Readonly<{
     credentials: StoredCredentials;
+    sessionCreationTag?: SessionCreationTagV1;
+    sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
     directory?: string;
     backendTarget?: BackendTargetRefV2Input;
     startedBy?: 'daemon' | 'terminal';
@@ -263,6 +274,21 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
 
     const modelSelection = readModelSelection(raw);
     const nativeForkSource = readNativeForkSource(raw.nativeForkSource);
+    const parsedSessionCreationTag = raw.sessionCreationTag === undefined
+        ? null
+        : SessionCreationTagV1Schema.safeParse(raw.sessionCreationTag);
+    if (parsedSessionCreationTag !== null && !parsedSessionCreationTag.success) {
+        throw new Error('Invalid plugin session creation tag');
+    }
+    const parsedSessionCreationCorrespondence = raw.sessionCreationCorrespondence === undefined
+        ? null
+        : SessionCreationCorrespondenceV1Schema.safeParse(raw.sessionCreationCorrespondence);
+    if (
+        parsedSessionCreationCorrespondence !== null
+        && !parsedSessionCreationCorrespondence.success
+    ) {
+        throw new Error('Invalid plugin session creation correspondence');
+    }
     const parsedStartupInstructions = raw.agentSessionStartupInstructionsV1 === undefined
         ? null
         : AgentSessionStartupInstructionsV1Schema.safeParse(
@@ -290,6 +316,12 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
 
     return Object.freeze({
         credentials,
+        ...(parsedSessionCreationTag?.success
+            ? { sessionCreationTag: parsedSessionCreationTag.data }
+            : {}),
+        ...(parsedSessionCreationCorrespondence?.success
+            ? { sessionCreationCorrespondence: parsedSessionCreationCorrespondence.data }
+            : {}),
         bootstrap: Object.freeze({
             ...(readOptionalString(raw.directory) ? { workingDirectory: readOptionalString(raw.directory) } : {}),
             ...(isRecord(raw.backendTarget) ? { target: raw.backendTarget as BackendTargetRefV2Input } : {}),
@@ -366,6 +398,11 @@ export function buildPluginSessionLaunchParams(params: Readonly<{
         metadata: Readonly<Record<string, unknown>>;
     }>;
 }>): PluginSessionLaunchParams {
+    const {
+        sessionCreationTag: _sessionCreationTag,
+        sessionCreationCorrespondence: _sessionCreationCorrespondence,
+        ...launchInput
+    } = params.input;
     return Object.freeze({
         backend: Object.freeze({
             id: params.backend.id,
@@ -374,7 +411,7 @@ export function buildPluginSessionLaunchParams(params: Readonly<{
         sessionId: params.runtime.sessionId,
         directory: params.runtime.directory,
         metadata: params.runtime.metadata,
-        ...params.input,
+        ...launchInput,
     });
 }
 
@@ -383,6 +420,12 @@ export function buildPluginHostSessionRuntimeOptions(
 ): PluginHostSessionRuntimeOptions {
     return Object.freeze({
         credentials: input.credentials,
+        ...(input.sessionCreationTag
+            ? { sessionCreationTag: input.sessionCreationTag }
+            : {}),
+        ...(input.sessionCreationCorrespondence
+            ? { sessionCreationCorrespondence: input.sessionCreationCorrespondence }
+            : {}),
         ...(typeof input.bootstrap.workingDirectory === 'string' ? { directory: input.bootstrap.workingDirectory } : {}),
         ...(input.bootstrap.target ? { backendTarget: input.bootstrap.target } : {}),
         ...(input.bootstrap.source ? { startedBy: input.bootstrap.source } : {}),

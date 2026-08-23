@@ -475,6 +475,21 @@ describe('resolveBuiltInContributions', () => {
         });
     });
 
+    // Claude is the only bundled Agent that emits `runtime-activity-snapshot`
+    // runtime events, and it now declares that fact only through the public
+    // `capabilities.sessions.runtimeActivitySnapshots` manifest capability an
+    // external author can type. Nothing else may claim the Activity slot: an
+    // Agent that never emits a snapshot would leave `runtime.activity` pinned
+    // at `unknown` for the whole Session instead of settling at `idle`.
+    it('binds the Runtime Activity slot to exactly the bundled Agents that emit snapshots', () => {
+        const contributes = resolveBuiltInContributions();
+
+        expect(contributes.agents
+            .filter((agent) => agent.catalogEntry?.runtimeActivityApplicability !== undefined)
+            .map((agent) => [agent.id, agent.catalogEntry?.runtimeActivityApplicability]))
+            .toEqual([['claude', 'supported']]);
+    });
+
     it('projects bundled SCM hosting providers from canonical manifests', () => {
         const contributes = resolveBuiltInContributions();
 
@@ -1084,6 +1099,56 @@ describe('resolveBuiltInContributions', () => {
         trustPolicy: 'local_trusted',
         installPolicy: 'link',
       },
+    });
+  });
+
+  it('projects every bundled Agent CLI detect and auth spec from its declared manifest CLI metadata', async () => {
+    const resolved = resolveBuiltInContributions();
+    const projected: Record<string, Readonly<{ loginStatusArgs: readonly string[] | null; binaryNames: readonly string[]; hasProbe: boolean }> | null> = {};
+    for (const agent of resolved.agents) {
+      const entry = agent.catalogEntry;
+      if (!entry?.getCliDetect || !entry.getCliAuthSpec) {
+        projected[agent.id] = null;
+        continue;
+      }
+      const detect = await entry.getCliDetect();
+      const authSpec = await entry.getCliAuthSpec();
+      projected[agent.id] = {
+        loginStatusArgs: detect.loginStatusArgs ?? null,
+        binaryNames: authSpec.binaryNames,
+        hasProbe: typeof authSpec.detectAuthStatus === 'function',
+      };
+    }
+
+    // Every Session Agent — bundled or installed — reaches the same declared-CLI
+    // projection. `coderabbit`/`deepsec` are execution-run Agents with no Session
+    // CLI surface, so they carry no CLI detect/auth hooks at all.
+    expect(projected).toEqual({
+      antigravity: { loginStatusArgs: null, binaryNames: ['agy'], hasProbe: false },
+      auggie: { loginStatusArgs: null, binaryNames: ['auggie'], hasProbe: true },
+      claude: { loginStatusArgs: null, binaryNames: ['claude'], hasProbe: true },
+      codex: { loginStatusArgs: ['login', 'status'], binaryNames: ['codex'], hasProbe: true },
+      coderabbit: null,
+      copilot: { loginStatusArgs: null, binaryNames: ['copilot'], hasProbe: true },
+      cursor: {
+        loginStatusArgs: ['about', '--format', 'json'],
+        binaryNames: ['cursor-agent', 'agent'],
+        hasProbe: true,
+      },
+      deepsec: null,
+      gemini: { loginStatusArgs: null, binaryNames: ['gemini'], hasProbe: true },
+      grok: { loginStatusArgs: null, binaryNames: ['grok'], hasProbe: true },
+      kilo: { loginStatusArgs: null, binaryNames: ['kilo'], hasProbe: true },
+      kimi: { loginStatusArgs: null, binaryNames: ['kimi'], hasProbe: true },
+      kiro: {
+        loginStatusArgs: ['whoami', '--format', 'json'],
+        binaryNames: ['kiro-cli'],
+        hasProbe: true,
+      },
+      ohMyPi: { loginStatusArgs: null, binaryNames: ['omp'], hasProbe: true },
+      opencode: { loginStatusArgs: ['auth', 'list'], binaryNames: ['opencode'], hasProbe: true },
+      pi: { loginStatusArgs: null, binaryNames: ['pi'], hasProbe: true },
+      qwen: { loginStatusArgs: null, binaryNames: ['qwen'], hasProbe: true },
     });
   });
 });

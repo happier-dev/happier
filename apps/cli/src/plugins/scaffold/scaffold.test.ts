@@ -203,6 +203,30 @@ function generatedUiSurfaceUsesPublicDeclarationHelper(source: string, surfaceNa
 
 describe('scaffoldLocalPlugin',
   () => {
+  it('scaffolds a working tree under any syntactically valid id, including the reserved namespace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-reserved-'));
+    try {
+      const reserved = await scaffoldLocalPlugin({
+        targetDir: join(root, 'reserved-plugin'),
+        pluginId: 'happier.agent.codex',
+        displayName: 'Codex',
+      });
+      expect(reserved).toEqual(expect.objectContaining({ ok: true }));
+
+      const malformed = await scaffoldLocalPlugin({
+        targetDir: join(root, 'malformed-plugin'),
+        pluginId: 'Not A Plugin Id',
+        displayName: 'Malformed',
+      });
+      expect(malformed).toEqual(expect.objectContaining({
+        ok: false,
+        diagnostics: [expect.objectContaining({ code: 'plugin_scaffold_invalid_input' })],
+      }));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('derives every generated dependency and compatibility fact from the public toolchain packet',
   async () => {
     const root = await mkdtemp(join(tmpdir(),
@@ -555,7 +579,14 @@ describe('scaffoldLocalPlugin',
     expect(generatedUiDeclarationPropertyNames(source)).toEqual(['surfaces', 'translations']);
     const surfaceName = generatedUiSurfaceReference(source);
     expect(surfaceName).toBe('mainSurface');
-    expect(generatedUiSurfaceUsesPublicDeclarationHelper(source, surfaceName)).toBe(true);
+    // The declaration lives in the surface leaf module `pluginUiBuild.ts` also
+    // reads, so the manifest projection and the build target derive from one
+    // `defineUiSurfaceDefinition(...)` call.
+    expect(generatedUiSurfaceUsesPublicDeclarationHelper(
+      await readFile(join(targetDir, 'src', 'ui', 'surfaces.ts'), 'utf8'),
+      surfaceName,
+    )).toBe(true);
+    expect(generatedUiSurfaceUsesPublicDeclarationHelper(source, surfaceName)).toBe(false);
     expect(source).toContain("locale: 'en'");
     expect(source).toContain("locale: 'fr'");
     expect(source).toContain("'scaffold.main.greeting'");
@@ -628,11 +659,19 @@ describe('scaffoldLocalPlugin',
       },
     });
 
-    const uiBuildConfigSource = await readFile(join(targetDir, 'pluginUiBuild.mjs'), 'utf8');
+    // One surface declaration owns the build identity. The config derives its
+    // targets through the SDK projection instead of restating `rendererId`,
+    // `entry` or the artifact tier a second time.
+    const uiSurfaceModuleSource = await readFile(join(targetDir, 'src', 'ui', 'surfaces.ts'), 'utf8');
+    expect(uiSurfaceModuleSource).toContain('defineUiSurfaceDefinition');
+    expect(uiSurfaceModuleSource).toContain('entry: "src/ui/index.ts"');
+    const uiBuildConfigSource = await readFile(join(targetDir, 'pluginUiBuild.ts'), 'utf8');
     expect(uiBuildConfigSource).toContain('defineBuildConfig');
-    expect(uiBuildConfigSource).toContain("entry: 'src/ui/index.ts'");
+    expect(uiBuildConfigSource).toContain('buildUiSurfaceTargets(mainSurface)');
+    expect(uiBuildConfigSource).toContain("from './src/ui/surfaces.ts'");
     expect(uiBuildConfigSource).not.toContain('./dist/index.js');
-    expect(uiBuildConfigSource).not.toContain('buildUiSurfaceTargets');
+    expect(uiBuildConfigSource).not.toContain('entry:');
+    expect(uiBuildConfigSource).not.toContain('rendererId:');
     expect(uiBuildConfigSource).not.toContain('createManagedRuntimeBundlerRunner');
     expect(uiBuildConfigSource).not.toContain('platforms:');
     expect(uiBuildConfigSource).not.toContain('module:');
@@ -686,7 +725,7 @@ describe('scaffoldLocalPlugin',
       }),
     ]));
 
-    const uiBuildConfigModule = await import(pathToFileURL(join(targetDir, 'pluginUiBuild.mjs')).href);
+    const uiBuildConfigModule = await import(pathToFileURL(join(targetDir, 'pluginUiBuild.ts')).href);
     expect(uiBuildConfigModule.default.targets).toEqual([
       { rendererId: 'main-renderer', entry: 'src/ui/index.ts', kind: 'hostedWeb' },
     ]);
@@ -720,7 +759,14 @@ describe('scaffoldLocalPlugin',
     expect(generatedUiDeclarationPropertyNames(source)).toEqual(['surfaces', 'translations']);
     const surfaceName = generatedUiSurfaceReference(source);
     expect(surfaceName).toBe('mainSurface');
-    expect(generatedUiSurfaceUsesPublicDeclarationHelper(source, surfaceName)).toBe(true);
+    // The declaration lives in the surface leaf module `pluginUiBuild.ts` also
+    // reads, so the manifest projection and the build target derive from one
+    // `defineUiSurfaceDefinition(...)` call.
+    expect(generatedUiSurfaceUsesPublicDeclarationHelper(
+      await readFile(join(targetDir, 'src', 'ui', 'surfaces.ts'), 'utf8'),
+      surfaceName,
+    )).toBe(true);
+    expect(generatedUiSurfaceUsesPublicDeclarationHelper(source, surfaceName)).toBe(false);
     expect(source).toContain("locale: 'en'");
     expect(source).toContain("locale: 'fr'");
     expect(source).toContain("'scaffold.main.greeting'");
@@ -820,16 +866,23 @@ describe('scaffoldLocalPlugin',
       .rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(join(targetDir, 'react-native.config.cjs'), 'utf8'))
       .rejects.toMatchObject({ code: 'ENOENT' });
-    const uiBuildConfig = await readFile(join(targetDir, 'pluginUiBuild.mjs'), 'utf8');
+    const uiSurfaceModule = await readFile(join(targetDir, 'src', 'ui', 'surfaces.ts'), 'utf8');
+    expect(uiSurfaceModule).toContain('defineUiSurfaceDefinition');
+    expect(uiSurfaceModule).toContain('entry: "src/ui/renderSurface.tsx"');
+    expect(uiSurfaceModule).toContain("platforms: ['web', 'ios', 'android']");
+    expect(uiSurfaceModule).toContain('module: {');
+    const uiBuildConfig = await readFile(join(targetDir, 'pluginUiBuild.ts'), 'utf8');
     expect(uiBuildConfig).toContain('defineBuildConfig');
-    expect(uiBuildConfig).toContain("entry: 'src/ui/renderSurface.tsx'");
+    expect(uiBuildConfig).toContain('buildUiSurfaceTargets(mainSurface)');
+    expect(uiBuildConfig).toContain("from './src/ui/surfaces.ts'");
     expect(uiBuildConfig).not.toContain('./dist/index.js');
-    expect(uiBuildConfig).not.toContain('buildUiSurfaceTargets');
     expect(uiBuildConfig).not.toContain('createManagedRuntimeBundlerRunner');
     expect(uiBuildConfig).not.toContain('bundlerConfig');
-    expect(uiBuildConfig).toContain("rendererId: 'main-renderer'");
-    expect(uiBuildConfig).toContain("platforms: ['web', 'ios', 'android']");
-    expect(uiBuildConfig).toContain('module: {');
+    // The Module Federation identity, entry and platform list are declared once
+    // on the surface; a beginner never synchronizes them here.
+    expect(uiBuildConfig).not.toContain("rendererId: 'main-renderer'");
+    expect(uiBuildConfig).not.toContain("platforms: ['web', 'ios', 'android']");
+    expect(uiBuildConfig).not.toContain('module: {');
     const testSource = await readFile(join(targetDir, 'test', 'index.test.mjs'), 'utf8');
     expect(testSource).toContain("import { activate, mainSurface, manifest } from '../dist/index.js';");
     expect(testSource).toContain("test('reactNative UI definition projects the public app surface and action launcher'");
@@ -876,7 +929,7 @@ describe('scaffoldLocalPlugin',
       .rejects.toMatchObject({ code: 'ENOENT' });
     const child = spawnSync(
       process.execPath,
-      ['--input-type=module', '--eval', "import('./pluginUiBuild.mjs').then((mod) => { if (!mod.default || !Array.isArray(mod.default.targets)) process.exit(2); })"],
+      ['--input-type=module', '--eval', "import('./pluginUiBuild.ts').then((mod) => { if (mod.default?.targets?.[0]?.rendererId !== 'main-renderer') process.exit(2); })"],
       { cwd: targetDir, encoding: 'utf8' },
     );
     expect({ status: child.status, stderr: child.stderr }).toEqual({ status: 0, stderr: '' });

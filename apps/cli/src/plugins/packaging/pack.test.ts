@@ -565,6 +565,11 @@ describe('packLocalPlugin', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.manifestPath.endsWith(`${sep}index.ts`)).toBe(true);
+      // The reported path must name the author tree the caller passed in, not
+      // the operation-local copy. `tmpdir()` is a symlink on macOS, so a
+      // relative mapping computed against the uncanonicalized copy root
+      // escapes `packageRootPath` entirely.
+      expect(result.manifestPath).toBe(join(result.packageRootPath, 'index.ts'));
       expect(result.manifest).toMatchObject({
         id: 'acme.code-defined',
         version: '1.0.0',

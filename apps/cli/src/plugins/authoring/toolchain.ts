@@ -29,6 +29,7 @@ import {
 } from '@happier-dev/cli-common/workspaces';
 import { BUILD_CONFIG_BASENAMES } from '@happier-dev/plugin-sdk/ui/build';
 
+import { resolveLocalPluginSourceManifestAuthority } from '@/plugins/manifest/bundledFirstPartyAuthority';
 import { readPluginManifest } from '@/plugins/manifest/read';
 import {
   findPluginDiagnosticSourceLocation,
@@ -918,12 +919,24 @@ export async function cleanupPluginAuthorGeneratedArtifacts(projectRoot: string)
  * named `manifest`/`activate` module. A development entrypoint is valid for
  * local source execution, but cannot produce a publishable author artifact;
  * reject that shape here before compiler, Action, UI, or daemon publication.
+ *
+ * The manifest is read under the authority the author root actually carries and
+ * as the local working tree it is. The reserved `happier.*` namespace and the
+ * release-stamped engine range stop a *distributed* artifact from impersonating
+ * a first-party plugin; a project root on this machine is not one, and the dev
+ * loop reaches this classifier through `plugins.author.build`/`test`. Enforcing
+ * them here refused external authors the loop bundled plugins get, while the
+ * rules stay fully enforced where custody actually transfers — archive staging
+ * on install rejects the same id whatever produced it.
  */
 export async function classifyPluginAuthorDaemonBuild(
   projectRoot: string,
 ): Promise<PluginAuthorDaemonBuildClassification> {
   const manifestPath = join(projectRoot, PLUGIN_MANIFEST_RELATIVE_PATH);
-  const manifestRead = await readPluginManifest({ manifestPath });
+  const manifestAuthority = await resolveLocalPluginSourceManifestAuthority({
+    pluginRootPath: projectRoot,
+  });
+  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance: 'localSource' });
   if (!manifestRead.ok) {
     if (manifestRead.diagnostics.every((diagnostic) => diagnostic.code === 'plugin_manifest_missing')) {
       return 'required';

@@ -77,7 +77,7 @@ function externalManifestText(version: string): string {
 }
 
 function ingest(manifestText: string) {
-    const ingested = ingestCanonicalPluginManifest(manifestText);
+    const ingested = ingestCanonicalPluginManifest(manifestText, { sourceProvenance: 'registryCustodied' });
     if (!ingested.ok) {
         throw new Error(ingested.diagnostics.map((item) => `${item.code}: ${item.message}`).join('\n'));
     }
@@ -396,7 +396,7 @@ describe('EU-5c/EU-5d semantic host-extension chain', () => {
 
     it('refuses a header action whose reference does not resolve', () => {
         const dangling = ingestCanonicalPluginManifest(externalManifestText('1.0.0')
-            .replace(`"action":"${HEADER_ACTION_LOCAL_ID}"`, '"action":"not-declared"'));
+            .replace(`"action":"${HEADER_ACTION_LOCAL_ID}"`, '"action":"not-declared"'), { sourceProvenance: 'registryCustodied' });
         expect(dangling.ok).toBe(false);
         expect(dangling.ok === false && dangling.diagnostics).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'plugin_manifest_dangling_reference' }),

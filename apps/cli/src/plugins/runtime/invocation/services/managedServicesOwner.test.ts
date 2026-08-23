@@ -1534,9 +1534,11 @@ describe('managed-services SVC09 owner', () => {
             'http://127.0.0.1:4312/v1',
         );
         expect(projection.access.endpointUrl('unknown')).toBeNull();
-        const response = await projection.access.fetch(
-            'http://127.0.0.1:4312/v1/models?limit=1',
-        );
+        const response = await projection.access.request({
+            pathAndQuery: '/v1/models?limit=1',
+            method: 'GET',
+            timeoutMs: 5_000,
+        });
         expect(response.status).toBe(200);
         expect(hostFetch).toHaveBeenCalledTimes(1);
         const fetchInit = hostFetch.mock.calls[0]?.[1];
@@ -1551,18 +1553,22 @@ describe('managed-services SVC09 owner', () => {
         expect(JSON.stringify(projection.access)).not.toContain(
             privateAuthorization!,
         );
-        await expect(projection.access.fetch(
-            'http://127.0.0.1:4312/admin',
-        )).rejects.toMatchObject({
+        await expect(projection.access.request({
+            pathAndQuery: '/admin',
+            method: 'GET',
+            timeoutMs: 5_000,
+        })).rejects.toMatchObject({
             code: 'plugin_managed_service_unavailable',
         });
         expect(hostFetch).toHaveBeenCalledTimes(1);
 
         harness.moveHealthyEndpoint('http://127.0.0.1:4312', 4312, 2);
         expect(projection.access.endpointUrl('responses')).toBeNull();
-        await expect(projection.access.fetch(
-            'http://127.0.0.1:4312/v1/models?limit=2',
-        )).rejects.toMatchObject({
+        await expect(projection.access.request({
+            pathAndQuery: '/v1/models?limit=2',
+            method: 'GET',
+            timeoutMs: 5_000,
+        })).rejects.toMatchObject({
             code: 'plugin_managed_service_unavailable',
         });
         expect(hostFetch).toHaveBeenCalledTimes(1);
@@ -1570,9 +1576,11 @@ describe('managed-services SVC09 owner', () => {
         await projection.cleanup();
         expect(projection.isCurrent()).toBe(false);
         expect(projection.access.endpointUrl('responses')).toBeNull();
-        await expect(projection.access.fetch(
-            'http://127.0.0.1:4312/v1/models',
-        )).rejects.toMatchObject({
+        await expect(projection.access.request({
+            pathAndQuery: '/v1/models',
+            method: 'GET',
+            timeoutMs: 5_000,
+        })).rejects.toMatchObject({
             code: 'plugin_managed_service_unavailable',
         });
     });

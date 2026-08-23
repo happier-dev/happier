@@ -11,6 +11,11 @@ import { scaffoldLocalPlugin } from './scaffold';
 type PluginUiBuilder = typeof import('../../../../../packages/plugin-sdk/dist/ui/build/bin.js');
 
 const pluginSdkRoot = fileURLToPath(new URL('../../../../../packages/plugin-sdk', import.meta.url));
+// A TypeScript build config is loaded through the project's own `typescript`
+// devDependency, which the scaffold declares and a real dependency preparation
+// installs. This stub install must materialize it for the same reason it
+// materializes the SDK.
+const typescriptPackageRoot = fileURLToPath(new URL('../../../../../node_modules/typescript', import.meta.url));
 const pluginUiBuilderPath = fileURLToPath(new URL(
   '../../../../../packages/plugin-sdk/dist/ui/build/bin.js',
   import.meta.url,
@@ -45,14 +50,19 @@ describe('scaffoldLocalPlugin managed UI build configuration', () => {
           const packageScope = join(projectRoot, 'node_modules', '@happier-dev');
           await mkdir(packageScope, { recursive: true });
           await symlink(pluginSdkRoot, join(packageScope, 'plugin-sdk'), 'dir');
+          await symlink(typescriptPackageRoot, join(projectRoot, 'node_modules', 'typescript'), 'dir');
           return { exitCode: 0, signal: null, stdout: '', stderr: '' };
         },
       });
       expect(dependencyPreparation).toEqual({ ok: true, projectRoot });
 
-      const buildConfig = await readFile(join(projectRoot, 'pluginUiBuild.mjs'), 'utf8');
-      expect(buildConfig).toContain("entry: 'src/ui/index.ts'");
+      const buildConfig = await readFile(join(projectRoot, 'pluginUiBuild.ts'), 'utf8');
+      expect(buildConfig).toContain('buildUiSurfaceTargets(mainSurface)');
+      // The config derives its target from the one surface declaration, and
+      // never from the not-yet-built daemon bundle.
       expect(buildConfig).not.toContain("./dist/index.js");
+      const surfaceModule = await readFile(join(projectRoot, 'src', 'ui', 'surfaces.ts'), 'utf8');
+      expect(surfaceModule).toContain('entry: "src/ui/index.ts"');
 
       await expect(readFile(join(projectRoot, 'dist', 'index.js'), 'utf8'))
         .rejects.toMatchObject({ code: 'ENOENT' });
@@ -112,7 +122,7 @@ describe('scaffoldLocalPlugin managed UI build configuration', () => {
         .rejects.toMatchObject({ code: 'ENOENT' });
       await expect(readFile(join(hostedRoot, 'vite.config.mjs'), 'utf8'))
         .rejects.toMatchObject({ code: 'ENOENT' });
-      await expect(readFile(join(hostedRoot, 'pluginUiBuild.mjs'), 'utf8'))
+      await expect(readFile(join(hostedRoot, 'pluginUiBuild.ts'), 'utf8'))
         .resolves.not.toContain('bundlerConfig');
 
       const native = await scaffoldLocalPlugin({
@@ -128,7 +138,7 @@ describe('scaffoldLocalPlugin managed UI build configuration', () => {
         await expect(readFile(join(nativeRoot, path), 'utf8'))
           .rejects.toMatchObject({ code: 'ENOENT' });
       }
-      await expect(readFile(join(nativeRoot, 'pluginUiBuild.mjs'), 'utf8'))
+      await expect(readFile(join(nativeRoot, 'pluginUiBuild.ts'), 'utf8'))
         .resolves.not.toContain('bundlerConfig');
     } finally {
       await rm(root, { recursive: true, force: true });

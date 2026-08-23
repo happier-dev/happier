@@ -20,7 +20,7 @@ import { ensurePluginStoreDirectories, resolvePluginStorePaths, type PluginStore
 const REACT_NATIVE_CRASH_STATE_FILE_NAME = 'react-native-crash-state.v3.json';
 const REACT_NATIVE_CRASH_STATE_LOCK_NAME = 'react-native-crash-state.v3.lock';
 
-export const REACT_NATIVE_CRASH_FAILURE_THRESHOLD = 2;
+const REACT_NATIVE_CRASH_FAILURE_THRESHOLD = 2;
 
 export const ReactNativeCrashStateRecordV3Schema = z.object({
     token: DaemonPluginReactNativeCrashBindingTokenV1Schema,
@@ -44,7 +44,6 @@ export type ReactNativeCrashStateStore = Readonly<{
     paths: PluginStorePaths;
     stateFilePath: string;
     read: () => Promise<ReactNativeCrashStateFileV3>;
-    write: (next: ReactNativeCrashStateFileV3) => Promise<void>;
     update: (
         transform: (
             current: ReactNativeCrashStateFileV3,
@@ -150,10 +149,6 @@ function sameMount(
         && left.presentation === right.presentation;
 }
 
-function countFailures(record: ReactNativeCrashStateRecordV3): number {
-    return record.renderFailureCount;
-}
-
 function createRecord(binding: ReactNativeCrashStateBinding, crashStateEpoch: number): ReactNativeCrashStateRecordV3 {
     return {
         token: {
@@ -223,7 +218,7 @@ export function createReactNativeCrashStateBindingKey(input: Readonly<{
     ]);
 }
 
-export function createEmptyReactNativeCrashState(): ReactNativeCrashStateFileV3 {
+function createEmptyReactNativeCrashState(): ReactNativeCrashStateFileV3 {
     return {
         t: 'happier_plugin_react_native_crash_state_v3',
         schemaVersion: 3,
@@ -328,7 +323,7 @@ export async function recordReactNativeCrashFailure(input: Readonly<{
                 [occurrenceId]: failure,
             },
         };
-        next.disabled = countFailures(next) >= REACT_NATIVE_CRASH_FAILURE_THRESHOLD;
+        next.disabled = next.renderFailureCount >= REACT_NATIVE_CRASH_FAILURE_THRESHOLD;
         status = 'recorded';
         disabled = next.disabled;
         return {
@@ -416,15 +411,6 @@ export function createReactNativeCrashStateStore(params?: Readonly<{ happyHomeDi
         stateFilePath,
         async read(): Promise<ReactNativeCrashStateFileV3> {
             return await readUnlocked();
-        },
-        async write(next: ReactNativeCrashStateFileV3): Promise<void> {
-            await withPluginStoreLock({
-                paths,
-                lockName: REACT_NATIVE_CRASH_STATE_LOCK_NAME,
-                fn: async () => {
-                    await writeUnlocked(next);
-                },
-            });
         },
         async update(transform): Promise<ReactNativeCrashStateFileV3> {
             return await withPluginStoreLock({

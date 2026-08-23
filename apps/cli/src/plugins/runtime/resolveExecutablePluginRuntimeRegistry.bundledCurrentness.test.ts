@@ -530,7 +530,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
         localId: FIXTURE_AGENT_ID,
       }]);
       const binding = runtime.agentRuntimesByAgentId
-        .get(FIXTURE_AGENT_ID)
+        .get(`${pluginId}/${FIXTURE_AGENT_ID}`)
         ?.sessionRunnerFactoryBinding;
       if (!binding) throw new Error('Expected fixture Agent runner binding');
       const createCurrentGlobalMcp = runtime.createRetainedRunnerAgentCurrentGlobalMcpService;
@@ -616,7 +616,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
         localId: FIXTURE_AGENT_ID,
       }]);
       const binding = runtime.agentRuntimesByAgentId
-        .get(FIXTURE_AGENT_ID)
+        .get(`${pluginId}/${FIXTURE_AGENT_ID}`)
         ?.sessionRunnerFactoryBinding;
       if (!binding) throw new Error('Expected fixture Agent runner binding');
       const createCurrentGlobalMcp = runtime.createRetainedRunnerAgentCurrentGlobalMcpService;
@@ -694,7 +694,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
         localId: FIXTURE_AGENT_ID,
       }]);
       const binding = runtime.agentRuntimesByAgentId
-        .get(FIXTURE_AGENT_ID)
+        .get(`${pluginId}/${FIXTURE_AGENT_ID}`)
         ?.sessionRunnerFactoryBinding;
       if (!binding) throw new Error('Expected fixture Agent runner binding');
       const createCurrentGlobalMcp = runtime.createRetainedRunnerAgentCurrentGlobalMcpService;

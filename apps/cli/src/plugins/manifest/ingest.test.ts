@@ -17,8 +17,8 @@ const fixture = {
 
 describe('CLI canonical manifest ingestion', () => {
   it('normalizes installed UTF-8 bytes and bundled objects identically', () => {
-    const installed = ingestCanonicalPluginManifest(Buffer.from(JSON.stringify(fixture), 'utf8'));
-    const bundled = ingestCanonicalPluginManifest(fixture);
+    const installed = ingestCanonicalPluginManifest(Buffer.from(JSON.stringify(fixture), 'utf8'), { sourceProvenance: 'registryCustodied' });
+    const bundled = ingestCanonicalPluginManifest(fixture, { sourceProvenance: 'registryCustodied' });
 
     expect(installed).toEqual(bundled);
     expect(installed).toEqual({ ok: true, manifest: expect.any(Object) });
@@ -26,8 +26,8 @@ describe('CLI canonical manifest ingestion', () => {
 
   it('returns identical coded diagnostics for malformed installed and bundled input', () => {
     const malformed = { ...fixture, unexpectedBehavior: true };
-    const installed = ingestCanonicalPluginManifest(Buffer.from(JSON.stringify(malformed), 'utf8'));
-    const bundled = ingestCanonicalPluginManifest(malformed);
+    const installed = ingestCanonicalPluginManifest(Buffer.from(JSON.stringify(malformed), 'utf8'), { sourceProvenance: 'registryCustodied' });
+    const bundled = ingestCanonicalPluginManifest(malformed, { sourceProvenance: 'registryCustodied' });
 
     expect(installed).toEqual(bundled);
     expect(installed).toEqual({
@@ -43,8 +43,8 @@ describe('CLI canonical manifest ingestion', () => {
       engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
     };
 
-    expect(ingestCanonicalPluginManifest(bundledFixture).ok).toBe(false);
-    expect(ingestCanonicalPluginManifest(bundledFixture, {
+    expect(ingestCanonicalPluginManifest(bundledFixture, { sourceProvenance: 'registryCustodied' }).ok).toBe(false);
+    expect(ingestCanonicalPluginManifest(bundledFixture, { sourceProvenance: 'localSource',
       manifestAuthority: 'bundled_first_party',
       enforceEngineCompatibility: false,
     })).toEqual({ ok: true, manifest: expect.any(Object) });

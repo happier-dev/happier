@@ -1,4 +1,9 @@
-import { ACTION_IDS, type ActionId } from '@happier-dev/protocol/actions';
+import {
+  ACTION_IDS,
+  formatQualifiedPluginActionId,
+  type ActionId,
+  type QualifiedPluginActionId,
+} from '@happier-dev/protocol/actions';
 import {
   projectPluginActionUnavailableOutcomeCode,
   type JsonValue,
@@ -23,8 +28,13 @@ import type { PluginActionSurface } from '@/plugins/runtime/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { ContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate';
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '@/plugins/runtime/invocation/actionExecutor';
+import type { TargetActionOperationProgressPort } from '@/plugins/runtime/invocation/targetActionRegistry';
+import {
+  isActionApprovalRequiredByEnv,
+  isActionEnabledByEnv,
+} from '@/settings/actionsSettings';
 
-type PluginActionExecutorResult = Readonly<
+export type PluginActionExecutorResult = Readonly<
   | {
     ok: true;
     result: JsonValue | null;
@@ -43,6 +53,10 @@ type PluginActionExecutorResult = Readonly<
     actionHandlerInvocation?: PluginActionHandlerInvocation;
   }
 >;
+
+export type PreparedContributedActionInvocation = Readonly<{
+  run(operationProgress?: TargetActionOperationProgressPort): Promise<PluginActionExecutorResult>;
+}>;
 
 export type PluginActionExecutionAttempt = Readonly<
   | { matched: false }
@@ -77,6 +91,20 @@ const BUILT_IN_ACTION_IDS = new Set<string>(ACTION_IDS);
 
 function isBuiltInActionId(actionId: string): boolean {
   return BUILT_IN_ACTION_IDS.has(actionId);
+}
+
+function resolveContributedActionSettingsId(
+  pluginId: string,
+  localId: string,
+): QualifiedPluginActionId | null {
+  try {
+    return formatQualifiedPluginActionId({ pluginId, localId });
+  } catch {
+    // Published contributed Actions already satisfy the canonical contribution
+    // identity contract. Legacy in-memory test fixtures without that identity
+    // remain outside the settings namespace rather than acquiring an alias.
+    return null;
+  }
 }
 
 function isExecutablePluginRuntimeRegistry(
@@ -303,6 +331,10 @@ export async function executeContributedAction(params: Readonly<{
     messageAction?: MessageActionAvailableSnapshotV1;
     signal?: AbortSignal;
     facts?: ContributionPolicyFacts;
+    operationProgress?: TargetActionOperationProgressPort;
+    capturePreparedInvocation?: (
+      invocation: PreparedContributedActionInvocation,
+    ) => void;
   }>;
 }>): Promise<PluginActionExecutionAttempt> {
   const actionId = String(params.actionId);
@@ -361,6 +393,22 @@ export async function executeContributedAction(params: Readonly<{
       result: actionHandlerNotStartedFailure(
         'plugin_action_handler_missing',
         'Plugin action requires a daemon entry handler',
+      ),
+    };
+  }
+  const contributedActionSettingsId = resolveContributedActionSettingsId(
+    pluginId,
+    action.definition.id,
+  );
+  if (
+    contributedActionSettingsId !== null
+    && !isActionEnabledByEnv(contributedActionSettingsId, { surface: actionSurface })
+  ) {
+    return {
+      matched: true,
+      result: actionHandlerNotStartedFailure(
+        'plugin_action_unavailable',
+        'Plugin action is disabled by Action settings',
       ),
     };
   }
@@ -515,7 +563,7 @@ export async function executeContributedAction(params: Readonly<{
             : {}),
         })
       : params.context.caller;
-    const targetResult = await targetActionInvocations.invoke({
+    const targetInvocation = {
       pluginId,
       localId: action.definition.id,
       input: validatedInput === null ? params.input : validatedInput.value,
@@ -540,32 +588,43 @@ export async function executeContributedAction(params: Readonly<{
       ...(params.context.defaultSessionId ? { sessionId: params.context.defaultSessionId } : {}),
       ...(params.context.signal ? { signal: params.context.signal } : {}),
       ...(params.context.facts ? { facts: params.context.facts } : {}),
+      ...(params.context.operationProgress
+        ? { operationProgress: params.context.operationProgress }
+        : {}),
+      ...(contributedActionSettingsId === null
+        ? {}
+        : {
+          isEnabledByActionSettings: () => isActionEnabledByEnv(
+            contributedActionSettingsId,
+            { surface: actionSurface },
+          ),
+          isApprovalRequiredByActionSettings: () => isActionApprovalRequiredByEnv(
+            contributedActionSettingsId,
+            { surface: actionSurface },
+          ),
+        }),
       ...(params.requestCurrentIntent ? { requestCurrentIntent: params.requestCurrentIntent } : {}),
-    });
-    const validatedResult = targetResult.status !== 'executed' || admittedTargetedOperation === undefined
-      ? null
-      : validateTargetedOperationResult(admittedTargetedOperation.targetProtocol, targetResult.value);
-    if (validatedResult !== null && !validatedResult.ok) {
-      return { matched: true, result: validatedResult.result };
-    }
-    if (targetResult.status === 'executed') {
+    } as const;
+    const projectTargetResult = (targetResult: Awaited<ReturnType<
+      typeof targetActionInvocations.invoke
+    >>): PluginActionExecutorResult => {
+      const validatedResult = targetResult.status !== 'executed' || admittedTargetedOperation === undefined
+        ? null
+        : validateTargetedOperationResult(admittedTargetedOperation.targetProtocol, targetResult.value);
+      if (validatedResult !== null && !validatedResult.ok) return validatedResult.result;
+      if (targetResult.status === 'executed') {
         // Generation and execution-origin fences protect admission before the
         // effect begins. A known successful settlement must survive later
-      // retirement so callers never mistake it for absence and retry blindly.
-      return {
-        matched: true,
-        result: {
+        // retirement so callers never mistake it for absence and retry blindly.
+        return {
           ok: true,
           result: validatedResult === null ? targetResult.value : validatedResult.value,
           ...(beforeExecutionOrigin?.status === 'resolved'
             ? { executionOrigin: beforeExecutionOrigin.origin }
             : {}),
-        },
         };
-    }
-    return {
-      matched: true,
-      result: {
+      }
+      return {
         ok: false,
         errorCode: targetResult.status === 'unavailable'
           ? projectPluginActionUnavailableOutcomeCode(
@@ -581,7 +640,24 @@ export async function executeContributedAction(params: Readonly<{
         ...(targetResult.actionHandlerInvocation === undefined
           ? {}
           : { actionHandlerInvocation: targetResult.actionHandlerInvocation }),
-      },
+      };
+    };
+    if (params.context.capturePreparedInvocation) {
+      const prepared = await targetActionInvocations.prepare(targetInvocation);
+      if (prepared.kind === 'settled') {
+        return { matched: true, result: projectTargetResult(prepared.result) };
+      }
+      params.context.capturePreparedInvocation(Object.freeze({
+        run: async (operationProgress) => projectTargetResult(await prepared.run({
+          ...(operationProgress ? { operationProgress } : {}),
+        })),
+      }));
+      return { matched: true, result: { ok: true, result: null } };
+    }
+    const targetResult = await targetActionInvocations.invoke(targetInvocation);
+    return {
+      matched: true,
+      result: projectTargetResult(targetResult),
     };
   }
 

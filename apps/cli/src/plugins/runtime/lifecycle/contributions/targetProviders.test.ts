@@ -103,7 +103,7 @@ function activationTarget(
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         contributes: { providers: [contribution.definition] },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingested.ok) {
         throw new Error(ingested.diagnostics.map((entry) => entry.message).join('\n'));
     }

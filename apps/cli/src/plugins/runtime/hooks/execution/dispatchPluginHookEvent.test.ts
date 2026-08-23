@@ -878,7 +878,7 @@ describe('dispatchPluginHookEvent', () => {
           executionKind: 'decide',
         }],
       },
-    }, {
+    }, { sourceProvenance: 'registryCustodied',
       manifestAuthority: 'external',
       enforceEngineCompatibility: false,
     });

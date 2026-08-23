@@ -1,8 +1,8 @@
 import {
     AccountEncryptionCurrentnessResponseSchema,
-    AutomationAccountCurrentnessWitnessV1Schema,
     createAccountScopedCryptoMaterialSnapshotV1,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+    projectAutomationAccountCurrentnessWitnessV1,
     type AccountEncryptionCurrentnessResponse,
     type AccountScopedCryptoMaterialSnapshotV1,
     type AutomationAccountCurrentnessWitnessV1,
@@ -55,15 +55,6 @@ export function isAvailableE2eeAutomationAccountEncryptionV1(
     return value.witness.mode === 'e2ee';
 }
 
-export function sameAutomationAccountCurrentnessV1(
-    left: AutomationAccountCurrentnessWitnessV1,
-    right: AutomationAccountCurrentnessWitnessV1,
-): boolean {
-    return left.mode === right.mode
-        && left.version === right.version
-        && left.contentKeyFingerprint === right.contentKeyFingerprint;
-}
-
 /**
  * Captures the Account-content owner material for one prospective Automation
  * host evidence attempt. The caller must first establish current E2EE mode;
@@ -112,19 +103,18 @@ export async function resolveValidatedAutomationAccountEncryptionV1(params: Read
     const parsedCurrentness = AccountEncryptionCurrentnessResponseSchema.safeParse(rawCurrentness);
     if (!parsedCurrentness.success) return { kind: 'unavailable' };
     const currentness = parsedCurrentness.data;
-    const witness = AutomationAccountCurrentnessWitnessV1Schema.safeParse({
-        mode: currentness.mode,
-        version: currentness.version,
-        contentKeyFingerprint: currentness.contentKeyFingerprint,
-    });
-    if (!witness.success) return { kind: 'unavailable' };
+    // A plain Account may still retain the content key of the E2EE state it
+    // was migrated away from. The canonical projection owner normalizes that
+    // retained fingerprint away before the witness is validated.
+    const witness = projectAutomationAccountCurrentnessWitnessV1(currentness);
+    if (witness === null) return { kind: 'unavailable' };
 
-    if (currentness.mode === 'plain') {
+    if (witness.mode === 'plain') {
         return {
             kind: 'available',
             witness: {
                 mode: 'plain',
-                version: witness.data.version,
+                version: witness.version,
                 contentKeyFingerprint: null,
             },
         };
@@ -134,11 +124,11 @@ export async function resolveValidatedAutomationAccountEncryptionV1(params: Read
     try {
         snapshot = await params.resolveAccountEncryptionMaterial(params.signal);
     } catch {
-        return { kind: 'retry', witness: witness.data };
+        return { kind: 'retry', witness };
     }
     if (params.signal.aborted) return { kind: 'unavailable' };
     if (snapshot === null || currentness.contentKeyFingerprint === null) {
-        return { kind: 'retry', witness: witness.data };
+        return { kind: 'retry', witness };
     }
 
     let localFingerprint: string;
@@ -147,11 +137,11 @@ export async function resolveValidatedAutomationAccountEncryptionV1(params: Read
             snapshot.contentPublicKeyFingerprint,
         );
     } catch {
-        return { kind: 'retry', witness: witness.data };
+        return { kind: 'retry', witness };
     }
     const e2eeWitness: E2eeAutomationAccountCurrentnessWitnessV1 = {
         mode: 'e2ee',
-        version: witness.data.version,
+        version: witness.version,
         contentKeyFingerprint: currentness.contentKeyFingerprint,
     };
     return localFingerprint === currentness.contentKeyFingerprint

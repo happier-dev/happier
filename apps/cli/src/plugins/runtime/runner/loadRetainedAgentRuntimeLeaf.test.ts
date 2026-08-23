@@ -39,6 +39,7 @@ async function prepareRetainedFactory(input: Readonly<{
   pluginId?: string;
   localAgentId?: string;
   manifestAuthority?: 'external' | 'bundled_first_party';
+  manifestEngines?: Readonly<Record<string, string>>;
   externalSessionsExport?: string;
   additionalFiles?: Readonly<Record<string, string>>;
 }>) {
@@ -59,6 +60,7 @@ async function prepareRetainedFactory(input: Readonly<{
     join(input.sourceRootPath, '.happier-plugin', 'plugin.json'),
     JSON.stringify(createPluginManifestV2Fixture({
       id: pluginId,
+      ...(input.manifestEngines ? { engines: input.manifestEngines } : {}),
       contributes: {
         agents: [{
           id: localAgentId,
@@ -297,6 +299,40 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
       expect(counters[counterKey]).toBe(1);
     } finally {
       delete counters[counterKey];
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(sourceRootPath, { recursive: true, force: true });
+    }
+  });
+
+  it('loads a local-source generation whose manifest declares a range this host does not satisfy', async () => {
+    // A `path` installation is admitted under `localSource`, where a
+    // pre-release engine placeholder in the author's working tree is the
+    // normal dev loop. The runtime leaf re-reads the very same generation
+    // bytes, so it must read the same provenance the record was minted with
+    // instead of silently falling back to the published-artifact rules.
+    const happyHomeDir = await mkdtemp(
+      join(tmpdir(), 'happier-runner-local-source-home-'),
+    );
+    const sourceRootPath = await mkdtemp(
+      join(tmpdir(), 'happier-runner-local-source-source-'),
+    );
+    try {
+      const fixture = await prepareRetainedFactory({
+        happyHomeDir,
+        sourceRootPath,
+        immutableGenerationId: 'generation-runner-local-source',
+        modulePath: 'agent/runtime/factory.mjs',
+        moduleBytes:
+          'export function createFixtureAgentRuntime() { return { sessions: { open() {} } }; }',
+        loadMode: 'immutable-js',
+        manifestEngines: { happier: '^99.0.0' },
+      });
+
+      await expect(loadRetainedAgentRuntimeLeaf({
+        paths: fixture.paths,
+        binding: fixture.binding,
+      })).resolves.toEqual({ factory: expect.any(Function) });
+    } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
       await rm(sourceRootPath, { recursive: true, force: true });
     }

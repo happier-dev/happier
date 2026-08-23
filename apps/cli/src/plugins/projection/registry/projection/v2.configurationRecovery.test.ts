@@ -40,7 +40,7 @@ function ingestManifest() {
                 dangerLevel: 'safe',
             }],
         },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
     return ingested.manifest;
 }

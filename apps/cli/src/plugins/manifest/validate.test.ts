@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { ingestCanonicalPluginManifest } from './ingest';
 import { validatePluginManifest } from './validate';
 
-const validatePluginManifestWithOptions = validatePluginManifest as (
-  input: unknown,
-  options?: { manifestAuthority?: 'external' | 'bundled_first_party' },
-) => ReturnType<typeof validatePluginManifest>;
+const INCOMPATIBLE_HAPPIER_ENGINE_MESSAGE = 'Plugin manifest requires a compatible Happier CLI version';
+
+function diagnosticMessages(result: ReturnType<typeof validatePluginManifest>): readonly string[] {
+  return result.ok ? [] : result.diagnostics.map((diagnostic) => diagnostic.message);
+}
 
 function createManifest(id: string): Record<string, unknown> {
   return {
@@ -47,7 +48,7 @@ describe('validatePluginManifest', () => {
           },
         }],
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
 
     expect(result).toEqual(expect.objectContaining({ ok: true }));
   });
@@ -80,10 +81,10 @@ describe('validatePluginManifest', () => {
       },
     });
 
-    expect(validatePluginManifest(createVoiceManifest('acme.credential-voice'))).toEqual(expect.objectContaining({
+    expect(validatePluginManifest(createVoiceManifest('acme.credential-voice'), { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({
       ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid' })],
     }));
-    expect(validatePluginManifest(createVoiceManifest('happier.voice.openai'), {
+    expect(validatePluginManifest(createVoiceManifest('happier.voice.openai'), { sourceProvenance: 'localSource',
       manifestAuthority: 'bundled_first_party',
     })).toEqual(expect.objectContaining({
       ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_invalid' })],
@@ -301,7 +302,7 @@ describe('validatePluginManifest', () => {
       },
     };
 
-    expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
+    expect(validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({ ok: true }));
     expect(validatePluginManifest({
       ...manifest,
       contributes: {
@@ -310,7 +311,7 @@ describe('validatePluginManifest', () => {
           action.id === 'mint-session' ? { ...action, id: 'other-action' } : action
         )),
       },
-    })).toEqual(expect.objectContaining({ ok: true }));
+    }, { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({ ok: true }));
     const unsafeAction = validatePluginManifest({
       ...manifest,
       contributes: {
@@ -327,7 +328,7 @@ describe('validatePluginManifest', () => {
             : action
         )),
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     expect(unsafeAction).toEqual(expect.objectContaining({ ok: true }));
     const broadCatalogAccess = validatePluginManifest({
       ...manifest,
@@ -348,7 +349,7 @@ describe('validatePluginManifest', () => {
             : request
         )),
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     expect(broadCatalogAccess).toEqual(expect.objectContaining({ ok: true }));
   });
 
@@ -391,7 +392,7 @@ describe('validatePluginManifest', () => {
       engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 },
       hostAccess: { required: [], optional: [] },
       contributes,
-    });
+    }, { sourceProvenance: 'registryCustodied' });
 
     expect(result).toEqual({
       ok: false,
@@ -403,7 +404,7 @@ describe('validatePluginManifest', () => {
   });
 
   it('rejects external manifests that claim the reserved happier namespace', () => {
-    const result = validatePluginManifest(createManifest('happier.agent.fake'));
+    const result = validatePluginManifest(createManifest('happier.agent.fake'), { sourceProvenance: 'registryCustodied' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -417,11 +418,47 @@ describe('validatePluginManifest', () => {
   });
 
   it('allows bundled first-party manifests to use the reserved happier namespace', () => {
-    const result = validatePluginManifestWithOptions(createManifest('happier.agent.codex'), {
+    const result = validatePluginManifest(createManifest('happier.agent.codex'), { sourceProvenance: 'localSource',
       manifestAuthority: 'bundled_first_party',
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  it('scopes the reserved happier namespace to registry-custodied artifacts', () => {
+    // The rule stops a *published* artifact from impersonating a first-party
+    // plugin. A working tree on this machine is the maintainer's own dev loop:
+    // there is nothing to impersonate, and blocking it blocks developing the
+    // plugins this repository ships.
+    expect(validatePluginManifest(createManifest('happier.agent.fake'), {
+      sourceProvenance: 'localSource',
+    })).toEqual(expect.objectContaining({ ok: true }));
+
+    expect(diagnosticMessages(validatePluginManifest(createManifest('happier.agent.fake'), {
+      sourceProvenance: 'registryCustodied',
+    }))).toEqual([expect.stringContaining('reserved happier.* namespace')]);
+  });
+
+  it('scopes the release-stamped engine range to registry-custodied artifacts', () => {
+    const unsatisfiable = createManifest('acme.future-host');
+    unsatisfiable.engines = { happier: '>=9999.0.0' };
+
+    expect(validatePluginManifest(unsatisfiable, {
+      sourceProvenance: 'localSource',
+    })).toEqual(expect.objectContaining({ ok: true }));
+
+    expect(diagnosticMessages(validatePluginManifest(unsatisfiable, {
+      sourceProvenance: 'registryCustodied',
+    }))).toEqual([INCOMPATIBLE_HAPPIER_ENGINE_MESSAGE]);
+  });
+
+  it('keeps every provenance-independent semantic rule enforced for a local source', () => {
+    const unsupportedEntry = createManifest('happier.agent.local-dev');
+    unsupportedEntry.entrypoints = { daemon: './daemon.unsupported' };
+
+    expect(diagnosticMessages(validatePluginManifest(unsupportedEntry, {
+      sourceProvenance: 'localSource',
+    }))).toEqual(['Plugin daemon entry uses an unsupported extension']);
   });
 
   it('rejects the removed lifecycle handler contribution family', () => {
@@ -436,7 +473,7 @@ describe('validatePluginManifest', () => {
       ],
     };
 
-    const result = validatePluginManifest(manifest);
+    const result = validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -470,7 +507,7 @@ describe('validatePluginManifest', () => {
       }],
     };
 
-    const result = validatePluginManifest(manifest);
+    const result = validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -497,21 +534,21 @@ describe('validatePluginManifest', () => {
       }],
     };
 
-    expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
+    expect(validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({ ok: true }));
   });
 
   it('accepts full npm semver ranges for engines.happier', () => {
     const manifest = createManifest('acme.semver');
     manifest.engines = { happier: '~0.2.0 || >=0.3.0 <1.0.0' };
 
-    expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
+    expect(validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({ ok: true }));
   });
 
   it('does not synthesize a host-version floor when engines.happier is absent', () => {
     const manifest = createManifest('acme.no-engine-floor');
     delete manifest.engines;
 
-    expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
+    expect(validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({ ok: true }));
   });
 
   it('keeps an unsupported daemon entry diagnostic bounded without echoing the declared path', () => {
@@ -519,7 +556,7 @@ describe('validatePluginManifest', () => {
     const manifest = createManifest('acme.long-daemon-entry');
     manifest.entrypoints = { daemon: daemonEntry };
 
-    const result = validatePluginManifest(manifest);
+    const result = validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -537,7 +574,7 @@ describe('validatePluginManifest', () => {
     const manifest = createManifest('acme.long-happier-engine');
     manifest.engines = { happier: happierEngine };
 
-    const result = validatePluginManifest(manifest);
+    const result = validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -554,7 +591,7 @@ describe('validatePluginManifest', () => {
     const manifest = createManifest('acme.invalid-semver');
     manifest.engines = { happier: 'not a semver range' };
 
-    const result = validatePluginManifest(manifest);
+    const result = validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -583,7 +620,7 @@ describe('validatePluginManifest', () => {
       ],
     };
 
-    const result = validatePluginManifest(manifest);
+    const result = validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -614,7 +651,7 @@ describe('validatePluginManifest', () => {
       }],
     };
 
-    expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
+    expect(validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({ ok: true }));
   });
 
   it('leaves ACP system-tool reference resolution to canonical manifest ingestion', () => {
@@ -637,8 +674,8 @@ describe('validatePluginManifest', () => {
       }],
     };
 
-    expect(validatePluginManifest(manifest)).toEqual(expect.objectContaining({ ok: true }));
-    expect(ingestCanonicalPluginManifest(manifest)).toEqual({
+    expect(validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({ ok: true }));
+    expect(ingestCanonicalPluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual({
       ok: false,
       diagnostics: expect.arrayContaining([expect.objectContaining({
         code: 'plugin_manifest_dangling_reference',

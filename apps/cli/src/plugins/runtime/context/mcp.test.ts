@@ -302,12 +302,13 @@ describe('createSessionScopedMcpServices permission integration', () => {
         expect(handleToolCall).not.toHaveBeenCalled();
     });
 
-    it('fails invalid metadata and unmappable exec-policy effects without granting authority', async () => {
+    it('admits deep strict-JSON metadata, fails non-JSON metadata and unmappable exec-policy effects without granting authority', async () => {
         const handleToolCall = vi.fn()
             .mockResolvedValueOnce(Object.freeze({
                 decision: 'approved_execpolicy_amendment' as const,
                 execPolicyAmendment: Object.freeze({ command: Object.freeze(['git', 'status']) }),
             }))
+            .mockResolvedValueOnce(Object.freeze({ decision: 'denied' as const }))
             .mockRejectedValueOnce(new Error('host secret must not cross the Session boundary'));
         const service = createSessionScopedMcpServices({
             readScope: async () => Object.freeze({ permissionHandler: { handleToolCall } }),
@@ -331,21 +332,27 @@ describe('createSessionScopedMcpServices permission integration', () => {
             reason: 'mcp_elicitation_meta_invalid',
         });
 
-        const oversizedMeta: Record<string, unknown> = {};
-        let cursor = oversizedMeta;
+        const deeplyNestedMeta: Record<string, unknown> = {};
+        let cursor = deeplyNestedMeta;
         for (let depth = 0; depth < 25; depth += 1) {
             const next: Record<string, unknown> = {};
             cursor.next = next;
             cursor = next;
         }
         await expect(service.elicit({
-            requestId: 'mcp-oversized-meta',
+            requestId: 'mcp-deep-meta',
             toolName: 'shell',
-            meta: oversizedMeta,
+            meta: deeplyNestedMeta,
         })).resolves.toEqual({
-            status: 'failed',
-            reason: 'mcp_elicitation_meta_invalid',
+            status: 'declined',
+            decision: 'denied',
         });
+        expect(handleToolCall).toHaveBeenLastCalledWith(
+            'mcp-deep-meta',
+            'shell',
+            undefined,
+            expect.anything(),
+        );
         await expect(service.elicit({
             requestId: 'mcp-host-error',
             toolName: 'shell',
@@ -353,6 +360,6 @@ describe('createSessionScopedMcpServices permission integration', () => {
             status: 'failed',
             reason: 'mcp_elicitation_failed',
         });
-        expect(handleToolCall).toHaveBeenCalledTimes(2);
+        expect(handleToolCall).toHaveBeenCalledTimes(3);
     });
 });

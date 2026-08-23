@@ -69,6 +69,19 @@ export function sanitizeExecDiagnosticText(
     return trimBugReportTextHeadToMaxBytes(redacted, maxBytes);
 }
 
+/**
+ * The one exec-client protocol failure constructor. Every stream/RPC/loopback
+ * transport in this folder reports a malformed, oversized, or truncated frame
+ * through it, so the `PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR` code is spelled once.
+ */
+export function createPluginExecClientProtocolError(
+    message: string,
+    cause?: unknown,
+    stderrPreview?: string,
+): PluginExecClientError {
+    return new PluginExecClientError('PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', message, { cause, stderrPreview });
+}
+
 export function createPluginExecClientAbortError(): PluginExecClientError {
     return new PluginExecClientError('PLUGIN_EXEC_CLIENT_ABORTED', 'Plugin exec client request was aborted');
 }

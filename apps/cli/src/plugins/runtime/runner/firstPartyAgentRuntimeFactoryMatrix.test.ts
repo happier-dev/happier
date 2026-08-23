@@ -888,7 +888,7 @@ describe('first-party runner Agent factory matrix', () => {
                     sourceRootPath: stagedSourceRoot,
                     record: generated,
                 });
-                const immutableManifest = await readPluginManifest({
+                const immutableManifest = await readPluginManifest({ sourceProvenance: 'localSource',
                     manifestPath: resolve(
                         prepared.rootPath,
                         '.happier-plugin',

@@ -283,6 +283,49 @@ export async function assertCliPackInputCurrentness({
   return recordedInputFingerprint;
 }
 
+/**
+ * A CLI tarball ships the build twice: `dist/` (what the compiler wrote, and what
+ * `assertCliPackInputCurrentness` proves current against source) and `package-dist/`
+ * (the published runtime closure `syncPackageDist` promotes from it). Only `dist` was
+ * ever checked, so a skipped or failed promotion published one tarball carrying two
+ * different source states — `HAPPIER_CLI_SKIP_PACKAGE_DIST_SYNC` survives artifact env
+ * sanitization and returns from the sync silently.
+ *
+ * Both directories carry the same `.build-manifest.json` the one build-manifest producer
+ * wrote, so requiring the two recorded identities to agree settles the publication on one
+ * closure using the fingerprints that already exist. This is not a second registry: it
+ * reads the canonical manifest through the canonical reader and records nothing.
+ */
+export function assertCliPublicationClosureIdentity({
+  packageRoot,
+  readBuildManifest = readCliDistBuildManifest,
+}) {
+  const readClosureIdentity = (directoryName) => {
+    const result = readBuildManifest(resolve(packageRoot, directoryName, 'index.mjs'));
+    if (!result?.ok) {
+      throw new Error(
+        `[pack-tarball] CLI ${directoryName} publication closure is unavailable: ${result?.reason ?? 'unknown'}`,
+      );
+    }
+    return {
+      fingerprint: String(result.manifest?.fingerprint ?? '').trim().toLowerCase(),
+      inputFingerprint: String(result.manifest?.inputFingerprint ?? '').trim().toLowerCase(),
+    };
+  };
+
+  const distIdentity = readClosureIdentity('dist');
+  const packageDistIdentity = readClosureIdentity('package-dist');
+  for (const field of ['fingerprint', 'inputFingerprint']) {
+    if (distIdentity[field] === packageDistIdentity[field]) continue;
+    throw new Error(
+      `[pack-tarball] CLI publication closure is split: dist and package-dist disagree on ${field} `
+      + `(dist ${distIdentity[field] || '<missing>'}, package-dist ${packageDistIdentity[field] || '<missing>'}); `
+      + 'the package closure was not promoted from this build',
+    );
+  }
+  return distIdentity;
+}
+
 function resolvePackSnapshotEntries(packageRoot, { includeBundledDependencies = true } = {}) {
   const packageJsonPath = resolve(packageRoot, 'package.json');
   if (!fs.existsSync(packageJsonPath)) return [];
@@ -696,6 +739,8 @@ export async function packTarball(options = {}) {
     options.loadCliCommonWorkspacesModuleImpl ?? loadCliCommonWorkspacesModule;
   const assertInputCurrentness =
     options.assertInputCurrentnessImpl ?? assertCliPackInputCurrentness;
+  const assertPublicationClosureIdentity =
+    options.assertPublicationClosureIdentityImpl ?? assertCliPublicationClosureIdentity;
   const npmInvocation = options.npmInvocation ??
     resolveNpmInvocation(
       options.platform,
@@ -745,6 +790,7 @@ export async function packTarball(options = {}) {
         env: heldLockEnv,
         heldLockValue,
       });
+      assertPublicationClosureIdentity({ packageRoot });
       ({ snapshotContainer, snapshotRoot } = createPackSnapshot({
         packageRoot,
         ownedTempRoot,

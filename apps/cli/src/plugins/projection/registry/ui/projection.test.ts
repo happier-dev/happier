@@ -1394,7 +1394,7 @@ describe('plugin UI projection family', () => {
                         mcp: false,
                         cli: false,
                         rpc: false,
-                        sdk: false,
+                        api: false,
                         plugin: false,
                     },
                     inputHints: null,

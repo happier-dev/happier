@@ -51,7 +51,7 @@ function registry(): ResolvedContributionRegistry {
                     mcp: false,
                     cli: false,
                     rpc: false,
-                    sdk: false,
+                    api: false,
                     plugin: false,
                 },
             },

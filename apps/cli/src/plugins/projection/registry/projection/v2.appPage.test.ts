@@ -57,7 +57,7 @@ function manifestText(input: Readonly<{
 }
 
 function loadedPlugin(pluginId: string, text: string): LoadedPlugin {
-    const ingested = ingestCanonicalPluginManifest(text);
+    const ingested = ingestCanonicalPluginManifest(text, { sourceProvenance: 'registryCustodied' });
     if (!ingested.ok) {
         throw new Error(ingested.diagnostics.map((item) => `${item.code}: ${item.message}`).join('\n'));
     }
@@ -106,10 +106,10 @@ function projectUiEntries(loadedPlugins: readonly LoadedPlugin[]) {
  * rather than to a broken fixture or to any rejection whatsoever.
  */
 function expectViewFieldRejected(overrides: Parameters<typeof manifestText>[0]): void {
-    const accepted = ingestCanonicalPluginManifest(manifestText({ pluginId: overrides.pluginId }));
+    const accepted = ingestCanonicalPluginManifest(manifestText({ pluginId: overrides.pluginId }), { sourceProvenance: 'registryCustodied' });
     expect(accepted.ok).toBe(true);
 
-    const rejected = ingestCanonicalPluginManifest(manifestText(overrides));
+    const rejected = ingestCanonicalPluginManifest(manifestText(overrides), { sourceProvenance: 'registryCustodied' });
     expect(rejected.ok).toBe(false);
     expect(rejected.ok ? [] : rejected.diagnostics).toContainEqual(expect.objectContaining({
         code: 'plugin_manifest_invalid',

@@ -3075,6 +3075,86 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
     });
 
+    it('does not publish an actionable OAuth phase before its acknowledgement is durable', async () => {
+        let observedDuringAcknowledgement: Readonly<{
+            read: unknown;
+            completion: unknown;
+        }> | null = null;
+        const durable = durableOAuthTransactions({
+            beforeAcknowledge: async (snapshot) => {
+                if (
+                    snapshot.phase !== 'awaitingOAuth'
+                    || observedDuringAcknowledgement
+                ) return;
+                observedDuringAcknowledgement = Object.freeze({
+                    read: await h.owner.read({ attemptId: 'attempt-1' }),
+                    completion: await h.owner.completeOAuth({
+                        attemptId: 'attempt-1',
+                        completion: {
+                            code: 'code-1',
+                            callbackUrl: 'http://127.0.0.1:4000/auth/callback',
+                            state: 'state-1',
+                        },
+                    }),
+                });
+            },
+        });
+        const h = harness({
+            admittedMode: oauthMode({ outcomeReconciliation: 'none' }),
+            oauthTransactions: durable.owner,
+        });
+
+        await h.owner.beginConnect({ service, modeId: 'oauth' });
+        await waitForAttemptStatus(h.owner, 'attempt-1', 'awaitingOAuth');
+
+        expect(observedDuringAcknowledgement).toMatchObject({
+            read: { status: 'starting', attemptId: 'attempt-1' },
+            completion: {
+                status: 'conflict',
+                attemptId: 'attempt-1',
+                code: 'connected_account_attempt_in_progress',
+            },
+        });
+    });
+
+    it('does not publish an actionable device phase before its acknowledgement is durable', async () => {
+        let observedDuringAcknowledgement: Readonly<{
+            read: unknown;
+            poll: unknown;
+        }> | null = null;
+        const deviceTransactions = {
+            acknowledge: vi.fn(async () => {
+                if (observedDuringAcknowledgement) return;
+                observedDuringAcknowledgement = Object.freeze({
+                    read: await h.owner.read({ attemptId: 'attempt-1' }),
+                    poll: await h.owner.pollDevice({ attemptId: 'attempt-1' }),
+                });
+            }),
+            read: vi.fn(async () => null),
+            clear: vi.fn(async () => {}),
+        };
+        const h = harness({
+            admittedMode: deviceMode('none'),
+            deviceTransactions,
+        });
+
+        await h.owner.beginConnect({ service, modeId: 'device' });
+        await waitForAttemptStatus(
+            h.owner,
+            'attempt-1',
+            'awaitingDeviceAuthorization',
+        );
+
+        expect(observedDuringAcknowledgement).toMatchObject({
+            read: { status: 'starting', attemptId: 'attempt-1' },
+            poll: {
+                status: 'conflict',
+                attemptId: 'attempt-1',
+                code: 'connected_account_attempt_in_progress',
+            },
+        });
+    });
+
     it('rehydrates an OAuth callback from the durable transaction without exposing its verifier', async () => {
         const durable = durableOAuthTransactions();
         const restartSafeConfiguration = Object.freeze({

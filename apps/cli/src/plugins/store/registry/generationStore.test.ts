@@ -545,6 +545,60 @@ describe('immutable plugin generation store', () => {
     }
   });
 
+  it('derives and persists source provenance from the minting distribution', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-generation-provenance-home-'));
+    const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-generation-provenance-source-'));
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    try {
+      await mkdir(join(sourceRootPath, '.happier-plugin'), { recursive: true });
+      await writeFile(join(sourceRootPath, '.happier-plugin', 'plugin.json'), '{}', 'utf8');
+      const mint = async (
+        distribution: Parameters<typeof createImmutablePluginGenerationRecordFromSource>[0]['distribution'],
+        immutableGenerationId: string,
+      ) => await createImmutablePluginGenerationRecordFromSource({
+        pluginId: 'acme.provenance',
+        sourceRootPath,
+        manifestRelativePath: '.happier-plugin/plugin.json',
+        distribution,
+        updatePolicy: 'manual',
+        createdAtMs: 1,
+        immutableGenerationId,
+      });
+
+      const localPath = await mint(
+        { kind: 'localPath', canonicalPath: sourceRootPath },
+        'generation-provenance-local',
+      );
+      const npm = await mint(
+        { kind: 'npm', registryOrigin: 'https://registry.npmjs.org', packageName: '@acme/provenance' },
+        'generation-provenance-npm',
+      );
+      const archive = await mint(
+        {
+          kind: 'archive',
+          source: { kind: 'remoteUrl', canonicalUrl: 'https://example.test/acme-provenance.tgz' },
+          integrity: `sha256-${Buffer.alloc(32, 7).toString('base64')}`,
+        },
+        'generation-provenance-archive',
+      );
+
+      expect([localPath.sourceProvenance, npm.sourceProvenance, archive.sourceProvenance])
+        .toEqual(['localSource', 'registryCustodied', 'registryCustodied']);
+
+      // The mint-time fact must survive the on-disk round trip: a runtime
+      // reader holding only the persisted record is the consumer that could
+      // not derive it before.
+      await prepareImmutablePluginGeneration({ paths, sourceRootPath, record: localPath });
+      await expect(readPreparedImmutablePluginGeneration({
+        paths,
+        immutableGenerationId: 'generation-provenance-local',
+      })).resolves.toMatchObject({ record: { sourceProvenance: 'localSource' } });
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(sourceRootPath, { recursive: true, force: true });
+    }
+  });
+
   it('stores opaque generation identity and structural materialization facts without a digest graph', async () => {
     const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-generation-opaque-record-source-'));
     try {
@@ -567,6 +621,7 @@ describe('immutable plugin generation store', () => {
         immutableGenerationId: 'generation-opaque-record',
         createdAtMs: 1,
         manifestRelativePath: '.happier-plugin/plugin.json',
+        sourceProvenance: 'localSource',
         files: [
           {
             relativePath: '.happier-plugin/plugin.json',
@@ -687,6 +742,7 @@ describe('immutable plugin generation store', () => {
         createdAtMs: 0,
         files,
         manifestRelativePath: files[0]!.relativePath,
+        sourceProvenance: 'registryCustodied' as const,
       };
     };
 
@@ -1018,6 +1074,7 @@ describe('immutable plugin generation store', () => {
       const unrelatedBytes = 'export default "installed"';
       await writeFile(join(unrelatedSourceRoot, 'daemon.mjs'), unrelatedBytes, 'utf8');
       const unrelatedRecord = {
+        sourceProvenance: 'registryCustodied' as const,
         t: 'happier_plugin_generation_v1' as const,
         schemaVersion: 1 as const,
         pluginId: 'acme.plugin',
@@ -1146,6 +1203,7 @@ describe('immutable plugin generation store', () => {
       const installedBytes = 'export default "installed"';
       await writeFile(join(installedSourceRoot, 'daemon.mjs'), installedBytes, 'utf8');
       const installedRecord = {
+        sourceProvenance: 'registryCustodied' as const,
         t: 'happier_plugin_generation_v1' as const,
         schemaVersion: 1 as const,
         pluginId,
@@ -1248,6 +1306,7 @@ describe('immutable plugin generation store', () => {
         await writeFile(join(rootPath, 'dist/index.js'), runtimeBytes, 'utf8');
         await writeFile(join(rootPath, 'package.json'), '{}', 'utf8');
         const record = {
+          sourceProvenance: 'localSource' as const,
           t: 'happier_plugin_generation_v1' as const,
           schemaVersion: 1 as const,
           pluginId,
@@ -1456,6 +1515,7 @@ describe('immutable plugin generation store', () => {
       );
       await writeFile(join(sourceRootPath, 'package.json'), '{}', 'utf8');
       const record = {
+        sourceProvenance: 'registryCustodied' as const,
         t: 'happier_plugin_generation_v1' as const,
         schemaVersion: 1 as const,
         pluginId,
@@ -1554,6 +1614,7 @@ describe('immutable plugin generation store', () => {
     await writeFile(join(sourceRootPath, 'daemon.mjs'), 'export default 1', 'utf8');
     const paths = resolvePluginStorePaths({ happyHomeDir });
     const record = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.plugin',
@@ -1694,6 +1755,7 @@ describe('immutable plugin generation store', () => {
     const runtimeBytes = 'export default 1';
     await writeFile(join(sourceRootPath, 'daemon.mjs'), runtimeBytes, 'utf8');
     const record = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.plugin',
@@ -1754,7 +1816,7 @@ describe('immutable plugin generation store', () => {
       paths,
       sourceRootPath,
       flushDirectory: async (path) => { flushedDirectories.push(path); },
-      record: {
+      record: { sourceProvenance: 'registryCustodied',
         t: 'happier_plugin_generation_v1', schemaVersion: 1, pluginId: 'acme.plugin', immutableGenerationId: 'generation-a', createdAtMs: 1,
         files: [{ relativePath: 'dist/daemon.mjs', byteLength: 16 }],
         manifestRelativePath: 'dist/daemon.mjs',
@@ -1791,6 +1853,7 @@ describe('immutable plugin generation store', () => {
     await writeFile(join(sourceRootPath, 'daemon.mjs'), 'export default 1', 'utf8');
     const paths = resolvePluginStorePaths({ happyHomeDir });
     const record = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.plugin',
@@ -1825,6 +1888,7 @@ describe('immutable plugin generation store', () => {
     const retiringRoot = join(paths.generationsDir, `.retiring-${retainedGenerationId}`);
     const retainedBytes = 'retained';
     const retainedRecord = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.plugin',
@@ -1874,7 +1938,7 @@ describe('immutable plugin generation store', () => {
     const prepared = await prepareImmutablePluginGeneration({
       paths,
       sourceRootPath,
-      record: {
+      record: { sourceProvenance: 'registryCustodied',
         t: 'happier_plugin_generation_v1',
         schemaVersion: 1,
         pluginId: 'acme.plugin',
@@ -1946,7 +2010,7 @@ describe('immutable plugin generation store', () => {
     const paths = resolvePluginStorePaths({ happyHomeDir });
     await expect(prepareImmutablePluginGeneration({
       paths, sourceRootPath,
-      record: {
+      record: { sourceProvenance: 'registryCustodied',
         t: 'happier_plugin_generation_v1', schemaVersion: 1, pluginId: 'acme.plugin', immutableGenerationId: 'generation-a', createdAtMs: 1,
         files: [{ relativePath: 'daemon.mjs', byteLength: 7 }],
         manifestRelativePath: 'daemon.mjs',
@@ -1966,6 +2030,7 @@ describe('immutable plugin generation store', () => {
     const paths = resolvePluginStorePaths({ happyHomeDir });
     const bytes = 'export default 1';
     const record = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const, schemaVersion: 1 as const, pluginId: 'acme.plugin', immutableGenerationId: 'generation-a', createdAtMs: 1,
       files: [{ relativePath: 'daemon.mjs', byteLength: Buffer.byteLength(bytes) }],
       manifestRelativePath: 'daemon.mjs',
@@ -1986,6 +2051,7 @@ describe('immutable plugin generation store', () => {
     const paths = resolvePluginStorePaths({ happyHomeDir });
     const bytes = 'export default 1';
     const record = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const, schemaVersion: 1 as const, pluginId: 'acme.plugin', immutableGenerationId: 'generation-a', createdAtMs: 1,
       files: [{ relativePath: 'dist/daemon.mjs', byteLength: Buffer.byteLength(bytes) }],
       manifestRelativePath: 'dist/daemon.mjs',
@@ -2018,6 +2084,7 @@ describe('immutable plugin generation store', () => {
       'generation-orphan',
       'plugin-generation.v1.json',
     ), JSON.stringify({
+      sourceProvenance: 'registryCustodied',
       t: 'happier_plugin_generation_v1',
       schemaVersion: 1,
       pluginId: 'acme.plugin',
@@ -2126,6 +2193,7 @@ describe('immutable plugin generation store', () => {
     const orphanId = 'generation-obsolete';
     const orphanRoot = join(paths.generationsDir, orphanId);
     const orphanRecord = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.plugin',
@@ -2260,6 +2328,7 @@ describe('immutable plugin generation store', () => {
     const immutableGenerationId = 'generation-marker-plugin-mismatch';
     const generationRoot = join(paths.generationsDir, immutableGenerationId);
     const record = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.plugin',
@@ -2337,6 +2406,7 @@ describe('immutable plugin generation store', () => {
     const orphanRoot = join(paths.generationsDir, orphanId);
     const orphanBytes = 'obsolete';
     const orphanRecord = {
+      sourceProvenance: 'registryCustodied' as const,
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
       pluginId: 'acme.plugin',

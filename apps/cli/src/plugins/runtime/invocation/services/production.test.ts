@@ -2227,7 +2227,7 @@ process.stdin.on('data', (chunk) => {
         const projection = Object.freeze({
             access: Object.freeze({
                 endpointUrl: () => 'http://127.0.0.1:4312/v1',
-                fetch: vi.fn(),
+                request: vi.fn(),
             }),
             isCurrent: () => true,
             cleanup: vi.fn(),

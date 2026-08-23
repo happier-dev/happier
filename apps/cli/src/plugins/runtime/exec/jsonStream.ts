@@ -9,6 +9,7 @@ import { attachJsonlLineReader } from '@/agent/runtime/jsonl/attachJsonlLineRead
 import {
     PluginExecClientError,
     createPluginExecClientAbortError,
+    createPluginExecClientProtocolError,
 } from './errors';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 
@@ -36,10 +37,6 @@ export type JsonStreamProcessClient = Readonly<{
 }>;
 
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
-
-function createProtocolError(message: string, cause?: unknown, stderrPreview?: string): PluginExecClientError {
-    return new PluginExecClientError('PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', message, { cause, stderrPreview });
-}
 
 function createClosedError(): PluginExecClientError {
     return new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'Plugin exec client stream is closed');
@@ -136,13 +133,13 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
             return;
         }
         if (Buffer.byteLength(line) > maxFrameBytes) {
-            failClient(createProtocolError('JSON stream record exceeded the configured size limit', undefined, readStderrPreview()));
+            failClient(createPluginExecClientProtocolError('JSON stream record exceeded the configured size limit', undefined, readStderrPreview()));
             return;
         }
         try {
             enqueueRecord(JSON.parse(line), Buffer.byteLength(line));
         } catch (error) {
-            failClient(createProtocolError('Invalid JSON stream record', error, readStderrPreview()));
+            failClient(createPluginExecClientProtocolError('Invalid JSON stream record', error, readStderrPreview()));
         }
     }
 
@@ -153,21 +150,21 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
     }
 
     function onStreamError(error: unknown): void {
-        failClient(createProtocolError('JSON stream failed', error, readStderrPreview()));
+        failClient(createPluginExecClientProtocolError('JSON stream failed', error, readStderrPreview()));
     }
 
     detachLineReader = attachJsonlLineReader(params.stdout, handleLine, {
         encoding: params.encoding,
         maxLineBytes: maxFrameBytes,
         onOversizedLine: () => {
-            failClient(createProtocolError('JSON stream record exceeded the configured size limit', undefined, readStderrPreview()));
+            failClient(createPluginExecClientProtocolError('JSON stream record exceeded the configured size limit', undefined, readStderrPreview()));
         },
         onError: (error) => {
-            failClient(createProtocolError('JSON stream LF reader failed', error, readStderrPreview()));
+            failClient(createPluginExecClientProtocolError('JSON stream LF reader failed', error, readStderrPreview()));
         },
         onTrailingPartialLine: (partialLine) => {
             if (partialLine.length > 0) {
-                failClient(createProtocolError('JSON stream ended with a trailing partial record', undefined, readStderrPreview()));
+                failClient(createPluginExecClientProtocolError('JSON stream ended with a trailing partial record', undefined, readStderrPreview()));
             }
         },
     });
@@ -197,19 +194,19 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
             } catch (error) {
                 return {
                     kind: 'rejected_before_write',
-                    error: createProtocolError('JSON stream record is not JSON-serializable', error, readStderrPreview()),
+                    error: createPluginExecClientProtocolError('JSON stream record is not JSON-serializable', error, readStderrPreview()),
                 };
             }
             if (typeof encodedRecord !== 'string') {
                 return {
                     kind: 'rejected_before_write',
-                    error: createProtocolError('JSON stream record is not JSON-serializable', undefined, readStderrPreview()),
+                    error: createPluginExecClientProtocolError('JSON stream record is not JSON-serializable', undefined, readStderrPreview()),
                 };
             }
             if (Buffer.byteLength(encodedRecord) > maxFrameBytes) {
                 return {
                     kind: 'rejected_before_write',
-                    error: createProtocolError('JSON stream record exceeded the configured size limit', undefined, readStderrPreview()),
+                    error: createPluginExecClientProtocolError('JSON stream record exceeded the configured size limit', undefined, readStderrPreview()),
                 };
             }
             try {

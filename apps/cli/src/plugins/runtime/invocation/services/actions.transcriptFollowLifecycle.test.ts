@@ -118,12 +118,12 @@ describe('production Plugin ActionsService transcript follow lifetime', () => {
             leaseId,
         });
 
-        await expect(follow(first, 'replace-me', 'session-before-refresh')).resolves.toMatchObject({
+        await expect(follow(first, 'replace-me', 'session-replacement')).resolves.toMatchObject({
             ok: true,
             leaseId: 'replace-me',
         });
         const replacedStore = boundary.createdStores.at(-1);
-        await expect(follow(first, 'replace-me', 'session-after-refresh')).resolves.toMatchObject({
+        await expect(follow(first, 'replace-me', 'session-replacement')).resolves.toMatchObject({
             ok: true,
             leaseId: 'replace-me',
         });
@@ -171,8 +171,18 @@ describe('production Plugin ActionsService transcript follow lifetime', () => {
             idleTtlMs: 1_000,
         });
         try {
-            expect(registry.retain({ leaseId: 'lease-1', idleTtlMs: 1_000, release: firstRelease })).toBe(true);
-            expect(registry.retain({ leaseId: 'lease-2', idleTtlMs: 1_000, release: secondRelease })).toBe(true);
+            expect(registry.retain({
+                sessionId: 'session-1',
+                leaseId: 'lease-1',
+                idleTtlMs: 1_000,
+                release: firstRelease,
+            })).toBe(true);
+            expect(registry.retain({
+                sessionId: 'session-2',
+                leaseId: 'lease-2',
+                idleTtlMs: 1_000,
+                release: secondRelease,
+            })).toBe(true);
             expect(vi.getTimerCount()).toBe(2);
 
             await registry.dispose();
@@ -182,6 +192,7 @@ describe('production Plugin ActionsService transcript follow lifetime', () => {
             expect(registry.activeCount()).toBe(0);
             expect(vi.getTimerCount()).toBe(0);
             expect(registry.retain({
+                sessionId: 'session-after-dispose',
                 leaseId: 'lease-after-dispose',
                 idleTtlMs: 1_000,
                 release: firstRelease,

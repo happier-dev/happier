@@ -27,7 +27,7 @@ describe('readPluginManifest target route', () => {
     roots.push(root);
     const path = join(root, 'plugin.json');
     await writeFile(path, JSON.stringify({ schemaVersion: 2, id: 'com.acme.plugin', version: '1.0.0', displayName: 'Acme', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, contributes: {} }));
-    const result = await readPluginManifest({ manifestPath: path });
+    const result = await readPluginManifest({ sourceProvenance: 'registryCustodied', manifestPath: path });
     expect(result).toEqual(expect.objectContaining({ ok: true, manifestPath: path }));
     expect(result).not.toHaveProperty('manifestDigest');
     expect(crypto.createHash).not.toHaveBeenCalled();
@@ -43,7 +43,7 @@ describe('readPluginManifest target route', () => {
       Buffer.from('","engines":{"happier":"^0.2.0"},"runtime":{"apiVersion":1},"contributes":{}}'),
     ]));
 
-    await expect(readPluginManifest({ manifestPath: path })).resolves.toEqual({
+    await expect(readPluginManifest({ sourceProvenance: 'registryCustodied', manifestPath: path })).resolves.toEqual({
       ok: false,
       diagnostics: [expect.objectContaining({
         code: 'plugin_manifest_invalid',
@@ -61,6 +61,7 @@ describe('readPluginManifest target route', () => {
     );
     const compatibility = {
       manifestAuthority: 'bundled_first_party' as const,
+      sourceProvenance: 'localSource' as const,
       enforceEngineCompatibility: false,
     };
     const compiledManifest = compiledManifestModule.PLUGIN_MANIFEST;
@@ -107,8 +108,8 @@ describe('readPluginManifest target route', () => {
     roots.push(root);
     const path = join(root, 'plugin.json');
     await writeFile(path, JSON.stringify({ schemaVersion: 2, id: 'com.acme.plugin', version: '1.0.0', displayName: 'Acme', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, uses: [] }));
-    expect(await readPluginManifest({ manifestPath: path })).toEqual({ ok: false, diagnostics: expect.any(Array) });
-    expect(await readPluginManifest({ manifestPath: join(root, 'missing.json') })).toEqual({ ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_missing' })] });
+    expect(await readPluginManifest({ sourceProvenance: 'registryCustodied', manifestPath: path })).toEqual({ ok: false, diagnostics: expect.any(Array) });
+    expect(await readPluginManifest({ sourceProvenance: 'registryCustodied', manifestPath: join(root, 'missing.json') })).toEqual({ ok: false, diagnostics: [expect.objectContaining({ code: 'plugin_manifest_missing' })] });
   });
 
   it('keeps the failing manifest path in the surfaced diagnostic message', async () => {
@@ -142,7 +143,7 @@ describe('readPluginManifest target route', () => {
         },
       },
     }));
-    const result = await readPluginManifest({ manifestPath: path });
+    const result = await readPluginManifest({ sourceProvenance: 'registryCustodied', manifestPath: path });
     expect(result.ok).toBe(false);
     const message = result.ok ? '' : result.diagnostics.map((diagnostic) => diagnostic.message).join(' | ');
     expect(message).toContain('contributes.ui.renderers.0.root.children.0.kind');

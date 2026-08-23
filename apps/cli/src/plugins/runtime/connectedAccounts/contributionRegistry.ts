@@ -15,10 +15,18 @@ export type ConnectedAccountRuntimeRegistration = Readonly<{
     runtime: PluginConnectedAccountRuntime;
 }>;
 
+/**
+ * The cold projection of one admitted connected-account contribution: everything a
+ * descriptor, configuration, or currentness read needs, and nothing that requires the
+ * plugin's executable code. `isCurrent` is the host's own generation closure, so a cold
+ * reader fences on exactly the identity an executable lease would.
+ */
 export type ConnectedAccountContributionRegistryEntry = Readonly<{
     ref: PluginContributionRef;
     descriptor: ResolvedConnectedAccountDescriptorContribution['definition'];
     generation: string;
+    immutableGenerationId: string;
+    isCurrent(): boolean;
 }>;
 
 export type ConnectedAccountRuntimeLease = Readonly<{
@@ -193,6 +201,14 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
 }>): Readonly<{
     list(): readonly ConnectedAccountContributionRegistryEntry[];
     /**
+     * Cold lookup of one declared contribution. Answers descriptor, generation identity
+     * and currentness without activating the owning plugin, so Settings, discovery and
+     * offline inspection do not boot executable plugin code. Returns `null` for a service
+     * this generation does not declare or could not admit — the same caller-visible fact
+     * `resolve` reports for those cases.
+     */
+    describe(ref: PluginContributionRef): ConnectedAccountContributionRegistryEntry | null;
+    /**
      * Resolves the qualified service's runtime lease for this registry generation.
      *
      * Returns `null` when the service is not resolvable here — no declared
@@ -260,10 +276,27 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         return matches[0] ?? null;
     }
 
+    function coldEntry(declared: Readonly<{
+        ref: PluginContributionRef;
+        descriptor: ResolvedConnectedAccountDescriptorContribution['definition'];
+        immutableGenerationId: string;
+    }>): ConnectedAccountContributionRegistryEntry {
+        return Object.freeze({
+            ref: declared.ref,
+            descriptor: declared.descriptor,
+            generation: params.generation,
+            immutableGenerationId: declared.immutableGenerationId,
+            isCurrent: () => isCurrentGeneration(declared.ref.pluginId),
+        });
+    }
+
     return Object.freeze({
         list() {
-            return Object.freeze([...descriptorsByKey.values()].map(({ ref, descriptor }) =>
-                Object.freeze({ ref, descriptor, generation: params.generation })));
+            return Object.freeze([...descriptorsByKey.values()].map(coldEntry));
+        },
+        describe(ref) {
+            const declared = descriptorsByKey.get(qualifiedKey(snapshotQualifiedRef(ref)));
+            return declared ? coldEntry(declared) : null;
         },
         async resolve(ref) {
             const qualifiedRef = snapshotQualifiedRef(ref);

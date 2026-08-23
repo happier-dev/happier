@@ -1,4 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  createCurrentGlobalExternalSessionsRouter,
+} from '@/session/external/currentGlobalRouting';
 import type { ProvidersService } from '@happier-dev/plugin-sdk/providers';
 
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
@@ -216,6 +220,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const onInitialRegistryPublished = vi.fn();
@@ -273,6 +280,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const ownerParams = {
@@ -326,6 +336,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const owner = createDaemonPluginRuntimeOwner({
@@ -372,6 +385,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       subscribe: vi.fn(() => () => undefined),
       getTargetedContributionsOwner,
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const owner = createDaemonPluginRuntimeOwner({
@@ -416,6 +432,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const owner = createDaemonPluginRuntimeOwner({
@@ -495,6 +514,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const daemonDatabaseLimits = Object.freeze({
@@ -552,6 +574,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
   }
@@ -684,6 +709,67 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 
+  // The same executable proof, keyed on the structural fact that a plugin is an
+  // activation target — never on where it came from. A bundled first-party
+  // plugin must not join the serving registry without it.
+  it('proves cold-start activation and primary-Agent-runtime readiness for bundled plugins too', async () => {
+    const events: string[] = [];
+    const dispose = vi.fn(async () => undefined);
+    const activatePluginsForValidation = vi.fn(async (pluginIds: readonly string[]) => {
+      if (pluginIds.includes('com.acme.bundled-broken')) {
+        throw new Error('bundled plugin activation rejected');
+      }
+      events.push(`activated:${pluginIds.join(',')}`);
+      return Object.freeze([]);
+    });
+    const bundledCreateRuntime = vi.fn(async () => {
+      events.push('bundled-runtime-created');
+      return Object.freeze({});
+    });
+    ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
+      contributes: Object.freeze({
+        activationTargets: Object.freeze([
+          createReadinessActivationTarget('com.acme.bundled-broken', 'first_party', []),
+          createReadinessActivationTarget('com.beta.bundled-agent', 'first_party', []),
+        ]),
+      }),
+      activatedPluginIds: new Set([
+        'com.acme.bundled-broken',
+        'com.beta.bundled-agent',
+      ]),
+      activatePluginsForValidation,
+      agentRuntimesByAgentId: new Map<string, unknown>([
+        ['bundled', Object.freeze({
+          agentId: 'bundled',
+          pluginId: 'com.beta.bundled-agent',
+          hasPrimaryRuntime: true,
+          retirementSignal: new AbortController().signal,
+          createRuntime: bundledCreateRuntime,
+        })],
+      ]),
+      stableEventsBroker: ownerMocks.stableEventsBroker,
+      dispose,
+    });
+    const owner = createDaemonPluginRuntimeOwner({
+      happyHomeDir: '/tmp/happier-runtime-owner-bundled-readiness-test',
+      staleCandidateCleanup: 'disabled',
+      reloadController: createColdStartReloadController(events),
+      connectedAccounts: createUnusedConnectedAccountsOwner(),
+    });
+
+    await owner.initialize();
+
+    expect(activatePluginsForValidation).toHaveBeenCalledWith(['com.acme.bundled-broken']);
+    expect(bundledCreateRuntime).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      'activated:com.beta.bundled-agent',
+      'bundled-runtime-created',
+      'published',
+    ]);
+    // A bundled participant's failure is isolated exactly like an external one.
+    expect(dispose).not.toHaveBeenCalled();
+  });
+
   it('disposes the initial registry when cold-start readiness fails registry-wide', async () => {
     const readinessError = new Error('activation targets are unavailable');
     const dispose = vi.fn(async () => undefined);
@@ -771,6 +857,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
 
@@ -823,6 +912,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const owner = createDaemonPluginRuntimeOwner({
@@ -891,6 +983,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const owner = createDaemonPluginRuntimeOwner({
@@ -972,6 +1067,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
         subscribe: vi.fn(() => () => undefined),
         publishDurableRunningSessionDisposition: vi.fn(),
+        currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+          () => null,
+        ),
         subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
       },
       connectedAccounts: createUnusedConnectedAccountsOwner(),
@@ -1026,6 +1124,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const owner = createDaemonPluginRuntimeOwner({
@@ -1082,6 +1183,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       getState: () => ({ generation: 0, activeRegistry: null, lastResult: null }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const recoveryInput = {
@@ -1128,6 +1232,9 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       }),
       subscribe: vi.fn(() => () => undefined),
       publishDurableRunningSessionDisposition: vi.fn(),
+      currentGlobalExternalSessions: createCurrentGlobalExternalSessionsRouter(
+        () => null,
+      ),
       subscribeRunningSessionDisposition: vi.fn(() => () => undefined),
     };
     const owner = createDaemonPluginRuntimeOwner({

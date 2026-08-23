@@ -23,6 +23,8 @@ import { createPluginReloadController } from './reload/controller';
 
 const PLUGIN_ID = 'acme.current-global-external-sessions';
 const AGENT_ID = 'current-global-agent';
+/** Installed Agents are routed by their qualified `{pluginId, localId}` identity. */
+const ROUTING_AGENT_ID = `${PLUGIN_ID}/${AGENT_ID}`;
 const SESSION_ID = 'current-global-session';
 const SOURCE_KIND = 'currentGlobalFixture';
 
@@ -325,7 +327,7 @@ async function resolveCurrentnessInputs(input: Readonly<{
         admitted.rootPath,
         ...admitted.record.manifestRelativePath.split('/'),
     );
-    const immutableManifest = await readPluginManifest({
+    const immutableManifest = await readPluginManifest({ sourceProvenance: 'registryCustodied',
         manifestPath,
         manifestAuthority: 'external',
         enforceEngineCompatibility: true,
@@ -435,7 +437,7 @@ describe('current global External Sessions publication', () => {
                 throw new Error('Expected the public current External Sessions factory');
             }
             const binding = hRegistry.agentRuntimesByAgentId
-                .get(AGENT_ID)
+                .get(ROUTING_AGENT_ID)
                 ?.sessionRunnerFactoryBinding;
             if (!binding) {
                 throw new Error('Expected the active External Sessions Agent binding');
@@ -448,7 +450,7 @@ describe('current global External Sessions publication', () => {
                 isGenerationCurrent: () => true,
             });
             const firstPage = await current.list({
-                agentId: AGENT_ID,
+                agentId: ROUTING_AGENT_ID,
                 limit: 1,
             });
             const firstRef = firstPage.items[0]?.ref;
@@ -457,7 +459,7 @@ describe('current global External Sessions publication', () => {
             }
             expect(firstPage.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
             await expect(current.list({
-                agentId: AGENT_ID,
+                agentId: ROUTING_AGENT_ID,
                 cursor: firstPage.nextCursor,
                 limit: 1,
             })).resolves.toMatchObject({
@@ -469,7 +471,7 @@ describe('current global External Sessions publication', () => {
                 nextCursor: null,
             });
             const accountAContinuationPage = await current.list({
-                agentId: AGENT_ID,
+                agentId: ROUTING_AGENT_ID,
                 limit: 1,
             });
             if (!accountAContinuationPage.nextCursor) {
@@ -507,14 +509,14 @@ describe('current global External Sessions publication', () => {
             });
             expect(boundaries.fetchAccountProfile).toHaveBeenCalledOnce();
             await expect(current.list({
-                agentId: AGENT_ID,
+                agentId: ROUTING_AGENT_ID,
                 cursor: accountAContinuationPage.nextCursor,
                 limit: 1,
             })).rejects.toMatchObject({
                 code: 'plugin_external_list_query_invalid',
             });
             const accountBPage = await current.list({
-                agentId: AGENT_ID,
+                agentId: ROUTING_AGENT_ID,
                 sourceId: firstRef.sourceId,
                 limit: 1,
             });
@@ -636,7 +638,7 @@ describe('current global External Sessions publication', () => {
             const createCurrent =
                 registry.createRetainedRunnerAgentCurrentGlobalExternalSessionsService;
             const binding = registry.agentRuntimesByAgentId
-                .get(AGENT_ID)
+                .get(ROUTING_AGENT_ID)
                 ?.sessionRunnerFactoryBinding;
             if (!createCurrent || !binding) {
                 throw new Error('Expected the cold public External Sessions binding');
@@ -658,11 +660,11 @@ describe('current global External Sessions publication', () => {
                 }),
             ]);
 
-            const firstDemand = firstCurrent.list({ agentId: AGENT_ID, limit: 1 });
+            const firstDemand = firstCurrent.list({ agentId: ROUTING_AGENT_ID, limit: 1 });
             await vi.waitFor(() => expect(
                 boundaries.fetchAccountProfile,
             ).toHaveBeenCalledTimes(1));
-            const secondDemand = secondCurrent.list({ agentId: AGENT_ID, limit: 1 });
+            const secondDemand = secondCurrent.list({ agentId: ROUTING_AGENT_ID, limit: 1 });
             // Both public callers have completed the same lazy activation,
             // while the first owner is still held at its account boundary.
             await new Promise<void>((resolve) => setImmediate(resolve));
@@ -679,7 +681,7 @@ describe('current global External Sessions publication', () => {
             }
             expect(secondPage.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
             await expect(secondCurrent.list({
-                agentId: AGENT_ID,
+                agentId: ROUTING_AGENT_ID,
                 cursor: firstCursor,
                 limit: 1,
             })).resolves.toMatchObject({

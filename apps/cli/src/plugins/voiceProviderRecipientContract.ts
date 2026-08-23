@@ -1,5 +1,4 @@
 import {
-    createRecipientContractDigestV1,
     createVoiceProviderRecipientContractFromCredentialsV1,
     type RecipientContractV1,
     type VoiceProviderContribution,
@@ -77,11 +76,4 @@ export function createVoiceProviderRecipientContract(
         },
         presentation: { title: declaration.definition.title },
     });
-}
-
-export function createVoiceProviderRecipientContractDigest(
-    declaration: VoiceProviderRecipientDeclaration,
-): string | null {
-    const contract = createVoiceProviderRecipientContract(declaration);
-    return contract ? createRecipientContractDigestV1(contract) : null;
 }

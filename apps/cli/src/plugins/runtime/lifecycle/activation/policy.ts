@@ -14,6 +14,7 @@ import type {
 
 import type { PluginCompatibilityDiagnostic } from '../../../validation/diagnostics/types';
 import { readPluginManifest } from '../../../manifest/read';
+import { pluginSourceProvenanceForKind } from '../../../manifest/sourceProvenance';
 import type { PluginDaemonModuleNamespace } from '../../types';
 import { appendDiagnostic } from '../utils';
 import {
@@ -141,6 +142,7 @@ export async function resolveActivationPolicy(
 
     const manifestResult = await readPluginManifest({
         manifestPath: target.manifestPath,
+        sourceProvenance: pluginSourceProvenanceForKind(target.sourceSpec.kind),
     });
     if (!manifestResult.ok) {
         return {

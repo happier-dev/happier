@@ -19,6 +19,10 @@ import {
 } from '@happier-dev/protocol';
 
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '@/plugins/daemon/installReviewPrincipal';
+import {
+  pluginSourceProvenanceForDistribution,
+  type PluginSourceProvenance,
+} from '@/plugins/manifest/sourceProvenance';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import {
@@ -452,18 +456,30 @@ function generationRecordPath(paths: PluginStorePaths, immutableGenerationId: st
   return join(paths.generationsDir, immutableGenerationId, 'plugin-generation.v1.json');
 }
 
+/**
+ * The replacement identity is content-addressed from the predecessor record
+ * alone, so it can be resolved before the facts the current registry supplies
+ * for the replacement body are known.
+ */
+function predecessorReplacementGenerationId(
+  record: PredecessorImmutablePluginGenerationRecord,
+): string {
+  return replacementId('generation', {
+    producerCommit: UNPUBLISHED_PLUGIN_REGISTRY_V1_PRODUCER_COMMIT,
+    immutableGenerationId: record.immutableGenerationId,
+    generationRecordDigest: digestJson(record),
+  });
+}
+
 function replacementGenerationFromPredecessor(input: Readonly<{
   record: PredecessorImmutablePluginGenerationRecord;
   manifestRelativePath: string;
+  sourceProvenance: PluginSourceProvenance;
 }>): Readonly<{
   replacementId: string;
   replacementRecord: ImmutablePluginGenerationRecord;
 }> {
-  const nextId = replacementId('generation', {
-    producerCommit: UNPUBLISHED_PLUGIN_REGISTRY_V1_PRODUCER_COMMIT,
-    immutableGenerationId: input.record.immutableGenerationId,
-    generationRecordDigest: digestJson(input.record),
-  });
+  const nextId = predecessorReplacementGenerationId(input.record);
   return Object.freeze({
     replacementId: nextId,
     replacementRecord: ImmutablePluginGenerationRecordSchema.parse({
@@ -477,6 +493,7 @@ function replacementGenerationFromPredecessor(input: Readonly<{
         byteLength,
       })),
       manifestRelativePath: input.manifestRelativePath,
+      sourceProvenance: input.sourceProvenance,
     }),
   });
 }
@@ -782,6 +799,7 @@ async function verifyPredecessorGeneration(input: Readonly<{
     // verified commit reference. Rollback-only records use their verified
     // predecessor generation artifact because no commit reference exists.
     manifestRelativePath,
+    sourceProvenance: pluginSourceProvenanceForDistribution(input.distribution),
   });
   return Object.freeze({ rootPath, record, ...replacement });
 }
@@ -1144,16 +1162,23 @@ async function retireProvablySupersededPredecessorRoots(input: Readonly<{
     } catch {
       continue;
     }
+    const currentReference = referencesByReplacementGenerationId.get(
+      predecessorReplacementGenerationId(record),
+    );
+    // The replacement body has to be reproduced exactly, so it needs the same
+    // provenance reconciliation derived from this plugin's distribution. A
+    // rollback retention's distribution shares its installation's lineage, and
+    // a lineage fixes the kind, so the current installation record is the one
+    // authority for both roles. Without it the root is not provably superseded.
+    const installation = input.state.plugins[record.pluginId];
+    if (!currentReference || currentReference.pluginId !== record.pluginId || !installation) {
+      continue;
+    }
     const replacement = replacementGenerationFromPredecessor({
       record,
       manifestRelativePath: record.installedArtifactRecord.relativePath,
+      sourceProvenance: pluginSourceProvenanceForDistribution(installation.source.distribution),
     });
-    const currentReference = referencesByReplacementGenerationId.get(
-      replacement.replacementId,
-    );
-    if (!currentReference || currentReference.pluginId !== record.pluginId) {
-      continue;
-    }
     const candidate = Object.freeze({ rootPath, record, ...replacement });
     try {
       await verifyGenerationInventory(candidate.rootPath, candidate.record);

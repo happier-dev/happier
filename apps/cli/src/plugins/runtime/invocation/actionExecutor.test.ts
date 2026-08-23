@@ -52,6 +52,61 @@ function createExecutor(
 }
 
 describe('target action executor', () => {
+  it('settles blocking approval before returning ready and memoizes handler dispatch', async () => {
+    let resolveApproval!: (value: Readonly<{ status: 'approved'; fingerprint: string }>) => void;
+    const approval = new Promise<Readonly<{ status: 'approved'; fingerprint: string }>>((resolve) => {
+      resolveApproval = resolve;
+    });
+    let approvalFingerprint = '';
+    const invoke = vi.fn(async () => ({ status: 'executed' as const, value: { ok: true } }));
+    const executor = createExecutor({
+      resolve: () => resolved('destructive'),
+      requestCurrentIntent: async ({ fingerprint }) => {
+        approvalFingerprint = fingerprint;
+        return await approval;
+      },
+      invoke,
+    });
+
+    const pendingPreparation = executor.prepare({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    });
+    await vi.waitFor(() => expect(approvalFingerprint).not.toBe(''));
+    expect(invoke).not.toHaveBeenCalled();
+    resolveApproval({ status: 'approved', fingerprint: approvalFingerprint });
+    const prepared = await pendingPreparation;
+    expect(prepared.kind).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('expected ready preparation');
+    expect(invoke).not.toHaveBeenCalled();
+    const first = prepared.run();
+    const second = prepared.run();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { status: 'executed', value: { ok: true } },
+      { status: 'executed', value: { ok: true } },
+    ]);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles rejected blocking approval without returning a runnable handle', async () => {
+    const invoke = vi.fn();
+    const executor = createExecutor({
+      resolve: () => resolved('destructive'),
+      requestCurrentIntent: async () => ({
+        status: 'rejected',
+        code: 'plugin_action_current_intent_rejected',
+      }),
+      invoke,
+    });
+
+    await expect(executor.prepare({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    })).resolves.toMatchObject({
+      kind: 'settled',
+      result: { status: 'unavailable', code: 'plugin_action_current_intent_rejected' },
+    });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it('resolves explicit authorization facts again after current-intent approval', async () => {
     let appliedGeneration = '7';
     const invoke = vi.fn(async () => ({ status: 'executed' as const, value: null }));

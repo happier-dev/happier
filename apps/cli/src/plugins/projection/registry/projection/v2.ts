@@ -700,6 +700,9 @@ function buildActionsById(
             scopes: resolveActionScopes(action),
             surfaces: resolveActionSurfaces(action.definition.surfaces),
             execution: execution.data,
+            ...(action.definition.operation
+                ? { operation: action.definition.operation }
+                : {}),
             ...(executionOrigin
                 ? {
                     serverIdentityId: executionOrigin.serverIdentityId,

@@ -418,7 +418,6 @@ export type ConnectedServicesContribution = Readonly<{
 }>;
 
 export type AgentRuntimeContribution = Readonly<{
-    builtInAcpCatalog?: boolean;
     agentCliSystemTool?: Readonly<{
         toolId?: unknown;
     }>;

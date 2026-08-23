@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -13,6 +13,7 @@ import { ensureManagedJavaScriptRuntimeCommand } from '@/packagedRuntime/js/mana
 import { PluginAuthorBundlerUnavailableError } from './bundleDaemonRuntime';
 import {
   assertPluginAuthorPrepublicationRuntimeDeclarations,
+  classifyPluginAuthorDaemonBuild,
   cleanupPluginAuthorGeneratedArtifacts,
   resolvePluginAuthorToolchainSpawnInvocation,
   resolveNativeTypeScriptBin,
@@ -1325,5 +1326,40 @@ describe('plugin author toolchain source locations', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('Expected a failed toolchain result');
     expect(result.diagnostics[0]?.source).toBeUndefined();
+  });
+});
+
+describe('classifyPluginAuthorDaemonBuild', () => {
+  const REPO_ROOT = resolve(import.meta.dirname, '../../../../..');
+
+  it('classifies a first-party bundled workspace package the current checkout actually ships', async () => {
+    // `happier.scm.backend.git` is a reserved-namespace id whose bundled
+    // manifest declares the build-time `^0.0.0` engine placeholder. The author
+    // build command must read it under the authority the path actually carries
+    // instead of defaulting to `external` and refusing our own package.
+    await expect(classifyPluginAuthorDaemonBuild(
+      resolve(REPO_ROOT, 'packages/plugins/scm-git'),
+    )).resolves.toBe('required');
+  });
+
+  // C1: the dev loop reaches this classifier through `plugins.author.build` and
+  // `plugins.author.test`, so refusing a reserved id here gave bundled plugins a
+  // loop external authors could not have. A project root is a working tree on
+  // this machine, never a distributed artifact. The rule stays fully enforced
+  // where custody actually transfers: `resolveLocalPathPluginSource` rejects the
+  // same id for every registry-custodied kind (see `discovery/sources/localPath.test.ts`),
+  // so an archive built from this root is still refused at install.
+  it('classifies a non-bundled author root claiming the reserved happier.* namespace', async () => {
+    const fixture = await createColdAuthorBuildFixture(createPluginManifestV2Fixture({
+      id: 'happier.impostor',
+    }));
+    try {
+      // Reaching a real classification (not a throw) is the contract: the
+      // fixture declares a daemon entrypoint, so its build is `required`.
+      await expect(classifyPluginAuthorDaemonBuild(fixture.projectRoot))
+        .resolves.toBe('required');
+    } finally {
+      await fixture.cleanup();
+    }
   });
 });

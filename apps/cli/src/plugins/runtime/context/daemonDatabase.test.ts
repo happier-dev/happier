@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -397,6 +397,78 @@ describe('plugin daemon database owner', () => {
             await rm(happyHomeDir, { recursive: true, force: true });
         }
     });
+
+    it('counts every retained plugin database file, including undeclared ones written while quiesced', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const databasesDir = join(paths.storageDir, 'acme.indexer', 'databases');
+        const limits = {
+            maximumDatabaseBytes: 64 * 1024,
+            maximumInputBytes: 64 * 1024,
+            maximumResultBytes: 16 * 1024,
+            maximumResultRows: 100,
+            maximumAffectedRows: 1_000,
+            maximumElapsedMs: 5_000,
+        } as const;
+        const owner = createPluginDaemonDatabaseOwner({
+            pluginId: 'acme.indexer',
+            paths,
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            limits,
+            declarations: [
+                { id: 'alpha', migrations: [{ version: 1, id: 'create-alpha' }], incumbentQueryFixtureId: 'alpha-v1' },
+            ],
+        });
+        const runtime = Object.freeze({
+            alpha: Object.freeze({
+                migrations: Object.freeze([Object.freeze({
+                    version: 1,
+                    id: 'create-alpha',
+                    up: async (transaction: { execute(sql: string): Promise<unknown> }) => {
+                        await transaction.execute('CREATE TABLE entries (value BLOB NOT NULL)');
+                    },
+                })]),
+                incumbentQueryFixture: Object.freeze({ id: 'alpha-v1', run: async () => undefined }),
+            }),
+        });
+        try {
+            const database = await owner.storage.database('alpha', runtime.alpha);
+            // The only retained file is the declared one, so an in-budget write
+            // must still be admitted.
+            await database.execute('INSERT INTO entries (value) VALUES (zeroblob(?))', [8 * 1024]);
+
+            const quiescence = await owner.quiesce();
+            const retainedBytes = (await stat(join(databasesDir, 'alpha.sqlite'))).size;
+            // The two accountings must disagree about the write attempted after
+            // resume: the declared database alone stays inside the budget while
+            // the plugin's retained files together exceed it.
+            expect(retainedBytes + 8 * 1024).toBeLessThanOrEqual(limits.maximumDatabaseBytes);
+            expect(retainedBytes * 3).toBeGreaterThan(limits.maximumDatabaseBytes);
+            // A candidate owning these files while this owner is quiesced can
+            // leave databases behind that no current declaration names.
+            for (const retained of ['gamma', 'delta']) {
+                await copyFile(
+                    join(databasesDir, 'alpha.sqlite'),
+                    join(databasesDir, `${retained}.sqlite`),
+                );
+            }
+            await quiescence.resume();
+
+            const resumed = await owner.storage.database('alpha', runtime.alpha);
+            await expect(resumed.query('SELECT COUNT(*) AS count FROM entries'))
+                .resolves.toEqual([{ count: 1 }]);
+            await expect(resumed.execute('INSERT INTO entries (value) VALUES (zeroblob(?))', [8 * 1024]))
+                .rejects.toMatchObject({ code: 'daemon_database_quota_exceeded' });
+            // An over-budget plugin still reads and reduces; only growth is refused.
+            await expect(resumed.execute('DELETE FROM entries')).resolves.toBeDefined();
+            await expect(resumed.query('SELECT COUNT(*) AS count FROM entries'))
+                .resolves.toEqual([{ count: 0 }]);
+        } finally {
+            await owner.close();
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    }, 120_000);
 
     it('enforces one aggregate plugin byte budget across declared databases while retaining per-file page limits', async () => {
         const happyHomeDir = await makeHappyHome();

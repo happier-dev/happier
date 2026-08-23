@@ -33,6 +33,7 @@ import type { PreparedPluginActivationGraph } from '@/plugins/runtime/types';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { resolveLocalPluginSourceManifestAuthority } from '@/plugins/manifest/bundledFirstPartyAuthority';
 import { readPluginManifest } from '@/plugins/manifest/read';
+import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
 import {
   evaluateOwnedPluginAuthorGeneration,
   projectEvaluatedPluginDevelopmentSource,
@@ -476,6 +477,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
                 ...PLUGIN_MANIFEST_RELATIVE_PATH.split('/'),
               ),
               manifestAuthority,
+              sourceProvenance: preparedGeneration.record.sourceProvenance,
             });
             if (!preparedManifest.ok) {
               throw new Error('Owned plugin development candidate manifest is unavailable');
@@ -645,6 +647,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         ...preparedGeneration.record.manifestRelativePath.split('/'),
       ),
       manifestAuthority: resolved.manifestAuthority,
+      sourceProvenance: preparedGeneration.record.sourceProvenance,
     });
     if (!candidateManifest.ok) {
       await cleanup();
@@ -684,9 +687,14 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         realm: hasDaemonExecution(manifest) ? 'daemon' : 'declarative',
       })
     ) {
+      // Not the candidate: this is whatever record is installed today, which
+      // may have been acquired from the registry before the operator pointed
+      // the id at a working tree. Derive its provenance from its own source
+      // kind so a published artifact keeps the rules it was admitted under.
       const previous = await readPluginManifest({
         manifestPath: existingAtPreparation.source.manifestPath,
         manifestAuthority: resolved.manifestAuthority,
+        sourceProvenance: pluginSourceProvenanceForKind(existingAtPreparation.source.kind),
       });
       if (
         previous.ok

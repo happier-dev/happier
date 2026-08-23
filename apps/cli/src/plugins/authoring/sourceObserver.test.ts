@@ -82,6 +82,60 @@ describe('plugin development source observation', () => {
     }
   });
 
+  it('observes a built manifest root whose dev entry is its TypeScript source', async () => {
+    // A root carrying BOTH a built `.happier-plugin/plugin.json` and TypeScript
+    // source is the shape every bundled plugin has. The daemon change preparer
+    // accepts it; the watch owner must agree rather than demanding an
+    // `entrypoints.development` the single-producer manifest never emits.
+    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-built-manifest-'));
+    try {
+      await writeProject(projectRoot);
+      const manifestPath = join(projectRoot, '.happier-plugin', 'plugin.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+      manifest.entrypoints = { daemon: './dist/index.js' };
+      await writeFile(manifestPath, JSON.stringify(manifest), 'utf8');
+      await mkdir(join(projectRoot, 'dist'), { recursive: true });
+      await writeFile(join(projectRoot, 'dist', 'index.js'), 'export function activate() {}\n', 'utf8');
+      const canonicalProjectRoot = await realpath(projectRoot);
+
+      const observation = await inspectPluginDevelopmentSource({ projectRoot });
+
+      expect(observation).toMatchObject({
+        ok: true,
+        authoringKind: 'manifest',
+        sourceRootPath: canonicalProjectRoot,
+        request: { kind: 'development', pluginId: 'acme.observer', projectRoot: canonicalProjectRoot },
+      });
+      if (!observation.ok) return;
+      expect(observation.observedRelativePaths).toEqual(expect.arrayContaining([
+        '.happier-plugin/plugin.json',
+        'src/index.ts',
+      ]));
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('still reports a declared development entrypoint that escapes the project root', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-escaping-dev-entry-'));
+    try {
+      await writeProject(projectRoot);
+      const manifestPath = join(projectRoot, '.happier-plugin', 'plugin.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+      manifest.entrypoints = { daemon: './dist/index.js', development: '../outside/index.ts' };
+      await writeFile(manifestPath, JSON.stringify(manifest), 'utf8');
+
+      const observation = await inspectPluginDevelopmentSource({ projectRoot });
+
+      expect(observation).toEqual(expect.objectContaining({
+        ok: false,
+        diagnostics: [expect.objectContaining({ code: 'plugin_dev_entry_outside_project' })],
+      }));
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('observes a literal TypeScript file without evaluating it or requiring author JSON', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-one-file-'));
     try {

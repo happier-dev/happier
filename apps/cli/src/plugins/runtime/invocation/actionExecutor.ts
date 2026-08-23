@@ -39,6 +39,8 @@ export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
   input: unknown;
   accountId?: string;
   resourceId?: string;
+  /** Host-stamped Action-settings decision, distinct from plugin confirmation. */
+  approvalRequiredByActionSettings?: true;
   policyFingerprint: string;
 }>;
 
@@ -109,7 +111,11 @@ function stable(value: unknown): string {
   return JSON.stringify(value) ?? 'undefined';
 }
 
-export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPolicy): string {
+type TargetActionPolicyFingerprintInput = NormalizedTargetActionPolicy & Readonly<{
+  approvalRequiredByActionSettings?: true;
+}>;
+
+export function fingerprintTargetActionPolicy(action: TargetActionPolicyFingerprintInput): string {
   return createHash('sha256').update(stable({
     qualifiedId: action.qualifiedId,
     generation: action.generation,
@@ -119,6 +125,7 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
     hostAccess: action.hostAccess,
     availability: action.availability,
     confirmation: action.confirmation,
+    approvalRequiredByActionSettings: action.approvalRequiredByActionSettings === true,
   })).digest('hex');
 }
 
@@ -202,6 +209,9 @@ export function resolvePresentUserGatePolicy(
     scopes: action.scopes,
     surfaces: action.surfaces,
     ...(action.confirmation === undefined ? {} : { confirmation: action.confirmation }),
+    ...(action.approvalRequiredByActionSettings === true
+      ? { approvalRequiredByActionSettings: true }
+      : {}),
     ...(action.availability === undefined ? {} : { availability: action.availability }),
     authorization: Object.freeze(projectTargetActionPresentUserAuthorizationFacts(
       authorization,
@@ -237,8 +247,12 @@ export function createTargetActionExecutor(deps: Readonly<{
   redactFailureText?: (action: ResolvedTargetAction, value: string) => string;
   diagnostic?: (fact: Readonly<{ qualifiedId: string; generation: string; surface: string; status: string; code?: string }>) => void | Promise<void>;
 }>) {
-  return Object.freeze({
-    async execute(args: Readonly<{ pluginId: string; localId: string; input: unknown; surface: string; invocationSurface?: string; sessionId?: string; signal?: AbortSignal; requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> }>): Promise<TargetActionExecutionResult> {
+  type ExecuteArgs = Readonly<{ pluginId: string; localId: string; input: unknown; surface: string; invocationSurface?: string; sessionId?: string; signal?: AbortSignal; requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> }>;
+
+  const prepare = async (args: ExecuteArgs): Promise<Readonly<
+    | { kind: 'settled'; result: TargetActionExecutionResult }
+    | { kind: 'ready'; run: () => Promise<TargetActionExecutionResult> }
+  >> => {
       let action: ResolvedTargetAction | null = null;
       const invocationSurface = args.invocationSurface ?? args.surface;
       const finish = async (result: TargetActionExecutionResult): Promise<TargetActionExecutionResult> => {
@@ -370,20 +384,45 @@ export function createTargetActionExecutor(deps: Readonly<{
       });
       if (admission.status !== 'admitted') {
         if (admission.status === 'failed') {
-          return await finish(failed(admission.code, new Error(admission.message), 'notStarted'));
+          return Object.freeze({
+            kind: 'settled' as const,
+            result: await finish(failed(admission.code, new Error(admission.message), 'notStarted')),
+          });
         }
-        return await finish(unavailable(admission.code));
+        return Object.freeze({
+          kind: 'settled' as const,
+          result: await finish(unavailable(admission.code)),
+        });
       }
-      if (args.signal?.aborted) return await finish(unavailable('plugin_action_aborted'));
       const { action: admittedAction, serviceBinding } = admission.action;
       action = admittedAction;
-      let result: TargetActionExecutionResult;
-      try {
-        result = await deps.invoke(admittedAction, { surface: args.surface, ...(args.sessionId ? { sessionId: args.sessionId } : {}), ...(args.signal ? { signal: args.signal } : {}) }, serviceBinding);
-      } catch (error) {
-        result = failed('plugin_action_execution_failed', error);
-      }
-      return await finish(result);
+      let runPromise: Promise<TargetActionExecutionResult> | null = null;
+      const run = (): Promise<TargetActionExecutionResult> => {
+        if (runPromise) return runPromise;
+        runPromise = (async () => {
+          if (args.signal?.aborted) return await finish(unavailable('plugin_action_aborted'));
+          let result: TargetActionExecutionResult;
+          try {
+            result = await deps.invoke(admittedAction, {
+              surface: args.surface,
+              ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+              ...(args.signal ? { signal: args.signal } : {}),
+            }, serviceBinding);
+          } catch (error) {
+            result = failed('plugin_action_execution_failed', error);
+          }
+          return await finish(result);
+        })();
+        return runPromise;
+      };
+      return Object.freeze({ kind: 'ready' as const, run });
+  };
+
+  return Object.freeze({
+    prepare,
+    async execute(args: ExecuteArgs): Promise<TargetActionExecutionResult> {
+      const prepared = await prepare(args);
+      return prepared.kind === 'settled' ? prepared.result : await prepared.run();
     },
   });
 }

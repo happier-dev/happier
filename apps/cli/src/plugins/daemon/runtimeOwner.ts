@@ -459,15 +459,18 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
           };
           try {
             const activationTargets = registry.contributes.activationTargets ?? [];
-            const externalPluginIds = [...new Set(
-              activationTargets
-                .filter((target) => target.provenance === 'external')
-                .map((target) => target.pluginId),
+            // Readiness is proven for every activation target, keyed on the
+            // structural fact that a plugin is one — never on where it came
+            // from. A bundled first-party plugin activates through the same ABI
+            // as an external one, so it must not join the serving registry
+            // without the same executable proof.
+            const readinessPluginIds = [...new Set(
+              activationTargets.map((target) => target.pluginId),
             )].sort();
             // The lifecycle manager already records ordinary activation and trust
             // failures against the affected plugin; this isolates the exceptional
             // rejections it cannot absorb.
-            await Promise.all(externalPluginIds.map(async (pluginId) => {
+            await Promise.all(readinessPluginIds.map(async (pluginId) => {
               await isolateReadinessParticipant(pluginId, 'activation', async () => {
                 await activatePluginRuntimeForReadiness({
                   registry,
@@ -490,7 +493,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
                 });
               }
             }
-            for (const pluginId of externalPluginIds) {
+            for (const pluginId of readinessPluginIds) {
               await isolateReadinessParticipant(pluginId, 'primaryAgentRuntime', async () => {
                 await bootstrapPrimaryAgentRuntimesForReadiness({
                   registry,

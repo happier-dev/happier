@@ -214,6 +214,7 @@ export async function createRetainedRunnerManagedDependenciesHost(
             const manifest = await readPluginManifest({
                 manifestPath,
                 manifestAuthority,
+                sourceProvenance: generation.record.sourceProvenance,
             });
             if (
                 !manifest.ok

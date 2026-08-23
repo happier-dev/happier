@@ -101,6 +101,7 @@ import {
 } from './lifecycle/contributions/externalSessionSourceRefusals';
 import { buildTargetActionInvocationRegistry } from './invocation/buildTargetActionRegistry';
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
+import { createHostContributedActionInvoker } from './invocation/actions/hostContributedActionInvoker';
 import {
     resolveCurrentSessionCapabilityBinding,
     resolveCurrentSessionUiBinding,
@@ -113,6 +114,9 @@ import {
     createCurrentGlobalExternalSessionsAuthorBinding,
     createCurrentGlobalExternalSessionsAuthorService,
 } from '@/session/external/currentGlobalAuthorService';
+import type {
+    CurrentGlobalExternalSessionsRouter,
+} from '@/session/external/currentGlobalRouting';
 import type { ExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import {
     createPluginSessionHandleCapabilitiesFactory,
@@ -275,7 +279,11 @@ import {
 import {
     createAgentCliHostResolutionEnvironment,
     createAgentCliSystemToolService,
+    createRetainedAgentCliSystemToolService,
 } from './exec/system/tools/agentCliBinding';
+import type {
+    BoundAgentCliLaunchSpec,
+} from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { projectPluginSystemToolContributions } from './exec/system/tools/definitions';
 import type {
     PluginContributionRef,
@@ -305,6 +313,7 @@ import {
 } from '../store/registry/generationStore';
 import { readPluginManifest } from '../manifest/read';
 import { ingestCanonicalPluginManifest } from '../manifest/ingest';
+import { pluginSourceProvenanceForKind } from '../manifest/sourceProvenance';
 import { serializeCanonicalPluginManifest } from '../manifest/serialize';
 import { projectPluginAuthorModule } from '../authoring/sourceModule';
 import {
@@ -787,6 +796,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
             correlationId: string;
             cwd: string;
             environment: Readonly<Record<string, string>>;
+            agentCliLaunch?: BoundAgentCliLaunchSpec;
             providerBindingActive: boolean;
             signal: AbortSignal;
             isGenerationCurrent(): boolean;
@@ -946,6 +956,10 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
      * and mounted UI resource watches — synchronously while lease-delayed
      * registry disposal remains pending. */
     retireLiveSubscriptionConsumers?(): void;
+    /** This registry's public current-global External Sessions authority. The
+     * reload controller publishes exactly one of these at a time and the
+     * daemon-lifetime router reads whichever is published now. */
+    currentGlobalExternalSessionsTarget?: CurrentGlobalExternalSessionsRouter;
     retainActivationRegistryComponentsExcluding?(
         pluginIds: ReadonlySet<string>,
     ): readonly PluginRuntimeActivationRegistryLease[];
@@ -1307,6 +1321,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
         externalSessionHostOperationOwner?: ExternalSessionHostOperationOwner;
         externalSessionsActiveServerDir?: string;
         externalSessionsActiveServerId?: string;
+        /**
+         * Daemon/controller-lifetime public current-global External Sessions
+         * router. Long-lived plugin contexts built by this registry capture it
+         * instead of this registry's own owner, so an unchanged plugin that
+         * outlives a peer Agent replacement keeps resolving the published
+         * generation. Absent it (an ephemeral or scoped registry with no
+         * controller), this registry is the only authority and targets itself.
+         */
+        currentGlobalExternalSessionsRouter?: CurrentGlobalExternalSessionsRouter;
     }>,
 ): Promise<ResolvedExecutablePluginRuntimeRegistry> {
     const generation = params?.generation ?? 0;
@@ -1700,6 +1723,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
             if (!await committed.isCurrent()) continue;
             const moduleManifest = ingestCanonicalPluginManifest(module.manifest, {
                 manifestAuthority: 'external',
+                // Same record, same provenance as the committed manifest this
+                // is compared against: a local working tree is not a published
+                // artifact, so the reserved-namespace rule must not silently
+                // drop its semantic contribution points.
+                sourceProvenance: pluginSourceProvenanceForKind(target.sourceSpec?.kind),
                 // The committed JSON manifest already passed the current-host
                 // compatibility gate. This is an exact identity check, not a
                 // second compatibility decision on a module definition.
@@ -2659,7 +2687,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ? [Object.freeze({
                     pluginId: agent.pluginId,
                     family: 'agents' as const,
-                    localId: agent.id,
+                    localId: agent.identity?.localId ?? agent.id,
                 })]
                 : []
         )),
@@ -2770,6 +2798,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         ?? 'unsupported';
                     return Object.freeze({
                         generationId: lease.generation,
+                        immutableGenerationId: lease.immutableGenerationId ?? null,
                         retirementSignal: lease.retirementSignal,
                         isCurrent: lease.isCurrent,
                         surface: createAgentExternalSessionsExecutionSurface(
@@ -2820,6 +2849,41 @@ export async function resolveExecutablePluginRuntimeRegistry(
             );
         }
     };
+    /**
+     * This registry's own public current-global authority. It becomes THE
+     * authority only while this registry is the published one; long-lived
+     * callers reach it through the daemon-lifetime router below.
+     */
+    const currentGlobalExternalSessionsTarget: CurrentGlobalExternalSessionsRouter =
+        Object.freeze({
+            resolveCurrent: () => currentGlobalExternalSessions,
+            activateConfiguredSources: async (agentId?: string) => {
+                // Callers address an Agent by its host routing id; an
+                // activation demand names the Agent's durable
+                // `{pluginId, localId}` contribution identity. Resolve one to
+                // the other through the catalog instead of comparing a routing
+                // id to a local id, which never matches for an installed Agent
+                // or for a bundled Agent whose manifest id is cased
+                // differently.
+                const identity = agentId
+                    ? authoritativeContributes.agentDefinitionsById
+                        .get(agentId)?.identity
+                    : undefined;
+                const demands = agentId
+                    ? (identity
+                        ? configuredExternalSessionAgentDemands.filter(
+                            (demand) => demand.pluginId === identity.pluginId
+                                && demand.localId === identity.localId,
+                        )
+                        : [])
+                    : configuredExternalSessionAgentDemands;
+                if (demands.length === 0) return;
+                await activateContributionsOnDemand(demands);
+            },
+        });
+    const publicCurrentGlobalExternalSessions: CurrentGlobalExternalSessionsRouter =
+        params?.currentGlobalExternalSessionsRouter
+        ?? currentGlobalExternalSessionsTarget;
     const refreshCurrentGlobalExternalSessionsAuthor = async (): Promise<void> => {
         const previousPublication = currentGlobalExternalSessionsPublicationTail;
         let releasePublication!: () => void;
@@ -3459,27 +3523,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
             });
         }
         : undefined;
-    const pluginActionExecutor = sessionCredentials
-        ? createCliActionExecutorFromCredentials({
-            credentials: sessionCredentials,
-            readCredentials: readStoredCredentials,
-            readRegisteredPromptAssetAdapters: () => promptAssetAdapters,
-            revalidatePluginActionCallerMaterialization,
-            revalidatePluginActionCallerImmutableGeneration,
-            ...(resolveAutomationEventAdoptedDefinitionSet
-                ? { resolveAutomationEventAdoptedDefinitionSet }
-                : {}),
-            ...(params?.runtimeActionExecute
-                ? { runtimeActionExecute: params.runtimeActionExecute }
-                : {}),
-            ...(params?.externalSessionPluginAdmissionOwner
-                ? {
-                    externalSessionPluginAdmissionOwner:
-                        params.externalSessionPluginAdmissionOwner,
-                }
-                : {}),
-        })
-        : null;
     const invokeContributedAction = (async (request) => {
         const runtimeRegistry = resolvedRuntimeRegistryOwner;
         if (!runtimeRegistry) {
@@ -3555,6 +3598,32 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 : { actionHandlerInvocation: attempt.result.actionHandlerInvocation }),
         });
     }) satisfies InvokeContributedAction;
+    const pluginActionExecutor = sessionCredentials
+        ? createCliActionExecutorFromCredentials({
+            credentials: sessionCredentials,
+            readCredentials: readStoredCredentials,
+            readRegisteredPromptAssetAdapters: () => promptAssetAdapters,
+            revalidatePluginActionCallerMaterialization,
+            revalidatePluginActionCallerImmutableGeneration,
+            invokeContributedAction: createHostContributedActionInvoker({
+                invokeContributedAction,
+                revalidatePluginActionCallerMaterialization,
+                revalidatePluginActionCallerImmutableGeneration,
+            }),
+            ...(resolveAutomationEventAdoptedDefinitionSet
+                ? { resolveAutomationEventAdoptedDefinitionSet }
+                : {}),
+            ...(params?.runtimeActionExecute
+                ? { runtimeActionExecute: params.runtimeActionExecute }
+                : {}),
+            ...(params?.externalSessionPluginAdmissionOwner
+                ? {
+                    externalSessionPluginAdmissionOwner:
+                        params.externalSessionPluginAdmissionOwner,
+                }
+                : {}),
+        })
+        : null;
     const resolveCurrentComposerExecutionTarget = () => {
         let machineId: string | null | undefined;
         try {
@@ -3643,24 +3712,23 @@ export async function resolveExecutablePluginRuntimeRegistry(
                             signal: seed.signal,
                             isGenerationCurrent:
                                 seed.isGenerationCurrent,
+                            ...(params?.externalSessionsActiveServerDir
+                                ? {
+                                    activeServerDir:
+                                        params.externalSessionsActiveServerDir,
+                                }
+                                : {}),
                             ...(params?.externalSessionPluginAdmissionOwner?.takeoverStart
                                 ? {
                                     takeoverStart:
                                         params.externalSessionPluginAdmissionOwner.takeoverStart,
                                 }
                                 : {}),
-                            resolveCurrent: () => currentGlobalExternalSessions,
-                            activateConfiguredSources: async (agentId) => {
-                                const demands = agentId
-                                    ? configuredExternalSessionAgentDemands.filter(
-                                        (demand) => demand.localId === agentId,
-                                    )
-                                    : configuredExternalSessionAgentDemands;
-                                if (demands.length === 0) return;
-                                await activateContributionsOnDemand(
-                                    demands,
-                                );
-                            },
+                            resolveCurrent: () =>
+                                publicCurrentGlobalExternalSessions.resolveCurrent(),
+                            activateConfiguredSources: async (agentId) =>
+                                await publicCurrentGlobalExternalSessions
+                                    .activateConfiguredSources(agentId),
                         }),
                         createHandleCapabilities: ({ sessionId, readSummary }) => (
                             createPluginSessionHandleCapabilitiesFactory({
@@ -5542,6 +5610,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ...generation.record.manifestRelativePath.split('/'),
             ),
             manifestAuthority,
+            sourceProvenance: generation.record.sourceProvenance,
         });
         const provider = manifest.ok
             ? manifest.manifest.contributes.providers.find(
@@ -6268,9 +6337,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     version: currentTarget.manifest.version,
                 }),
                 contribution: Object.freeze({
-                    id: verified.binding.agentId,
+                    id: verified.binding.localAgentId,
                     qualifiedId:
-                        `${verified.binding.pluginId}/agents/${verified.binding.agentId}`,
+                        `${verified.binding.pluginId}/agents/${verified.binding.localAgentId}`,
                 }),
                 generation: String(activatedRegistry.generation),
                 correlationId: agentParams.correlationId,
@@ -6320,9 +6389,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     version: currentTarget.manifest.version,
                 }),
                 contribution: Object.freeze({
-                    id: verified.binding.agentId,
+                    id: verified.binding.localAgentId,
                     qualifiedId:
-                        `${verified.binding.pluginId}/agents/${verified.binding.agentId}`,
+                        `${verified.binding.pluginId}/agents/${verified.binding.localAgentId}`,
                 }),
                 generation: String(activatedRegistry.generation),
                 correlationId: agentParams.correlationId,
@@ -6380,9 +6449,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     version: currentTarget.manifest.version,
                 }),
                 contribution: Object.freeze({
-                    id: verified.binding.agentId,
+                    id: verified.binding.localAgentId,
                     qualifiedId:
-                        `${verified.binding.pluginId}/agents/${verified.binding.agentId}`,
+                        `${verified.binding.pluginId}/agents/${verified.binding.localAgentId}`,
                 }),
                 generation: String(activatedRegistry.generation),
                 correlationId: agentParams.correlationId,
@@ -6447,8 +6516,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     version: binding.pluginVersion,
                 }),
                 contribution: Object.freeze({
-                    id: binding.agentId,
-                    qualifiedId: `${binding.pluginId}/agents/${binding.agentId}`,
+                    id: binding.localAgentId,
+                    qualifiedId: `${binding.pluginId}/agents/${binding.localAgentId}`,
                 }),
                 generation: binding.immutableGenerationId,
                 correlationId: agentParams.correlationId,
@@ -6474,12 +6543,39 @@ export async function resolveExecutablePluginRuntimeRegistry(
                             .required,
                 }),
             );
-            const systemTools = createPluginExecSystemToolResolver({
-                definitions: projectPluginSystemToolContributions(
-                    manifest.contributes.systemTools ?? [],
-                ),
+            const systemToolDefinitions = projectPluginSystemToolContributions(
+                manifest.contributes.systemTools ?? [],
+            );
+            const genericSystemTools = createPluginExecSystemToolResolver({
+                definitions: systemToolDefinitions,
                 registerGrant() {},
             });
+            const agentCliSystemTool = (
+                agentParams.agentCliLaunch?.localAgentId
+                    === binding.localAgentId
+            )
+                ? declaredAgent.catalog?.agentCliSystemTool
+                : undefined;
+            const systemTools = agentCliSystemTool
+                ? (() => {
+                    const definition = systemToolDefinitions.find(
+                        (candidate) => candidate.toolId === agentCliSystemTool.toolId,
+                    );
+                    if (!definition) {
+                        throw new PluginError({
+                            code: 'plugin_agent_cli_system_tool_unavailable',
+                            message: `Agent '${binding.agentId}' CLI system tool is unavailable`,
+                        });
+                    }
+                    return createRetainedAgentCliSystemToolService({
+                        agentId: binding.agentId,
+                        binding: agentCliSystemTool,
+                        definition,
+                        launch: agentParams.agentCliLaunch!.spec,
+                        delegate: genericSystemTools,
+                    });
+                })()
+                : genericSystemTools;
             const retainedManagedDependencies =
                 await createRetainedRunnerManagedDependenciesHost({
                     paths: storePaths,
@@ -6715,11 +6811,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 })()
                 : undefined;
             const storePaths = resolvePluginStorePaths({ happyHomeDir: params?.happyHomeDir });
+            // Callers address an Agent by its host routing id, which is
+            // qualified for an installed Agent and differently cased for some
+            // bundled ones. A plugin-contribution identity is always
+            // `{pluginId, localId}`, so it is resolved from the Agent's own
+            // durable identity here rather than re-read from the routing id.
+            const agentLocalId = declaredAgent.identity?.localId ?? agentParams.agentId;
             const seed = Object.freeze({
                 plugin: Object.freeze({ id: agentParams.pluginId, version: agentParams.pluginVersion }),
                 contribution: Object.freeze({
-                    id: agentParams.agentId,
-                    qualifiedId: `${agentParams.pluginId}/agents/${agentParams.agentId}`,
+                    id: agentLocalId,
+                    qualifiedId: `${agentParams.pluginId}/agents/${agentLocalId}`,
                 }),
                 generation: agentParams.generation,
                 correlationId: agentParams.correlationId,
@@ -6804,7 +6906,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     immutableGenerationIdsByPluginId.get(pluginId) ?? null
                 ),
                 resources: resourcesOwner,
-                agent: { pluginId: agent.pluginId!, localId: agent.definition.id },
+                agent: {
+                    pluginId: agent.pluginId!,
+                    localId: agent.identity?.localId ?? agent.definition.id,
+                },
                 ...(promptParams.selectedAsset ? { selectedAsset: promptParams.selectedAsset } : {}),
                 signal: promptParams.signal ?? new AbortController().signal,
                 isGenerationCurrent: () => isPluginConsumerCurrent(agent.pluginId!),
@@ -6985,6 +7090,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         startAdoptedBackgroundServices: () => activatedRegistry.startAdoptedBackgroundServices(),
         publishDeclaredEventSubscriptions,
         retireLiveSubscriptionConsumers,
+        currentGlobalExternalSessionsTarget,
         retainActivationRegistryComponentsExcluding: (excludedPluginIds) => Object.freeze(
             retainedActivationRegistryLeases
                 .filter((lease) => (

@@ -169,7 +169,7 @@ function readBundledChannelsProviderPlugin(
     params: BundledChannelsPluginFixture,
 ): LoadedPlugin {
     const semanticPointRefs = readTargetedContributionPointSemanticRefs(params.manifest);
-    const ingested = ingestCanonicalPluginManifest(params.manifest, {
+    const ingested = ingestCanonicalPluginManifest(params.manifest, { sourceProvenance: 'localSource',
         manifestAuthority: 'bundled_first_party',
         enforceEngineCompatibility: false,
     });
@@ -458,12 +458,12 @@ describe('targeted contribution observation service', () => {
 
     it('does not re-decode an admitted snapshot from a caller-visible target ref', async () => {
         const target = new AbortController();
-        const v1Point = admittedSurfaceTarget.contributionPoints.providers;
-        const v2Point = admittedSurfaceTargetV2.contributionPoints.providers;
-        type V2Contribution = typeof v2Point extends TargetedContributionPointRef<infer TContribution>
-            ? TContribution
-            : never;
-        const visibleV2PointWithV1Carrier: TargetedContributionPointRef<V2Contribution> = Object.freeze({
+        const v1Point = readTargetedContributionPointSemanticRefs(admittedSurfaceTarget.manifest)
+            .find((point) => point.protocol.version === admittedSurfaceProtocol.version);
+        const v2Point = readTargetedContributionPointSemanticRefs(admittedSurfaceTargetV2.manifest)
+            .find((point) => point.protocol.version === admittedSurfaceProtocolV2.version);
+        if (!v1Point || !v2Point) throw new Error('Expected admitted target point semantic refs');
+        const visibleV2PointWithV1Carrier: TargetedContributionPointRef = Object.freeze({
             targetPluginId: v2Point.targetPluginId,
             id: v2Point.id,
             protocol: v2Point.protocol,
@@ -539,8 +539,13 @@ describe('targeted contribution observation service', () => {
 
         const snapshot = await observation.readCurrent();
         expect(snapshot.generation).toBe('immutable-target-a');
-        expect(snapshot.contributions.map((contribution) => contribution.contributor.pluginId))
-            .toEqual(['acme.v2.first', 'acme.v2.second']);
+        expect(snapshot.contributions).toHaveLength(2);
+        expect(snapshot.contributions[0]).toMatchObject({
+            contributor: { pluginId: 'acme.v2.first' },
+        });
+        expect(snapshot.contributions[1]).toMatchObject({
+            contributor: { pluginId: 'acme.v2.second' },
+        });
         expect(registry.pluginDiagnosticsByPluginId).toEqual({});
 
         observation.dispose();
@@ -634,8 +639,16 @@ describe('targeted contribution observation service', () => {
 
         const snapshot = await observation.readCurrent();
         expect(snapshot.generation).toBe('immutable-target-a');
-        expect(snapshot.contributions.map((contribution) => contribution.contributor.pluginId))
-            .toEqual(['acme.descriptor', 'acme.surface', 'acme.point']);
+        expect(snapshot.contributions).toHaveLength(3);
+        expect(snapshot.contributions[0]).toMatchObject({
+            contributor: { pluginId: 'acme.descriptor' },
+        });
+        expect(snapshot.contributions[1]).toMatchObject({
+            contributor: { pluginId: 'acme.surface' },
+        });
+        expect(snapshot.contributions[2]).toMatchObject({
+            contributor: { pluginId: 'acme.point' },
+        });
         expect(registry.pluginDiagnosticsByPluginId).toEqual({});
 
         observation.dispose();

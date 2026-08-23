@@ -5,6 +5,7 @@ import { decodePluginManifestUtf8 } from '@happier-dev/protocol/plugins/manifest
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { ingestCanonicalPluginManifest } from './ingest';
+import type { PluginSourceProvenance } from './sourceProvenance';
 import type { CanonicalPluginManifest } from './types';
 
 export type ReadPluginManifestResult =
@@ -22,6 +23,8 @@ export type ReadPluginManifestResult =
 export async function readPluginManifest(params: Readonly<{
   manifestPath: string;
   manifestAuthority?: 'external' | 'bundled_first_party';
+  /** See `PluginManifestValidationOptions.sourceProvenance`. */
+  sourceProvenance: PluginSourceProvenance;
   enforceEngineCompatibility?: boolean;
 }>): Promise<ReadPluginManifestResult> {
   let manifestRawBytes: Uint8Array;
@@ -43,22 +46,13 @@ export async function readPluginManifest(params: Readonly<{
     throw error;
   }
 
-  const ingestion = ingestCanonicalPluginManifest(
-    manifestRawBytes,
-    params.manifestAuthority || params.enforceEngineCompatibility !== undefined
-      ? {
-          ...(params.manifestAuthority
-            ? { manifestAuthority: params.manifestAuthority }
-            : {}),
-          ...(params.enforceEngineCompatibility !== undefined
-            ? {
-                enforceEngineCompatibility:
-                  params.enforceEngineCompatibility,
-              }
-            : {}),
-        }
-      : undefined,
-  );
+  const ingestion = ingestCanonicalPluginManifest(manifestRawBytes, {
+    ...(params.manifestAuthority ? { manifestAuthority: params.manifestAuthority } : {}),
+    sourceProvenance: params.sourceProvenance,
+    ...(params.enforceEngineCompatibility !== undefined
+      ? { enforceEngineCompatibility: params.enforceEngineCompatibility }
+      : {}),
+  });
   if (!ingestion.ok) {
     return {
       ok: false,

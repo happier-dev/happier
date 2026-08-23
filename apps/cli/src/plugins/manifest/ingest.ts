@@ -12,7 +12,7 @@ export type CanonicalPluginManifestIngestionResult =
 
 export function ingestCanonicalPluginManifest(
   input: unknown,
-  options: Pick<PluginManifestValidationOptions, 'manifestAuthority' | 'enforceEngineCompatibility'> = {},
+  options: Pick<PluginManifestValidationOptions, 'manifestAuthority' | 'sourceProvenance' | 'enforceEngineCompatibility'>,
 ): CanonicalPluginManifestIngestionResult {
   const ingestion = ingestPluginManifestV2(input);
   if (!ingestion.ok) return ingestion;

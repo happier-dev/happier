@@ -266,6 +266,39 @@ function parseReady(raw: string): PackedTestDaemonReady | null {
   }
 }
 
+/**
+ * The disposable daemon must run the SAME Happier CLI implementation as the
+ * process that starts it, otherwise a packed journey silently proves whatever
+ * prebuilt artifact happens to sit in the checkout instead of the code under
+ * test. A packaged CLI already satisfies that: its packaged entrypoint is the
+ * implementation currently executing. A source-run CLI does not, because
+ * `resolvePackagedRuntimeEntrypoint` returns any `package-dist`/`dist` build
+ * that exists next to the sources, no matter how old.
+ *
+ * This module's own execution form is the authority for which implementation
+ * is live: a TypeScript module means the checkout sources are executing, so the
+ * daemon is pinned to the source runtime. An explicit caller pin
+ * (`HAPPIER_CLI_SUBPROCESS_ENTRYPOINT`) always wins.
+ */
+export function resolveDisposableDaemonEnvironment(
+  baseEnv: NodeJS.ProcessEnv,
+  runtimeModuleUrl: string,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    HAPPIER_CLI_UPDATE_CHECK: '0',
+    HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '1',
+  };
+  const pinnedEntrypoint = typeof environment.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string'
+    ? environment.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim()
+    : '';
+  if (pinnedEntrypoint) return environment;
+  const runtimeModulePath = runtimeModuleUrl.split('?')[0] ?? runtimeModuleUrl;
+  if (!/\.[cm]?tsx?$/.test(runtimeModulePath)) return environment;
+  environment.HAPPIER_CLI_SUBPROCESS_PREFER_TSX = '1';
+  return environment;
+}
+
 async function startDisposableDaemon(params: Readonly<{
   operationRoot: string;
   happyHomeDir: string;
@@ -273,6 +306,7 @@ async function startDisposableDaemon(params: Readonly<{
   connectedAccountsFixturePluginId?: string;
 }>): Promise<DisposableDaemon> {
   const readyFile = join(params.operationRoot, `daemon-ready-${randomUUID()}.json`);
+  const daemonEnvironment = resolveDisposableDaemonEnvironment(process.env, import.meta.url);
   const launchSpec = buildHappyCliSubprocessLaunchSpec([
     'daemon',
     'plugin-packed-test-host',
@@ -286,15 +320,13 @@ async function startDisposableDaemon(params: Readonly<{
       '--connected-accounts-fixture-plugin-id',
       params.connectedAccountsFixturePluginId,
     ] : []),
-  ]);
+  ], { environment: daemonEnvironment });
   const child = spawn(launchSpec.filePath, launchSpec.args, {
     cwd: params.projectRoot,
     env: sanitizeDaemonSpawnEnv({
-      ...process.env,
+      ...daemonEnvironment,
       ...(launchSpec.env ?? {}),
       HAPPIER_HOME_DIR: params.happyHomeDir,
-      HAPPIER_CLI_UPDATE_CHECK: '0',
-      HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '1',
     }),
     stdio: ['ignore', 'ignore', 'pipe'],
     windowsHide: true,

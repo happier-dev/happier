@@ -2024,6 +2024,34 @@ describe('createDaemonPathPluginChangePreparer', () => {
     await prepared.cleanup();
   }, 180_000);
 
+  // C1: an external plugin developed from a local working tree is the same
+  // record shape as a bundled one — a path the operator authored on this
+  // machine. Provenance, not authorship, decides the registry-lifecycle rules,
+  // so the reserved namespace must not lock an external author out of the dev
+  // loop that the discovery owner already admitted.
+  it('prepares a development install of an external local path plugin under a reserved id', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-home-external-reserved-'));
+    roots.push(happyHomeDir);
+    const pluginRoot = await createDescriptorPlugin({ pluginId: 'happier.agent.fake' });
+    const prepare = createDaemonPathPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle: {
+        prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+      },
+      runManagedPluginPnpm: successfulManagedPnpmBoundary,
+      runPluginUiArtifactBuild: async (input) => ({ ok: true as const, projectRoot: input.projectRoot, built: false }),
+    });
+
+    const prepared = await prepare({
+      kind: 'installPath',
+      locator: pluginRoot,
+      development: true,
+    });
+
+    expect(prepared).toMatchObject({ pluginId: 'happier.agent.fake' });
+    await prepared.cleanup();
+  });
+
   it('discloses each executable realm declared by a local path plugin', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-home-'));
     roots.push(happyHomeDir);

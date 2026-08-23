@@ -1849,9 +1849,9 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     family: 'agents',
                     localId: 'session-agent',
                 }]);
-                expect(runtimeRegistry.agentRuntimesByAgentId.get('session-agent')).toMatchObject({
+                expect(runtimeRegistry.agentRuntimesByAgentId.get('acme.mcp.session/session-agent')).toMatchObject({
                     pluginId: 'acme.mcp.session',
-                    agentId: 'session-agent',
+                    agentId: 'acme.mcp.session/session-agent',
                     generation: String(runtimeRegistry.generation),
                 });
                 const currentSessionUi = createNativeAgentCurrentSessionUiServices({
@@ -1909,7 +1909,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         },
                     }),
                 );
-                const agentContribution = runtimeRegistry.contributes.agentDefinitionsById.get('session-agent');
+                const agentContribution = runtimeRegistry.contributes.agentDefinitionsById.get('acme.mcp.session/session-agent');
                 if (!agentContribution) throw new Error('Expected session Agent contribution');
                 const backendContribution = {
                     id: 'session-agent',
@@ -2243,6 +2243,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         const paths = resolvePluginStorePaths({ happyHomeDir });
         const immutableGenerationId = 'acme-resource-generation-1';
         const generationRecord = {
+            sourceProvenance: 'registryCustodied' as const,
             t: 'happier_plugin_generation_v1' as const, schemaVersion: 1 as const,
             pluginId: 'acme.resource.action', immutableGenerationId,
             createdAtMs: 1,
@@ -2444,11 +2445,11 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     serviceAvailability: [],
                 },
             });
-            expect(runtimeRegistry.agentRuntimesByAgentId.get('novel-reviewer')).toMatchObject({
+            expect(runtimeRegistry.agentRuntimesByAgentId.get('acme.resource.action/novel-reviewer')).toMatchObject({
                 generation: String(runtimeRegistry.generation),
                 immutableGenerationId,
             });
-            const promptAssetBlocks = await runtimeRegistry.resolvePromptAssetBlocks({ agentId: 'novel-reviewer' });
+            const promptAssetBlocks = await runtimeRegistry.resolvePromptAssetBlocks({ agentId: 'acme.resource.action/novel-reviewer' });
             const machineKey = new Uint8Array(32).fill(9);
             const promptPlan = await resolveEffectiveCodingPromptPlan({
                 credentials: {
@@ -2512,7 +2513,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     pluginGenerations: {},
                 },
             });
-            await expect(runtimeRegistry.resolvePromptAssetBlocks({ agentId: 'novel-reviewer' }))
+            await expect(runtimeRegistry.resolvePromptAssetBlocks({ agentId: 'acme.resource.action/novel-reviewer' }))
                 .rejects.toMatchObject({ code: 'plugin_generation_stale' });
             await expect(runtimeRegistry.targetActionInvocations?.invoke({
                 pluginId: 'acme.resource.action', localId: 'read-prompt', input: {}, surface: 'cli',
@@ -2925,7 +2926,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         }>) => await prepareImmutablePluginGeneration({
             paths,
             sourceRootPath: params.root,
-            record: {
+            record: { sourceProvenance: 'registryCustodied',
                 t: 'happier_plugin_generation_v1', schemaVersion: 1,
                 pluginId: params.pluginId,
                 immutableGenerationId: params.immutableGenerationId,

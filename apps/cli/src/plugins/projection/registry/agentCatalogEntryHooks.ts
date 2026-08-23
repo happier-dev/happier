@@ -20,7 +20,6 @@ import {
     type PluginSystemToolContributionV1,
 } from '@happier-dev/protocol';
 
-import { createBuiltInCliDetect } from '@/agent/acp/catalog/builtIn/detect';
 import { resolveRuntimeActivityApplicability } from '@/agent/runtime/session/activity/runtimeActivityApplicability';
 import type {
     PreflightSessionControlsProbeKind,
@@ -1994,31 +1993,29 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
         return ({
         ...(agentCliSystemTool ? { agentCliSystemTool } : {}),
         ...(runtimeActivityApplicability ? { runtimeActivityApplicability } : {}),
-        ...(params.contribution.builtInAcpCatalog === true
+        // An Agent's baseline CLI detect and auth spec are always projected from its
+        // declared manifest CLI metadata by `createManifestAgentCatalogEntry`, for
+        // bundled and installed Agents alike. Only a plugin that owns bespoke probe
+        // logic overrides the spec here, and that override is reachable through the
+        // same declaration seam an external Agent uses.
+        ...(cliAuth
             ? {
-                getCliDetect: async () => createBuiltInCliDetect(params.agentId),
                 getCliAuthSpec: async () => {
-                    if (cliAuth) {
-                        const { createCatalogCliAuthSpec } = await import(
-                            '@/capabilities/cliAuth/createCatalogCliAuthSpec'
-                        );
-                        return createCatalogCliAuthSpec(params.agentId, {
-                            detectAuthStatus: async ({ resolvedPath }) => cliAuth.detectAuthStatus({
-                                resolvedPath,
-                                env: process.env,
-                                runCommand: async (args, options) => runCliCommandBestEffort({
-                                    resolvedPath,
-                                    args: [...args],
-                                    timeoutMs: options?.timeoutMs,
-                                    env: options?.env,
-                                }),
-                            }),
-                        });
-                    }
-                    const { createBuiltInCliAuthSpec } = await import(
-                        '@/agent/acp/catalog/builtIn/auth'
+                    const { createCatalogCliAuthSpec } = await import(
+                        '@/capabilities/cliAuth/createCatalogCliAuthSpec'
                     );
-                    return createBuiltInCliAuthSpec(params.agentId);
+                    return createCatalogCliAuthSpec(params.agentId, {
+                        detectAuthStatus: async ({ resolvedPath }) => cliAuth.detectAuthStatus({
+                            resolvedPath,
+                            env: process.env,
+                            runCommand: async (args, options) => runCliCommandBestEffort({
+                                resolvedPath,
+                                args: [...args],
+                                timeoutMs: options?.timeoutMs,
+                                env: options?.env,
+                            }),
+                        }),
+                    });
                 },
             }
             : {}),

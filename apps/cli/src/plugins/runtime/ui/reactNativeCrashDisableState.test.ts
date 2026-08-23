@@ -6,7 +6,6 @@ import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import {
-    REACT_NATIVE_CRASH_FAILURE_THRESHOLD,
     createReactNativeCrashStateBindingKey,
     createReactNativeCrashStateStore,
     recordReactNativeCrashFailure,
@@ -160,7 +159,6 @@ describe('React Native crash-state daemon owner', () => {
                 '22222222-2222-4222-8222-222222222222': 'render_error',
             },
         });
-        expect(REACT_NATIVE_CRASH_FAILURE_THRESHOLD).toBe(2);
 
         expect((await recordReactNativeCrashFailure({
             store,

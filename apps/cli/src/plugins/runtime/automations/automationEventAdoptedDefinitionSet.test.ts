@@ -15,6 +15,7 @@ import type {
   PluginWebhookInvocationReferenceV1,
 } from '@happier-dev/protocol';
 
+import type { AvailableAutomationAccountEncryptionV1 } from './automationAccountCurrentness';
 import {
   createAutomationEventAdoptedDefinitionSetV1,
 } from './automationEventAdoptedDefinitionSet';
@@ -159,6 +160,12 @@ const eventDeclarationRelease = {
   archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
 } as const satisfies AutomationEventDeclarationReleaseV1;
 
+/** The keyless plain Account snapshot every fixture set adopts under. */
+const PLAIN_ACCOUNT_ENCRYPTION = {
+  kind: 'available',
+  witness: { mode: 'plain', version: 4, contentKeyFingerprint: null },
+} as const satisfies AvailableAutomationAccountEncryptionV1;
+
 function page(
   revision: string,
   definitions: readonly AutomationEventStoredDefinitionProjectionV1[],
@@ -194,7 +201,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions,
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });
@@ -266,7 +273,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions,
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });
@@ -337,7 +344,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions,
       projectStoredDefinition: projectPrivateDefinition,
     });
@@ -418,7 +425,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions,
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectDurableStoredDefinition(stored),
     });
@@ -461,7 +468,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions,
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });
@@ -515,7 +522,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions,
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });
@@ -558,7 +565,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions,
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });
@@ -579,7 +586,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async () => page('7', [malformed], null),
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });
@@ -601,7 +608,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async ({ input }) => input.knownRevision === '7'
         ? malformedUnchanged
         : page('7', [definition], null),
@@ -629,7 +636,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async () => oversizedPage,
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });
@@ -648,7 +655,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async ({ signal }) => {
         observedSignal = signal;
         refreshAbort.abort();
@@ -679,7 +686,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async ({ input, signal }) => {
         if (input.knownRevision === undefined) return page('7', [definition], null);
         if (input.knownRevision !== '7') throw new Error('unexpected revision check');
@@ -737,7 +744,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: generation.signal,
       isGenerationCurrent: () => !generation.signal.aborted,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async ({ signal }) => await new Promise<AutomationEventStoredDefinitionsReadResultV1>(
         (_resolve, reject) => {
           if (!signal) {
@@ -789,7 +796,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async () => {
         reads += 1;
         if (reads === 1) {
@@ -832,7 +839,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async () => {
         reads += 1;
         if (reads === 1) {
@@ -869,7 +876,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: generation.signal,
       isGenerationCurrent: () => !generation.signal.aborted,
       revalidateCallerMaterialization: async () => callerCurrent,
-      revalidateAccountContent: async () => accountCurrent,
+      resolveAccountEncryption: async () => (accountCurrent ? PLAIN_ACCOUNT_ENCRYPTION : null),
       readStoredDefinitions: async () => {
         callerCurrent = false;
         return page('7', [definition], null);
@@ -888,7 +895,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: generation.signal,
       isGenerationCurrent: () => !generation.signal.aborted,
       revalidateCallerMaterialization: async () => callerCurrent,
-      revalidateAccountContent: async () => accountCurrent,
+      resolveAccountEncryption: async () => (accountCurrent ? PLAIN_ACCOUNT_ENCRYPTION : null),
       readStoredDefinitions: async () => {
         accountCurrent = false;
         return page('7', [definition], null);
@@ -909,7 +916,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => originalCallerCurrent,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async ({ input }) => input.knownRevision === '7'
         ? unchanged('7')
         : page('7', [first], null),
@@ -928,7 +935,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: new AbortController().signal,
       isGenerationCurrent: () => true,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async () => page('9', [], null),
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });
@@ -957,7 +964,7 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
       generationSignal: generation.signal,
       isGenerationCurrent: () => !generation.signal.aborted,
       revalidateCallerMaterialization: async () => true,
-      revalidateAccountContent: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
       readStoredDefinitions: async () => page('7', [definition], null),
       projectStoredDefinition: async ({ storedDefinition: stored }) => projectStoredDefinition(stored),
     });

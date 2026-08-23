@@ -206,7 +206,7 @@ describe('production registry session runner factory resolution', () => {
                 }),
             ]));
             const binding = registry.agentRuntimesByAgentId
-                .get(AGENT_ID)
+                .get(`acme.runner-resolver.success/${AGENT_ID}`)
                 ?.sessionRunnerFactoryBinding;
             if (!binding || 'kind' in binding) {
                 throw new Error('Expected an attested plugin factory binding');
@@ -252,7 +252,7 @@ describe('production registry session runner factory resolution', () => {
             admitted.rootPath,
             ...admitted.record.manifestRelativePath.split('/'),
         );
-        const immutableManifest = await readPluginManifest({
+        const immutableManifest = await readPluginManifest({ sourceProvenance: 'registryCustodied',
             manifestPath,
             manifestAuthority: 'external',
             enforceEngineCompatibility: true,
@@ -326,12 +326,12 @@ describe('production registry session runner factory resolution', () => {
                 sessionOpenCalls: 0,
             });
             const registeredAgent = registry.contributes.agentDefinitionsById
-                .get(AGENT_ID);
+                .get(`${pluginId}/${AGENT_ID}`);
             if (!registeredAgent) {
                 throw new Error('Expected the public external Agent contribution');
             }
             const binding = registry.agentRuntimesByAgentId
-                .get(AGENT_ID)
+                .get(`${pluginId}/${AGENT_ID}`)
                 ?.sessionRunnerFactoryBinding;
             if (!binding || 'kind' in binding) {
                 throw new Error('Expected an attested plugin factory binding');
@@ -358,7 +358,7 @@ describe('production registry session runner factory resolution', () => {
                 },
                 definition: {
                     kindVersion: 1,
-                    id: AGENT_ID,
+                    id: `${pluginId}/${AGENT_ID}`,
                     ownedBackendIds: [],
                 },
             });
@@ -401,8 +401,8 @@ describe('production registry session runner factory resolution', () => {
                     identity: {
                         pluginId,
                         pluginVersion: '1.0.0',
-                        agentId: AGENT_ID,
-                        backendId: AGENT_ID,
+                        agentId: `${pluginId}/${AGENT_ID}`,
+                        backendId: `${pluginId}/${AGENT_ID}`,
                         generation: binding.immutableGenerationId,
                         immutableGenerationId:
                             binding.immutableGenerationId,
@@ -416,7 +416,7 @@ describe('production registry session runner factory resolution', () => {
                 },
             });
 
-            const resolution = await engineRegistry.resolveForBackendId(AGENT_ID);
+            const resolution = await engineRegistry.resolveForBackendId(`${pluginId}/${AGENT_ID}`);
             expect(resolution?.agent).toBe(registeredAgent);
             expect(runnerCreateRuntime).not.toHaveBeenCalled();
             expect(state.factoryCalls).toBe(0);
@@ -433,7 +433,7 @@ describe('production registry session runner factory resolution', () => {
                     directory: '/tmp/public-external-runner',
                     backendTarget: {
                         kind: 'backend',
-                        backendId: AGENT_ID,
+                        backendId: `${pluginId}/${AGENT_ID}`,
                     },
                 } as never) as Readonly<{
                     config: Readonly<{
@@ -503,7 +503,7 @@ describe('production registry session runner factory resolution', () => {
                     })],
                 }),
             ]));
-            expect(registry.agentRuntimesByAgentId.has(AGENT_ID)).toBe(false);
+            expect(registry.agentRuntimesByAgentId.has(`acme.runner-resolver.wrong-export/${AGENT_ID}`)).toBe(false);
         } finally {
             await registry.dispose();
             await removeFixture(fixture);
@@ -531,7 +531,7 @@ describe('production registry session runner factory resolution', () => {
                     })],
                 }),
             ]));
-            expect(registry.agentRuntimesByAgentId.has(AGENT_ID)).toBe(false);
+            expect(registry.agentRuntimesByAgentId.has(`acme.runner-resolver.entry-leaf/${AGENT_ID}`)).toBe(false);
         } finally {
             await registry.dispose();
             await removeFixture(fixture);

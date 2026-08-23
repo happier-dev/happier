@@ -83,7 +83,7 @@ function createManifest(options: Readonly<{
         }],
       } : {}),
     },
-  });
+  }, { sourceProvenance: 'registryCustodied' });
   if (!result.ok) throw new Error(`Fixture manifest rejected: ${JSON.stringify(result.diagnostics)}`);
   return result.manifest;
 }

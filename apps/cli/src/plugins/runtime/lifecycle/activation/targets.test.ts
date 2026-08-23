@@ -16,7 +16,7 @@ function target(contributes: Record<string, unknown>, activationEvents: readonly
         ...(activationEvents.length > 0
             ? { activation: { events: activationEvents.map((kind) => ({ kind })) } }
             : {}),
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!result.ok) throw new Error(result.diagnostics.map((entry) => entry.message).join('\n'));
     return {
         provenance: 'external', source: { kind: 'path' }, pluginId: result.manifest.id,

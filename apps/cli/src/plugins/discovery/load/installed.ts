@@ -113,6 +113,7 @@ export async function loadPluginsFromState(
 
     const resolvedSource = await resolveLocalPathPluginSource({
       locator: resolvedLocator,
+      installedSourceKind: record.source.kind,
     });
     if (!resolvedSource.ok) {
       diagnosticsByPluginId[pluginId] = resolvedSource.diagnostics;

@@ -7,7 +7,10 @@ import type {
 } from '@/plugins/runtime/exec/privateContract';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { resolveAgentCliLaunchSpecForRuntime } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
+import {
+  resolveAgentCliLaunchSpecForRuntime,
+  type AgentCliLaunchSpec,
+} from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 
 import type { PluginExecSystemToolDefinition } from './definitions';
 import { createPluginExecSystemToolResolver } from './resolveGrant';
@@ -34,19 +37,15 @@ function failUnavailable(agentId: string, detail: string): never {
 }
 
 function sameArgs(left: readonly string[], right: readonly string[]): boolean {
-    return left.length === right.length && left.every((value, index) => value === right[index]);
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-/**
- * Binds one explicitly declared system tool to the canonical Agent CLI
- * resolver without exposing the host-resolved path through the public SDK.
- */
-export function createAgentCliSystemToolService(params: Readonly<{
+function createBoundAgentCliSystemToolService(params: Readonly<{
     agentId: string;
-    runtimeSpec: AgentCliRuntimeDescriptor;
     binding: AgentCliSystemToolBinding;
     definition: PluginExecSystemToolDefinition;
-    processEnv: NodeJS.ProcessEnv;
+    resolveLaunch(): AgentCliLaunchSpec | null;
+    resolutionEnvironment(launch: AgentCliLaunchSpec): NodeJS.ProcessEnv;
     delegate: ExecSystemToolServiceV1;
 }>): ExecSystemToolServiceV1 {
     if (params.binding.toolId !== params.definition.toolId) {
@@ -61,9 +60,7 @@ export function createAgentCliSystemToolService(params: Readonly<{
                 return await params.delegate.resolve(request);
             }
 
-            const launch = resolveAgentCliLaunchSpecForRuntime(params.runtimeSpec, {
-                processEnv: params.processEnv,
-            });
+            const launch = params.resolveLaunch();
             if (!launch) {
                 return failUnavailable(params.agentId, 'canonical Agent CLI resolution failed');
             }
@@ -74,7 +71,7 @@ export function createAgentCliSystemToolService(params: Readonly<{
             const resolver = createPluginExecSystemToolResolver({
                 definitions: Object.freeze([params.definition]),
                 baseEnv: Object.freeze({
-                    ...params.processEnv,
+                    ...params.resolutionEnvironment(launch),
                     PATH: '',
                 }),
                 preferredPathAccess: 'readable-javascript',
@@ -84,17 +81,77 @@ export function createAgentCliSystemToolService(params: Readonly<{
                 ...request,
                 preferredPath: launch.resolvedPath,
             });
+            const exactLaunch = Object.freeze({
+                ...resolved.launch,
+                executablePath: launch.command,
+                args: Object.freeze([...launch.args]),
+            });
+            const exactResolved = Object.freeze({
+                ...resolved,
+                launch: exactLaunch,
+            });
             if (
-                resolved.executablePath !== launch.resolvedPath
-                || resolved.launch.executablePath !== launch.command
-                || !sameArgs(resolved.launch.args ?? [], launch.args)
+                exactResolved.executablePath !== launch.resolvedPath
+                || exactResolved.launch.executablePath !== launch.command
+                || !sameArgs(exactResolved.launch.args ?? [], launch.args)
             ) {
                 return failUnavailable(
                     params.agentId,
                     'system-tool launch did not preserve canonical Agent CLI identity',
                 );
             }
-            return resolved;
+            return exactResolved;
         },
+    });
+}
+
+/**
+ * Binds one explicitly declared system tool to the canonical Agent CLI
+ * resolver without exposing the host-resolved path through the public SDK.
+ */
+export function createAgentCliSystemToolService(params: Readonly<{
+    agentId: string;
+    runtimeSpec: AgentCliRuntimeDescriptor;
+    binding: AgentCliSystemToolBinding;
+    definition: PluginExecSystemToolDefinition;
+    processEnv: NodeJS.ProcessEnv;
+    delegate: ExecSystemToolServiceV1;
+}>): ExecSystemToolServiceV1 {
+    return createBoundAgentCliSystemToolService({
+        agentId: params.agentId,
+        binding: params.binding,
+        definition: params.definition,
+        resolveLaunch: () => resolveAgentCliLaunchSpecForRuntime(
+            params.runtimeSpec,
+            { processEnv: params.processEnv },
+        ),
+        resolutionEnvironment: () => params.processEnv,
+        delegate: params.delegate,
+    });
+}
+
+/**
+ * Uses the daemon-admitted launch exactly as captured, without consulting the
+ * current daemon environment or exposing that launch spec through plugin APIs.
+ */
+export function createRetainedAgentCliSystemToolService(params: Readonly<{
+    agentId: string;
+    binding: AgentCliSystemToolBinding;
+    definition: PluginExecSystemToolDefinition;
+    launch: AgentCliLaunchSpec;
+    delegate: ExecSystemToolServiceV1;
+}>): ExecSystemToolServiceV1 {
+    return createBoundAgentCliSystemToolService({
+        agentId: params.agentId,
+        binding: params.binding,
+        definition: params.definition,
+        resolveLaunch: () => params.launch,
+        // The generic grant owner needs a JavaScript runner only when the
+        // already-admitted CLI is a script. Pin it to the admitted command;
+        // do not read the current daemon process environment.
+        resolutionEnvironment: (launch) => ({
+            HAPPIER_JS_RUNTIME_PATH: launch.command,
+        }),
+        delegate: params.delegate,
     });
 }

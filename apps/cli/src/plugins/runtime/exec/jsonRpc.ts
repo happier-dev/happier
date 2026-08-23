@@ -15,6 +15,7 @@ import { attachJsonlLineReader } from '@/agent/runtime/jsonl/attachJsonlLineRead
 import {
     PluginExecClientError,
     createPluginExecClientAbortError,
+    createPluginExecClientProtocolError,
     sanitizeExecDiagnosticText,
 } from './errors';
 import { createPluginProtocolCallbackQueue } from './callbackQueue';
@@ -62,12 +63,8 @@ function readId(value: unknown): string | number | null {
     return typeof value === 'string' || typeof value === 'number' ? value : null;
 }
 
-function createProtocolError(message: string, cause?: unknown, stderrPreview?: string): PluginExecClientError {
-    return new PluginExecClientError('PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', message, { cause, stderrPreview });
-}
-
 function createFrameSizeError(maxFrameBytes: number, stderrPreview?: string): PluginExecClientError {
-    return createProtocolError(
+    return createPluginExecClientProtocolError(
         `JSON-RPC frame exceeded the configured size limit (${maxFrameBytes} bytes)`,
         undefined,
         stderrPreview,
@@ -350,14 +347,14 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
             return null;
         }
         if (!isObject(nextMessage)) {
-            throw createProtocolError('JSON-RPC message hook must pass, suppress, or replace with an object frame', undefined, readStderrPreview());
+            throw createPluginExecClientProtocolError('JSON-RPC message hook must pass, suppress, or replace with an object frame', undefined, readStderrPreview());
         }
         return nextMessage;
     }
 
     async function handleMessage(message: unknown): Promise<void> {
         if (!isObject(message)) {
-            failClient(createProtocolError('JSON-RPC frame must be an object', undefined, readStderrPreview()));
+            failClient(createPluginExecClientProtocolError('JSON-RPC frame must be an object', undefined, readStderrPreview()));
             return;
         }
         const hookedMessage = await applyJsonRpcMessageHook(message, 'incoming');
@@ -382,7 +379,7 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         }
         const method = typeof jsonMessage.method === 'string' ? jsonMessage.method : null;
         if (!method) {
-            failClient(createProtocolError('JSON-RPC frame must include a method or response id', undefined, readStderrPreview()));
+            failClient(createPluginExecClientProtocolError('JSON-RPC frame must include a method or response id', undefined, readStderrPreview()));
             return;
         }
         if (id !== null) {
@@ -397,7 +394,7 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
             inFlightRequestHandlers += 1;
             void handleRequest(jsonMessage, id, method)
                 .catch((error) => {
-                    failClient(createProtocolError('JSON-RPC request handler dispatch failed', error, readStderrPreview()));
+                    failClient(createPluginExecClientProtocolError('JSON-RPC request handler dispatch failed', error, readStderrPreview()));
                 })
                 .finally(() => {
                     inFlightRequestHandlers -= 1;
@@ -444,10 +441,10 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
                 return;
             }
             void handleMessage(message).catch((error) => {
-                failClient(createProtocolError('JSON-RPC message hook failed', error, readStderrPreview()));
+                failClient(createPluginExecClientProtocolError('JSON-RPC message hook failed', error, readStderrPreview()));
             });
         } catch (error) {
-            const failure = createProtocolError('Invalid JSON-RPC frame', error, readStderrPreview());
+            const failure = createPluginExecClientProtocolError('Invalid JSON-RPC frame', error, readStderrPreview());
             if (rejectCorrelatedFrame(line, failure)) return;
             failClient(failure);
         }
@@ -459,10 +456,10 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         }, {
             maxFrameBytes,
             onError: (error) => {
-                failClient(createProtocolError('JSON-RPC content-length reader failed', error, readStderrPreview()));
+                failClient(createPluginExecClientProtocolError('JSON-RPC content-length reader failed', error, readStderrPreview()));
             },
             onTrailingPartialFrame: () => {
-                failClient(createProtocolError('JSON-RPC stream ended with a trailing partial frame', undefined, readStderrPreview()));
+                failClient(createPluginExecClientProtocolError('JSON-RPC stream ended with a trailing partial frame', undefined, readStderrPreview()));
             },
         })
         : attachJsonlLineReader(params.stdout, handleLine, {
@@ -470,11 +467,11 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
             maxLineBytes: maxFrameBytes,
             onOversizedLine: rejectOversizedFrame,
             onError: (error) => {
-                failClient(createProtocolError('JSON-RPC LF reader failed', error, readStderrPreview()));
+                failClient(createPluginExecClientProtocolError('JSON-RPC LF reader failed', error, readStderrPreview()));
             },
             onTrailingPartialLine: (partialLine) => {
                 if (partialLine.length > 0) {
-                    failClient(createProtocolError('JSON-RPC stream ended with a trailing partial frame', undefined, readStderrPreview()));
+                    failClient(createPluginExecClientProtocolError('JSON-RPC stream ended with a trailing partial frame', undefined, readStderrPreview()));
                 }
             },
         });
@@ -564,13 +561,13 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
                 if (!wrote) {
                     correlator.reject(
                         requestId,
-                        createProtocolError('JSON-RPC request write was suppressed by a message hook', undefined, readStderrPreview()),
+                        createPluginExecClientProtocolError('JSON-RPC request write was suppressed by a message hook', undefined, readStderrPreview()),
                     );
                 }
             } catch (error) {
                 correlator.reject(
                     requestId,
-                    error instanceof Error ? error : createProtocolError('JSON-RPC write failed', error),
+                    error instanceof Error ? error : createPluginExecClientProtocolError('JSON-RPC write failed', error),
                 );
             }
             return await promise;

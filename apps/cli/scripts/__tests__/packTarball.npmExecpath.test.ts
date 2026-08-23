@@ -18,6 +18,10 @@ const packTarball = (options: Parameters<typeof packTarballImpl>[0]) => packTarb
   ...options,
   npmCliExistsSync: options.npmCliExistsSync ?? (() => true),
   assertInputCurrentnessImpl: async () => undefined,
+  // These cases drive npm invocation and artifact sanitization against a synthetic
+  // filesystem, so there is no promoted closure to compare; publication-closure
+  // identity has its own coverage in `publicationClosureIdentity.test.ts`.
+  assertPublicationClosureIdentityImpl: () => undefined,
   loadCliCommonWorkspacesModuleImpl:
     options.loadCliCommonWorkspacesModuleImpl ?? loadCliCommonWorkspacesModuleFromSource,
 });

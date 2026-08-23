@@ -389,6 +389,7 @@ type ActionDefinitionV1NonExecutionFields = Pick<ActionDefinitionV1,
     | 'toolExposure'
     | 'inputHints'
     | 'outputSchema'
+    | 'operation'
     | 'sideEffectClass'
     | 'inputSchema'
     | 'compatibility'

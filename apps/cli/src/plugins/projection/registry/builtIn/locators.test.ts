@@ -1,10 +1,36 @@
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, type TargetedContributionPointRef } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../sources/generatedBundledPlugins';
 import { loadBundledPluginLocators, type BundledPluginLocator } from './locators';
+
+const requireFromTest = createRequire(import.meta.url);
+
+function readSerializedBundledPluginManifest(packageName: string): unknown {
+    const manifestEntrypoint = requireFromTest.resolve(`${packageName}/manifest`);
+    const packageRoot = dirname(dirname(manifestEntrypoint));
+    return JSON.parse(readFileSync(
+        join(packageRoot, '.happier-plugin', 'plugin.json'),
+        'utf8',
+    )) as unknown;
+}
+
+type ContributionPointCollection =
+    | TargetedContributionPointRef<unknown>
+    | Readonly<{ protocols: readonly TargetedContributionPointRef<unknown>[] }>;
+
+function readSingleContributionPoint(
+    point: ContributionPointCollection,
+): TargetedContributionPointRef<unknown> {
+    if ('protocols' in point) throw new Error('Expected one contribution-point protocol');
+    return point;
+}
 
 function locator(overrides: Partial<BundledPluginLocator> = {}): BundledPluginLocator {
     return {
@@ -62,11 +88,13 @@ describe('bundled plugin locators', () => {
             },
         });
 
+        const point = readSingleContributionPoint(target.contributionPoints.providers);
+
         const [loaded] = loadBundledPluginLocators([locator({ manifest: target.manifest })]);
 
-        expect(loaded?.semanticPointRefs?.[0]).toBe(target.contributionPoints.providers);
+        expect(loaded?.semanticPointRefs?.[0]).toBe(point);
         expect(loaded?.semanticPointRefs?.[0]?.semanticCarrier).toBe(
-            target.contributionPoints.providers.semanticCarrier,
+            point.semanticCarrier,
         );
         expect(Object.getOwnPropertySymbols(target.manifest.contributes.pluginContributionPoints)).toEqual([]);
         expect(loaded?.manifest.contributes.pluginContributionPoints[0]).not.toHaveProperty('semanticCarrier');
@@ -132,6 +160,18 @@ describe('bundled plugin locators', () => {
                 .filter((candidate) => candidate.pluginId.startsWith('happier.scm.hosting.'))
                 .map((candidate) => candidate.pluginId),
         ).toEqual([]);
+    });
+
+    it('accepts the serialized Claude manifest through the same strict bundled intake', () => {
+        const claudeLocator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(
+            (candidate) => candidate.pluginId === 'happier.agent.claude',
+        );
+
+        expect(claudeLocator).toBeDefined();
+        expect(() => loadBundledPluginLocators([{
+            ...claudeLocator!,
+            manifest: readSerializedBundledPluginManifest(claudeLocator!.sourceSpec.locator),
+        }])).not.toThrow();
     });
 
 });

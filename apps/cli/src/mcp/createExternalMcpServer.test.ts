@@ -239,4 +239,76 @@ describe('createExternalMcpServer', () => {
     });
   });
 
+  it('retains a real MCP primary target while excluding unowned tracked targeting', async () => {
+    vi.doUnmock('@/mcp/resources/registerHappierMcpResources');
+    vi.doUnmock('@/mcp/server/registerHappierMcpBuiltInTools');
+    vi.resetModules();
+
+    type ToolHandler = (args: unknown, extra?: unknown) => Promise<unknown>;
+    type PrimaryTargetSetter = (args: Readonly<{ sessionId: string | null }>) => Promise<unknown>;
+
+    const handlers = new Map<string, ToolHandler>();
+
+    vi.doMock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
+      McpServer: class FakeMcpServer {
+        registerResource() {}
+        registerTool(name: string, _meta: unknown, handler: ToolHandler) {
+          handlers.set(name, handler);
+        }
+      },
+    }));
+
+    vi.doMock('@/session/actions/createCliActionExecutorHarness', () => ({
+      createCliActionExecutorHarness: (
+        _params: unknown,
+        overrides?: Readonly<{ sessionTargetPrimarySet?: PrimaryTargetSetter }>,
+      ) => ({
+        executor: {
+          execute: async (actionId: string, input: unknown, context: Readonly<{ defaultSessionId: string }>) => {
+            if (actionId === 'session.target.primary.set') {
+              const sessionId = input && typeof input === 'object' && !Array.isArray(input)
+                && typeof (input as Readonly<{ sessionId?: unknown }>).sessionId === 'string'
+                ? (input as Readonly<{ sessionId: string }>).sessionId
+                : null;
+              return {
+                ok: true as const,
+                result: await overrides?.sessionTargetPrimarySet?.({ sessionId }),
+              };
+            }
+            return {
+              ok: true as const,
+              result: { defaultSessionId: context.defaultSessionId },
+            };
+          },
+        },
+      }),
+    }));
+
+    const { createExternalMcpServer } = await import('@/mcp/createExternalMcpServer');
+    const { toolNames } = createExternalMcpServer({
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+    });
+
+    expect(toolNames).not.toContain('session_target_tracked_set');
+
+    const setPrimary = handlers.get('session_target_primary_set');
+    const listSessions = handlers.get('session_list');
+    expect(setPrimary).toBeDefined();
+    expect(listSessions).toBeDefined();
+
+    await expect(setPrimary?.({ sessionId: 'sess-primary' })).resolves.toMatchObject({ isError: false });
+    const listResult = await listSessions?.({}) as Readonly<{
+      isError: boolean;
+      content: readonly Readonly<{ type: string; text: string }>[];
+    }>;
+    expect(listResult.isError).toBe(false);
+    expect(JSON.parse(listResult.content[0]?.text ?? '{}')).toEqual({ defaultSessionId: 'sess-primary' });
+  });
+
 });

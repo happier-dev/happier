@@ -52,6 +52,10 @@ import {
 } from '../../runner/createHostDeclarativeAcpAgentRuntimeFactory';
 import type { ResolvedAgentContribution } from '../../../projection/registry/types';
 import {
+    indexAgentRoutingIdsByContributionIdentity,
+    readAgentRoutingIdForContributionIdentity,
+} from '../../../projection/registry/agentRoutingIdentity';
+import {
     readAgentPrimaryRuntime,
     readAgentSessionCapabilities,
 } from '../../../projection/registry/agentContributionDefinition';
@@ -134,7 +138,14 @@ export type GenerationBoundExternalSessionObservation = Readonly<{
 type AgentRuntimeRegistrationLeaseBase = Readonly<{
     pluginId: string;
     pluginVersion: string;
+    /** Host routing id. Qualified for an installed Agent. */
     agentId: string;
+    /**
+     * The Agent's own manifest-local id. Plugin-contribution identities —
+     * invocation seeds, custody keys, qualified contribution ids — are always
+     * `{pluginId, localId}`, never the host routing id.
+     */
+    localAgentId: string;
     generation: string;
     immutableGenerationId?: string | null;
     startupInstructionsVersions?: readonly [1];
@@ -1216,8 +1227,8 @@ function createLease(params: Readonly<{
             version: params.pluginVersion,
         });
         const contribution = Object.freeze({
-            id: params.agentId,
-            qualifiedId: `${params.pluginId}/agents/${params.agentId}`,
+            id: params.localAgentId,
+            qualifiedId: `${params.pluginId}/agents/${params.localAgentId}`,
         });
         const services = await createInvocationServices(input.signal, input.cwd);
         assertCurrent();
@@ -1259,7 +1270,7 @@ function createLease(params: Readonly<{
                 retirementSignal: params.retirementSignal,
             })
             : null;
-    const managedEndpointRead = contributionOwnedManagedEndpointRead
+    const managedEndpointRead = contributionOwnedManagedEndpointRead?.demand
         ?? params.managedEndpointRead;
     const externalSessions = params.boundedExternalSessions
         ?? (params.registration.externalSessions
@@ -1283,6 +1294,27 @@ function createLease(params: Readonly<{
                     : {}),
             })
             : undefined);
+    /**
+     * Observation is passive: it runs from persisted policy, with no user
+     * asking for anything. Supervising the contribution's *spawn* declaration
+     * is active — it starts and retains a process until the generation
+     * retires — so observation must not reach that shape. Attaching to a
+     * server the user already runs starts nothing, so following one stays
+     * available here through the same owner. When the contribution declares an
+     * owned spawn for the source, observation falls back to the Session-runner
+     * endpoint host, which reads a server a runner already started, and to a
+     * typed unavailable read when there is none.
+     */
+    const observationManagedEndpointRead: AgentExternalSessionsManagedEndpointReadHost | undefined =
+        contributionOwnedManagedEndpointRead
+            ? async (input) => (
+                await contributionOwnedManagedEndpointRead.attachedOnly(input)
+                    ?? await (
+                        params.managedEndpointRead?.(input)
+                        ?? createUnavailableAgentExternalSessionsManagedEndpointRead()
+                    )
+            )
+            : params.managedEndpointRead;
     const externalSessionObservation = params.boundedExternalSessionObservation
         ?? (params.registration.externalSessionObservation
             ? createGenerationBoundExternalSessionObservation({
@@ -1298,8 +1330,8 @@ function createLease(params: Readonly<{
                 assertCurrent,
                 isGenerationActive: params.isGenerationActive,
                 retirementSignal: params.retirementSignal,
-                ...(managedEndpointRead
-                    ? { managedEndpointRead }
+                ...(observationManagedEndpointRead
+                    ? { managedEndpointRead: observationManagedEndpointRead }
                     : {}),
             })
             : undefined);
@@ -1339,6 +1371,7 @@ function createLease(params: Readonly<{
         pluginId: params.pluginId,
         pluginVersion: params.pluginVersion,
         agentId: params.agentId,
+        localAgentId: params.localAgentId,
         generation: params.generation,
         immutableGenerationId: params.immutableGenerationId,
         ...(params.startupInstructionsVersions
@@ -1454,17 +1487,7 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
     const selectedAgentById = new Map(
         params.agents.map((agent) => [agent.id, agent] as const),
     );
-    const selectedAgentIdByPluginAndLocalId = new Map<string, ReadonlyMap<string, string>>();
-    for (const agent of params.agents) {
-        const pluginId = agent.identity?.pluginId ?? agent.pluginId;
-        if (!pluginId) {
-            continue;
-        }
-        const localId = agent.identity?.localId ?? agent.id;
-        const localIds = new Map(selectedAgentIdByPluginAndLocalId.get(pluginId));
-        localIds.set(localId, agent.id);
-        selectedAgentIdByPluginAndLocalId.set(pluginId, localIds);
-    }
+    const selectedAgentIdByIdentity = indexAgentRoutingIdsByContributionIdentity(params.agents);
     const candidates = params.targetRegistrations
         .filter((entry): entry is TargetRegistration & Readonly<{
             registration: Extract<ContributionRuntimeRegistration, { family: 'agents' }>;
@@ -1480,10 +1503,10 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
         if (!target) {
             continue;
         }
-        const agentId = selectedAgentIdByPluginAndLocalId
-            .get(candidate.pluginId)
-            ?.get(candidate.registration.localId)
-            ?? candidate.registration.localId;
+        const agentId = readAgentRoutingIdForContributionIdentity(selectedAgentIdByIdentity, {
+            pluginId: candidate.pluginId,
+            localId: candidate.registration.localId,
+        }) ?? candidate.registration.localId;
         const selectedPluginId = selectedOwnerByAgentId.get(agentId);
         if (selectedPluginId && selectedPluginId !== candidate.pluginId) {
             params.onDuplicate(Object.freeze({

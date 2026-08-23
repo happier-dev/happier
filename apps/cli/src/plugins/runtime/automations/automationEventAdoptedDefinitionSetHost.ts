@@ -32,6 +32,7 @@ import {
   createAutomationAccountEncryptionMaterialSnapshotV1,
   isAvailableE2eeAutomationAccountEncryptionV1,
   resolveValidatedAutomationAccountEncryptionV1,
+  type AvailableAutomationAccountEncryptionV1,
 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import type { StoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
@@ -102,28 +103,22 @@ function createEmptySignal(): AbortSignal {
   return new AbortController().signal;
 }
 
+/**
+ * Opens one stored definition under the Account crypto snapshot its refresh
+ * attempt already resolved. It never reads Account currentness itself: the set
+ * owns that boundary, and one reading per definition made adoption cost a
+ * remote round trip per Automation.
+ */
 async function projectStoredDefinition(params: Readonly<{
   storedDefinition: AutomationEventStoredDefinitionProjectionV1;
   eventDeclarationRelease: AutomationEventDeclarationReleaseV1;
   transport: AutomationEventSourcesListTransportV1;
-  resolveAccountEncryptionCurrentness: (
-    signal?: AbortSignal,
-  ) => Promise<AccountEncryptionCurrentnessResponse>;
-  resolveAccountEncryptionMaterial: (
-    signal?: AbortSignal,
-  ) => Promise<AccountScopedCryptoMaterialSnapshotV1 | null>;
+  accountEncryption: AvailableAutomationAccountEncryptionV1;
   signal?: AbortSignal;
 }>): Promise<AutomationEventAdoptedDefinitionForAdmissionV1 | null> {
   const signal = params.signal ?? createEmptySignal();
-  const accountEncryption = await resolveValidatedAutomationAccountEncryptionV1({
-    signal,
-    resolveAccountEncryptionCurrentness: params.resolveAccountEncryptionCurrentness,
-    resolveAccountEncryptionMaterial: params.resolveAccountEncryptionMaterial,
-  });
-  if (
-    signal.aborted
-    || accountEncryption.kind !== 'available'
-  ) return null;
+  const accountEncryption = params.accountEncryption;
+  if (signal.aborted) return null;
 
   const binding = AutomationTriggerDefinitionBindingV1Schema.parse({
     v: 1,
@@ -242,19 +237,12 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
   const resolveAccountEncryptionMaterial = params.resolveAccountEncryptionMaterial
     ?? (async (_signal?: AbortSignal) =>
       createAutomationAccountEncryptionMaterialSnapshotV1(params.credentials));
-  const revalidateAccountContent = async (signal?: AbortSignal): Promise<boolean> => {
+  // One Account crypto/currentness owner for every boundary this set has.
+  const resolveAccountEncryption = async (
+    signal?: AbortSignal,
+  ): Promise<AvailableAutomationAccountEncryptionV1 | null> => {
     const accountEncryption = await resolveValidatedAutomationAccountEncryptionV1({
       signal: signal ?? createEmptySignal(),
-      resolveAccountEncryptionCurrentness,
-      resolveAccountEncryptionMaterial,
-    });
-    return accountEncryption.kind === 'available';
-  };
-  const resolveAdmissionAccountEncryption = async (
-    signal: AbortSignal,
-  ) => {
-    const accountEncryption = await resolveValidatedAutomationAccountEncryptionV1({
-      signal,
       resolveAccountEncryptionCurrentness,
       resolveAccountEncryptionMaterial,
     });
@@ -267,15 +255,18 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
     generationSignal: params.generationSignal,
     isGenerationCurrent: params.isGenerationCurrent,
     revalidateCallerMaterialization: params.revalidateCallerMaterialization,
-    revalidateAccountContent,
-    resolveAdmissionAccountEncryption,
+    resolveAccountEncryption,
     readStoredDefinitions,
-    projectStoredDefinition: async ({ storedDefinition, eventDeclarationRelease, signal }) => await projectStoredDefinition({
+    projectStoredDefinition: async ({
       storedDefinition,
       eventDeclarationRelease,
+      accountEncryption,
+      signal,
+    }) => await projectStoredDefinition({
+      storedDefinition,
+      eventDeclarationRelease,
+      accountEncryption,
       transport: params.transport,
-      resolveAccountEncryptionCurrentness,
-      resolveAccountEncryptionMaterial,
       ...(signal ? { signal } : {}),
     }),
   });

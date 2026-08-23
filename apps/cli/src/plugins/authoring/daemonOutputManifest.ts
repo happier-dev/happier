@@ -16,6 +16,7 @@ import {
 } from 'node:path';
 
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { realpathNearestExistingAncestor } from './physicalAncestorPath';
 
 /**
  * The authoring bundler is the owner of this small transition record. It is
@@ -31,20 +32,6 @@ type PluginDaemonOutputManifest = Readonly<{
   version: 1;
   outputs: readonly string[];
 }>;
-
-async function realpathNearestExistingAncestor(targetPath: string): Promise<string> {
-  let candidatePath = targetPath;
-  while (true) {
-    try {
-      return await realpath(candidatePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
-      const parentPath = dirname(candidatePath);
-      if (parentPath === candidatePath) throw error;
-      candidatePath = parentPath;
-    }
-  }
-}
 
 /** Check a project-relative path without following a symlinked project child. */
 async function assertContainedNoFollowPath(params: Readonly<{

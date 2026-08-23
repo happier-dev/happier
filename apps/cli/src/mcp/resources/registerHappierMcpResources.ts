@@ -53,7 +53,7 @@ export function registerHappierMcpResources(
               surface,
               isActionEnabled,
             })
-              .map(serializeActionSpec),
+              .map((spec) => serializeActionSpec(spec)),
           }),
         },
       ],

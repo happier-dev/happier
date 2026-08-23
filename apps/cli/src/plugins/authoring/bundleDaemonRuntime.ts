@@ -15,6 +15,7 @@ import { resolvePortablePluginRelativePath } from '@/plugins/manifest/portableRe
 import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '@/plugins/runtime/activationSources';
 import { isCanonicalAbsolutePathInsideRoot as isPathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { writePluginDaemonOutputManifest } from './daemonOutputManifest';
+import { realpathNearestExistingAncestor } from './physicalAncestorPath';
 import { resolveSameInstallNodeModulesRoot } from './packageInstallationRoot';
 import {
   assertPluginDaemonEntryOutsideTypeScriptEmit,
@@ -23,6 +24,117 @@ import {
 import { evaluatePluginAuthorRuntimeStagingSource } from './runtimeStagingSource';
 
 const PACKED_ESM_EXTENSIONS = new Set(['.js', '.mjs']);
+
+/**
+ * esbuild labels every bundled module with a `// <path>` header rendered relative to the
+ * build working directory. The plugin bundler builds from a staged directory, so a module
+ * resolved outside it is labelled by walking up to the filesystem root — which stamps the
+ * author's absolute checkout path into the shipped bundle and makes the same source emit
+ * different bytes on two machines.
+ *
+ * The portable label is the module's path relative to the root that already spans this
+ * build: the plugin source root and the canonical workspace package roots it resolves
+ * against. A module outside that span is labelled from its last `node_modules` segment,
+ * and anything else by file name; all three are properties of the module, never of where
+ * the checkout happens to live.
+ */
+function resolvePortableModulePathRoot(
+  sourceRoot: string,
+  canonicalWorkspacePackageRoots: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const spannedRoots = [sourceRoot, ...Object.values(canonicalWorkspacePackageRoots ?? {})]
+    .map((root) => {
+      const resolvedRoot = resolve(root);
+      try {
+        return realpathSync(resolvedRoot);
+      } catch {
+        return resolvedRoot;
+      }
+    });
+  let commonSegments = spannedRoots[0]?.split(sep) ?? [];
+  for (const root of spannedRoots.slice(1)) {
+    const segments = root.split(sep);
+    let shared = 0;
+    while (shared < commonSegments.length && shared < segments.length && commonSegments[shared] === segments[shared]) {
+      shared += 1;
+    }
+    commonSegments = commonSegments.slice(0, shared);
+  }
+  // A span that reaches the filesystem root labels nothing portably.
+  if (commonSegments.filter((segment) => segment.length > 0).length === 0) return undefined;
+  return commonSegments.join(sep);
+}
+
+function portableModulePathLabel(
+  inputKey: string,
+  options: Readonly<{ buildWorkingDirectory: string; portableRoot: string | undefined }>,
+): string {
+  // Keys that do not escape the build working directory are already checkout-independent.
+  if (!inputKey.startsWith('../') && !isAbsolute(inputKey)) return inputKey;
+  const absolutePath = resolve(options.buildWorkingDirectory, inputKey);
+  if (options.portableRoot && isPathInsideRoot(options.portableRoot, absolutePath)) {
+    return relative(options.portableRoot, absolutePath).split(sep).join('/');
+  }
+  const segments = absolutePath.split(sep);
+  const lastNodeModulesIndex = segments.lastIndexOf('node_modules');
+  if (lastNodeModulesIndex >= 0) return segments.slice(lastNodeModulesIndex).join('/');
+  return segments[segments.length - 1] ?? inputKey;
+}
+
+/**
+ * esbuild writes each module key twice: once as a `// <key>` comment, and — for every module
+ * it wraps in `__commonJS`/`__esm` — again as the registry object's property name, which is an
+ * executable string literal in the shipped bundle. Both carry the same non-portable label.
+ *
+ * The registry entry is emitted as `  "<key>"(<params>) {`. It names the wrapper function for
+ * stack traces only; each wrapper object holds exactly one key, so relabelling it cannot
+ * collide with a sibling or change which module the bundle loads.
+ */
+const ESBUILD_MODULE_REGISTRY_KEY_INDENT = '  ';
+
+function rewriteEsbuildModuleRegistryKeyLine(
+  line: string,
+  portableLabelsByInputKey: ReadonlyMap<string, string>,
+): string {
+  if (!line.startsWith(`${ESBUILD_MODULE_REGISTRY_KEY_INDENT}"`)) return line;
+  const keyStart = ESBUILD_MODULE_REGISTRY_KEY_INDENT.length;
+  let cursor = keyStart + 1;
+  while (cursor < line.length && line[cursor] !== '"') {
+    cursor += line[cursor] === '\\' ? 2 : 1;
+  }
+  // Only an immediately following parameter list is a module-registry entry; anything else
+  // is an ordinary string the author's own code may own.
+  if (line[cursor] !== '"' || line[cursor + 1] !== '(') return line;
+  let inputKey: unknown;
+  try {
+    inputKey = JSON.parse(line.slice(keyStart, cursor + 1));
+  } catch {
+    return line;
+  }
+  if (typeof inputKey !== 'string') return line;
+  const portableLabel = portableLabelsByInputKey.get(inputKey);
+  if (portableLabel === undefined) return line;
+  return `${ESBUILD_MODULE_REGISTRY_KEY_INDENT}${JSON.stringify(portableLabel)}${line.slice(cursor + 1)}`;
+}
+
+/**
+ * Rewrites only lines that exactly reproduce a module key esbuild reported for this build,
+ * so an author's own comment or string is never touched.
+ */
+export function rewriteEsbuildModulePathLabels(
+  source: string,
+  portableLabelsByInputKey: ReadonlyMap<string, string>,
+): string {
+  if (portableLabelsByInputKey.size === 0) return source;
+  return source
+    .split('\n')
+    .map((line) => {
+      if (!line.startsWith('// ')) return rewriteEsbuildModuleRegistryKeyLine(line, portableLabelsByInputKey);
+      const portableLabel = portableLabelsByInputKey.get(line.slice(3));
+      return portableLabel === undefined ? line : `// ${portableLabel}`;
+    })
+    .join('\n');
+}
 
 // esbuild exposes no public hook for its ESM dynamic-require fallback. This
 // exact compiler release is therefore part of the generated-output contract.
@@ -247,20 +359,6 @@ async function validateContainedPackSourceImports(params: Readonly<{
       throw new Error(
         `Plugin author source import '${imported.original ?? imported.path}' resolves outside the package root`,
       );
-    }
-  }
-}
-
-async function realpathNearestExistingAncestor(targetPath: string): Promise<string> {
-  let candidatePath = targetPath;
-  while (true) {
-    try {
-      return await realpath(candidatePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
-      const parentPath = dirname(candidatePath);
-      if (parentPath === candidatePath) throw error;
-      candidatePath = parentPath;
     }
   }
 }
@@ -758,10 +856,26 @@ export async function stagePluginDaemonRuntime(
       return Object.freeze({ outputKey, absoluteOutputPath });
     });
 
+    const portableRoot = resolvePortableModulePathRoot(
+      sourceRoot,
+      params.canonicalWorkspacePackageRoots,
+    );
+    const portableLabelsByInputKey = new Map(
+      Object.keys(buildResult.metafile.inputs)
+        .map((inputKey) => [
+          inputKey,
+          portableModulePathLabel(inputKey, { buildWorkingDirectory, portableRoot }),
+        ] as const)
+        .filter(([inputKey, portableLabel]) => inputKey !== portableLabel),
+    );
+
     for (const { absoluteOutputPath } of emittedOutputs) {
       const emittedPath = absoluteOutputPath;
       const emittedSource = await readFile(emittedPath, 'utf8');
-      const rewrittenSource = rewriteEsbuildDynamicRequireHelper(emittedSource);
+      const rewrittenSource = rewriteEsbuildModulePathLabels(
+        rewriteEsbuildDynamicRequireHelper(emittedSource),
+        portableLabelsByInputKey,
+      );
       if (rewrittenSource !== emittedSource) {
         await writeFile(emittedPath, rewrittenSource, 'utf8');
       }

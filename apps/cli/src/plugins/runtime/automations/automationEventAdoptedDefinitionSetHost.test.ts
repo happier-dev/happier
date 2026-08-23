@@ -880,3 +880,48 @@ describe('Automation Event adopted-definition host factory', () => {
     }]);
   });
 });
+
+describe('adopted definition set Account-currentness cost', () => {
+  /**
+   * The adopted catalog publishes atomically, so nothing is observable while it
+   * is built. One Account crypto/currentness snapshot therefore covers the
+   * whole attempt: the per-definition reads that made adoption O(N) remote
+   * round trips buy no observable guarantee the boundary rechecks do not.
+   */
+  it('reads Account currentness a constant number of times per refresh attempt', async () => {
+    const measure = async (definitionCount: number) => {
+      let currentnessReads = 0;
+      const definitions = Array.from({ length: definitionCount }, (_unused, index) => (
+        storedDefinition({ automationId: `automation-${index + 1}` })
+      ));
+      const owner = createAutomationEventAdoptedDefinitionSetHostV1({
+        credentials,
+        caller,
+        transport: { kind: 'checkpointedPull' },
+        generationSignal: new AbortController().signal,
+        isGenerationCurrent: () => true,
+        revalidateCallerMaterialization: async () => true,
+        readStoredDefinitions: async (): Promise<AutomationEventStoredDefinitionsReadResultV1> => ({
+          kind: 'page',
+          revision: '7',
+          eventDeclarationRelease,
+          definitions,
+          nextCursor: null,
+        }),
+        resolveAccountEncryptionCurrentness: async () => {
+          currentnessReads += 1;
+          return await plainCurrentness();
+        },
+        resolveAccountEncryptionMaterial: async () => null,
+      });
+      await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '7' });
+      return currentnessReads;
+    };
+
+    const oneDefinition = await measure(1);
+    const twentyDefinitions = await measure(20);
+    expect(twentyDefinitions).toBe(oneDefinition);
+    // Attempt snapshot, page boundary, closing boundary.
+    expect(oneDefinition).toBe(3);
+  });
+});

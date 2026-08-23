@@ -328,7 +328,7 @@ describe('PluginRegistryCommitCoordinator', () => {
     const prepared = await prepareImmutablePluginGeneration({
       paths,
       sourceRootPath,
-      record: {
+      record: { sourceProvenance: 'registryCustodied',
         t: 'happier_plugin_generation_v1',
         schemaVersion: 1,
         pluginId: 'acme.plugin',

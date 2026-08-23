@@ -5,10 +5,8 @@ import type {
   ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
 
-import {
-  handlePluginCommandCliCommand,
-  resolvePluginCommandProjection,
-} from './pluginCommandContributions';
+import { handlePluginCommandCliCommand } from './pluginCommandContributions';
+import { resolvePluginCommandProjection } from './pluginCommandProjection';
 import {
   findCommandDispatchDescriptor,
   resolveCommandCompletionCandidates,

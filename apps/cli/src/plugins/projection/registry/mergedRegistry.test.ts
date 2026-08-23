@@ -135,13 +135,14 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme-agent')).toMatchObject({
-            id: 'acme-agent',
+        expect(registry.agentDefinitionsById.get('acme.ohmypi/acme-agent')).toMatchObject({
+            id: 'acme.ohmypi/acme-agent',
+            identity: { pluginId: 'acme.ohmypi', localId: 'acme-agent' },
             provenance: 'external',
             source: { kind: 'path' },
             definition: {
                 kindVersion: 1,
-                id: 'acme-agent',
+                id: 'acme.ohmypi/acme-agent',
                 ownedBackendIds: [],
             },
         });
@@ -255,7 +256,7 @@ describe('resolveMergedContributionRegistry', () => {
         });
         expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
         expect(registry.agentDefinitionsById.get('codex')).not.toHaveProperty('getRuntimeCore');
-        expect(registry.agentDefinitionsById.get('acme-agent')).toMatchObject({
+        expect(registry.agentDefinitionsById.get('acme.ohmypi/acme-agent')).toMatchObject({
             richDefinition: {
                 provenance: 'external',
                 definition: expect.objectContaining({
@@ -364,7 +365,7 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme-invalid')).toBeUndefined();
+        expect(registry.agentDefinitionsById.get('acme.invalid/acme-invalid')).toBeUndefined();
         expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
         expect(registry.pluginDiagnosticsByPluginId['acme.invalid']).toEqual(expect.arrayContaining([
             expect.objectContaining({
@@ -451,12 +452,12 @@ describe('resolveMergedContributionRegistry', () => {
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
         expect(registry.pluginDiagnosticsByPluginId['acme.review.coderabbit']).toEqual([]);
-        expect(registry.agentDefinitionsById.get('acme-review')).toMatchObject({
-            id: 'acme-review',
+        expect(registry.agentDefinitionsById.get('acme.review.coderabbit/acme-review')).toMatchObject({
+            id: 'acme.review.coderabbit/acme-review',
             pluginId: 'acme.review.coderabbit',
             runtimeSpec: null,
         });
-        expect(registry.catalogEntriesById['acme-review']).toBeUndefined();
+        expect(registry.catalogEntriesById['acme.review.coderabbit/acme-review']).toBeUndefined();
         expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
         expect(registry.executionRunProfilesById?.get('acme.review.coderabbit/review')).toMatchObject({
             pluginId: 'acme.review.coderabbit',
@@ -516,7 +517,7 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme-orphaned')).toBeUndefined();
+        expect(registry.agentDefinitionsById.get('acme.orphaned/acme-orphaned')).toBeUndefined();
         expect(registry.pluginDiagnosticsByPluginId['acme.orphaned']).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 code: 'plugin_manifest_invalid',
@@ -688,7 +689,7 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme-agent')).toBeUndefined();
+        expect(registry.agentDefinitionsById.get('acme.ohmypi/acme-agent')).toBeUndefined();
         expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
         expect(registry.pluginDiagnosticsByPluginId['acme.ohmypi']).toEqual(expect.arrayContaining([
             expect.objectContaining({
@@ -746,8 +747,8 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme-runtime')).toMatchObject({
-            id: 'acme-runtime',
+        expect(registry.agentDefinitionsById.get('acme.runtime/acme-runtime')).toMatchObject({
+            id: 'acme.runtime/acme-runtime',
             richDefinition: {
                 provenance: 'external',
                 definition: expect.objectContaining({
@@ -817,7 +818,7 @@ describe('resolveMergedContributionRegistry', () => {
         });
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
-        expect(registry.agentDefinitionsById.get('acme-runtime')).toBeUndefined();
+        expect(registry.agentDefinitionsById.get('acme.runtime/acme-runtime')).toBeUndefined();
         expect(registry.pluginDiagnosticsByPluginId['acme.runtime']).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'plugin_manifest_invalid' }),
         ]));

@@ -2095,7 +2095,11 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             return drift;
         }
         if (result.status === 'awaitingOAuthRedirect') {
-            attempt.phase = 'awaitingOAuth';
+            // The transaction snapshot reads the provider expiry, so stage it before
+            // the durable write. The actionable phase and its response stay
+            // unpublished until that acknowledgement lands and the attempt is proven
+            // still current: an eager read or completion must never act on
+            // authorization this daemon could not recover after a restart.
             attempt.oauthExpiresAtMs = result.expiresAtMs ?? null;
             const response: AttemptResponse = {
                 status: 'awaitingOAuth',
@@ -2104,7 +2108,6 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 callbackUrl: attempt.oauthTransaction!.request.callbackUrl,
                 ...(result.expiresAtMs === undefined ? {} : { expiresAtMs: result.expiresAtMs }),
             };
-            attempt.lastResponse = response;
             try {
                 await acknowledgeOAuthTransaction(attempt, 'awaitingOAuth');
             } catch {
@@ -2136,10 +2139,14 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 }
                 return afterAcknowledge;
             }
+            attempt.phase = 'awaitingOAuth';
+            attempt.lastResponse = response;
             return response;
         }
         if (result.status === 'awaitingDeviceAuthorization') {
-            attempt.phase = 'awaitingDeviceAuthorization';
+            // Same publication rule as the OAuth branch: the snapshot needs the device
+            // state, but the actionable phase and response wait for the durable
+            // acknowledgement and the currentness recheck.
             attempt.device = {
                 expiresAtMs: result.expiresAtMs,
                 pollIntervalMs: result.pollIntervalMs,
@@ -2187,13 +2194,17 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 expiresAtMs: result.expiresAtMs,
                 pollIntervalMs: result.pollIntervalMs,
             };
+            attempt.phase = 'awaitingDeviceAuthorization';
             attempt.lastResponse = response;
             return response;
         }
         if (result.status === 'pending') {
-            attempt.phase = attempt.admission.descriptor.kind === 'oauthDeviceCode'
-                ? 'awaitingDeviceAuthorization'
-                : 'outcomeUnknown';
+            const republishesDevicePhase =
+                attempt.admission.descriptor.kind === 'oauthDeviceCode';
+            // `outcomeUnknown` is an uncertainty phase, not an actionable one, so it is
+            // published immediately. The device phase re-publication waits for the same
+            // acknowledgement and currentness recheck as its first publication.
+            if (!republishesDevicePhase) attempt.phase = 'outcomeUnknown';
             if (attempt.oauthTransaction) {
                 try {
                     await acknowledgeOAuthTransaction(attempt, 'outcomeUnknown');
@@ -2261,6 +2272,9 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     await cleanUpAfterDeviceAcknowledgementDrift(attempt, afterAcknowledge);
                     return afterAcknowledge;
                 }
+            }
+            if (republishesDevicePhase) {
+                attempt.phase = 'awaitingDeviceAuthorization';
             }
             const response: AttemptResponse = {
                 status: 'pending',

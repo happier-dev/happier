@@ -82,7 +82,12 @@ import {
 
 type NativeAgentSessionOpenIntent =
     | Readonly<{ kind: 'create' }>
-    | Readonly<{ kind: 'resume'; providerSessionId: string; importHistory: boolean }>
+    | Readonly<{
+        kind: 'resume';
+        providerSessionId: string;
+        importHistory: boolean;
+        strictNativeResumeIdentity?: boolean;
+    }>
     | Readonly<{ kind: 'fork'; source: NativeForkSource }>;
 
 type NativeAgentSessionRuntimeCreation = Readonly<{
@@ -581,6 +586,7 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
 
 function resolveInitialNativeAgentSessionOpenIntent(
     sessionInput: PluginSessionBindingInput,
+    strictNativeResumeIdentity: boolean,
 ): NativeAgentSessionOpenIntent {
     const providerSessionId = normalizeNonEmptyString(sessionInput.resume.resumeSessionId);
     const nativeForkSource = sessionInput.nativeForkSource;
@@ -592,6 +598,9 @@ function resolveInitialNativeAgentSessionOpenIntent(
             kind: 'resume',
             providerSessionId,
             importHistory: true,
+            ...(strictNativeResumeIdentity
+                ? { strictNativeResumeIdentity: true }
+                : {}),
         });
     }
     return Object.freeze({ kind: 'create' });
@@ -948,7 +957,10 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
                 createNativeRuntime: async (runtimeParams) => {
                     const initialRuntime = normalizeNativeAgentSessionRuntimeCreation(
                         await params.createSessionRuntime(
-                            resolveInitialNativeAgentSessionOpenIntent(params.sessionInput),
+                            resolveInitialNativeAgentSessionOpenIntent(
+                                params.sessionInput,
+                                runtimeParams.strictNativeResumeIdentity === true,
+                            ),
                             runtimeParams,
                         ),
                     );

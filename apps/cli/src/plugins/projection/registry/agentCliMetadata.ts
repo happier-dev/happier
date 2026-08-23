@@ -117,7 +117,7 @@ function createMetadataAuthStatusProbe(
             const result = await runCliCommandBestEffort({
                 resolvedPath: 'gh',
                 args: ['auth', 'token'],
-                timeoutMs: 1_500,
+                timeoutMs: resolveCopilotGhAuthProbeTimeoutMs(),
             });
             return result.ok && `${result.stdout}\n${result.stderr}`.trim().length > 0
                 ? { state: 'logged_in', method: 'oauth_cli', source: 'command' }
@@ -198,6 +198,18 @@ function resolveMetadataEnvironmentStatus(
             : 'api_key_env' as const,
         source: 'env' as const,
     };
+}
+
+/**
+ * The GitHub CLI token probe is slower than the generic status-probe budget on a
+ * cold `gh` install, so operators can widen it. This is the one owner of that
+ * documented key; the retired host-owned ACP auth fallback used to read it.
+ */
+function resolveCopilotGhAuthProbeTimeoutMs(): number {
+    const raw = process.env.HAPPIER_COPILOT_CLI_AUTH_PROBE_TIMEOUT_MS;
+    const normalized = typeof raw === 'string' ? raw.replaceAll('_', '').trim() : '';
+    const parsed = normalized.length > 0 ? Number(normalized) : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 1_500;
 }
 
 function commandFailureStatus(exitCode: number | null) {

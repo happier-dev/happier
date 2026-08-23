@@ -23,7 +23,7 @@ describe('bundled activation policy', () => {
           dangerLevel: 'safe',
         }],
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingestion.ok) throw new Error('Fixture must normalize');
     const diagnosticsByPluginId = {};
     const policy = readBundledActivationPolicy({
@@ -82,7 +82,7 @@ describe('bundled activation policy', () => {
           },
         }],
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingestion.ok) throw new Error('Fixture must normalize');
 
     const policy = buildActivationPolicy(ingestion.manifest);
@@ -119,7 +119,7 @@ describe('bundled activation policy', () => {
           }],
           optional: [],
         },
-      });
+      }, { sourceProvenance: 'registryCustodied' });
       if (!leastPrivilegeIngestion.ok) throw new Error('Least-privilege fixture must normalize');
 
       const leastPrivilegePolicy = buildActivationPolicy(leastPrivilegeIngestion.manifest);
@@ -152,7 +152,7 @@ describe('bundled activation policy', () => {
         }],
         optional: [],
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingestion.ok) throw new Error('Fixture must normalize');
 
     const policy = buildActivationPolicy(ingestion.manifest);
@@ -189,7 +189,7 @@ describe('bundled activation policy', () => {
           executableNames: ['agent-cli'],
         }],
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingestion.ok) throw new Error('Fixture must normalize');
 
     expect(buildActivationPolicy(ingestion.manifest).runtimeCapabilities)
@@ -213,7 +213,7 @@ describe('bundled activation policy', () => {
           scope: { enabled: true },
         }],
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingestion.ok) throw new Error('Fixture must normalize');
 
     const policy = buildActivationPolicy(ingestion.manifest);
@@ -238,7 +238,7 @@ describe('bundled activation policy', () => {
           origins: ['https://api.example.test', 'https://other.example.test'],
         }],
       },
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingestion.ok) throw new Error('Fixture must normalize');
 
     const policy = buildActivationPolicy(ingestion.manifest);

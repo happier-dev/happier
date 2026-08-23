@@ -4,6 +4,7 @@ import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
     isPluginError,
     PluginError,
+    type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
@@ -18,6 +19,7 @@ import {
 import type { HostCurrentSessionPresentationService } from '@/agent/runtime/state/currentSessionUiTypes';
 
 import { createTargetActionInvocationRegistry } from './targetActionRegistry';
+import type { TargetActionCurrentIntentRequest } from './actionExecutor';
 import { createTargetActionHostBindingResolver } from '../hostAccess/resolve';
 import {
     createUnavailablePluginServicesFactory,
@@ -87,6 +89,156 @@ function createRegistry(
 }
 
 describe('target action invocation registry', () => {
+    it('requires current intent before a safe handler when the host stamps Action-settings approval', async () => {
+        const handler = vi.fn(async () => ({ echoed: 'approved' }));
+        const registry = createRegistry({ actions: [{ ...action(), handler }] });
+        let approve: ((value: Readonly<{ status: 'approved'; fingerprint: string }>) => void) | undefined;
+        const requestCurrentIntent = vi.fn(async (request: TargetActionCurrentIntentRequest) => await new Promise<Readonly<{
+            status: 'approved'; fingerprint: string;
+        }>>((resolve) => {
+            approve = (value) => resolve(value);
+        }));
+
+        const invocation = registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+            isApprovalRequiredByActionSettings: () => true,
+            requestCurrentIntent,
+        });
+
+        await vi.waitFor(() => expect(requestCurrentIntent).toHaveBeenCalledOnce());
+        expect(handler).not.toHaveBeenCalled();
+        const request = requestCurrentIntent.mock.calls[0]?.[0];
+        if (!request || !approve) throw new Error('Expected host Action-settings approval request');
+        approve({ status: 'approved', fingerprint: request.fingerprint });
+
+        await expect(invocation).resolves.toEqual({ status: 'executed', value: { echoed: 'approved' } });
+        expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it('rechecks host Action-settings enablement immediately before the handler', async () => {
+        const handler = vi.fn(async () => ({ echoed: 'should-not-run' }));
+        const registry = createRegistry({ actions: [{ ...action(), handler }] });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+            isEnabledByActionSettings: () => false,
+        })).resolves.toMatchObject({
+            status: 'unavailable',
+            code: 'plugin_action_unavailable',
+            actionHandlerInvocation: 'notStarted',
+        });
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('prepares without entering the handler and runs the exact admitted handler once with progress', async () => {
+        const handler = vi.fn(async (_input, context: PluginInvocationContext) => {
+            context.operation?.update({ phase: 'publishing', label: 'Publishing' });
+            return { echoed: 'ready' };
+        });
+        const registry = createRegistry({
+            actions: [{
+                ...action({
+                    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+                }),
+                handler,
+            }],
+        });
+
+        const prepared = await registry.prepare({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'x' },
+            surface: 'cli',
+        });
+        expect(prepared.kind).toBe('ready');
+        expect(handler).not.toHaveBeenCalled();
+        if (prepared.kind !== 'ready') throw new Error('expected ready target action');
+        const update = vi.fn();
+        const first = prepared.run({ operationProgress: { update } });
+        const second = prepared.run({ operationProgress: { update } });
+
+        await expect(Promise.all([first, second])).resolves.toEqual([
+            { status: 'executed', value: { echoed: 'ready' } },
+            { status: 'executed', value: { echoed: 'ready' } },
+        ]);
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(update).toHaveBeenCalledWith({ phase: 'publishing', label: 'Publishing' });
+    });
+
+    it('reports validated tracked daemon Action progress through the host port', async () => {
+        const updates: unknown[] = [];
+        let retainedOperation: PluginInvocationContext['operation'];
+        const registry = createRegistry({
+            actions: [{
+                ...action({
+                    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+                }),
+                handler: async (_input, context) => {
+                    retainedOperation = context.operation;
+                    expect(context.operation).toBeDefined();
+                    expect(Object.keys(context.operation ?? {})).toEqual(['update']);
+                    context.operation?.update({ phase: 'indexing', label: 'Indexing files' });
+                    context.operation?.update({ current: 2, total: 4, label: 'Halfway' });
+                    expect(() => context.operation?.update({ current: 5, total: 4 })).toThrow();
+                    return { echoed: 'tracked' };
+                },
+            }],
+        });
+
+        await expect(registry.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: { value: 'x' },
+            surface: 'cli',
+            operationProgress: {
+                update: (progress) => updates.push(progress),
+            },
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'tracked' } });
+
+        retainedOperation?.update({ label: 'late' });
+        expect(updates).toEqual([
+            { phase: 'indexing', label: 'Indexing files' },
+            { current: 2, total: 4, label: 'Halfway' },
+        ]);
+    });
+
+    it('withholds the reporter for untracked Actions and returns tracked handler failures to the host', async () => {
+        const untrackedUpdate = vi.fn();
+        const untracked = createRegistry({
+            actions: [{
+                ...action(),
+                handler: async (_input, context) => {
+                    expect(context.operation).toBeUndefined();
+                    return { echoed: 'untracked' };
+                },
+            }],
+        });
+        await expect(untracked.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+            operationProgress: {
+                update: untrackedUpdate,
+            },
+        })).resolves.toEqual({ status: 'executed', value: { echoed: 'untracked' } });
+        expect(untrackedUpdate).not.toHaveBeenCalled();
+
+        const tracked = createRegistry({
+            actions: [{
+                ...action({
+                    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
+                }),
+                handler: async () => {
+                    throw new PluginError({ code: 'tracked_failed', message: 'Tracked failed' });
+                },
+            }],
+        });
+        await expect(tracked.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
+            operationProgress: {
+                update: vi.fn(),
+            },
+        })).resolves.toMatchObject({ status: 'failed', code: 'tracked_failed' });
+    });
+
     it('binds one Connected Account operation to the target correlation and disposes it at settlement', async () => {
         const dispose = vi.fn();
         let operationInput: Readonly<{

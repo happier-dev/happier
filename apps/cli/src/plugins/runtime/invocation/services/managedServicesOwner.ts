@@ -3571,69 +3571,57 @@ export function createManagedServicesOwner(input: Readonly<{
                     return endpointUrls.get(endpointTemplateId)?.toString()
                         ?? null;
                 },
-                async fetch(
-                    request: string | URL,
-                    init?: RequestInit,
-                ): Promise<Response> {
+                /**
+                 * The one transport for an admitted managed Provider endpoint.
+                 * It scopes the caller's relative request to the declared
+                 * endpoint paths, then dispatches through the exact supervised
+                 * handle, so header injection, credential currentness, redirect
+                 * refusal and request bounding have a single owner.
+                 */
+                async request(
+                    request: ManagedServiceRequest & Readonly<{ timeoutMs: number }>,
+                ): Promise<ManagedServiceResponse> {
                     if (!readsAccessCurrent()) return unavailable();
                     let target: URL;
                     try {
                         target = new URL(
-                            typeof request === 'string'
-                                ? request
-                                : request.toString(),
+                            request.pathAndQuery,
+                            projectedEndpoint.baseUrl,
                         );
                     } catch {
                         return unavailable();
                     }
                     if (
-                        // The scheme has to be the supervised endpoint's own, so
-                        // an attached https server is reachable while a request
-                        // still cannot be redirected onto another scheme.
+                        // The scheme and origin have to be the supervised
+                        // endpoint's own, so an attached https server is
+                        // reachable while a request still cannot leave it.
                         target.protocol !== projectedEndpoint.baseUrl.protocol
+                        || target.origin !== projectedEndpoint.baseUrl.origin
                         || target.username !== ''
                         || target.password !== ''
                         || target.hash !== ''
                         || !isWithinEndpointPath(target, endpointUrls)
                     ) return unavailable();
-                    const headers = new Headers(init?.headers);
-                    const providerHeaders = await facts.requestHeaders(
-                        'provider',
-                    );
-                    if (!readsAccessCurrent()) return unavailable();
-                    const injectedHeaders: Record<string, string> = {
-                        ...providerHeaders,
-                    };
-                    const credentialHeader = facts.credential?.httpHeader;
-                    if (credentialHeader) {
-                        injectedHeaders[credentialHeader.name] =
-                            credentialHeader.value;
-                    }
-                    const mergedHeaders = mergeManagedServiceRequestHeaders(
-                        headers,
-                        injectedHeaders,
-                    );
-                    const response = await executeManagedServiceFetch({
-                        fetch: hostFetch,
-                        target,
-                        init: {
-                            ...init,
-                            headers: mergedHeaders,
-                        },
-                        signals: [
-                            lifetime.signal,
-                            signal,
-                            facts.scope.signal,
-                            init?.signal,
-                        ],
-                        timeoutMs:
-                            DEFAULT_MANAGED_SERVICE_REQUEST_TIMEOUT_MS,
-                        isCurrent: readsAccessCurrent,
-                    });
-                    return new Response(response.body, {
-                        status: response.status,
-                        statusText: response.statusText,
-                        headers: response.headers,
+                    // The response body outlives this call frame, so the
+                    // composed signal must too: `composeAbortSignals` needs a
+                    // deterministic teardown this scope cannot provide.
+                    const signals = [
+                        lifetime.signal,
+                        signal,
+                        facts.scope.signal,
+                        request.signal,
+                    ].filter((candidate): candidate is AbortSignal => (
+                        candidate !== undefined && candidate !== null
+                    ));
+                    return await service.request({
+                        pathAndQuery: `${target.pathname}${target.search}`,
+                        ...(request.method ? { method: request.method } : {}),
+                        ...(request.headers ? { headers: request.headers } : {}),
+                        ...(request.body ? { body: request.body } : {}),
+                        timeoutMs: request.timeoutMs,
+                        signal: signals.length === 1
+                            ? signals[0]!
+                            : AbortSignal.any(signals),
                     });
                 },
             });

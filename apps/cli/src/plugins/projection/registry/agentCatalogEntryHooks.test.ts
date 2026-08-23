@@ -200,7 +200,6 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
             agentId: 'kiro',
             packageName: '@happier-dev/plugins-test',
             contribution: {
-                builtInAcpCatalog: true,
                 cliAuth: {
                     detectAuthStatus: async () => ({
                         state: 'logged_in',
@@ -223,46 +222,21 @@ describe('createAgentRuntimeCatalogEntryHooks', () => {
     });
 
     it('projects Pi CLI catalog residuals from the Pi runtime contribution', async () => {
-        const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
-        const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
-        try {
-            process.env.OPENAI_API_KEY = 'sk-pi-test';
-            delete process.env.ANTHROPIC_API_KEY;
+        const hooks = createAgentRuntimeCatalogEntryHooks({
+            agentId: 'pi',
+            packageName: '@happier-dev/plugins-pi',
+            contribution: PI_AGENT_RUNTIME_CONTRIBUTION,
+            systemTools: PI_PLUGIN_MANIFEST.contributes.systemTools,
+        })();
 
-            const hooks = createAgentRuntimeCatalogEntryHooks({
-                agentId: 'pi',
-                packageName: '@happier-dev/plugins-pi',
-                contribution: PI_AGENT_RUNTIME_CONTRIBUTION,
-                systemTools: PI_PLUGIN_MANIFEST.contributes.systemTools,
-            })();
+        expect(hooks.getCliCommandHandler).toBeTypeOf('function');
+        expect(hooks.checklists).toEqual({});
 
-            expect(hooks.getCliCommandHandler).toBeTypeOf('function');
-            expect(hooks.checklists).toEqual({});
-
-            await expect(hooks.getCliDetect?.()).resolves.toEqual({
-                versionArgsToTry: [['--version'], ['version'], ['-v']],
-                loginStatusArgs: null,
-            });
-
-            const authSpec = await hooks.getCliAuthSpec?.();
-            expect(authSpec?.binaryNames).toEqual(['pi']);
-            await expect(authSpec?.detectAuthStatus?.({ resolvedPath: '/bin/pi' })).resolves.toMatchObject({
-                state: 'logged_in',
-                method: 'api_key_env',
-                source: 'env',
-            });
-        } finally {
-            if (originalOpenAiApiKey === undefined) {
-                delete process.env.OPENAI_API_KEY;
-            } else {
-                process.env.OPENAI_API_KEY = originalOpenAiApiKey;
-            }
-            if (originalAnthropicApiKey === undefined) {
-                delete process.env.ANTHROPIC_API_KEY;
-            } else {
-                process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
-            }
-        }
+        // Pi's CLI detect/auth spec is a declared-manifest fact projected by
+        // `createManifestAgentCatalogEntry`, exactly as it is for an installed Agent.
+        // The runtime contribution must not re-own it.
+        expect(hooks.getCliDetect).toBeUndefined();
+        expect(hooks.getCliAuthSpec).toBeUndefined();
     });
 
     it('projects only strict provider-owned request-auth use descriptors', () => {

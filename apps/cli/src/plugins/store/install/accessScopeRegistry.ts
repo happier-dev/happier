@@ -8,13 +8,19 @@ import {
   type PluginHostAccessRequestV2,
 } from '@happier-dev/protocol';
 
+/**
+ * Scope comparison is exact-equality over the canonical scope. Every consumer
+ * of this registry treats any non-`exact` relation identically -- a changed
+ * required HostAccess scope re-enters human review, and a changed optional
+ * selection is dropped -- so the registry deliberately does not rank a scope
+ * as narrower or broader. Admitting a "narrowing" update without review would
+ * be a product decision, not a comparison detail.
+ */
 export type PluginAccessScopeComparison =
   | Readonly<{ relation: 'exact'; reason: 'canonical_scope_equal' }>
-  | Readonly<{ relation: 'narrower'; reason: 'candidate_scope_narrower' }>
-  | Readonly<{ relation: 'broader'; reason: 'candidate_scope_broader' }>
   | Readonly<{
       relation: 'changed';
-      reason: 'unknown_capability' | 'comparator_missing' | 'comparator_error' | 'incomparable';
+      reason: 'unknown_capability' | 'canonical_scope_differs';
     }>
   | Readonly<{
       relation: 'invalid';
@@ -25,7 +31,6 @@ export type PluginAccessScopeRegistration = Readonly<{
   capability: string;
   scopeSchema: z.ZodType<unknown>;
   canonicalize: (scope: unknown) => unknown;
-  isSubset?: (candidate: unknown, previous: unknown) => boolean;
 }>;
 
 export type PluginAccessSelection = Readonly<{
@@ -155,7 +160,6 @@ export function createPluginAccessScopeRegistry(
       capability,
       scopeSchema: registration.scopeSchema,
       canonicalize: registration.canonicalize,
-      ...(registration.isSubset ? { isSubset: registration.isSubset } : {}),
     }));
   }
 
@@ -196,31 +200,9 @@ export function createPluginAccessScopeRegistry(
         ? { relation: 'invalid', reason: 'previous_scope_invalid' }
         : { relation: 'invalid', reason: 'canonicalizer_error' };
     }
-    if (canonicalJson(candidate.value) === canonicalJson(previous.value)) {
-      return { relation: 'exact', reason: 'canonical_scope_equal' };
-    }
-    if (!registration.isSubset) return { relation: 'changed', reason: 'comparator_missing' };
-    try {
-      const candidateIsSubset = registration.isSubset(candidate.value, previous.value);
-      const candidateIsSubsetAgain = registration.isSubset(candidate.value, previous.value);
-      const previousIsSubset = registration.isSubset(previous.value, candidate.value);
-      const previousIsSubsetAgain = registration.isSubset(previous.value, candidate.value);
-      if (
-        typeof candidateIsSubset !== 'boolean'
-        || typeof candidateIsSubsetAgain !== 'boolean'
-        || typeof previousIsSubset !== 'boolean'
-        || typeof previousIsSubsetAgain !== 'boolean'
-        || candidateIsSubset !== candidateIsSubsetAgain
-        || previousIsSubset !== previousIsSubsetAgain
-      ) {
-        return { relation: 'changed', reason: 'comparator_error' };
-      }
-      if (candidateIsSubset && !previousIsSubset) return { relation: 'narrower', reason: 'candidate_scope_narrower' };
-      if (previousIsSubset && !candidateIsSubset) return { relation: 'broader', reason: 'candidate_scope_broader' };
-      return { relation: 'changed', reason: 'incomparable' };
-    } catch {
-      return { relation: 'changed', reason: 'comparator_error' };
-    }
+    return canonicalJson(candidate.value) === canonicalJson(previous.value)
+      ? { relation: 'exact', reason: 'canonical_scope_equal' }
+      : { relation: 'changed', reason: 'canonical_scope_differs' };
   }
 
   return Object.freeze({
@@ -490,79 +472,6 @@ function canonicalizeBuiltInScope(capability: string, value: unknown): unknown {
   }
 }
 
-function stringSetIsSubset(candidate: readonly string[], previous: readonly string[]): boolean {
-  const previousValues = new Set(previous);
-  return candidate.every((value) => previousValues.has(value));
-}
-
-function structuredSetIsSubset(candidate: readonly unknown[], previous: readonly unknown[]): boolean {
-  const previousValues = new Set(previous.map(canonicalJson));
-  return candidate.every((value) => previousValues.has(canonicalJson(value)));
-}
-
-function optionalStringSetIsSubset(
-  candidate: readonly string[] | undefined,
-  previous: readonly string[] | undefined,
-): boolean {
-  if (previous === undefined) return true;
-  return candidate !== undefined && stringSetIsSubset(candidate, previous);
-}
-
-function optionalEmptyStringSetIsSubset(
-  candidate: readonly string[] | undefined,
-  previous: readonly string[] | undefined,
-): boolean {
-  return stringSetIsSubset(candidate ?? [], previous ?? []);
-}
-
-function builtInSubsetComparator(capability: string): ((candidate: unknown, previous: unknown) => boolean) | undefined {
-  switch (capability) {
-    case 'network':
-      return (candidate, previous) => {
-        const candidateScope = candidate as Extract<PluginHostAccessRequestV2, { capability: 'network' }>['scope'];
-        const previousScope = previous as Extract<PluginHostAccessRequestV2, { capability: 'network' }>['scope'];
-        return structuredSetIsSubset(candidateScope.targets, previousScope.targets)
-          && optionalStringSetIsSubset(candidateScope.methods, previousScope.methods)
-          && (candidateScope.privateNetwork !== true || previousScope.privateNetwork === true);
-      };
-    case 'connectedAccounts':
-      return (candidate, previous) => {
-        const candidateScope = candidate as Extract<PluginHostAccessRequestV2, { capability: 'connectedAccounts' }>['scope'];
-        const previousScope = previous as Extract<PluginHostAccessRequestV2, { capability: 'connectedAccounts' }>['scope'];
-        return structuredSetIsSubset(candidateScope.serviceRefs, previousScope.serviceRefs)
-          && optionalStringSetIsSubset(candidateScope.accountScopes, previousScope.accountScopes)
-          && stringSetIsSubset(candidateScope.operations, previousScope.operations)
-          && optionalEmptyStringSetIsSubset(
-            candidateScope.materializationKinds,
-            previousScope.materializationKinds,
-          );
-      };
-    case 'sessions':
-      return (candidate, previous) => {
-        const candidateScope = candidate as Extract<PluginHostAccessRequestV2, { capability: 'sessions' }>['scope'];
-        const previousScope = previous as Extract<PluginHostAccessRequestV2, { capability: 'sessions' }>['scope'];
-        return stringSetIsSubset(candidateScope.access, previousScope.access)
-          && optionalStringSetIsSubset(candidateScope.machineIds, previousScope.machineIds)
-          && optionalStringSetIsSubset(candidateScope.projectIds, previousScope.projectIds);
-      };
-    case 'storage.account':
-      return () => true;
-    case 'mcp':
-      return (candidate, previous) => {
-        const candidateScope = candidate as Extract<PluginHostAccessRequestV2, { capability: 'mcp' }>['scope'];
-        const previousScope = previous as Extract<PluginHostAccessRequestV2, { capability: 'mcp' }>['scope'];
-        return structuredSetIsSubset(candidateScope.serverRefs, previousScope.serverRefs)
-          && structuredSetIsSubset(
-            candidateScope.discoverySourceRefs,
-            previousScope.discoverySourceRefs,
-          )
-          && stringSetIsSubset(candidateScope.operations, previousScope.operations);
-      };
-    default:
-      return undefined;
-  }
-}
-
 export function createDefaultPluginAccessScopeRegistry(): PluginAccessScopeRegistry {
   return createPluginAccessScopeRegistry(PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2.map((entry) => ({
     capability: entry.capability,
@@ -571,8 +480,5 @@ export function createDefaultPluginAccessScopeRegistry(): PluginAccessScopeRegis
       entry.schema.shape.scope,
     ),
     canonicalize: (scope: unknown) => canonicalizeBuiltInScope(entry.capability, scope),
-    ...(entry.authorizationClass === 'hostResourceSelection' && builtInSubsetComparator(entry.capability)
-      ? { isSubset: builtInSubsetComparator(entry.capability) }
-      : {}),
   })));
 }

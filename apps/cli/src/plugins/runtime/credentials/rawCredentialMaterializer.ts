@@ -799,16 +799,18 @@ async function inspectCurrentAuthorization(
 ): Promise<CurrentAuthorizationInspection> {
   signal.throwIfAborted();
   assertRuntimeCurrent(input.binding);
+  // The selected source and the install-review principal come from two stores,
+  // so the composite is read inside one selected-source bracket: the principal
+  // is read once, between two reads of the selection that must still agree.
+  // Re-reading the principal itself would bracket nothing — no authorization
+  // step runs between two adjacent reads of the same registry snapshot — and
+  // every effect this inspection feeds is already re-inspected against a fresh
+  // read by `authorize` around the grant list and by `materialize` around the
+  // credential use.
   const firstSelected = await readSelectedSource(input, authority, signal, allowWarm);
   signal.throwIfAborted();
   assertRuntimeCurrent(input.binding);
-  const firstPrincipal = await input.currentInstallReviewPrincipal.readCurrent({
-    pluginId: input.binding.manifest.id,
-    signal,
-  });
-  signal.throwIfAborted();
-  assertRuntimeCurrent(input.binding);
-  const currentPrincipal = await input.currentInstallReviewPrincipal.readCurrent({
+  const principal = await input.currentInstallReviewPrincipal.readCurrent({
     pluginId: input.binding.manifest.id,
     signal,
   });
@@ -817,19 +819,14 @@ async function inspectCurrentAuthorization(
   const currentSelected = await readSelectedSource(input, authority, signal, false);
   signal.throwIfAborted();
   assertRuntimeCurrent(input.binding);
-  if (
-    !firstPrincipal
-    || !currentPrincipal
-    || JSON.stringify(currentPrincipal) !== JSON.stringify(firstPrincipal)
-    || currentSelected.fingerprint !== firstSelected.fingerprint
-  ) {
+  if (!principal || currentSelected.fingerprint !== firstSelected.fingerprint) {
     throw unavailable();
   }
   const authoritySource = await input.readCurrentGrantAuthoritySource();
   signal.throwIfAborted();
   assertRuntimeCurrent(input.binding);
   if (authoritySource?.kind !== 'machine_installation') throw unavailable();
-  const parsedSubject = permissionSubject(input.binding, authority, firstSelected, firstPrincipal);
+  const parsedSubject = permissionSubject(input.binding, authority, firstSelected, principal);
   if (parsedSubject.kind !== 'credential_access_disclosure') throw unavailable();
   const subject = Object.freeze({
     ...parsedSubject,

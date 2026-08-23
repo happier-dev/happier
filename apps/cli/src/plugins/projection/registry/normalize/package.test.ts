@@ -133,6 +133,7 @@ describe('target package contribution projection', () => {
         scopes: ['session'],
         surfaces: ['cli'],
         execution: { target: 'daemon' },
+        operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
         placementBindings: ['primary'],
         resultSchema,
         dangerLevel: 'writesRemote',
@@ -148,6 +149,7 @@ describe('target package contribution projection', () => {
     expect(registry.commands[0]?.definition.actionId).toBe('com.acme.plugin/run');
     expect(registry.actions[0]?.definition).toMatchObject({
       outputSchema: resultSchema,
+      operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
       dangerLevel: 'writesRemote',
       confirmation: {
         title: { key: 'actions.run.title', fallback: 'Run remotely?' },
@@ -178,6 +180,39 @@ describe('target package contribution projection', () => {
     });
     expect(registry.actions[0]?.definition.contributionSurfaces).toEqual(['ui']);
     expect(registry.actions[0]?.definition).toMatchObject({ icon: 'arrow-up-right' });
+  });
+
+  it('makes dynamically installed Actions API-eligible independently of author presentation surfaces', () => {
+    const action = {
+      id: 'inspect',
+      title: 'Inspect',
+      scopes: ['session'],
+      surfaces: ['cli'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'safe',
+    } as const;
+    const external = loaded('com.acme.external-action', { actions: [action] });
+    const bundled = {
+      ...loaded('com.acme.bundled-action', { actions: [action] }),
+      sourceSpec: {
+        kind: 'bundled' as const,
+        locator: '@happier-dev/acme-bundled-action',
+        trustPolicy: 'local_trusted' as const,
+        installPolicy: 'link' as const,
+      },
+    } satisfies LoadedPlugin;
+
+    const registry = buildPluginContributionRegistry({
+      loadedPlugins: [external, bundled],
+    });
+
+    for (const contribution of registry.actions) {
+      expect(contribution.definition.surfaces).toMatchObject({
+        api: true,
+        cli: true,
+      });
+      expect(contribution.definition.surfaces).not.toHaveProperty('sdk');
+    }
   });
 
   it('preserves the exact client execution target and Voice surface through the canonical Action projection', () => {

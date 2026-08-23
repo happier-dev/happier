@@ -766,6 +766,7 @@ describe('createBundledActivationSourceResolver', () => {
       ]),
       immutableArtifactRecordsByPackageName: new Map([
         ['@happier-dev/plugins-session-owner', {
+          sourceProvenance: 'localSource' as const,
           t: 'happier_plugin_generation_v1' as const,
           schemaVersion: 1 as const,
           pluginId: 'happier.agent.session-owner',

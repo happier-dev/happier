@@ -41,9 +41,11 @@ describe('projectManifestAgentContribution', () => {
         const contribution = project(sessionAgent(['create', 'resume']));
 
         expect(contribution.runtimeSpec).toBeNull();
+        expect(contribution.id).toBe('com.acme.agent/acme-agent');
+        expect(contribution.identity).toEqual({ pluginId: 'com.acme.agent', localId: 'acme-agent' });
         expect(contribution.catalogEntry).toMatchObject({
-            id: 'acme-agent',
-            cliSubcommand: 'acme-agent',
+            id: 'com.acme.agent/acme-agent',
+            cliSubcommand: 'com.acme.agent/acme-agent',
             vendorResumeSupport: 'supported',
         });
         expect(contribution.catalogEntry).not.toHaveProperty('getCliDetect');
@@ -55,20 +57,20 @@ describe('projectManifestAgentContribution', () => {
 
         const handler = await getCliCommandHandler();
         await handler({
-            args: ['acme-agent', '--happy-starting-mode', 'remote'],
-            rawArgv: ['happier', 'acme-agent', '--happy-starting-mode', 'remote'],
+            args: ['com.acme.agent/acme-agent', '--happy-starting-mode', 'remote'],
+            rawArgv: ['happier', 'com.acme.agent/acme-agent', '--happy-starting-mode', 'remote'],
             terminalRuntime: null,
         });
 
         expect(runBackendSessionCliCommand).toHaveBeenCalledWith({
             context: {
-                args: ['acme-agent', '--happy-starting-mode', 'remote'],
-                rawArgv: ['happier', 'acme-agent', '--happy-starting-mode', 'remote'],
+                args: ['com.acme.agent/acme-agent', '--happy-starting-mode', 'remote'],
+                rawArgv: ['happier', 'com.acme.agent/acme-agent', '--happy-starting-mode', 'remote'],
                 terminalRuntime: null,
             },
-            backendIdForSessionRuntime: 'acme-agent',
-            runtimeAuthorityAgentId: 'acme-agent',
-            agentIdForAccountSettings: 'acme-agent',
+            backendIdForSessionRuntime: 'com.acme.agent/acme-agent',
+            runtimeAuthorityAgentId: 'com.acme.agent/acme-agent',
+            agentIdForAccountSettings: 'com.acme.agent/acme-agent',
         });
     });
 
@@ -131,7 +133,7 @@ describe('projectManifestAgentContribution', () => {
         });
 
         expect(contribution.runtimeSpec).toMatchObject({
-            id: 'acme-agent',
+            id: 'com.acme.agent/acme-agent',
             binaryName: 'acme-agent',
         });
         const getCliDetect = contribution.catalogEntry?.getCliDetect;

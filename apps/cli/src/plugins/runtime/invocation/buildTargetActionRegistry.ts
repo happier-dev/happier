@@ -4,8 +4,10 @@ import {
     derivePluginDaemonContributionRegistrationRights,
     PluginActionConfirmationV2Schema,
     PluginActionDangerLevelV2Schema,
+    ActionOperationDeclarationV1Schema,
     type PluginActionPresentUserGatePolicy,
 } from '@happier-dev/protocol';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions';
 
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
@@ -61,10 +63,18 @@ function readStringArray(value: unknown): readonly string[] | null {
         : null;
 }
 
+function readProjectedActionSurfaces(value: unknown): readonly string[] | null {
+    const parsed = ActionSurfaceSchema.safeParse(value);
+    if (!parsed.success) return null;
+    return Object.freeze(Object.entries(parsed.data).flatMap(([surface, enabled]) => (
+        enabled ? [surface] : []
+    )));
+}
+
 function readTargetDefinition(value: unknown): TargetActionDefinition {
     if (!isRecord(value)) throw new Error('Target action definition is not an object');
     const scopes = readStringArray(value.scopes);
-    const surfaces = readStringArray(value.contributionSurfaces ?? value.surfaces);
+    const surfaces = readProjectedActionSurfaces(value.surfaces);
     if (typeof value.id !== 'string' || !scopes || !surfaces) {
         throw new Error(`Target action '${String(value.id)}' is missing canonical action metadata`);
     }
@@ -77,8 +87,11 @@ function readTargetDefinition(value: unknown): TargetActionDefinition {
             ? {}
             : { confirmation: PluginActionConfirmationV2Schema.parse(value.confirmation) }),
         ...(isRecord(value.inputSchema) ? { inputSchema: value.inputSchema } : {}),
-        ...(isRecord(value.resultSchema) ? { resultSchema: value.resultSchema } : {}),
+        ...(isRecord(value.outputSchema) ? { resultSchema: value.outputSchema } : {}),
         ...(value.availability === undefined ? {} : { availability: value.availability }),
+        ...(value.operation === undefined
+            ? {}
+            : { operation: ActionOperationDeclarationV1Schema.parse(value.operation) }),
     });
 }
 
@@ -172,6 +185,19 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             if (!manifest || !actionDefinition) {
                 throw new Error(`Target action registration '${entry.pluginId}/actions/${entry.registration.localId}' has no matching manifest action`);
             }
+            const actionIdentity = createPluginContributionIdentity({
+                pluginId: entry.pluginId,
+                localId: entry.registration.localId,
+            });
+            const actionRegistryKey = buildQualifiedPluginContributionKey(actionIdentity);
+            const resolvedAction = params.contributes.actionsById?.get(actionRegistryKey);
+            if (
+                !resolvedAction
+                || resolvedAction.pluginId !== entry.pluginId
+                || resolvedAction.definition.id !== entry.registration.localId
+            ) {
+                throw new Error(`Target action registration '${entry.pluginId}/actions/${entry.registration.localId}' has no matching resolved Action projection`);
+            }
             const hostAccessIds = readStringArray(actionDefinition.hostAccess);
             expectedActionKeys.delete(`${entry.pluginId}\u0000${entry.registration.localId}`);
             return [{
@@ -187,7 +213,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     }),
                 localId: entry.registration.localId,
                 definition: {
-                    ...readTargetDefinition(actionDefinition),
+                    ...readTargetDefinition(resolvedAction.definition),
                     hostAccessRequests: resolveManifestHostAccessRequests({
                         manifest,
                         pluginId: entry.pluginId,

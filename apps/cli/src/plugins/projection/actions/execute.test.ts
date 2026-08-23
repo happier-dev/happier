@@ -19,6 +19,7 @@ import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtim
 import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
 import { createTargetActionInvocationRegistry as createTargetActionInvocationRegistryBase } from '@/plugins/runtime/invocation/targetActionRegistry';
 import type { TargetActionInvocationRegistration } from '@/plugins/runtime/invocation/targetActionRegistry';
+import type { TargetActionCurrentIntentRequest } from '@/plugins/runtime/invocation/actionExecutor';
 import { executePluginActionIfAvailable } from './execute';
 
 type SafeResolvedActionContribution = Omit<ResolvedActionContribution, 'definition'> & Readonly<{
@@ -160,7 +161,7 @@ function createAction(
         mcp: false,
         cli: true,
         rpc: false,
-        sdk: false,
+        api: false,
         plugin: false,
       },
       inputHints: null,
@@ -267,6 +268,103 @@ function createExecutableRegistry(params: Readonly<{
 }
 
 describe('executePluginActionIfAvailable', () => {
+  it('fails closed before activation for disabled external and bundled contributed Actions', async () => {
+    const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'acme.action.plugin/actions/disabled-action': { enabled: false },
+      },
+    });
+
+    try {
+      for (const provenance of ['external', 'first_party'] as const) {
+        const source = createAction('/unused/disabled-action.mjs', 'disabled-action');
+        const action: ResolvedActionContribution = { ...source, provenance };
+        const targetActionInvocations = createTargetActionInvocationRegistry({
+          actions: [],
+          expectedActions: [{ pluginId: 'acme.action.plugin', localId: 'disabled-action' }],
+        });
+        const activateContributionsOnDemand = vi.fn(async () => []);
+
+        await expect(executePluginActionIfAvailable({
+          runtimeRegistry: createExecutableRegistry({
+            action,
+            targetActionInvocations,
+            activateContributionsOnDemand,
+          }),
+          actionId: action.definition.id,
+          input: {},
+          context: { surface: 'cli' },
+        })).resolves.toEqual({
+          matched: true,
+          result: {
+            ok: false,
+            errorCode: 'plugin_action_unavailable',
+            error: 'Plugin action is disabled by Action settings',
+            actionHandlerInvocation: 'notStarted',
+          },
+        });
+
+        expect(activateContributionsOnDemand).not.toHaveBeenCalled();
+      }
+    } finally {
+      if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
+    }
+  });
+
+  it('requires current intent for a safe contributed Action when Action settings require approval', async () => {
+    const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'acme.action.plugin/actions/settings-approval': { approvalRequiredSurfaces: ['cli'] },
+      },
+    });
+
+    try {
+      const action = createAction('/unused/settings-approval.mjs', 'settings-approval');
+      const handler = vi.fn(async () => ({ executed: true }));
+      const targetActionInvocations = createTargetActionInvocationRegistry({
+        actions: [createTargetActionRegistration({ action, handler })],
+      });
+      let approve: ((value: Readonly<{ status: 'approved'; fingerprint: string }>) => void) | undefined;
+      const requestCurrentIntent = vi.fn(async (request: TargetActionCurrentIntentRequest) => await new Promise<Readonly<{
+        status: 'approved'; fingerprint: string;
+      }>>((resolve) => {
+        approve = (value) => resolve(value);
+      }));
+
+      const invocation = executePluginActionIfAvailable({
+        runtimeRegistry: createExecutableRegistry({
+          action,
+          targetActionInvocations,
+          activateContributionsOnDemand: async () => [],
+        }),
+        actionId: action.definition.id,
+        input: {},
+        requestCurrentIntent,
+        context: { surface: 'cli' },
+      });
+
+      await vi.waitFor(() => expect(requestCurrentIntent).toHaveBeenCalledOnce());
+      expect(handler).not.toHaveBeenCalled();
+      const request = requestCurrentIntent.mock.calls[0]?.[0];
+      if (!request || !approve) throw new Error('Expected Action settings approval request');
+      approve({ status: 'approved', fingerprint: request.fingerprint });
+
+      await expect(invocation).resolves.toEqual({
+        matched: true,
+        result: { ok: true, result: { executed: true } },
+      });
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
+    }
+  });
+
   it('does not daemon-dispatch a client-target contributed Action', async () => {
     const base = createAction('/unused/client-action.mjs', 'open-client');
     const action: SafeResolvedActionContribution = {
@@ -1447,7 +1545,7 @@ describe('executePluginActionIfAvailable', () => {
   });
 
   it('activates the executable action registration behind a command contribution', async () => {
-    const action = createAction('/unused/daemon.mjs', 'acme.action.start');
+    const action = createAction('/unused/daemon.mjs', 'start');
     const activationDemands: unknown[] = [];
     let targetActions: TargetActionInvocationRegistration[] = [];
     const targetActionInvocations = createTargetActionInvocationRegistry({
@@ -1487,14 +1585,14 @@ describe('executePluginActionIfAvailable', () => {
     expect(activationDemands).toEqual([{
       pluginId: 'acme.action.plugin',
       family: 'actions',
-      localId: 'acme.action.start',
+      localId: 'start',
     }]);
     expect(result).toEqual({
       matched: true,
       result: {
         ok: true,
         result: {
-          actionId: 'acme.action.start',
+          actionId: 'start',
           input: {
             scope: 'command',
           },
@@ -1506,7 +1604,7 @@ describe('executePluginActionIfAvailable', () => {
   });
 
   it('activates the executable action registration behind a tool contribution', async () => {
-    const action = createAction('/unused/daemon.mjs', 'acme.action.inspect');
+    const action = createAction('/unused/daemon.mjs', 'inspect');
     const activationDemands: unknown[] = [];
     let targetActions: TargetActionInvocationRegistration[] = [];
     const targetActionInvocations = createTargetActionInvocationRegistry({
@@ -1546,14 +1644,14 @@ describe('executePluginActionIfAvailable', () => {
     expect(activationDemands).toEqual([{
       pluginId: 'acme.action.plugin',
       family: 'actions',
-      localId: 'acme.action.inspect',
+      localId: 'inspect',
     }]);
     expect(result).toEqual({
       matched: true,
       result: {
         ok: true,
         result: {
-          actionId: 'acme.action.inspect',
+          actionId: 'inspect',
           input: {
             scope: 'tool',
           },
@@ -1605,7 +1703,7 @@ describe('executePluginActionIfAvailable', () => {
   });
 
   it('uses the committed target action generation instead of stale sourceSpec trust metadata', async () => {
-    const trustedAction = createAction('/unused/daemon.mjs', 'acme.action.untrusted');
+    const trustedAction = createAction('/unused/daemon.mjs', 'untrusted');
     const action: ResolvedActionContribution = {
       ...trustedAction,
       sourceSpec: {

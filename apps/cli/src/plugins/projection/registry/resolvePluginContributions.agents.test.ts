@@ -150,9 +150,15 @@ describe('resolved plugin Agent projection', () => {
             'terminal',
             'externalSessions',
         ]);
-        expect(bundled?.runtimeSpec).toEqual(external?.runtimeSpec);
+        // Capability parity is exact; only the routing id differs, because a
+        // bundled Agent keeps its released unqualified identifier while an
+        // installed Agent is addressed by its qualified `{pluginId, localId}`.
+        expect(bundled?.id).toBe('acme');
+        expect(external?.id).toBe('com.acme.agent/acme');
+        expect({ ...bundled?.runtimeSpec, id: null }).toEqual({ ...external?.runtimeSpec, id: null });
+        expect(bundled?.runtimeSpec?.id).toBe('acme');
         expect(external?.runtimeSpec).toMatchObject({
-            id: 'acme',
+            id: 'com.acme.agent/acme',
             title: 'Acme',
             binaryName: 'acme',
             alternativeBinaryNames: ['acme-cli'],
@@ -205,7 +211,7 @@ describe('resolved plugin Agent projection', () => {
         }
 
         expect(bundled?.catalogEntry?.id).toBe('acme');
-        expect(external?.catalogEntry?.id).toBe('acme');
+        expect(external?.catalogEntry?.id).toBe('com.acme.agent/acme');
         expect(await external?.catalogEntry?.getCliDetect?.()).toEqual({
             versionArgsToTry: [['--version'], ['version'], ['-v']],
             loginStatusArgs: null,

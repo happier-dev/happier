@@ -5,6 +5,8 @@ import type { Credentials, StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
 import {
   ProviderConnectionIdSchema,
+  SessionCreationCorrespondenceV1Schema,
+  deriveSessionCreationTagV1,
   type ProviderBoundModelRef,
 } from '@happier-dev/protocol';
 
@@ -256,6 +258,71 @@ describe('plugin session runtime adapters', () => {
       existingSessionId: 'happy-session',
       sessionAttachFilePath: '/tmp/session-attach.json',
     });
+  });
+
+  it('preserves the admitted spawn identity through the plugin host runtime binding', async () => {
+    const sessionCreationTag = deriveSessionCreationTagV1({
+      callerCreationNamespace: 'plugin:acme.plugin',
+      creationKey: 'external-action-spawn',
+    });
+    const sessionCreationCorrespondence = SessionCreationCorrespondenceV1Schema.parse({
+      v: 1,
+      sessionCreationTag,
+      recipe: {
+        execution: { machineId: 'machine-1', directory: '/tmp/plugin-backend' },
+        organization: { folderId: null, tagIds: [] },
+        agentTarget: {
+          kind: 'agent',
+          identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        },
+        modelSelection: null,
+        profileId: null,
+        requestedPermissionMode: null,
+        agentModeId: null,
+        configuration: null,
+        connectedServices: null,
+        mcpSelection: null,
+        transcriptStorage: null,
+        terminal: null,
+        agentSessionStartupInstructionsMarkerV1: null,
+        checkout: null,
+      },
+    });
+
+    const options = buildPluginHostSessionRuntimeOptions(
+      buildPluginSessionBindingInput({
+        credentials,
+        sessionCreationTag,
+        sessionCreationCorrespondence,
+      }),
+    );
+
+    expect(options.sessionCreationTag).toBe(sessionCreationTag);
+    expect(options.sessionCreationCorrespondence).toEqual(sessionCreationCorrespondence);
+
+    let launchParams: unknown = null;
+    const pluginPlan = await createPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent: createAgentFixture(),
+      launch: async (params) => {
+        launchParams = params;
+        return { runtime: createRuntimeTurnOperations() } as never;
+      },
+      sessionInput: buildPluginSessionBindingInput({
+        credentials,
+        sessionCreationTag,
+        sessionCreationCorrespondence,
+      }),
+    });
+
+    await pluginPlan.config.createSessionRuntime?.(createHostFactoryParams());
+
+    expect(pluginPlan.opts).toMatchObject({
+      sessionCreationTag,
+      sessionCreationCorrespondence,
+    });
+    expect(launchParams).not.toHaveProperty('sessionCreationTag');
+    expect(launchParams).not.toHaveProperty('sessionCreationCorrespondence');
   });
 
   it('consumes provider-owned deferred-startup policy only on the native Agent plan', async () => {
@@ -868,6 +935,36 @@ describe('plugin session runtime adapters', () => {
       kind: 'resume',
       providerSessionId: 'vendor-session-1',
       importHistory: true,
+    });
+  });
+
+  it('carries strict native-return identity only from the matching host intent', async () => {
+    let capturedOpenIntent: unknown = null;
+    const runtime = createRuntimeTurnOperations();
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(),
+      agent: createAgentFixture(),
+      createSessionRuntime: async (params) => {
+        capturedOpenIntent = params;
+        return runtime;
+      },
+      sessionInput: buildPluginSessionBindingInput({
+        credentials,
+        directory: '/tmp/plugin-backend',
+        resume: 'vendor-session-1',
+      }),
+    });
+
+    await plan.config.createSessionRuntime?.({
+      ...createHostFactoryParams(),
+      strictNativeResumeIdentity: true,
+    });
+
+    expect(capturedOpenIntent).toEqual({
+      kind: 'resume',
+      providerSessionId: 'vendor-session-1',
+      importHistory: true,
+      strictNativeResumeIdentity: true,
     });
   });
 

@@ -1,5 +1,5 @@
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedActionContribution } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -30,6 +30,88 @@ function lazyTargetActionRegistry(
 }
 
 describe('executeContributedAction lazy activation failures', () => {
+    it('captures the exact prepared target without invoking it during contributed admission', async () => {
+        const action = {
+            pluginId: 'acme.target',
+            definition: {
+                id: 'commit',
+                surfaces: { cli: true },
+            },
+        } as unknown as ResolvedActionContribution;
+        const run = vi.fn(async () => ({
+            status: 'executed' as const,
+            value: { committed: true },
+        }));
+        const prepare = vi.fn(async () => ({ kind: 'ready' as const, run }));
+        const invoke = vi.fn();
+        const registry = {
+            contributes: {
+                actionsById: new Map([['acme.target/commit', action]]),
+            },
+            targetActionInvocations: {
+                expects: () => true,
+                has: () => true,
+                prepare,
+                invoke,
+            },
+        } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+        let captured: Readonly<{
+            run(operationProgress?: Readonly<{ update(progress: unknown): void }>): Promise<unknown>;
+        }> | undefined;
+
+        await expect(executeContributedAction({
+            runtimeRegistry: registry,
+            actionId: 'acme.target/commit',
+            context: {
+                surface: 'cli',
+                capturePreparedInvocation: (invocation) => { captured = invocation; },
+            },
+        })).resolves.toEqual({
+            matched: true,
+            result: { ok: true, result: null },
+        });
+        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(invoke).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        await expect(captured?.run()).resolves.toEqual({ ok: true, result: { committed: true } });
+        expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes the tracked operation progress port to the committed target invocation', async () => {
+        const action = {
+            pluginId: 'acme.target',
+            definition: {
+                id: 'commit',
+                surfaces: { cli: true },
+            },
+        } as unknown as ResolvedActionContribution;
+        const invoke = vi.fn(async () => ({
+            status: 'executed' as const,
+            value: { committed: true },
+        }));
+        const registry = {
+            contributes: {
+                actionsById: new Map([['acme.target/commit', action]]),
+            },
+            targetActionInvocations: {
+                expects: () => true,
+                has: () => true,
+                invoke,
+            },
+        } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+        const operationProgress = { update: vi.fn() };
+
+        await expect(executeContributedAction({
+            runtimeRegistry: registry,
+            actionId: 'acme.target/commit',
+            context: { surface: 'cli', operationProgress },
+        })).resolves.toEqual({
+            matched: true,
+            result: { ok: true, result: { committed: true } },
+        });
+        expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ operationProgress }));
+    });
+
     it('projects an unexpected activation rejection once before it reaches the public Action result', async () => {
         const secret = 'target-action-activation-secret';
         const path = '/Users/alice/private/target-action-activation.json';

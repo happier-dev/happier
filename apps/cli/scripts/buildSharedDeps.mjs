@@ -1687,6 +1687,8 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   const shouldPublishBundledPluginArtifacts = opts.publishBundledPluginArtifacts !== false;
   const prepareGeneratedCompilerInputs = opts.prepareGeneratedCompilerInputsImpl
     ?? runCanonicalPluginSdkGeneratedCompilerInputs;
+  const generatedCompilerInputMode = opts.generatedCompilerInputMode
+    ?? (String(opts.env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1' ? 'check' : 'write');
   if (
     opts.prepareGeneratedCompilerInputsImpl
     || exists(resolve(repoRoot, PLUGIN_SDK_GENERATED_INPUTS_RELATIVE_PATH))
@@ -1695,9 +1697,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
       repoRoot,
       env: opts.env ?? process.env,
       quiet: opts.quiet === true,
-      mode: String(opts.env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1'
-        ? 'check'
-        : 'write',
+      mode: generatedCompilerInputMode,
     });
   }
   let workspaceNames = resolveSourceDevWorkspaceNames({
@@ -1908,17 +1908,12 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   ]);
   let publishedBundledPluginArtifacts = false;
   let rebuiltGeneratedSourceWorkspaces = [];
-  // Compiling a bundled plugin package DESTROYS its published daemon runtime
-  // artifact: the compiler and the canonical publisher both own
-  // `<plugin>/dist/<entrypoints.daemon>`, and a compiler emit replaces the
-  // bundle with a bare re-export module. So the destructive rebuild and its
-  // repair are inseparable — this run republishes whenever it rebuilt a bundled
-  // plugin, or whenever a plugin's published tree already diverges from the
-  // generated inventory because some other builder clobbered it. Both hold even
-  // in a declarations-only closure that never materializes runtime dependencies.
-  // Only the canonical publisher's own re-entrant sync
-  // (`publishBundledPluginArtifacts: false`) is exempt, because it is the
-  // publisher.
+  // The compiler and publisher have disjoint outputs: compilation owns `dist/**`,
+  // while the publisher owns `.happier-plugin/**` plus the coherent generated
+  // inventory/projections describing the package. A rebuilt or externally changed
+  // compiled tree still invalidates those projections, so refresh publication after
+  // a selected plugin rebuild or detected inventory divergence. The publisher's own
+  // re-entrant dependency sync (`publishBundledPluginArtifacts: false`) is exempt.
   if (
     shouldPublishBundledPluginArtifacts
     && (includeRuntimeDependencies || bundledPluginWorkspaceNamesToPublish.length > 0)

@@ -56,7 +56,7 @@ function createPrerequisiteHookActivationTarget(params: Readonly<{
         ...(params.agentIdFilter ? { filters: { agentId: params.agentIdFilter } } : {}),
       }],
     },
-  }, {
+  }, { sourceProvenance: 'localSource',
     manifestAuthority: params.pluginId.startsWith('happier.') ? 'bundled_first_party' : 'external',
     enforceEngineCompatibility: false,
   });

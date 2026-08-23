@@ -28,6 +28,11 @@ import {
   flushFileDurably,
 } from './durability';
 
+import {
+  pluginSourceProvenanceForDistribution,
+  pluginSourceProvenanceForKind,
+  PluginSourceProvenanceSchema,
+} from '@/plugins/manifest/sourceProvenance';
 import { PluginAccessSelectionSchema } from '../install/accessScopeRegistry';
 import {
   AlgorithmQualifiedIntegritySchema,
@@ -171,6 +176,12 @@ export const ImmutablePluginGenerationRecordSchema = z.object({
   createdAtMs: z.number().int().nonnegative(),
   files: z.array(GenerationFileSchema).max(MAXIMUM_IMMUTABLE_GENERATION_FILES),
   manifestRelativePath: PortableRelativePathSchema,
+  /**
+   * Derived once, at mint time, from the distribution identity the generation
+   * was admitted under. A generation is a daemon-owned, symlink-free copy, so
+   * no reader can re-derive this from the materialized bytes.
+   */
+  sourceProvenance: PluginSourceProvenanceSchema,
 }).strict().superRefine((record, context) => {
   const paths = record.files.map((file) => file.relativePath);
   if (new Set(paths).size !== paths.length || paths.some((path, index) => index > 0 && paths[index - 1]! >= path)) {
@@ -682,6 +693,9 @@ function createImmutablePluginGenerationRecord(input: Readonly<{
     createdAtMs: input.createdAtMs,
     files,
     manifestRelativePath,
+    sourceProvenance: pluginSourceProvenanceForDistribution(
+      PluginDistributionIdentitySchema.parse(input.distribution),
+    ),
   });
 }
 
@@ -787,10 +801,45 @@ async function readGenerationRecord(
   return ImmutablePluginGenerationRecordSchema.parse(value);
 }
 
+/**
+ * The exact structural fact that made one generation path inadmissible.
+ *
+ * The containment walk below already distinguishes these; naming them lets an
+ * administration reader report and repair-guide the real condition instead of
+ * re-deriving it from English message text or walking the tree a second time.
+ */
+export type ContainedGenerationFileFailure =
+  | 'root_not_directory'
+  | 'missing'
+  | 'escaped'
+  | 'not_regular'
+  | 'shared_inode'
+  | 'size_mismatch';
+
+export class ContainedGenerationFileError extends Error {
+  readonly failure: ContainedGenerationFileFailure;
+  readonly relativePath: string;
+
+  constructor(
+    failure: ContainedGenerationFileFailure,
+    relativePath: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ContainedGenerationFileError';
+    this.failure = failure;
+    this.relativePath = relativePath;
+  }
+}
+
 async function assertGenerationRootDirectory(root: string): Promise<void> {
   const rootStat = await lstat(root);
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new Error('Immutable plugin generation root must be a real directory, not a symbolic link');
+    throw new ContainedGenerationFileError(
+      'root_not_directory',
+      '',
+      'Immutable plugin generation root must be a real directory, not a symbolic link',
+    );
   }
 }
 
@@ -814,28 +863,28 @@ async function assertContainedRegularFile(
       metadata = await lstat(currentPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
-        throw new Error(`${label} is missing from the immutable generation root: ${normalizedPath}`);
+        throw new ContainedGenerationFileError('missing', normalizedPath, `${label} is missing from the immutable generation root: ${normalizedPath}`);
       }
       throw error;
     }
     if (metadata.isSymbolicLink()) {
-      throw new Error(`${label} must be contained in the immutable generation root, not a symbolic link: ${normalizedPath}`);
+      throw new ContainedGenerationFileError('escaped', normalizedPath, `${label} must be contained in the immutable generation root, not a symbolic link: ${normalizedPath}`);
     }
     if (index === segments.length - 1) {
       if (!metadata.isFile()) {
-        throw new Error(`${label} must be a regular file: ${normalizedPath}`);
+        throw new ContainedGenerationFileError('not_regular', normalizedPath, `${label} must be a regular file: ${normalizedPath}`);
       }
       if (
         options?.expectedByteLength !== undefined
         && metadata.size !== options.expectedByteLength
       ) {
-        throw new Error(`${label} has an unexpected byte length: ${normalizedPath}`);
+        throw new ContainedGenerationFileError('size_mismatch', normalizedPath, `${label} has an unexpected byte length: ${normalizedPath}`);
       }
       if (options?.requireExclusiveInode && metadata.nlink > 1) {
-        throw new Error(`${label} must not share a writable inode: ${normalizedPath}`);
+        throw new ContainedGenerationFileError('shared_inode', normalizedPath, `${label} must not share a writable inode: ${normalizedPath}`);
       }
     } else if (!metadata.isDirectory()) {
-      throw new Error(`${label} ancestor must be a real directory: ${normalizedPath}`);
+      throw new ContainedGenerationFileError('not_regular', normalizedPath, `${label} ancestor must be a real directory: ${normalizedPath}`);
     }
   }
 }
@@ -844,9 +893,13 @@ export async function assertContainedRegularGenerationFile(
   root: string,
   relativePath: string,
   label: string,
+  options?: Readonly<{ expectedByteLength?: number }>,
 ): Promise<void> {
   await assertContainedRegularFile(root, relativePath, label, {
     requireExclusiveInode: true,
+    ...(options?.expectedByteLength === undefined
+      ? {}
+      : { expectedByteLength: options.expectedByteLength }),
   });
 }
 async function verifyPersistedGeneration(root: string, expected: ImmutablePluginGenerationRecord): Promise<void> {
@@ -971,8 +1024,38 @@ export type BundledImmutablePluginArtifact = Readonly<{
    * the package root export.
    */
   daemonEntryRelativePath?: string | null;
-  record: ImmutablePluginGenerationRecord;
+  /**
+   * Structural generation facts only. Provenance is not one of them: the host
+   * itself ships these bytes, so `admitBundledImmutablePluginGeneration`
+   * stamps that custody fact rather than the artifact generator restating it.
+   */
+  record: Omit<ImmutablePluginGenerationRecord, 'sourceProvenance'>;
 }>;
+
+/**
+ * Host custody of one exact plugin generation: the host itself ships these
+ * bytes under this generation id.
+ *
+ * This is the only derivation of first-party runner authority. A plugin's own
+ * `happier.*` id is a claim its manifest makes about itself, and an installed
+ * plugin may legitimately carry one while it is being developed from a local
+ * working tree — so the id can never stand in for custody. An ambiguous
+ * inventory (more than one artifact for the same plugin) resolves to no
+ * custody rather than picking one.
+ */
+export function resolveBundledImmutablePluginArtifact(input: Readonly<{
+  bundledArtifacts: readonly BundledImmutablePluginArtifact[];
+  pluginId: string;
+  immutableGenerationId: string;
+}>): BundledImmutablePluginArtifact | null {
+  const forPlugin = input.bundledArtifacts.filter(
+    (artifact) => artifact.record.pluginId === input.pluginId,
+  );
+  const artifact = forPlugin.length === 1 ? forPlugin[0]! : null;
+  return artifact?.record.immutableGenerationId === input.immutableGenerationId
+    ? artifact
+    : null;
+}
 
 async function resolveBundledPackageEntry(packageName: string): Promise<string> {
   return createRequire(import.meta.url).resolve(packageName);
@@ -984,7 +1067,10 @@ async function admitBundledImmutablePluginGeneration(input: Readonly<{
 }>): Promise<CurrentCommittedPluginGeneration> {
   const artifact = Object.freeze({
     ...input.artifact,
-    record: ImmutablePluginGenerationRecordSchema.parse(input.artifact.record),
+    record: ImmutablePluginGenerationRecordSchema.parse({
+      ...input.artifact.record,
+      sourceProvenance: pluginSourceProvenanceForKind('bundled'),
+    }),
   });
   const lexicalEntryPath = resolve(await input.resolvePackageEntry(artifact.packageName));
   const entrySegments = artifact.packageEntryRelativePath.split('/');
@@ -2021,10 +2107,11 @@ export async function readCurrentPluginImmutableGenerationIntegrityCurrentness(
     input.requiredAgentSessionRunnerFactoryLocalAgentId?.trim();
   let retainedManifestAuthority = input.retainedManifestAuthority;
   if (bundledArtifacts.length > 1) return false;
-  const exactBundledArtifact = bundledArtifacts[0]?.record.immutableGenerationId
-    === immutableGenerationId
-    ? bundledArtifacts[0]
-    : null;
+  const exactBundledArtifact = resolveBundledImmutablePluginArtifact({
+    bundledArtifacts,
+    pluginId,
+    immutableGenerationId,
+  });
   if (exactBundledArtifact) {
     if (retainedManifestAuthority === 'external') return false;
     try {

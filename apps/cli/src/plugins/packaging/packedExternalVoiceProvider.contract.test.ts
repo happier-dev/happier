@@ -397,13 +397,13 @@ describe('packed external Voice provider author contract', () => {
           diagnostics: [],
         }),
       ]));
-      expect(runtimeRegistry.contributes.agentDefinitionsById.get('voice-agent')).toMatchObject({
+      expect(runtimeRegistry.contributes.agentDefinitionsById.get('acme.packed-voice/voice-agent')).toMatchObject({
         pluginId: 'acme.packed-voice',
         identity: { pluginId: 'acme.packed-voice', localId: 'voice-agent' },
-        definition: { id: 'voice-agent' },
+        definition: { id: 'acme.packed-voice/voice-agent' },
       });
       const binding = runtimeRegistry.agentRuntimesByAgentId
-        .get('voice-agent')
+        .get('acme.packed-voice/voice-agent')
         ?.sessionRunnerFactoryBinding;
       if (!binding || 'kind' in binding) {
         throw new Error('Expected an attested packed Voice Agent factory binding');

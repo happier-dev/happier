@@ -6,7 +6,16 @@ import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
     derivePluginCollectionIdentityTagV1,
-    PluginAccountStorageLogicalKeyV1Schema,
+    PluginAccountKvRowError,
+    assertPluginAccountKvExpectedVersionV1,
+    clonePluginAccountKvRowV1,
+    createEmptyPluginAccountKvRowV1,
+    deletePluginAccountKvEntryV1,
+    listPluginAccountKvEntriesV1,
+    normalizePluginAccountKvLogicalKeyV1,
+    projectPluginAccountKvEntryV1,
+    readPluginAccountKvEntryV1,
+    setPluginAccountKvEntryV1,
     type PluginAccountStorageEntryV1,
     PluginAccountStorageMutationRequestV1Schema,
     PluginAccountStorageMutationResponseV1Schema,
@@ -50,7 +59,6 @@ import {
     openPluginCollectionPrivatePayloadV1,
     resolveEffectivePluginCollectionLimitsV1,
     openPluginAccountStoragePrivatePayloadV1,
-    normalizePluginAccountStorageJsonValueV1,
     normalizeStrictJsonValue,
     sealPluginAccountStoragePrivatePayloadV1,
     sealPluginCollectionPrivatePayloadV1,
@@ -403,54 +411,45 @@ function setJsonRecordValue(record: Record<string, JsonValue>, key: string, valu
     });
 }
 
-function normalizeAccountKvValue(value: JsonValue): JsonValue {
+/**
+ * Account KV logical-key semantics live in the Protocol owner so the daemon and
+ * the direct Plugin UI client cannot drift. The daemon keeps only the
+ * translation into its own `PluginError` vocabulary.
+ */
+function inAccountKvRowAlgebra<T>(operation: () => T): T {
     try {
-        return normalizePluginAccountStorageJsonValueV1(value) as JsonValue;
-    } catch {
-        throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV value is not within the published JSON bounds');
+        return operation();
+    } catch (error) {
+        if (error instanceof PluginAccountKvRowError) {
+            throw dataError(error.code, error.message);
+        }
+        throw error;
     }
 }
 
 function normalizeAccountKvKey(key: string): string {
-    try {
-        return PluginAccountStorageLogicalKeyV1Schema.parse(key);
-    } catch {
-        throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV key is invalid or reserved');
-    }
+    return inAccountKvRowAlgebra(() => normalizePluginAccountKvLogicalKeyV1(key));
 }
 
 function createEmptyAccountKvRow(): PluginAccountStorageRowV1 {
-    return PluginAccountStorageRowV1Schema.parse({ v: 1, values: Object.create(null) });
+    return createEmptyPluginAccountKvRowV1();
 }
 
 function cloneAccountKvRow(row: PluginAccountStorageRowV1): PluginAccountStorageRowV1 {
-    return PluginAccountStorageRowV1Schema.parse(row);
+    return clonePluginAccountKvRowV1(row);
 }
 
 function accountKvEntryAt(
     row: PluginAccountStorageRowV1,
     key: string,
 ): PluginAccountStorageEntryV1 | undefined {
-    return hasOwn(row.values, key) ? row.values[key] : undefined;
+    return readPluginAccountKvEntryV1(row, key);
 }
 
 function toAccountKvEntry<TValue extends JsonValue = JsonValue>(
     entry: PluginAccountStorageEntryV1,
 ): AccountKvEntry<TValue> {
-    if ('deleted' in entry) {
-        return Object.freeze({ version: entry.version, deleted: true as const });
-    }
-    return Object.freeze({
-        version: entry.version,
-        value: normalizeAccountKvValue(entry.value) as TValue,
-    });
-}
-
-function toAccountKvListItem(key: string, entry: PluginAccountStorageEntryV1): AccountKvListItem {
-    const publicEntry = toAccountKvEntry(entry);
-    return 'deleted' in publicEntry
-        ? Object.freeze({ key, version: publicEntry.version, deleted: true as const })
-        : Object.freeze({ key, version: publicEntry.version, value: publicEntry.value });
+    return inAccountKvRowAlgebra(() => projectPluginAccountKvEntryV1<TValue>(entry));
 }
 
 function assertAccountKvExpectedVersion(
@@ -458,28 +457,9 @@ function assertAccountKvExpectedVersion(
     key: string,
     expectedVersion: number | 'absent',
 ): PluginAccountStorageEntryV1 | undefined {
-    if (
-        expectedVersion !== 'absent'
-        && (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)
-    ) {
-        throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV expected version is invalid');
-    }
-    const current = accountKvEntryAt(row, key);
-    if (
-        (expectedVersion === 'absent' && current !== undefined)
-        || (expectedVersion !== 'absent' && (current === undefined || current.version !== expectedVersion))
-    ) {
-        throw dataError(ACCOUNT_KV_CONFLICT_CODE, 'Account KV key changed before the conditional write completed');
-    }
-    return current;
-}
-
-function nextAccountKvVersion(previous: PluginAccountStorageEntryV1 | undefined): number {
-    if (!previous) return 0;
-    if (previous.version >= Number.MAX_SAFE_INTEGER) {
-        throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV key version cannot advance further');
-    }
-    return previous.version + 1;
+    return inAccountKvRowAlgebra(
+        () => assertPluginAccountKvExpectedVersionV1(row, key, expectedVersion),
+    );
 }
 
 function setAccountKvEntry(
@@ -488,17 +468,7 @@ function setAccountKvEntry(
     value: JsonValue,
     previous: PluginAccountStorageEntryV1 | undefined,
 ): number {
-    const version = nextAccountKvVersion(previous);
-    Object.defineProperty(row.values, key, {
-        value: Object.freeze({
-            version,
-            value: normalizeAccountKvValue(value),
-        }),
-        enumerable: true,
-        writable: true,
-        configurable: true,
-    });
-    return version;
+    return inAccountKvRowAlgebra(() => setPluginAccountKvEntryV1(row, key, value, previous));
 }
 
 function deleteAccountKvEntry(
@@ -506,62 +476,7 @@ function deleteAccountKvEntry(
     key: string,
     previous: PluginAccountStorageEntryV1,
 ): number {
-    if ('deleted' in previous) {
-        throw dataError(ACCOUNT_KV_CONFLICT_CODE, 'Account KV key is already deleted');
-    }
-    const version = nextAccountKvVersion(previous);
-    Object.defineProperty(row.values, key, {
-        value: Object.freeze({ version, deleted: true as const }),
-        enumerable: true,
-        writable: true,
-        configurable: true,
-    });
-    return version;
-}
-
-function encodeAccountKvListCursor(input: Readonly<{
-    revision: number;
-    prefix: string | null;
-    lastKey: string;
-}>): string {
-    return Buffer.from(JSON.stringify({
-        v: 1,
-        revision: input.revision,
-        prefix: input.prefix,
-        lastKey: input.lastKey,
-    }), 'utf8')
-        .toString('base64url');
-}
-
-function decodeAccountKvListCursor(cursor: string): Readonly<{
-    revision: number;
-    prefix: string | null;
-    lastKey: string;
-}> {
-    try {
-        const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as unknown;
-        if (
-            !parsed
-            || typeof parsed !== 'object'
-            || Array.isArray(parsed)
-            || (parsed as Readonly<Record<string, unknown>>).v !== 1
-            || !Number.isSafeInteger((parsed as Readonly<Record<string, unknown>>).revision)
-            || (
-                (parsed as Readonly<Record<string, unknown>>).prefix !== null
-                && typeof (parsed as Readonly<Record<string, unknown>>).prefix !== 'string'
-            )
-            || typeof (parsed as Readonly<Record<string, unknown>>).lastKey !== 'string'
-        ) {
-            throw new Error('invalid cursor');
-        }
-        return Object.freeze({
-            revision: (parsed as Readonly<Record<string, unknown>>).revision as number,
-            prefix: (parsed as Readonly<Record<string, unknown>>).prefix as string | null,
-            lastKey: (parsed as Readonly<Record<string, unknown>>).lastKey as string,
-        });
-    } catch {
-        throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV list cursor is invalid');
-    }
+    return inAccountKvRowAlgebra(() => deletePluginAccountKvEntryV1(row, key, previous));
 }
 
 function parseCollectionError(value: unknown, kind: 'read' | 'mutation'): PluginError | null {
@@ -1612,44 +1527,27 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         signal?: AbortSignal;
                     }> = {}) {
                         await assertBoundCurrent(lifecycle, options.signal);
-                        if (options.prefix?.startsWith('@happier/')) {
-                            throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV key prefix is reserved');
-                        }
-                        const limit = options.limit ?? 100;
-                        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
-                            throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV list limit is invalid');
-                        }
+                        // Validate the request shape before spending a read, then
+                        // page through the Protocol row owner so the daemon and the
+                        // direct Plugin UI client cannot disagree about ordering,
+                        // cursor identity, or tombstone visibility.
+                        inAccountKvRowAlgebra(() => listPluginAccountKvEntriesV1({
+                            row: createEmptyAccountKvRow(),
+                            revision: -1,
+                            ...(options.prefix === undefined ? {} : { prefix: options.prefix }),
+                            ...(options.limit === undefined ? {} : { limit: options.limit }),
+                        }));
                         const snapshot = await readAccountKvSnapshot(options.signal);
-                        const revision = snapshot.expectedRevision === 'absent' ? -1 : snapshot.expectedRevision;
-                        const prefix = options.prefix ?? null;
-                        const cursor = options.cursor === undefined ? null : decodeAccountKvListCursor(options.cursor);
-                        if (cursor && cursor.revision !== revision) {
-                            throw dataError(
-                                'plugin_account_kv_cursor_stale',
-                                'Account KV changed before the next page was read',
-                            );
-                        }
-                        if (cursor && cursor.prefix !== prefix) {
-                            throw dataError(ACCOUNT_KV_INVALID_CODE, 'Account KV list cursor does not match the requested prefix');
-                        }
-                        const keys = Object.keys(snapshot.row.values)
-                            .filter((key) => prefix === null || key.startsWith(prefix))
-                            .filter((key) => !cursor || key > cursor.lastKey)
-                            .sort();
-                        const selected = keys.slice(0, limit);
-                        const lastKey = selected[selected.length - 1];
-                        return Object.freeze({
-                            items: Object.freeze(selected.map((key) => {
-                                const entry = accountKvEntryAt(snapshot.row, key);
-                                if (!entry) {
-                                    throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Account KV list row changed during read');
-                                }
-                                return toAccountKvListItem(key, entry);
-                            })),
-                            ...(lastKey && keys.length > selected.length
-                                ? { nextCursor: encodeAccountKvListCursor({ revision, prefix, lastKey }) }
-                                : {}),
-                        });
+                        return inAccountKvRowAlgebra(() => listPluginAccountKvEntriesV1({
+                            row: snapshot.row,
+                            revision: snapshot.expectedRevision === 'absent' ? -1 : snapshot.expectedRevision,
+                            ...(options.prefix === undefined ? {} : { prefix: options.prefix }),
+                            ...(options.limit === undefined ? {} : { limit: options.limit }),
+                            ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+                        })) as Readonly<{
+                            items: readonly AccountKvListItem[];
+                            nextCursor?: string;
+                        }>;
                     },
                     async transaction<T>(operation: (transaction: AccountKvTransaction) => Promise<T>, options?: Readonly<{ signal?: AbortSignal }>) {
                         assertKvTransactionNotNested();

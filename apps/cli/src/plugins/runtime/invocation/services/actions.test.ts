@@ -9,6 +9,7 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 
 import {
     createPluginInvocationActionsService,
+    type ContributedActionInvocationResult,
     type InvokeContributedAction,
 } from './actions';
 import { createPluginActionCallerMaterializationFixture } from './actionCaller.testkit';
@@ -251,9 +252,9 @@ describe('plugin invocation ActionsService', () => {
         expect(execute).toHaveBeenCalledOnce();
     });
 
-    it('keeps permission approval unavailable to plugins while retaining host-stamped user-action outcomes', async () => {
+    it('keeps permission decisions present-user gated while retaining host-stamped user-action outcomes', async () => {
         const sessionUserActionAnswer = vi.fn<NonNullable<ActionExecutorDeps['sessionUserActionAnswer']>>(
-            async (_args) => undefined,
+            async (_args) => ({ ok: true }),
         );
         const service = createPluginInvocationActionsService({
             seed: {
@@ -275,7 +276,7 @@ describe('plugin invocation ActionsService', () => {
         await expect(Reflect.apply(service.execute, service, ['session.permission.respond', {
             requestId: 'permission-1',
             decision: 'allow',
-        }])).rejects.toMatchObject({ code: 'plugin_action_not_available' });
+        }])).rejects.toMatchObject({ code: 'present_user_required' });
 
         await expect(service.execute('session.user_action.answer', {
             requestId: 'question-1',
@@ -293,7 +294,7 @@ describe('plugin invocation ActionsService', () => {
             sessionId: 'session-forged',
             requestId: 'permission-1',
             decision: 'allow',
-        }])).rejects.toMatchObject({ code: 'plugin_action_not_available' });
+        }])).rejects.toMatchObject({ code: 'present_user_required' });
     });
 
     it('reaches the canonical daemon browser owner with host-stamped identity and composed cancellation', async () => {
@@ -564,12 +565,15 @@ describe('plugin invocation ActionsService', () => {
             invokeContributedAction: vi.fn(),
         });
 
-        await expect(service.execute('plugins.permissions.grants.request', {
-            capability: 'reviews.comments.write.direct',
-            targetScope: { kind: 'account' },
-            subject: { kind: 'general' },
-            reason: 'Publish approved review comments directly',
-        })).rejects.toMatchObject({ code: 'test_stop_after_binding' });
+        await expect(Reflect.apply(service.execute, service, [
+            'plugins.permissions.grants.request',
+            {
+                capability: 'reviews.comments.write.direct',
+                targetScope: { kind: 'account' },
+                subject: { kind: 'general' },
+                reason: 'Publish approved review comments directly',
+            },
+        ])).rejects.toMatchObject({ code: 'test_stop_after_binding' });
         expect(pluginPermissionGrantAction).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'plugins.permissions.grants.request',
             input: expect.objectContaining({
@@ -627,9 +631,9 @@ describe('plugin invocation ActionsService', () => {
             signal: expect.any(AbortSignal),
         });
 
-        await expect(service.execute('plugins.permissions.grants.grant' as never, {
+        await expect(service.execute('plugins.permissions.grants.grant', {
             requestId: 'request-1',
-        } as never)).rejects.toMatchObject({ code: 'plugin_action_not_available' });
+        })).rejects.toMatchObject({ code: 'present_user_required' });
         expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(1);
     });
 
@@ -847,12 +851,14 @@ describe('plugin invocation ActionsService', () => {
                 isGenerationCurrent: () => true,
             },
             actionExecutor: { execute: vi.fn() },
-            invokeContributedAction: vi.fn<InvokeContributedAction>(async () => ({
-                status: 'unavailable' as const,
-                code: 'plugin_action_handler_missing',
-                message: 'No committed target handler exists',
-                actionHandlerInvocation: 'notStarted',
-            } as never)),
+            invokeContributedAction: vi.fn<InvokeContributedAction>(async () => (
+                Object.freeze({
+                    status: 'unavailable' as const,
+                    code: 'plugin_action_handler_missing',
+                    message: 'No committed target handler exists',
+                    actionHandlerInvocation: 'notStarted',
+                } satisfies ContributedActionInvocationResult)
+            )),
         });
 
         const received = await service.execute(
@@ -961,7 +967,7 @@ describe('plugin invocation ActionsService', () => {
             invokeContributedAction,
         });
 
-        await expect(service.executeWithExecutionOrigin(
+        await expect(Reflect.apply(service.executeWithExecutionOrigin, service, [
             { pluginId: 'acme.target', localId: 'publish' },
             { title: 'Ready' },
             {
@@ -973,8 +979,8 @@ describe('plugin invocation ActionsService', () => {
                         materializationId: 'materialization-target-current',
                     },
                 },
-            } as never,
-        )).rejects.toMatchObject({
+            },
+        ])).rejects.toMatchObject({
             code: 'plugin_action_execution_origin_invalid',
         });
         expect(invokeContributedAction).not.toHaveBeenCalled();
@@ -1069,15 +1075,21 @@ describe('plugin invocation ActionsService', () => {
             invokeContributedAction: vi.fn(),
         });
 
-        await expect(service.execute('unknown.action' as never, {} as never))
+        await expect(Reflect.apply(service.execute, service, ['unknown.action', {}]))
             .rejects.toMatchObject({ code: 'plugin_action_unknown' });
-        await expect(service.execute('sessions.external.takeover.start' as never, {} as never))
-            .rejects.toMatchObject({ code: 'plugin_action_not_available' });
+        await expect(Reflect.apply(service.execute, service, ['sessions.external.takeover.start', {}]))
+            .rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
         expect(execute).not.toHaveBeenCalled();
     });
 
-    it('rejects raw Session-subagent Action ids before off-invocation reads or writes reach the generic executor', async () => {
-        const execute = vi.fn(async () => ({ ok: true as const, result: [] }));
+    it('projects Session-subagent reads while rejecting lifecycle writes', async () => {
+        const execute = vi.fn()
+            .mockResolvedValueOnce({ ok: true as const, result: [] })
+            .mockResolvedValueOnce({ ok: true as const, result: null })
+            .mockResolvedValueOnce({
+                ok: true as const,
+                result: { kind: 'snapshot' as const, subagents: [] },
+            });
         const service = createPluginInvocationActionsService({
             seed: {
                 plugin: { id: 'acme.caller', version: '1.0.0' },
@@ -1092,10 +1104,19 @@ describe('plugin invocation ActionsService', () => {
             invokeContributedAction: vi.fn(),
         });
 
+        for (const [actionId, input, expected] of [
+            ['sessions.subagents.list', { parentSessionId: 'session-outside' }, []],
+            ['sessions.subagents.get', { id: 'subagent-outside', parentSessionId: 'session-outside' }, null],
+            ['sessions.subagents.watch', {
+                id: 'subagent-outside',
+                parentSessionId: 'session-outside',
+            }, { kind: 'snapshot', subagents: [] }],
+        ] as const) {
+            await expect(Reflect.apply(service.execute, service, [actionId, input]))
+                .resolves.toEqual(expected);
+        }
+
         for (const [actionId, input] of [
-            ['sessions.subagents.list', { parentSessionId: 'session-outside' }],
-            ['sessions.subagents.get', { id: 'subagent-outside', parentSessionId: 'session-outside' }],
-            ['sessions.subagents.watch', { id: 'subagent-outside', parentSessionId: 'session-outside' }],
             ['sessions.subagents.upsert', {
                 id: 'subagent-outside',
                 parentSessionId: 'session-outside',
@@ -1118,7 +1139,7 @@ describe('plugin invocation ActionsService', () => {
                 .rejects.toMatchObject({ code: 'plugin_action_not_available' });
         }
 
-        expect(execute).not.toHaveBeenCalled();
+        expect(execute).toHaveBeenCalledTimes(3);
     });
 
     it('invokes an executor-backed runtime action through its exact canonical schemas', async () => {
@@ -1152,12 +1173,12 @@ describe('plugin invocation ActionsService', () => {
             viewId: 'view-1',
             url: 'https://example.com',
         })).resolves.toMatchObject({ status: 'dispatched', commandId: 'command-1' });
-        await expect(service.execute('browser.navigate', {
+        await expect(Reflect.apply(service.execute, service, ['browser.navigate', {
             kind: 'navigate',
             commandId: 'command-2',
             browserSessionId: 'browser-session-1',
             viewId: 'view-1',
-        } as never)).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+        }])).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
         expect(execute).toHaveBeenCalledTimes(1);
     });
 

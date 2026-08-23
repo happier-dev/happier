@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { lstat, mkdir, realpath } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
+import { lstat, mkdir, readdir, realpath } from 'node:fs/promises';
+import { basename, join, relative, resolve, sep } from 'node:path';
 
 import {
     PluginDaemonDatabaseContributionV1Schema,
@@ -111,6 +111,7 @@ type SqliteRunResult = Readonly<{
 
 const databaseOperationContext = new AsyncLocalStorage<ReadonlySet<DatabaseEntry>>();
 const LEDGER_TABLE = '_happier_plugin_schema';
+const DATABASE_FILE_SUFFIX = '.sqlite';
 
 function fail(code: string, message: string, retryable = false): never {
     throw new PluginContextServiceError(code, message, retryable);
@@ -576,17 +577,28 @@ async function assertDatabaseQuota(
     return pageBytes;
 }
 
-function assertPluginDatabaseQuota(
+/**
+ * The plugin-wide budget covers every database file the plugin retains on the
+ * shared daemon disk, not only the handles this owner currently holds open.
+ * Open entries contribute their live page accounting; every other retained
+ * file — including one a superseded declaration set left behind — contributes
+ * its on-disk size.
+ */
+function aggregatePluginDatabaseBytes(
     entries: Iterable<DatabaseEntry>,
-    limits: PluginDaemonDatabaseLimits,
-): void {
+    persistedFileBytes: ReadonlyMap<string, number>,
+): number {
     let totalBytes = 0;
+    const openFileNames = new Set<string>();
     for (const entry of entries) {
         totalBytes += entry.pageBytes;
-        if (totalBytes > limits.maximumDatabaseBytes) {
-            fail('daemon_database_quota_exceeded', 'Plugin daemon databases exceed the aggregate byte budget');
-        }
+        openFileNames.add(basename(entry.filePath));
     }
+    for (const [fileName, fileBytes] of persistedFileBytes) {
+        if (openFileNames.has(fileName)) continue;
+        totalBytes += fileBytes;
+    }
+    return totalBytes;
 }
 
 async function configureHostDatabase(
@@ -622,20 +634,23 @@ async function acquireConfiguredWorker(
     return worker;
 }
 
-async function ensurePluginDatabasePath(params: Readonly<{
-    pluginId: string;
-    paths: PluginStorePaths;
-    localId: string;
-}>): Promise<string> {
-    const pluginId = PluginIdSchema.safeParse(params.pluginId);
-    if (!pluginId.success) {
+function assertPluginDatabaseNamespace(pluginId: string): string {
+    const parsed = PluginIdSchema.safeParse(pluginId);
+    if (!parsed.success) {
         fail('daemon_database_identity_invalid', 'Daemon database requires a canonical plugin id');
     }
-    const namespace = normalizePluginStorageNamespace(pluginId.data);
-    if (namespace !== pluginId.data) {
+    const namespace = normalizePluginStorageNamespace(parsed.data);
+    if (namespace !== parsed.data) {
         fail('daemon_database_identity_invalid', 'Daemon database requires an unambiguous plugin namespace');
     }
-    const localId = assertDatabaseLocalId(params.localId);
+    return namespace;
+}
+
+async function ensurePluginDatabasesDirectory(params: Readonly<{
+    namespace: string;
+    paths: PluginStorePaths;
+}>): Promise<string> {
+    const namespace = params.namespace;
     await mkdir(params.paths.storageDir, { recursive: true });
     const storageRoot = await realpath(params.paths.storageDir);
     const pluginDirectory = resolve(storageRoot, namespace);
@@ -668,7 +683,50 @@ async function ensurePluginDatabasePath(params: Readonly<{
     if (relative(pluginRealPath, databasesRealPath) !== 'databases') {
         fail('daemon_database_path_invalid', 'Plugin daemon database directory escaped its namespace');
     }
-    const fileName = `${encodeURIComponent(localId)}.sqlite`;
+    return databasesRealPath;
+}
+
+function pluginDatabaseFileName(localId: string): string {
+    return `${encodeURIComponent(localId)}${DATABASE_FILE_SUFFIX}`;
+}
+
+/**
+ * Every database file the plugin retains in its own storage namespace, by file
+ * name. Undeclared files a superseded declaration set left behind are included
+ * because the byte budget is plugin-wide and the daemon disk is shared. WAL and
+ * shared-memory sidecars are excluded so the census keeps the same page-image
+ * basis as the live `PRAGMA page_count` accounting it is combined with.
+ */
+async function readPersistedPluginDatabaseFileBytes(params: Readonly<{
+    pluginId: string;
+    paths: PluginStorePaths;
+}>): Promise<ReadonlyMap<string, number>> {
+    const namespace = assertPluginDatabaseNamespace(params.pluginId);
+    const directory = await ensurePluginDatabasesDirectory({ namespace, paths: params.paths });
+    const fileBytes = new Map<string, number>();
+    for (const fileName of await readdir(directory)) {
+        if (!fileName.endsWith(DATABASE_FILE_SUFFIX)) continue;
+        const metadata = await lstat(resolve(directory, fileName)).catch((error: unknown) => {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+            throw error;
+        });
+        // A symlink is never a database this owner can open, and its own inode
+        // holds only a path, so it contributes nothing measurable here.
+        if (!metadata || !metadata.isFile() || metadata.isSymbolicLink()) continue;
+        fileBytes.set(fileName, metadata.size);
+    }
+    return fileBytes;
+}
+
+async function ensurePluginDatabasePath(params: Readonly<{
+    pluginId: string;
+    paths: PluginStorePaths;
+    localId: string;
+}>): Promise<string> {
+    const namespace = assertPluginDatabaseNamespace(params.pluginId);
+    const localId = assertDatabaseLocalId(params.localId);
+    const databasesRealPath = await ensurePluginDatabasesDirectory({ namespace, paths: params.paths });
+    const fileName = pluginDatabaseFileName(localId);
     const filePath = resolve(databasesRealPath, fileName);
     if (relative(databasesRealPath, filePath) !== fileName || filePath.includes(`..${sep}`)) {
         fail('daemon_database_path_invalid', 'Plugin daemon database file escaped its namespace');
@@ -873,7 +931,8 @@ function createTransactionDeadline(params: Readonly<{
 async function withHostTransaction<T>(params: Readonly<{
     entry: DatabaseEntry;
     limits: PluginDaemonDatabaseLimits;
-    assertQuota: () => void;
+    readAggregateBytes: () => Promise<number>;
+    assertQuota: (baselineBytes: number) => Promise<void>;
     signal: AbortSignal;
     isGenerationCurrent: () => boolean;
     operationSignal?: AbortSignal;
@@ -895,6 +954,11 @@ async function withHostTransaction<T>(params: Readonly<{
         context.assertUsable();
         await worker.exec('BEGIN IMMEDIATE', context.requestOptionsFor());
         began = true;
+        // A plugin already over its plugin-wide budget must still be able to
+        // read and shrink, so the commit gate refuses growth rather than the
+        // pre-existing size it inherited.
+        const baselineBytes = await params.readAggregateBytes();
+        context.assertUsable();
         const result = await params.operation(context);
         context.assertUsable();
         params.entry.pageBytes = await assertDatabaseQuota(
@@ -902,7 +966,7 @@ async function withHostTransaction<T>(params: Readonly<{
             params.limits,
             context.requestOptionsFor(),
         );
-        params.assertQuota();
+        await params.assertQuota(baselineBytes);
         deadline.beginCommit();
         await worker.exec('COMMIT');
         committed = true;
@@ -1030,7 +1094,8 @@ function createTransactionHandle(params: Readonly<{
 function createPublicDatabaseHandle(params: Readonly<{
     entry: DatabaseEntry;
     limits: PluginDaemonDatabaseLimits;
-    assertQuota: () => void;
+    readAggregateBytes: () => Promise<number>;
+    assertQuota: (baselineBytes: number) => Promise<void>;
     ownerSignal: AbortSignal;
     isGenerationCurrent: () => boolean;
     assertOwnerUsable?: () => void;
@@ -1055,6 +1120,7 @@ function createPublicDatabaseHandle(params: Readonly<{
             operation: async () => await withHostTransaction({
                 entry: params.entry,
                 limits: params.limits,
+                readAggregateBytes: params.readAggregateBytes,
                 assertQuota: params.assertQuota,
                 signal: params.ownerSignal,
                 isGenerationCurrent: params.isGenerationCurrent,
@@ -1124,8 +1190,27 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
         PluginDaemonDatabaseContributionV1Schema.parse(declaration)
     )));
     const entries = new Map<string, DatabaseEntry>();
-    const assertQuota = (): void => {
-        assertPluginDatabaseQuota(entries.values(), limits);
+    /**
+     * On-disk sizes of the plugin's retained database files. The set of open
+     * entries is applied at use time, so this stays valid until the files
+     * themselves can have changed behind this owner: an entry closing, or a
+     * candidate writing them while this owner is quiesced.
+     */
+    let persistedFileBytes: ReadonlyMap<string, number> | null = null;
+    const invalidatePersistedCensus = (): void => {
+        persistedFileBytes = null;
+    };
+    const readAggregateBytes = async (): Promise<number> => {
+        persistedFileBytes ??= await readPersistedPluginDatabaseFileBytes({
+            pluginId: params.pluginId,
+            paths: params.paths,
+        });
+        return aggregatePluginDatabaseBytes(entries.values(), persistedFileBytes);
+    };
+    const assertQuota = async (baselineBytes: number): Promise<void> => {
+        const totalBytes = await readAggregateBytes();
+        if (totalBytes <= limits.maximumDatabaseBytes || totalBytes <= baselineBytes) return;
+        fail('daemon_database_quota_exceeded', 'Plugin daemon databases exceed the aggregate byte budget');
     };
     /**
      * `ensurePluginDatabasePath` is asynchronous. Publish one pending open
@@ -1185,17 +1270,13 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
         const opening = openingEntries.get(localId);
         if (opening) return opening;
 
-        const created = createEntry(localId).then(async (entry) => {
+        // Opening is not growth: a retained file already counted against the
+        // budget from disk, and refusing the handle would strand the very data
+        // the plugin has to read and shrink. The commit gate owns the refusal.
+        const created = createEntry(localId).then((entry) => {
             entries.set(localId, entry);
-            try {
-                assertQuota();
-                return entry;
-            } catch (error) {
-                entries.delete(localId);
-                entry.closed = true;
-                await entry.worker.close().catch(() => undefined);
-                throw error;
-            }
+            invalidatePersistedCensus();
+            return entry;
         });
         openingEntries.set(localId, created);
         const clearOpening = (): void => {
@@ -1244,6 +1325,7 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             operation: async () => await withHostTransaction({
                 entry,
                 limits,
+                readAggregateBytes,
                 assertQuota,
                 signal: params.signal,
                 isGenerationCurrent: params.isGenerationCurrent,
@@ -1345,7 +1427,10 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             assertOwnerUsable(options.signal);
             if (!entry.initialized) {
                 entry.initialized = prepareEntry(entry, normalizedOptions, declaration).catch(async (error) => {
-                    if (entries.get(localId) === entry) entries.delete(localId);
+                    if (entries.get(localId) === entry) {
+                        entries.delete(localId);
+                        invalidatePersistedCensus();
+                    }
                     entry!.closed = true;
                     await entry!.worker.close().catch(() => undefined);
                     throw error;
@@ -1356,6 +1441,7 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             return createPublicDatabaseHandle({
                 entry,
                 limits,
+                readAggregateBytes,
                 assertQuota,
                 ownerSignal: params.signal,
                 isGenerationCurrent: params.isGenerationCurrent,
@@ -1378,6 +1464,7 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             await entry.worker.close();
         }
         entries.clear();
+        invalidatePersistedCensus();
     };
 
     return Object.freeze({
@@ -1397,6 +1484,9 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
                 async resume(): Promise<void> {
                     if (resumed) return;
                     resumed = true;
+                    // A candidate owned these files while this owner was
+                    // quiesced, so the census taken before that is stale.
+                    invalidatePersistedCensus();
                     if (!ownerClosed) ownerQuiesced = false;
                 },
             });

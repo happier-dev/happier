@@ -262,12 +262,17 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
       mcp: definition.surfaces.includes('mcp'),
       cli: definition.surfaces.includes('cli'),
       rpc: false,
-      sdk: false,
+      // API invocation is a host-owned capability for dynamically installed
+      // contributed Actions. It is intentionally independent from an
+      // author-declared presentation surface, so manifests never grow a
+      // parallel `api` declaration that can drift from the public ingress.
+      api: true,
       plugin: definition.surfaces.includes('plugin'),
     },
     inputHints: normalizePluginActionInputHintsV2(definition.inputHints) ?? null,
     inputSchema: definition.inputSchema ?? {},
     ...(definition.resultSchema ? { outputSchema: definition.resultSchema } : {}),
+    ...(definition.operation ? { operation: definition.operation } : {}),
     scopes: definition.scopes,
     contributionSurfaces: definition.surfaces,
     ...(definition.placementBindings ? { placementBindings: [...definition.placementBindings] } : {}),

@@ -7,9 +7,11 @@ import {
 } from './accessScopeRegistry';
 
 describe('PluginAccessScopeRegistry', () => {
-  it('does not expose ambient-power subset comparison through the optional-selection registry', () => {
+  it('reports any non-equal canonical scope as changed rather than ranking it', () => {
     const registry = createDefaultPluginAccessScopeRegistry();
 
+    // Ambient network power is never ranked as a narrowing: a different
+    // canonical scope is simply changed, so its consumers re-enter review.
     expect(registry.compare(
       'network',
       {
@@ -20,59 +22,28 @@ describe('PluginAccessScopeRegistry', () => {
         targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
         methods: ['GET', 'POST'],
       },
-    )).toEqual({
-      relation: 'changed',
-      reason: 'comparator_missing',
-    });
+    )).toEqual({ relation: 'changed', reason: 'canonical_scope_differs' });
+    // An independently selectable host resource is ranked no differently.
+    expect(registry.compare(
+      'sessions',
+      { access: ['read'], machineIds: ['machine-a'] },
+      { access: ['read', 'write'], machineIds: ['machine-a', 'machine-b'] },
+    )).toEqual({ relation: 'changed', reason: 'canonical_scope_differs' });
+    expect(registry.compare(
+      'filesystem',
+      { locations: [{ root: 'workspace', pathPrefix: 'src' }], access: ['read'] },
+      { locations: [{ root: 'workspace' }], access: ['read'] },
+    )).toEqual({ relation: 'changed', reason: 'canonical_scope_differs' });
+    // An unregistered capability stays conservative rather than comparing.
     expect(registry.compare(
       'secrets',
       { secretIds: ['token'], access: ['read'] },
       { secretIds: ['token', 'webhook'], access: ['read', 'write'] },
     )).toEqual({ relation: 'changed', reason: 'unknown_capability' });
-  });
-
-  it('returns exact, narrower, broader, invalid, and conservative changed decisions', () => {
-    const registry = createDefaultPluginAccessScopeRegistry();
-
     expect(registry.compare('future.capability', {}, {})).toEqual({
       relation: 'changed',
       reason: 'unknown_capability',
     });
-    expect(registry.compare(
-      'filesystem',
-      { locations: [{ root: 'workspace', pathPrefix: 'src' }], access: ['read'] },
-      { locations: [{ root: 'workspace' }], access: ['read'] },
-    )).toMatchObject({ relation: 'changed', reason: 'comparator_missing' });
-  });
-
-  it('implements subset comparison only for independently selectable host resources', () => {
-    const registry = createDefaultPluginAccessScopeRegistry();
-    const narrowerCases = [
-      ['connectedAccounts',
-        { serviceRefs: ['github'], accountScopes: ['read'], operations: ['use'], materializationKinds: ['environment'] },
-        { serviceRefs: ['github', { pluginId: 'com.acme.accounts', localId: 'slack' }], accountScopes: ['read', 'write'], operations: ['select', 'use'], materializationKinds: ['files', 'environment'] }],
-      ['sessions',
-        { access: ['read'], machineIds: ['machine-a'], projectIds: ['project-a'] },
-        { access: ['read', 'write'], machineIds: ['machine-a', 'machine-b'], projectIds: ['project-a'] }],
-      ['mcp',
-        {
-          serverRefs: ['local-server'],
-          discoverySourceRefs: ['local-discovery'],
-          operations: ['listTools', 'discover'],
-        },
-        {
-          serverRefs: ['local-server', { pluginId: 'other.plugin', localId: 'shared' }],
-          discoverySourceRefs: [
-            'local-discovery',
-            { pluginId: 'other.plugin', localId: 'shared-discovery' },
-          ],
-          operations: ['listTools', 'callTools', 'discover'],
-        }],
-    ] as const;
-
-    for (const [capability, candidate, previous] of narrowerCases) {
-      expect(registry.compare(capability, candidate, previous), capability).toMatchObject({ relation: 'narrower' });
-    }
   });
 
   it('canonicalizes MCP server and discovery-source references as independent sets', () => {
@@ -106,7 +77,7 @@ describe('PluginAccessScopeRegistry', () => {
         discoverySourceRefs: [localDiscovery, sharedDiscovery],
         operations: ['listTools', 'discover'],
       },
-    )).toMatchObject({ relation: 'narrower' });
+    )).toEqual({ relation: 'changed', reason: 'canonical_scope_differs' });
 
     const selection = registry.createSelection({
       pluginId: 'acme.plugin',
@@ -142,17 +113,19 @@ describe('PluginAccessScopeRegistry', () => {
       'connectedAccounts',
       { ...base, materializationKinds: ['environment'] },
       { ...base, materializationKinds: ['environment', 'files'] },
-    )).toMatchObject({ relation: 'narrower' });
+    )).toEqual({ relation: 'changed', reason: 'canonical_scope_differs' });
+    // An omitted materialization set is a distinct authority, not an implicit
+    // subset of a declared one, in either direction.
     expect(registry.compare(
       'connectedAccounts',
       base,
       { ...base, materializationKinds: ['environment'] },
-    )).toMatchObject({ relation: 'narrower' });
+    )).toEqual({ relation: 'changed', reason: 'canonical_scope_differs' });
     expect(registry.compare(
       'connectedAccounts',
       { ...base, materializationKinds: ['environment'] },
       base,
-    )).toMatchObject({ relation: 'broader' });
+    )).toEqual({ relation: 'changed', reason: 'canonical_scope_differs' });
 
     const selection = registry.createSelection({
       pluginId: 'acme.plugin',
@@ -216,7 +189,7 @@ describe('PluginAccessScopeRegistry', () => {
       'filesystem',
       { locations: [{ root: 'workspace', pathPrefix: 'src2' }], access: ['read'] },
       { locations: [{ root: 'workspace', pathPrefix: 'src' }], access: ['read'] },
-    )).toMatchObject({ relation: 'changed', reason: 'comparator_missing' });
+    )).toEqual({ relation: 'changed', reason: 'canonical_scope_differs' });
   });
 
   it('canonicalizes origin spelling and duplicate set entries before comparison', () => {
@@ -226,77 +199,6 @@ describe('PluginAccessScopeRegistry', () => {
       { targets: [{ kind: 'fixedOrigin', origin: 'https://API.example.test:443' }], methods: ['POST', 'GET', 'GET'] },
       { targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }], methods: ['GET', 'POST'], privateNetwork: false },
     )).toMatchObject({ relation: 'exact' });
-  });
-
-  it('fails closed when a capability comparator throws or cannot establish an order', () => {
-    const schema = z.object({ value: z.string() }).strict();
-    const throwing = createPluginAccessScopeRegistry([{
-      capability: 'throws',
-      scopeSchema: schema,
-      canonicalize: (scope) => scope,
-      isSubset: () => { throw new Error('boom'); },
-    }]);
-    const incomparable = createPluginAccessScopeRegistry([{
-      capability: 'partial',
-      scopeSchema: schema,
-      canonicalize: (scope) => scope,
-      isSubset: () => false,
-    }]);
-
-    expect(throwing.compare('throws', { value: 'next' }, { value: 'previous' })).toEqual({
-      relation: 'changed',
-      reason: 'comparator_error',
-    });
-    expect(incomparable.compare('partial', { value: 'next' }, { value: 'previous' })).toEqual({
-      relation: 'changed',
-      reason: 'incomparable',
-    });
-  });
-
-  it('fails closed for non-boolean or input-mutating comparators', () => {
-    const schema = z.object({ values: z.array(z.string()).min(1) }).strict();
-    const nonBoolean = createPluginAccessScopeRegistry([{
-      capability: 'non-boolean',
-      scopeSchema: schema,
-      canonicalize: (scope) => scope,
-      isSubset: (() => 'truthy') as unknown as (candidate: unknown, previous: unknown) => boolean,
-    }]);
-    const mutating = createPluginAccessScopeRegistry([{
-      capability: 'mutating',
-      scopeSchema: schema,
-      canonicalize: (scope) => scope,
-      isSubset: (candidate) => {
-        (candidate as { values: string[] }).values.pop();
-        return true;
-      },
-    }]);
-
-    expect(nonBoolean.compare('non-boolean', { values: ['a'] }, { values: ['a', 'b'] })).toEqual({
-      relation: 'changed',
-      reason: 'comparator_error',
-    });
-    expect(mutating.compare('mutating', { values: ['a'] }, { values: ['a', 'b'] })).toEqual({
-      relation: 'changed',
-      reason: 'comparator_error',
-    });
-  });
-
-  it('fails closed for a non-deterministic comparator', () => {
-    let next = false;
-    const registry = createPluginAccessScopeRegistry([{
-      capability: 'non-deterministic',
-      scopeSchema: z.object({ value: z.string() }).strict(),
-      canonicalize: (scope) => scope,
-      isSubset: () => {
-        next = !next;
-        return next;
-      },
-    }]);
-
-    expect(registry.compare('non-deterministic', { value: 'a' }, { value: 'b' })).toEqual({
-      relation: 'changed',
-      reason: 'comparator_error',
-    });
   });
 
   it('rejects non-idempotent, mutating, or non-JSON canonicalizers', () => {
@@ -340,14 +242,19 @@ describe('PluginAccessScopeRegistry', () => {
       capability: 'stable',
       scopeSchema: schema,
       canonicalize: (scope: unknown) => scope,
-      isSubset: () => false,
     };
     const registry = createPluginAccessScopeRegistry([registration]);
-    registration.isSubset = () => true;
+    // A registration mutated after registration cannot retarget the registry:
+    // this replacement would otherwise collapse every scope to one value.
+    registration.canonicalize = () => ({ values: ['pinned'] });
 
     expect(registry.compare('stable', { values: ['a'] }, { values: ['b'] })).toEqual({
       relation: 'changed',
-      reason: 'incomparable',
+      reason: 'canonical_scope_differs',
+    });
+    expect(registry.compare('stable', { values: ['a'] }, { values: ['a'] })).toEqual({
+      relation: 'exact',
+      reason: 'canonical_scope_equal',
     });
 
     const selection = registry.createSelection({

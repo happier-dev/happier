@@ -2,7 +2,6 @@ import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import {
-  isReservedHappierPluginId,
   PluginIdSchema,
   PluginScaffoldUiModeSchema,
   type PluginScaffoldUiMode,
@@ -44,7 +43,10 @@ export type ScaffoldLocalPluginResult =
 const DEFAULT_PLUGIN_VERSION = '0.1.0';
 const PUBLIC_PLUGIN_SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
 const PLUGIN_AUTHORING_SKILL_DIRECTORY = ['.agents', 'skills', 'happier-plugin-authoring'] as const;
+const MAIN_SURFACE_ID = 'main';
+/** `uiSurfaceRendererId(MAIN_SURFACE_ID)`; the generated test pins the equality. */
 const REACT_NATIVE_WEB_CONTRIBUTION_ID = 'main-renderer';
+const MAIN_SURFACE_MODULE_RELATIVE_PATH = 'src/ui/surfaces.ts';
 const REACT_NATIVE_WEB_SOURCE_ENTRY = 'src/ui/renderSurface.tsx';
 const REACT_NATIVE_REPACK_MODULE_PATH = './renderSurface';
 const REACT_NATIVE_REPACK_EXPORT_NAME = 'renderSurface';
@@ -115,7 +117,7 @@ function createPackageJson(params: Readonly<{
 
   if (params.ui === 'reactNative') {
     // The React Native surface renders on web through the SDK-managed
-    // react-native-web build. `build:ui` reads only `pluginUiBuild.mjs`; the
+    // react-native-web build. `build:ui` reads only `pluginUiBuild.ts`; the
     // SDK derives operation-local Vite and Re.Pack configs before emitting the
     // digested `dist/happier-plugin-ui` artifact tree.
     scripts['build:ui'] = 'happier-plugin-build-ui --project-root .';
@@ -242,6 +244,58 @@ function createPluginAuthoringSkillSource(): string {
   ].join('\n');
 }
 
+/**
+ * The surface lives in its own leaf module so `pluginUiBuild.ts` can derive the
+ * build targets from the SAME declaration the manifest projects. Its only
+ * import is the SDK, which keeps it cheap for the build-config loader to
+ * evaluate and keeps the author with one place to edit a surface.
+ */
+function createPluginUiSurfaceModuleSource(params: Readonly<{
+  pluginId: string;
+  displayName: string;
+  ui: PluginScaffoldUiMode;
+}>): string {
+  const declaration = params.ui === 'hostedWeb'
+    ? [
+      'export const mainSurface = defineUiSurfaceDefinition({',
+      `  id: ${JSON.stringify(MAIN_SURFACE_ID)},`,
+      "  placement: 'appPage',",
+      `  title: { key: 'scaffold.main.title', fallback: ${JSON.stringify(params.displayName)} },`,
+      "  renderer: { kind: 'hostedWeb', requiredHostMethods: ['context', 'executeAction'] },",
+      `  build: { entry: ${JSON.stringify(HOSTED_WEB_SOURCE_ENTRY)} },`,
+      '});',
+    ]
+    : (() => {
+      const module = createReactNativeRepackModuleIdentity(params.pluginId);
+      return [
+        'export const mainSurface = defineUiSurfaceDefinition({',
+        `  id: ${JSON.stringify(MAIN_SURFACE_ID)},`,
+        "  placement: 'appPage',",
+        `  title: { key: 'scaffold.main.title', fallback: ${JSON.stringify(params.displayName)} },`,
+        "  renderer: { kind: 'reactNative', requiredHostMethods: ['context', 'executeAction'] },",
+        '  build: {',
+        `    entry: ${JSON.stringify(REACT_NATIVE_WEB_SOURCE_ENTRY)},`,
+        "    platforms: ['web', 'ios', 'android'],",
+        '    module: {',
+        `      containerName: ${JSON.stringify(module.containerName)},`,
+        `      modulePath: ${JSON.stringify(module.modulePath)},`,
+        `      exportName: ${JSON.stringify(module.exportName)},`,
+        '    },',
+        '  },',
+        '});',
+      ];
+    })();
+  return [
+    '// One surface declaration. `src/index.ts` projects it into the manifest and',
+    '// `pluginUiBuild.ts` derives its build target from it, so a renderer, entry',
+    '// or platform change is edited exactly once.',
+    "import { defineUiSurfaceDefinition } from '@happier-dev/plugin-sdk';",
+    '',
+    ...declaration,
+    '',
+  ].join('\n');
+}
+
 function createPluginSource(params: Readonly<{
   pluginId: string;
   displayName: string;
@@ -252,42 +306,14 @@ function createPluginSource(params: Readonly<{
     : "['agent', 'cli', 'mcp', 'ui']";
   const mainSurface = params.ui === undefined
     ? []
-    : params.ui === 'hostedWeb'
-      ? [
-        'export const mainSurface = defineUiSurfaceDefinition({',
-        "  id: 'main',",
-        "  placement: 'appPage',",
-        `  title: { key: 'scaffold.main.title', fallback: ${JSON.stringify(params.displayName)} },`,
-        "  renderer: { kind: 'hostedWeb', requiredHostMethods: ['context', 'executeAction'] },",
-        `  build: { entry: ${JSON.stringify(HOSTED_WEB_SOURCE_ENTRY)} },`,
-        '});',
-        '',
-      ]
-      : (() => {
-        const module = createReactNativeRepackModuleIdentity(params.pluginId);
-        return [
-          'export const mainSurface = defineUiSurfaceDefinition({',
-          "  id: 'main',",
-          "  placement: 'appPage',",
-          `  title: { key: 'scaffold.main.title', fallback: ${JSON.stringify(params.displayName)} },`,
-          "  renderer: { kind: 'reactNative', requiredHostMethods: ['context', 'executeAction'] },",
-          '  build: {',
-          `    entry: ${JSON.stringify(REACT_NATIVE_WEB_SOURCE_ENTRY)},`,
-          "    platforms: ['web', 'ios', 'android'],",
-          '    module: {',
-          `      containerName: ${JSON.stringify(module.containerName)},`,
-          `      modulePath: ${JSON.stringify(module.modulePath)},`,
-          `      exportName: ${JSON.stringify(module.exportName)},`,
-          '    },',
-          '  },',
-          '});',
-          '',
-        ];
-      })();
+    : [
+      "import { mainSurface } from './ui/surfaces.js';",
+      '',
+      'export { mainSurface };',
+      '',
+    ];
   const lines = [
-    params.ui === undefined
-      ? "import { definePlugin } from '@happier-dev/plugin-sdk';"
-      : "import { definePlugin, defineUiSurfaceDefinition } from '@happier-dev/plugin-sdk';",
+    "import { definePlugin } from '@happier-dev/plugin-sdk';",
     "import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';",
     '',
     ...mainSurface,
@@ -708,41 +734,24 @@ function createHostedWebSource(params: Readonly<{ displayName: string }>): strin
   ].join('\n');
 }
 
-function createUiBuildConfigSource(params: Readonly<{
-  pluginId: string;
-  ui: PluginScaffoldUiMode;
-}>): string {
-  const target = params.ui === 'hostedWeb'
-    ? [
-      '    {',
-      `      rendererId: '${REACT_NATIVE_WEB_CONTRIBUTION_ID}',`,
-      `      entry: '${HOSTED_WEB_SOURCE_ENTRY}',`,
-      "      kind: 'hostedWeb',",
-      '    },',
-    ]
-    : (() => {
-      const module = createReactNativeRepackModuleIdentity(params.pluginId);
-      return [
-        '    {',
-        `      rendererId: '${REACT_NATIVE_WEB_CONTRIBUTION_ID}',`,
-        `      entry: '${REACT_NATIVE_WEB_SOURCE_ENTRY}',`,
-        "      kind: 'reactNative',",
-        "      platforms: ['web', 'ios', 'android'],",
-        '      module: {',
-        `        containerName: ${JSON.stringify(module.containerName)},`,
-        `        modulePath: ${JSON.stringify(module.modulePath)},`,
-        `        exportName: ${JSON.stringify(module.exportName)},`,
-        '      },',
-        '    },',
-      ];
-    })();
+/**
+ * The build config DERIVES its targets from the one surface declaration through
+ * the SDK's retained `buildUiSurfaceTargets` projection. The predecessor
+ * scaffold restated `rendererId`, `entry`, `kind`, `platforms` and the Module
+ * Federation identity here as well, so a beginner maintained two sources of one
+ * truth and a drifted pair failed only at artifact-verification time.
+ *
+ * Raw `ui.views` / `ui.renderers` plus a hand-written `targets` array remain the
+ * advanced route for shared renderers, fallback chains and custom artifacts.
+ */
+function createUiBuildConfigSource(): string {
   return [
-    "import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';",
+    "import { buildUiSurfaceTargets, defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';",
+    '',
+    `import { mainSurface } from './${MAIN_SURFACE_MODULE_RELATIVE_PATH}';`,
     '',
     'export const pluginUiBuildConfig = defineBuildConfig({',
-    '  targets: [',
-    ...target,
-    '  ],',
+    '  targets: [...buildUiSurfaceTargets(mainSurface)],',
     '});',
     '',
     'export default pluginUiBuildConfig;',
@@ -808,10 +817,14 @@ export async function scaffoldLocalPlugin(params: Readonly<{
       diagnostics: [createDiagnostic('plugin_scaffold_invalid_input', 'Plugin scaffold target directory is required')],
     };
   }
-  if (!PluginIdSchema.safeParse(pluginId).success || isReservedHappierPluginId(pluginId)) {
+  // Scaffolding writes a working tree, not a published artifact. The reserved
+  // `happier.*` namespace is a registry-custody rule owned by manifest
+  // validation and archive staging, so refusing it here only stopped a
+  // maintainer from scaffolding a plugin this repository ships.
+  if (!PluginIdSchema.safeParse(pluginId).success) {
     return {
       ok: false,
-      diagnostics: [createDiagnostic('plugin_scaffold_invalid_input', 'Plugin id must use a lower-case dot-delimited owner namespace outside the reserved happier.* namespace')],
+      diagnostics: [createDiagnostic('plugin_scaffold_invalid_input', 'Plugin id must use a lower-case dot-delimited owner namespace')],
     };
   }
   if (!displayName) {
@@ -854,7 +867,10 @@ export async function scaffoldLocalPlugin(params: Readonly<{
     : ui === 'reactNative'
       ? join(targetDir, ...REACT_NATIVE_WEB_SOURCE_ENTRY.split('/'))
       : undefined;
-  const uiBuildConfigPath = join(targetDir, 'pluginUiBuild.mjs');
+  // A TypeScript build config is an admitted `BUILD_CONFIG_BASENAMES` entry and
+  // is what lets the config import the typed surface declaration directly.
+  const uiBuildConfigPath = join(targetDir, 'pluginUiBuild.ts');
+  const uiSurfaceModulePath = join(targetDir, ...MAIN_SURFACE_MODULE_RELATIVE_PATH.split('/'));
 
   try {
     await mkdir(join(targetDir, 'src'), { recursive: true });
@@ -880,12 +896,20 @@ export async function scaffoldLocalPlugin(params: Readonly<{
     await writeFile(testEntryPath, createPluginTestSource({ pluginId, displayName, ui }), 'utf8');
     await writeFile(tsconfigPath, createTypeScriptConfig(), 'utf8');
     await writeFile(authoringSkillPath, createPluginAuthoringSkillSource(), 'utf8');
-    if (uiEntryPath && ui === 'hostedWeb') {
-      await writeFile(uiEntryPath, createHostedWebSource({ displayName }), 'utf8');
-      await writeFile(uiBuildConfigPath, createUiBuildConfigSource({ pluginId, ui }), 'utf8');
-    } else if (uiEntryPath && ui === 'reactNative') {
-      await writeFile(uiEntryPath, createReactNativeSurfaceSource({ displayName }), 'utf8');
-      await writeFile(uiBuildConfigPath, createUiBuildConfigSource({ pluginId, ui }), 'utf8');
+    if (uiEntryPath && ui !== undefined) {
+      await writeFile(
+        uiEntryPath,
+        ui === 'hostedWeb'
+          ? createHostedWebSource({ displayName })
+          : createReactNativeSurfaceSource({ displayName }),
+        'utf8',
+      );
+      await writeFile(
+        uiSurfaceModulePath,
+        createPluginUiSurfaceModuleSource({ pluginId, displayName, ui }),
+        'utf8',
+      );
+      await writeFile(uiBuildConfigPath, createUiBuildConfigSource(), 'utf8');
     }
   } catch (error) {
     await rm(targetDir, { recursive: true, force: true }).catch(() => undefined);

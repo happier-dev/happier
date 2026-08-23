@@ -5,7 +5,10 @@ import type {
 import type {
     ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
-    ManagedServiceHandle } from '@happier-dev/plugin-sdk/managed-services';
+    ManagedServiceHandle,
+    ManagedServiceRequest,
+    ManagedServiceResponse,
+} from '@happier-dev/plugin-sdk/managed-services';
 import type {
     ExecService } from '@happier-dev/plugin-sdk/exec';
 import type {
@@ -72,9 +75,20 @@ export type ManagedProviderEndpointPath = Readonly<{
     servicePath: string;
 }>;
 
+/**
+ * Host-private projection of one admitted managed Provider endpoint.
+ *
+ * `endpointUrl` names the declared endpoint for contracts that must hand a URL
+ * to another process. Bytes always move through `request`, which is the exact
+ * `ManagedServiceHandle.request` for the supervised service: header injection,
+ * credential currentness, redirect refusal and request bounding stay with that
+ * one owner instead of a second transport with its own rules.
+ */
 export type ManagedProviderEndpointHttpAccess = Readonly<{
     endpointUrl(endpointTemplateId: string): string | null;
-    fetch(input: string | URL, init?: RequestInit): Promise<Response>;
+    request(
+        request: ManagedServiceRequest & Readonly<{ timeoutMs: number }>,
+    ): Promise<ManagedServiceResponse>;
 }>;
 
 export type ManagedProviderEndpointAccessProjection = Readonly<{

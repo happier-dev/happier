@@ -350,6 +350,12 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
                   params.externalSessionsActiveServerId,
               }
             : {}),
+          ...(params.reloadController.currentGlobalExternalSessions
+            ? {
+                currentGlobalExternalSessionsRouter:
+                  params.reloadController.currentGlobalExternalSessions,
+              }
+            : {}),
           ...(candidate.preparedActivationGraphsByPluginId
             ? {
                 preparedActivationGraphsByPluginId:

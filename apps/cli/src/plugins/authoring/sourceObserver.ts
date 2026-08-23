@@ -37,7 +37,12 @@ export type PluginDevelopmentSourceObservation =
       authoringKind?: 'code' | 'manifest';
       sourceRootPath: string;
       request: PluginDevelopmentSourceRequest;
-      developmentEntryPath: string;
+      /**
+       * Absent for a built manifest root that declares no
+       * `entrypoints.development`: the daemon owns that source's development
+       * closure, and nothing on the CLI side reads this path.
+       */
+      developmentEntryPath?: string;
       observedRelativePaths: readonly string[];
       declaredDependencies: Readonly<Record<string, string>>;
       observedDirectoryPaths: readonly string[];
@@ -254,16 +259,13 @@ export async function inspectPluginDevelopmentSource(input: Readonly<{
   projectRoot = resolvedSource.pluginRootPath;
   const manifestResult = resolvedSource;
 
-  const developmentEntrypoint = manifestResult.manifest.entrypoints?.development;
-  if (!developmentEntrypoint) {
-    return {
-      ok: false,
-      diagnostics: [diagnostic(
-        'plugin_dev_entry_missing',
-        'Plugin manifest must declare entrypoints.development for happier plugins dev.',
-      )],
-    };
-  }
+  // A built manifest root has no `entrypoints.development`: its development
+  // entry is the TypeScript source the daemon compiles into an owned
+  // generation. The daemon change preparer accepts exactly that shape, and the
+  // watch loop only observes and submits edits, so requiring the declaration
+  // here refused a source the owner downstream already handles. When the
+  // manifest does declare one, it is still resolved so an escaping or missing
+  // dev entry is reported to the author before the daemon round trip.
   const entryResolution = await resolvePluginDaemonEntryPath({
     pluginRootPath: projectRoot,
     manifest: manifestResult.manifest,
@@ -284,15 +286,6 @@ export async function inspectPluginDevelopmentSource(input: Readonly<{
     };
   }
   const developmentEntryPath = entryResolution.devDaemonEntryPath;
-  if (!developmentEntryPath) {
-    return {
-      ok: false,
-      diagnostics: [diagnostic(
-        'plugin_dev_entry_missing',
-        `Plugin development entrypoint is unavailable: ${developmentEntrypoint}`,
-      )],
-    };
-  }
 
   let declaredDependencies: Readonly<Record<string, string>>;
   try {
@@ -320,7 +313,7 @@ export async function inspectPluginDevelopmentSource(input: Readonly<{
         projectRoot,
         ...(input.sdkRegistryOrigin ? { sdkRegistryOrigin: input.sdkRegistryOrigin } : {}),
       },
-      developmentEntryPath,
+      ...(developmentEntryPath ? { developmentEntryPath } : {}),
       observedRelativePaths: inventory.files.map((path) => toPortableRelativePath(projectRoot, path)),
       declaredDependencies,
       observedDirectoryPaths: inventory.directories,

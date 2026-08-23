@@ -603,6 +603,9 @@ export async function stageNpmCompatiblePluginArchive(
     const manifestResult = await readPluginManifest({
       manifestPath: join(extracted.rootPath, PACKAGE_MANIFEST_PATH),
       ...(params.manifestAuthority ? { manifestAuthority: params.manifestAuthority } : {}),
+      // Staging only ever expands a published package or archive, which is
+      // exactly what the registry-lifecycle rules describe.
+      sourceProvenance: 'registryCustodied',
     });
     assertStagingNotAborted(params.signal);
     if (!manifestResult.ok) reject('manifest_invalid', 'Plugin manifest failed strict ingestion and semantic validation');

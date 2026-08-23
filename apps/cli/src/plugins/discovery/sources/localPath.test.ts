@@ -102,8 +102,8 @@ describe('resolveLocalPathPluginSource', () => {
     expect(result.manifestAuthority).toBe('external');
   });
 
-  it('still refuses a local root that imitates the bundled package contract to claim a reserved id', async () => {
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-impostor-'));
+  it('lets a local working tree develop a reserved happier.* id without granting it first-party authority', async () => {
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-local-reserved-'));
     await writePluginManifest(pluginRoot, { id: 'happier.agent.codex' });
     await writeFile(
       join(pluginRoot, 'package.json'),
@@ -113,11 +113,50 @@ describe('resolveLocalPathPluginSource', () => {
 
     const result = await resolveLocalPathPluginSource({ locator: pluginRoot });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.diagnostics).toEqual([
-      expect.objectContaining({ message: expect.stringContaining('reserved happier.* namespace') }),
-    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifest.id).toBe('happier.agent.codex');
+    // Provenance scoped the *namespace* rule; it did not promote the root to
+    // the bundled first-party custody authority managed services read.
+    expect(result.manifestAuthority).toBe('external');
+  });
+
+  it.each(['package', 'marketplace', 'archive'] as const)(
+    'still refuses a %s artifact that claims the reserved happier namespace',
+    async (installedSourceKind) => {
+      const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-registry-reserved-'));
+      await writePluginManifest(pluginRoot, { id: 'happier.agent.codex' });
+
+      expect(await resolveLocalPathPluginSource({ locator: pluginRoot, installedSourceKind })).toEqual(
+        expect.objectContaining({
+          ok: false,
+          diagnostics: [expect.objectContaining({
+            message: expect.stringContaining('reserved happier.* namespace'),
+          })],
+        }),
+      );
+      // Same bytes, same path: only the record's provenance decided the rule.
+      expect(await resolveLocalPathPluginSource({ locator: pluginRoot, installedSourceKind: 'path' }))
+        .toEqual(expect.objectContaining({ ok: true }));
+    },
+  );
+
+  it('keeps the declared engine range enforced for a registry-custodied artifact only', async () => {
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-engine-'));
+    await writePluginManifest(pluginRoot, { engines: { happier: '>=9999.0.0' } });
+
+    expect(await resolveLocalPathPluginSource({
+      locator: pluginRoot,
+      installedSourceKind: 'archive',
+    })).toEqual(expect.objectContaining({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        message: expect.stringContaining('requires a compatible Happier CLI version'),
+      })],
+    }));
+
+    expect(await resolveLocalPathPluginSource({ locator: pluginRoot }))
+      .toEqual(expect.objectContaining({ ok: true }));
   });
 
   it('preserves an explicit standalone manifest-file locator instead of rewriting it to the parent directory', async () => {

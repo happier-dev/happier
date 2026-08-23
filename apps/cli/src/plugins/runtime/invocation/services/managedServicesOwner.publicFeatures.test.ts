@@ -686,9 +686,11 @@ describe('managed-services SVC09 public feature completeness', () => {
 
             expect(projection).not.toBeNull();
             if (!projection) return;
-            await projection.access.fetch(
-                'http://127.0.0.1:43140/v1/models',
-            );
+            await projection.access.request({
+                pathAndQuery: '/v1/models',
+                method: 'GET',
+                timeoutMs: 5_000,
+            });
             expect(latestAuthorization(requests, '/healthz')).toBe(
                 initialHealthAuthorization,
             );
@@ -698,9 +700,11 @@ describe('managed-services SVC09 public feature completeness', () => {
 
             await credentialLease.rotate('credential-b');
             await vi.advanceTimersByTimeAsync(251);
-            await projection.access.fetch(
-                'http://127.0.0.1:43140/v1/models?after=rotation',
-            );
+            await projection.access.request({
+                pathAndQuery: '/v1/models?after=rotation',
+                method: 'GET',
+                timeoutMs: 5_000,
+            });
 
             expect(credentialLease.materialize).toHaveBeenCalledTimes(2);
             expect(latestAuthorization(requests, '/healthz')).toBe(

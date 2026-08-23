@@ -565,12 +565,14 @@ describe('plugin raw credential materializer', () => {
     expect(JSON.stringify(inspection.subject)).not.toContain('saved-secret-raw');
   });
 
-  it('fails authorization inspection when the principal or admitted runtime changes during inspection', async () => {
+  it('fails the authorized materialization when the principal or admitted runtime changes across it', async () => {
     let principalReads = 0;
     const principalTurnover = createHarness({
       readPrincipal: async () => principalSnapshot(++principalReads === 1 ? principalA : principalB),
     });
-    await expect(principalTurnover.materializer.inspectAuthorization()).rejects.toMatchObject({
+    // The grant list was evaluated for the principal read before it; a
+    // principal that has since changed must not reach the credential.
+    await expect(principalTurnover.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
       code: 'plugin_voice_credential_access_unavailable',
     });
 

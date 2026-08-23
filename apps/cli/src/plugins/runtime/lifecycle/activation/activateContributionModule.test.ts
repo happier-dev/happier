@@ -11,7 +11,7 @@ function manifest(contributes: Record<string, unknown>) {
     const result = ingestCanonicalPluginManifest({
         schemaVersion: 2, id: 'acme.activation', version: '1.0.0', displayName: 'Activation',
         engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' }, contributes,
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!result.ok) throw new Error(result.diagnostics.map((item) => item.message).join('\n'));
     return result.manifest;
 }

@@ -102,7 +102,7 @@ describe('target activation publication', () => {
                 }],
                 systemTools: [{ id: 'forge', title: 'Forge', executableNames: ['forge'] }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
 
         const activated = await activatePluginRuntimeRegistry({
@@ -179,7 +179,7 @@ describe('target activation publication', () => {
                         },
                     }],
                 },
-            });
+            }, { sourceProvenance: 'registryCustodied' });
             if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
             const activate = vi.fn((api: PluginApi) => {
                 api.connectedAccounts.register('forge', {
@@ -272,7 +272,7 @@ describe('target activation publication', () => {
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {},
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) {
             throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         }
@@ -333,7 +333,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -388,7 +388,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -442,7 +442,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -514,7 +514,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -622,7 +622,7 @@ describe('target activation publication', () => {
                 }],
                 systemTools: [{ id: 'fixture-cli', title: 'Fixture CLI', executableNames: ['fixture'] }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -760,7 +760,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -810,7 +810,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], execution: { target: 'daemon' }, surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -868,7 +868,7 @@ describe('target activation publication', () => {
                     priority: 10,
                 }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -946,7 +946,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         const alpha = createManifest('acme.target.alpha');
         const beta = createManifest('acme.target.beta');
         if (!alpha.ok || !beta.ok) throw new Error('Fixture manifests must be valid');
@@ -1017,7 +1017,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -1100,7 +1100,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -1158,7 +1158,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],
@@ -1215,7 +1215,7 @@ describe('target activation publication', () => {
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
-        });
+        }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         const registry = {
             agents: [], actions: [], resources: [],

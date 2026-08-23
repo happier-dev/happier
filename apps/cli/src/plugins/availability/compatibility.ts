@@ -45,7 +45,11 @@ export function evaluatePluginCompatibilityProjection(
     });
   }
 
-  const manifestValidation = validatePluginManifest(parsed.data.manifest);
+  // A compatibility projection only ever describes an acquirable published
+  // artifact; nothing local reaches this evaluation.
+  const manifestValidation = validatePluginManifest(parsed.data.manifest, {
+    sourceProvenance: 'registryCustodied',
+  });
   const projection = createPluginCompatibilityProjectionV1({
     manifest: manifestValidation.ok ? manifestValidation.manifest : parsed.data.manifest,
     uiArtifacts: parsed.data.uiArtifacts,

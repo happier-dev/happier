@@ -62,7 +62,7 @@ const coldTarget = definePlugin({
         }).point(),
     },
 });
-const coldTargetManifest = ingestCanonicalPluginManifest(coldTarget.manifest, {
+const coldTargetManifest = ingestCanonicalPluginManifest(coldTarget.manifest, { sourceProvenance: 'registryCustodied',
     manifestAuthority: 'external',
     enforceEngineCompatibility: false,
 });
@@ -101,7 +101,7 @@ function action(): ResolvedActionContribution {
                 mcp: false,
                 cli: false,
                 rpc: false,
-                sdk: false,
+                api: false,
                 plugin: true,
             },
             inputHints: null,
@@ -119,7 +119,7 @@ function currentGeneration(
     pluginId: string,
     immutableGenerationId: string,
 ): CurrentCommittedPluginGeneration {
-    const record: ImmutablePluginGenerationRecord = {
+    const record: ImmutablePluginGenerationRecord = { sourceProvenance: 'registryCustodied',
         t: 'happier_plugin_generation_v1',
         schemaVersion: 1,
         pluginId,
@@ -193,7 +193,7 @@ function bundledFixtureManifest(pluginId: string) {
         entrypoints: { daemon: './dist/plugin.mjs' },
         hostAccess: { required: [], optional: [] },
         contributes: {},
-    });
+    }, { sourceProvenance: 'registryCustodied' });
     if (!ingestion.ok) throw new Error('targeted_contribution_fixture_manifest_invalid');
     return ingestion.manifest;
 }

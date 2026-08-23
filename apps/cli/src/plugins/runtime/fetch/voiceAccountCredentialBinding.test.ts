@@ -866,6 +866,69 @@ describe('Voice account Plugin fetch credential binding', () => {
         expect(adapter).not.toHaveBeenCalled();
     });
 
+    it('admits a bundled first-party provider whose declared recipient operations changed after approval', async () => {
+        const identity = {
+            pluginId: 'happier.voice.elevenlabs',
+            localId: 'realtime-elevenlabs',
+        } as const;
+        const approvedDefinition = {
+            ...definition,
+            id: identity.localId,
+            title: 'ElevenLabs Voice',
+        };
+        // The approval the user gave before the release that changed the
+        // bundled provider's mediated operations.
+        publishCredential(
+            'happier.voice.elevenlabs/realtime-elevenlabs',
+            1,
+            createRecipientContractDigestV1(createVoiceProviderRecipientContractFromCredentialsV1({
+                package: {
+                    pluginId: identity.pluginId,
+                    source: { kind: 'bundled', locator: identity.pluginId },
+                },
+                publisher: { trust: 'bundled', identity: 'happier.dev:first-party-bundle' },
+                contribution: identity,
+                credentials: {
+                    slot: approvedDefinition.credentials!.slot,
+                    hostMediated: approvedDefinition.credentials!.hostMediated!,
+                },
+                presentation: { title: approvedDefinition.title },
+            })),
+        );
+        const changedDefinition = {
+            ...approvedDefinition,
+            credentials: {
+                ...approvedDefinition.credentials!,
+                hostMediated: {
+                    operations: [
+                        ...approvedDefinition.credentials!.hostMediated!.operations,
+                        {
+                            ...approvedDefinition.credentials!.hostMediated!.operations[0]!,
+                            id: 'new-operation',
+                            purpose: 'voice.new-operation',
+                        },
+                    ],
+                },
+            },
+        };
+        const adapter = vi.fn(async (request: TestFetchRequest) => response(request, { voices: [] }));
+        const service = createCatalogService(adapter, {
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, [{
+            pluginId: identity.pluginId,
+            identity,
+            definition: changedDefinition,
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+        }], identity.pluginId);
+
+        await expect(service.request(catalogRequest(identity))).resolves.toMatchObject({
+            status: 200,
+        });
+        expect(adapter).toHaveBeenCalledOnce();
+    });
+
     it('redacts the materialized credential from interceptors and sanitizes adapter failures', async () => {
         publishCredential();
         const observedRequest = vi.fn(async (

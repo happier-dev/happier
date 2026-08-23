@@ -864,6 +864,14 @@ describe('connected-account runtime invoker', () => {
         const registeredRuntime: PluginConnectedAccountRuntime = {
             ...runtime(() => {}),
             async refresh(context) {
+                // A Connected Account mutation context carries the mutation's own
+                // `operation` metadata. It is not an Action invocation, so the host
+                // must not advertise an Action progress reporter it would discard.
+                expect(context.operation).toEqual({
+                    operationId: 'refresh-1',
+                    configurationRevision: 'configuration-1',
+                });
+                expect(Object.hasOwn(context.operation, 'update')).toBe(false);
                 await context.stagedCredentials.get('existing-token');
                 await context.stagedCredentials.set('issued-token', issuedCredential);
                 return { status: 'connected' };
