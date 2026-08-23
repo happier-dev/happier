@@ -201,4 +201,47 @@ describe('pagePiTranscript', () => {
     }
     expect(ordered.map((i) => i.id).map((id) => id.slice(-2))).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 'm6']);
   });
+
+  it('signals truncation instead of mis-paging when the active branch changes between older-page requests', async () => {
+    // A live pi session may switch its active branch (new leaf) between two older-page
+    // requests. The previous page's cursor must not be applied as a bare index to the
+    // re-projected branch — that would skip or duplicate entries in the imported
+    // transcript. The cursor carries the boundary item id (the item the next page would
+    // deliver first); when the boundary item no longer sits at that position in the new
+    // active branch, the pager must report truncated (caller resets), mirroring
+    // readAfterPiTranscript's anchor check. A shared-prefix divergence (boundary item
+    // still present at the same index) pages through the common ancestor correctly and
+    // is covered by the linear/tree suites above.
+    const agentDir = freshAgentDir();
+    // Branch A: m1 -> m2 -> m3 -> m4 (active). Page 1 delivers [m3, m4], cursor boundary = m2's successor position.
+    const lines = [
+      header,
+      msg('m1', null, 'user', 'message one', '2024-12-03T14:00:01.000Z'),
+      msg('m2', 'm1', 'assistant', 'message two', '2024-12-03T14:00:02.000Z'),
+      msg('m3', 'm2', 'assistant', 'message three', '2024-12-03T14:00:03.000Z'),
+      msg('m4', 'm3', 'assistant', 'message four', '2024-12-03T14:00:04.000Z'),
+    ];
+    const { source, env } = writeSession(agentDir, lines);
+
+    const first = await pagePiTranscript({ source, env, remoteSessionId: SESSION_ID, direction: 'older', maxBytes: 10_000, maxItems: 2 });
+    expect(first.items.map((i) => i.id).map((id) => id.slice(-2))).toEqual(['m3', 'm4']);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextCursor).toBeTruthy();
+
+    // Live session diverges BELOW the boundary: the new leaf abandons m2's subtree
+    // entirely (new root chain), so the boundary item m2 is no longer on the active
+    // branch at all. The stale cursor's bare index must not be applied.
+    const diverged = [
+      header,
+      msg('r1', null, 'user', 'replacement root', '2024-12-03T14:00:01.000Z'),
+      msg('r2', 'r1', 'assistant', 'replacement two', '2024-12-03T14:00:02.000Z'),
+      msg('r3', 'r2', 'assistant', 'replacement three', '2024-12-03T14:00:03.000Z'),
+      msg('r4', 'r3', 'assistant', 'replacement four', '2024-12-03T14:00:04.000Z'),
+      ];
+    writeSession(agentDir, diverged);
+
+    const second = await pagePiTranscript({ source, env, remoteSessionId: SESSION_ID, direction: 'older', cursor: first.nextCursor ?? undefined, maxBytes: 10_000, maxItems: 2 });
+    expect(second.truncated).toBe(true);
+    expect(second.items).toEqual([]);
+  });
 });

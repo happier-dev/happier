@@ -6,7 +6,7 @@ import type { PiSessionEntry } from './piEntryContext';
 import { mapPiSessionToDirectMessages } from './mapPiSessionToDirectMessages';
 import { resolvePiDirectSessionFile } from './resolvePiDirectSessionFile';
 
-type PiBackwardCursorV1 = Readonly<{ v: 1; kind: 'piBackward'; endExclusive: number }>;
+type PiBackwardCursorV1 = Readonly<{ v: 1; kind: 'piBackward'; endExclusive: number; boundaryItemId?: string | null }>;
 export type PiForwardCursorV1 = Readonly<{
   v: 1;
   kind: 'piForward';
@@ -18,7 +18,7 @@ function encodeBackwardCursor(value: PiBackwardCursorV1): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
-function decodeBackwardCursor(raw: string | undefined): number | null {
+function decodeBackwardCursor(raw: string | undefined): PiBackwardCursorV1 | null {
   if (typeof raw !== 'string' || raw.trim().length === 0) return null;
   try {
     const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
@@ -27,7 +27,8 @@ function decodeBackwardCursor(raw: string | undefined): number | null {
     if (value.v !== 1 || value.kind !== 'piBackward') return null;
     const endExclusive = typeof value.endExclusive === 'number' && Number.isFinite(value.endExclusive) ? value.endExclusive : NaN;
     if (!Number.isFinite(endExclusive) || endExclusive < 0) return null;
-    return Math.trunc(endExclusive);
+    const boundaryItemId = typeof value.boundaryItemId === 'string' && value.boundaryItemId ? value.boundaryItemId : null;
+    return { v: 1, kind: 'piBackward', endExclusive: Math.trunc(endExclusive), boundaryItemId };
   } catch {
     return null;
   }
@@ -190,8 +191,22 @@ export async function pagePiTranscript(params: Readonly<{
   // endExclusive, collected newest-first so byte-limit truncation cuts the OLDER end and the next
   // page's window begins exactly where this one stopped. This keeps pages gap-free, overlap-free,
   // and reconstructable into full chronological order even when maxBytes truncates below maxItems.
+  // The cursor also carries the boundary item id (the last item the NEXT page would deliver, i.e.
+  // items[endExclusive - 1]): if the live session switched its active branch between requests, the
+  // item at that index is no longer the item the caller last saw, and applying the bare index
+  // would silently skip or duplicate entries. On anchor mismatch the pager reports `truncated`
+  // with no items so the caller resets — mirroring readAfterPiTranscript's anchor check.
   const decoded = decodeBackwardCursor(params.cursor);
-  const endExclusive = decoded === null ? total : Math.min(Math.max(0, decoded), total);
+  if (decoded && decoded.boundaryItemId && items[decoded.endExclusive - 1]?.id !== decoded.boundaryItemId) {
+    return {
+      items: [],
+      nextCursor: null,
+      tailCursor,
+      hasMore: false,
+      truncated: true,
+    };
+  }
+  const endExclusive = decoded === null ? total : Math.min(Math.max(0, decoded.endExclusive), total);
   if (endExclusive <= 0) {
     return { items: [], nextCursor: null, tailCursor, hasMore: false };
   }
@@ -210,7 +225,14 @@ export async function pagePiTranscript(params: Readonly<{
 
   const newEndExclusive = endExclusive - collected.length;
   const hasMore = newEndExclusive > 0;
-  const nextCursor = hasMore ? encodeBackwardCursor({ v: 1, kind: 'piBackward', endExclusive: newEndExclusive }) : null;
+  const nextCursor = hasMore
+    ? encodeBackwardCursor({
+      v: 1,
+      kind: 'piBackward',
+      endExclusive: newEndExclusive,
+      boundaryItemId: items[newEndExclusive - 1]?.id ?? null,
+    })
+    : null;
 
   return { items: collected, nextCursor, tailCursor, hasMore };
 }
