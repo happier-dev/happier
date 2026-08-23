@@ -86,6 +86,6 @@ describe('NewSessionWizardSettingsView', () => {
         screen.pressRowByTitle('Two-column layout');
         expect(setColumnsEnabled).toHaveBeenCalledWith(true);
 
-        expect(screen.findRowByTitle('Create a worktree for new sessions')).toBeNull();
+        expect(screen.findRow('settings-new-session-default-worktree')).toBeNull();
     });
 });

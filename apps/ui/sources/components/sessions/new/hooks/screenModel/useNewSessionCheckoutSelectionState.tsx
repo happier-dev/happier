@@ -36,7 +36,8 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     const [checkoutCreationDraft, setCheckoutCreationDraft] = React.useState<NewSessionCheckoutCreationDraft | null>(() => {
         return initialCheckoutSelection.checkoutCreationDraft;
     });
-    const [checkoutSelectionExplicit, setCheckoutSelectionExplicit] = React.useState(initialCheckoutSelection.explicit);
+    const [checkoutSelectionExplicitState, setCheckoutSelectionExplicit] = React.useState(initialCheckoutSelection.explicit);
+    const checkoutSelectionExplicit = initialCheckoutSelection.explicit || checkoutSelectionExplicitState;
     const setExplicitCheckoutCreationDraft = React.useCallback<React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>>((next) => {
         setCheckoutSelectionExplicit(true);
         setCheckoutCreationDraft(next);

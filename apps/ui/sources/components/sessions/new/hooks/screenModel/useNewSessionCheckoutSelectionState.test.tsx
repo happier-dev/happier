@@ -106,6 +106,24 @@ describe('useNewSessionCheckoutSelectionState', () => {
         await hook.unmount();
     });
 
+    it('preserves an explicit current-path selection that arrives with delayed Git detection', async () => {
+        const hook = await renderHook(
+            (props: HookParams) => useNewSessionCheckoutSelectionState(props),
+            { initialProps: makeParams({ repoScmSnapshot: makeRepoSnapshot('svn') }) },
+        );
+
+        expect(hook.getCurrent().checkoutCreationDraft).toBeNull();
+
+        await hook.rerender(makeParams({
+            tempSessionData: { checkoutCreationDraft: null },
+            repoScmSnapshot: makeRepoSnapshot('git'),
+        }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().checkoutCreationDraft).toBeNull();
+        await hook.unmount();
+    });
+
     it('applies the worktree default when delayed repository detection becomes Git', async () => {
         const initialProps = makeParams({ repoScmSnapshot: makeRepoSnapshot('svn') });
         const hook = await renderHook(
