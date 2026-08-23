@@ -24,6 +24,7 @@ import {
     isValidPluginJsonSchemaValue,
     measurePluginCollectionMutationRequestDecompositionV1,
     resolveEffectivePluginCollectionLimitsV1,
+    resolvePluginCollectionIdentityTagV1,
     type AccountScopedCryptoMaterial,
     type NormalizedPluginAccountCollectionContractV1,
     type PluginCollectionContractRefV1,
@@ -181,6 +182,11 @@ export type ActivePluginCollectionWatchOutcomeV1 =
     | Readonly<{ status: 'watching'; dispose(): void }>
     | ActivePluginCollectionUnavailableV1;
 
+export type ActivePluginCollectionIdentityTagOutcomeV1 =
+    | Readonly<{ status: 'ready'; tag: string }>
+    | ActivePluginCollectionUnavailableV1
+    | ActivePluginCollectionRejectedV1;
+
 export type ActivePluginCollectionLimitsOutcomeV1 =
     | Readonly<{ status: 'ready'; limits: PluginCollectionEffectiveLimitsV1 }>
     | ActivePluginCollectionUnavailableV1;
@@ -204,6 +210,17 @@ export type ActivePluginCollectionClientForContractRefOutcomeV1<
 export type ActivePluginCollectionClientV1<
     TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
 > = Readonly<{
+    /**
+     * Derive this collection's Account-mode-aware identity value for one field
+     * the admitted contract declares as a mode-derived identity. The contract,
+     * not the caller, decides which fields have a derivation domain, and the
+     * mode and Account material come from the same prepared operation every
+     * other call uses.
+     */
+    identityTag(
+        request: Readonly<{ field: string; components: readonly string[] }>,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionIdentityTagOutcomeV1>;
     get(
         rowId: string,
         options?: ActivePluginCollectionOperationOptionsV1,
@@ -872,6 +889,31 @@ export function createActivePluginCollectionClient<
         return { status: 'ready', serverId: serverSnapshot.serverId };
     };
 
+    const identityTag = async (
+        request: Readonly<{ field: string; components: readonly string[] }>,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionIdentityTagOutcomeV1> => {
+        const prepared = await prepareCollectionOperation(options, params.accountLifetime);
+        if (prepared.status === 'unavailable') return prepared;
+        try {
+            const resolved = resolvePluginCollectionIdentityTagV1({
+                contract: params.contract,
+                accountEncryptionMode: prepared.operation.encryptionMode,
+                material: prepared.operation.material,
+                field: request.field,
+                components: request.components,
+            });
+            if (resolved.status === 'failed') {
+                return resolved.reason === 'field-not-declared'
+                    ? rejected('collection_identity_field_undeclared')
+                    : unavailable('account-encryption-material-unavailable');
+            }
+            return { status: 'ready', tag: resolved.tag };
+        } finally {
+            prepared.operation.release();
+        }
+    };
+
     const limits = async (
         options?: ActivePluginCollectionOperationOptionsV1,
     ): Promise<ActivePluginCollectionLimitsOutcomeV1> => {
@@ -927,6 +969,7 @@ export function createActivePluginCollectionClient<
     };
 
     return Object.freeze({
+        identityTag,
         get,
         query,
         mutate,

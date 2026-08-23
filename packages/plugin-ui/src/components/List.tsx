@@ -10,14 +10,21 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { FlatList, I18nManager, SectionList, View } from 'react-native';
+import { FlatList, I18nManager, Platform, SectionList, View } from 'react-native';
 
 import { useOptionalHappierUiLocalization } from '../environment/context.js';
 import type {
   HappierFocusable,
+  HappierGestureResponderEvent,
   HappierPortableStyle,
   HappierStyleProp,
 } from '../presentation/portableTypes.js';
+import {
+  readHappierPointerModifiers,
+  resolveHappierListMultiSelectionKeyboardIntent,
+  resolveHappierListMultiSelectionPointerAction,
+  resolveHappierPointerPlatform,
+} from '../presentation/collection/multiSelection.js';
 import {
   resolveHappierItemBehavior,
   resolveHappierRovingSelection,
@@ -38,6 +45,12 @@ import {
 } from '../presentation/collection/ItemOverflow.js';
 import type { HappierTone } from '../presentation/semantics.js';
 import { Field, TextField } from './Form.js';
+import {
+  ListMultiSelectionProvider,
+  ListSelectionActionBar,
+  useListMultiSelectionStoreSnapshot,
+  type ListMultiSelectionStore,
+} from './ListMultiSelection.js';
 import { Stack } from './Layout.js';
 import { Menu } from './Overlay.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
@@ -96,6 +109,31 @@ type ListSelectionBaseProps<Item> = Readonly<{
    * know where the reader is reads it here rather than keeping a second cursor.
    */
   onFocusedKeyChange?: (key: string) => void;
+  /**
+   * Opt in to keyed MULTI-selection beside the single selected key.
+   *
+   * The two cursors stay independent and neither derives from the other: the
+   * single `selectedKey` remains "which row's detail is open", the multi
+   * selection is "which rows a bulk action will act on", and moving one never
+   * moves the other. That independence is why this is an opt-in capability
+   * rather than a second meaning stuffed into `selectedKey`.
+   *
+   * The List owns the rows the capability sees — its flattened traversal order
+   * and, for retention, every row the author supplied before search narrowed it
+   * — because only the List can see the rows its virtualizer has not mounted.
+   */
+  multiple?: ListMultiSelectionCapabilityProps<Item>;
+}>;
+
+export type ListMultiSelectionCapabilityProps<Item = unknown> = Readonly<{
+  /** Created with `useListMultiSelectionController({ rows: 'collection' })`. */
+  store: ListMultiSelectionStore;
+  /**
+   * Which rows a bulk action may act on. A row excluded here can still be read
+   * and opened; it simply never joins a selection, which is what a section's
+   * continuation or placeholder row needs. Defaults to every row.
+   */
+  isItemSelectable?: (item: Item, index: number) => boolean;
 }>;
 
 /** One selected semantic List.Item key, controlled or initially author-owned. */
@@ -250,7 +288,12 @@ export type ItemProps = Readonly<{
   icon?: ReactNode;
   accessory?: ReactNode;
   tone?: HappierTone;
-  onPress?: () => unknown;
+  /**
+   * The activation event travels with the press. A single-select list ignores
+   * it; the multi-selection capability reads its modifier keys to tell an open
+   * from a toggle or a range extension.
+   */
+  onPress?: (event?: HappierGestureResponderEvent) => unknown;
   disabled?: boolean;
   busy?: boolean;
   selected?: boolean;
@@ -276,7 +319,8 @@ export type ListItemProps = ItemProps;
 
 type ListItemSelectionContextValue = Readonly<{
   selected: boolean;
-  select: () => void;
+  /** The activation event carries the modifier keys one press means something by. */
+  select: (event?: HappierGestureResponderEvent) => void;
   positionInSet: number;
   setSize: number;
   roving: HappierRovingCollectionItem;
@@ -302,8 +346,8 @@ type VirtualizedListRowProps<Item> = Readonly<{
    * instead of every mounted row.
    */
   isTabStop: boolean;
-  onSelect: (key: string) => void;
-  onRovingKey: (index: number, key: string) => boolean;
+  onSelect: (key: string, event?: HappierGestureResponderEvent) => void;
+  onRovingKey: (index: number, key: string, event: unknown) => boolean;
   registerTarget: (key: string, target: HappierFocusable | null) => void;
 }>;
 
@@ -318,12 +362,12 @@ class VirtualizedListRow<Item> extends PureComponent<VirtualizedListRowProps<Ite
     const selection: ListItemSelectionContextValue | null = props.selectionEnabled
       ? {
           selected: props.selected,
-          select: () => props.onSelect(props.itemKey),
+          select: (event) => props.onSelect(props.itemKey, event),
           positionInSet: props.index + 1,
           setSize: props.setSize,
           roving: {
             isTabStop: props.isTabStop,
-            onKeyDown: (key) => props.onRovingKey(props.rowIndex, key),
+            onKeyDown: (key, event) => props.onRovingKey(props.rowIndex, key, event),
             register: (target) => props.registerTarget(props.itemKey, target),
           },
         }
@@ -488,6 +532,39 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     return offsets;
   }, [visibleSections]);
 
+  // ---- Opt-in keyed multi-selection ---------------------------------------
+  // The store is the single owner of the selected set; this List owns only the
+  // ROWS it can see, which is the half a store can never know for itself.
+  const multiCapability = props.selection?.multiple;
+  const multiStore = multiCapability?.store ?? null;
+  const multiStoreRef = useRef<ListMultiSelectionStore | null>(multiStore);
+  multiStoreRef.current = multiStore;
+  const multiSnapshot = useListMultiSelectionStoreSnapshot(multiStore);
+  const isItemSelectable = multiCapability?.isItemSelectable;
+  const visibleSelectionKeys = useMemo(
+    () => rows.map((row) => row.key),
+    [rows],
+  );
+  // Eligibility is derived from the AUTHOR's rows, not the filtered ones, so a
+  // reader who selects six rows and then types in the search box still has six
+  // rows selected when they clear it. Memoized on the dataset identity, so a
+  // selection change never reprojects it.
+  const eligibleSelectionKeys = useMemo(() => {
+    if (multiStore === null) return [];
+    const authorRows = authorSections !== undefined
+      ? authorSections.flatMap((section) => section.data.map((item, index) => ({ item, index })))
+      : (authorItems ?? []).map((item, index) => ({ item, index }));
+    return authorRows
+      .filter((entry) => isItemSelectable?.(entry.item, entry.index) !== false)
+      .map((entry) => keyForItem(entry.item, entry.index));
+  }, [authorItems, authorSections, isItemSelectable, keyForItem, multiStore]);
+  useEffect(() => {
+    multiStore?.setVisibleRows({
+      visibleOrderedKeys: visibleSelectionKeys,
+      eligibleKeys: eligibleSelectionKeys,
+    });
+  }, [eligibleSelectionKeys, multiStore, visibleSelectionKeys]);
+
   const [uncontrolledSelectedKey, setUncontrolledSelectedKey] = useState<string | null>(
     props.selection?.defaultSelectedKey ?? null,
   );
@@ -505,6 +582,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // inline arrow would invalidate on every render.
   const requestFocus = (key: string) => {
     setFocusedKey(key);
+    // One cursor, reported twice: the store's focus is what a bulk-action bar
+    // and a row checkbox read, and letting it drift from the List's own focus
+    // would be the second cursor this capability exists to avoid.
+    multiStoreRef.current?.setFocusedKey(key);
     props.selection?.onFocusedKeyChange?.(key);
   };
   const requestFocusRef = useRef(requestFocus);
@@ -518,14 +599,40 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   requestSelectionRef.current = requestSelection;
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
+  // Held behind a ref for the same reason the selected key is: the row renderer
+  // must not be invalidated by a selection change, or every mounted cell is
+  // rebuilt on each toggle. `extraData` below is what commits the rows.
+  const multiSelectedKeysRef = useRef(multiSnapshot.selectedKeys);
+  multiSelectedKeysRef.current = multiSnapshot.selectedKeys;
   const rowFocusRequest = useRowFocusRequest();
+
   // Pointer and touch activation is one gesture that both focuses and selects;
   // only the keyboard separates the two. The gesture has already placed native
   // focus on the row it landed on, so it also RETIRES any request still waiting
   // for a reveal — otherwise that row's later registration pulls focus off the
   // row the reader just chose, one or more frames after the interaction.
-  const selectItem = useCallback((key: string) => {
+  const selectItem = useCallback((key: string, event?: HappierGestureResponderEvent) => {
     rowFocusRequest.abandon();
+    const store = multiStoreRef.current;
+    if (store !== null) {
+      const modifiers = readHappierPointerModifiers(event);
+      const action = resolveHappierListMultiSelectionPointerAction({
+        isSelectionMode: store.getSnapshot().isSelectionMode,
+        platform: resolveHappierPointerPlatform(Platform.OS),
+        ...modifiers,
+      });
+      if (action !== 'open') {
+        // A modified press builds a SET. Moving the single selected key here
+        // would open a detail the reader did not ask for and discard the set
+        // they were assembling, which is exactly the two cursors collapsing
+        // into one.
+        requestFocusRef.current(key);
+        if (action === 'toggle') store.toggle(key);
+        else if (action === 'selectRange') store.selectRange(key);
+        else store.addRange(key);
+        return;
+      }
+    }
     requestFocusRef.current(key);
     requestSelectionRef.current(key);
   }, [rowFocusRequest]);
@@ -546,6 +653,19 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const rovingEntries = useMemo<readonly HappierRovingEntry[]>(
     () => rows.map((row) => ({ disabled: isItemDisabled?.(row.item, row.index) === true })),
     [isItemDisabled, rows],
+  );
+  // A range extension steps over what it cannot SELECT, which is a larger set
+  // than what it cannot reach: a continuation row is readable and focusable and
+  // still never joins a selection. Reusing the reading entries here would stop
+  // an extension dead on the first such row.
+  const multiRovingEntries = useMemo<readonly HappierRovingEntry[]>(
+    () => (multiStore === null
+      ? rovingEntries
+      : rows.map((row, rowIndex) => ({
+          disabled: rovingEntries[rowIndex]?.disabled === true
+            || isItemSelectable?.(row.item, row.index) === false,
+        }))),
+    [isItemSelectable, multiStore, rovingEntries, rows],
   );
   const selectedIndex = selectedKey === null ? -1 : rowIndexByKey.get(selectedKey) ?? -1;
   const focusedIndex = focusedKey === null ? -1 : rowIndexByKey.get(focusedKey) ?? -1;
@@ -617,7 +737,47 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     if (mounted === undefined) return;
     rowFocusRequest.consume(key, mounted);
   };
-  const moveFocus = (fromIndex: number, key: string): boolean => {
+  const moveFocus = (fromIndex: number, key: string, event: unknown): boolean => {
+    const currentRowIndex = focusedIndex >= 0 ? focusedIndex : fromIndex;
+    const multiStoreForKey = multiStoreRef.current;
+    if (multiStoreForKey !== null) {
+      const snapshot = multiStoreForKey.getSnapshot();
+      const intent = resolveHappierListMultiSelectionKeyboardIntent({
+        key,
+        ...readHappierPointerModifiers(event),
+        platform: resolveHappierPointerPlatform(Platform.OS),
+        entries: multiRovingEntries,
+        currentIndex: currentRowIndex,
+        rtl,
+      });
+      // Escape belongs to whatever the reader is actually in. With no live
+      // selection it is the host's — a dialog, a detail pane — so the capability
+      // declines it rather than swallowing a key it has nothing to close.
+      const claimed = intent !== null && (intent.kind !== 'exit' || snapshot.isSelectionMode);
+      if (claimed && intent !== null) {
+        const currentKey = rows[currentRowIndex]?.key ?? null;
+        if (intent.kind === 'exit') multiStoreForKey.exit();
+        else if (intent.kind === 'selectAllVisible') multiStoreForKey.selectAllVisible();
+        else if (intent.kind === 'toggleFocused') {
+          if (currentKey !== null) multiStoreForKey.toggle(currentKey);
+        } else {
+          const nextRow = rows[intent.toIndex];
+          if (nextRow !== undefined) {
+            // Shift+Arrow before anything is selected has no anchor to measure
+            // from, so the row the reader is standing on becomes it. Without
+            // this the first extension selects one row and the second selects
+            // from there, which reads as a dropped keypress.
+            if (snapshot.selectedKeys.size === 0 && currentKey !== null) {
+              multiStoreForKey.replaceWith(currentKey);
+            }
+            multiStoreForKey.addRange(nextRow.key);
+            requestFocusRef.current(nextRow.key);
+            requestRowFocus(nextRow.key, intent.toIndex);
+          }
+        }
+        return true;
+      }
+    }
     // Activation stays with the shared row pressable. This owner claims only
     // collection navigation, so Space and Enter still select through the
     // author's row action rather than through a second activation path.
@@ -626,7 +786,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     // reader is. While a reveal is in flight the requested row has not mounted,
     // so the keydown still arrives at the previous row's element; navigating
     // from there would silently discard the move the reader already made.
-    const currentIndex = focusedIndex >= 0 ? focusedIndex : fromIndex;
+    const currentIndex = currentRowIndex;
     const next = resolveHappierRovingSelection({
       entries: rovingEntries,
       currentIndex,
@@ -650,7 +810,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // Held behind a ref so a focus or selection change never invalidates the row
   // renderer and forces the virtualizer to rebuild its mounted cells.
   const onRovingKey = useCallback(
-    (index: number, key: string) => moveFocusRef.current(index, key),
+    (index: number, key: string, event: unknown) => moveFocusRef.current(index, key, event),
     [],
   );
 
@@ -705,14 +865,19 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
         setSize={input.setSize}
         renderItem={renderItem}
         selectionEnabled={selectionEnabled}
-        selected={selectedKeyRef.current === itemKey}
+        // With the capability mounted, `aria-selected` is the multi-selection —
+        // the standard meaning in a multi-selectable listbox. The single key
+        // stays the open detail and keeps owning the tab stop.
+        selected={multiStore === null
+          ? selectedKeyRef.current === itemKey
+          : multiSelectedKeysRef.current.has(itemKey)}
         isTabStop={selectionEnabled && tabStopIndexRef.current === input.rowIndex}
         onSelect={selectItem}
         onRovingKey={onRovingKey}
         registerTarget={registerTarget}
       />
     );
-  }, [keyForItem, onRovingKey, registerTarget, renderItem, selectItem, selectionEnabled]);
+  }, [keyForItem, multiStore, onRovingKey, registerTarget, renderItem, selectItem, selectionEnabled]);
 
   const flatSetSize = visibleItems?.length ?? 0;
   const renderFlatRow = useCallback(({ item, index }: Readonly<{ item: Item; index: number }>) => (
@@ -739,7 +904,9 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
 
   // Both facts reach the mounted cells: the tab stop follows focus, so a
   // focus-only move must still commit the two rows whose tab order changed.
-  const extraData = selectionEnabled ? `${selectedKey ?? ''}\u0000${focusedKey ?? ''}` : undefined;
+  const extraData = selectionEnabled
+    ? `${selectedKey ?? ''}\u0000${focusedKey ?? ''}\u0000${multiStore === null ? '' : multiSnapshot.version}`
+    : undefined;
 
   const collection = visibleSections !== undefined ? (
     <SectionList
@@ -799,13 +966,19 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // One box around the collection and its chrome. It is unconditional so that
   // gaining or losing chrome never changes the React tree shape around the
   // virtualizer, which would remount it and throw away its scroll position.
+  // The provider is UNCONDITIONAL for the same reason the box is: a tree shape
+  // that changed with the capability would remount the virtualizer and throw
+  // away its scroll position. It publishes the store to the rows, to an author's
+  // own row affordance, and to `List.SelectionActionBar` in the footer.
   return (
-    <View style={virtualizedListBoxStyle}>
-      {headerContent}
-      {collection}
-      {emptyContent}
-      {props.footer}
-    </View>
+    <ListMultiSelectionProvider store={multiStore}>
+      <View style={virtualizedListBoxStyle}>
+        {headerContent}
+        {collection}
+        {emptyContent}
+        {props.footer}
+      </View>
+    </ListMultiSelectionProvider>
   );
 }
 
@@ -905,9 +1078,9 @@ function ListItem(props: ListItemProps): ReactElement {
     accessibilityPositionInSet: selection.positionInSet,
     accessibilitySetSize: selection.setSize,
     rovingCollectionItem: selection.roving,
-    onPress: () => {
-      selection.select();
-      return props.onPress?.();
+    onPress: (event) => {
+      selection.select(event);
+      return props.onPress?.(event);
     },
   }, defaultSecondaryActionAccessibilityLabel, true);
 }
@@ -949,4 +1122,10 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
 export const List = Object.assign(ListRoot, {
   Section: ListSection,
   Item: ListItem,
+  /**
+   * The bulk action bar for the multi-selection capability. Placed in `footer`,
+   * it reads the same store the rows do and renders only while a selection is
+   * live.
+   */
+  SelectionActionBar: ListSelectionActionBar,
 });

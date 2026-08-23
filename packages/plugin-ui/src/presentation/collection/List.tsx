@@ -7,7 +7,11 @@ import {
   useHappierNativeMinimumInteractiveTargetSize,
 } from '../../environment/interactiveTarget.js';
 import type { HappierUiTheme } from '../../environment/types.js';
-import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
+import type {
+  HappierGestureResponderEvent,
+  HappierPortableStyle,
+  HappierStyleProp,
+} from '../portableTypes.js';
 import { HappierSpinner } from '../feedback/Spinner.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierDivider } from '../content/Foundation.js';
@@ -87,8 +91,12 @@ export type HappierListItemProps = Readonly<{
   /** Keep an interactive accessory outside the row's primary Pressable. */
   accessoryOutsidePressable?: boolean;
   tone?: HappierTone;
-  /** The caller owns the action; this component owns only its press presentation. */
-  onPress?: () => unknown;
+  /**
+   * The caller owns the action; this component owns only its press presentation.
+   * The activation event travels with it so a collection owner can read the
+   * modifier keys one press was made with.
+   */
+  onPress?: (event?: HappierGestureResponderEvent) => unknown;
   disabled?: boolean;
   busy?: boolean;
   selected?: boolean;
@@ -392,7 +400,7 @@ export function HappierListItem({
       controlRef={roving?.register}
       tabIndex={behavior.tabIndex}
       onKeyDown={roving?.onKeyDown}
-      onPress={() => onPress?.()}
+      onPress={(event) => onPress?.(event)}
       style={(state) => ({
         width: '100%',
         minWidth: 0,

@@ -11,6 +11,7 @@ export * from './Icon.js';
 export * from './Image.js';
 export * from './Layout.js';
 export * from './List.js';
+export * from './ListMultiSelection.js';
 export * from './Overlay.js';
 export {
   usePluginAccessibility,

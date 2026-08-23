@@ -13,7 +13,14 @@ export type HappierSelectableRole = 'radio' | 'option' | 'button' | undefined;
  */
 export type HappierRovingCollectionItem = Readonly<{
   isTabStop: boolean;
-  onKeyDown: (key: string) => boolean;
+  /**
+   * The event travels beside the key because the collection owner is the only
+   * participant that can act on its modifiers: `Shift+ArrowDown` extends a
+   * range to the row AFTER the cursor, and the row the event reached cannot see
+   * that row when the virtualizer has not mounted it. A provider that ignores
+   * the second argument is unaffected.
+   */
+  onKeyDown: (key: string, event: unknown) => boolean;
   register: (target: HappierFocusable | null) => void;
 }>;
 

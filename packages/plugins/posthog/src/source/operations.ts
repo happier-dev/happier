@@ -536,7 +536,48 @@ type PosthogScanGeometry = Readonly<{
     from: string;
     to: string | null;
     nativeLimit: number;
+    /**
+     * The caveats this walk has already established, carried across every page
+     * of the same pass.
+     *
+     * A walk's pages are separate invocations, and this walk crosses
+     * environments: environment one skipping malformed rows and environment two
+     * running clean to its end settled the pass as `walkFinished`, so the
+     * aggregate claimed exhaustion over a list that had silently dropped issues.
+     * Names only — `omittedItemCount` belongs to the call that omitted the rows.
+     */
+    walkHealth: readonly PosthogScanStickyReasonV1[];
 }>;
+
+/**
+ * The page facts that stay true of the whole walk, strongest first.
+ *
+ * Both are erasable by a later page and neither ends the walk: a non-advancing
+ * offset moves to the next selected environment, and a skipped row leaves the
+ * walk running. The reasons that DO end the walk are not here, because a page
+ * that reports one is the last page and has nothing to be erased by.
+ */
+const POSTHOG_SCAN_STICKY_REASONS_V1 = Object.freeze([
+    POSTHOG_FAILURE_CODES.malformedRows,
+    POSTHOG_FAILURE_CODES.paginationNonAdvancing,
+] as const);
+
+type PosthogScanStickyReasonV1 = (typeof POSTHOG_SCAN_STICKY_REASONS_V1)[number];
+
+/**
+ * An unknown or repeated reason name is a token this source did not mint at this
+ * version. Admitting it would erase a caveat the walk already established.
+ */
+function readScanWalkHealth(raw: unknown): readonly PosthogScanStickyReasonV1[] | null {
+    if (!Array.isArray(raw)) return null;
+    const reasons: PosthogScanStickyReasonV1[] = [];
+    for (const entry of raw) {
+        const reason = POSTHOG_SCAN_STICKY_REASONS_V1.find((candidate) => candidate === entry);
+        if (reason === undefined || reasons.includes(reason)) return null;
+        reasons.push(reason);
+    }
+    return Object.freeze(reasons);
+}
 
 function decodeScanGeometry(token: string, environmentCount: number): PosthogScanGeometry | null {
     // The bounded JSON envelope has one owner across every source; only the frontier
@@ -550,8 +591,10 @@ function decodeScanGeometry(token: string, environmentCount: number): PosthogSca
     const from = raw['from'];
     const to = raw['to'];
     const nativeLimit = raw['nativeLimit'];
+    const walkHealth = readScanWalkHealth(raw['walkHealth']);
     if (
-        raw['v'] !== 1
+        walkHealth === null
+        || raw['v'] !== 1
         || typeof environmentIndex !== 'number'
         || !Number.isSafeInteger(environmentIndex)
         || environmentIndex < 0
@@ -567,7 +610,7 @@ function decodeScanGeometry(token: string, environmentCount: number): PosthogSca
     ) {
         return null;
     }
-    return { v: 1, environmentIndex, offset, from, to, nativeLimit };
+    return { v: 1, environmentIndex, offset, from, to, nativeLimit, walkHealth };
 }
 
 function scanWindow(geometry: PosthogScanGeometry): PosthogResolvedWindow {
@@ -599,6 +642,7 @@ export async function scanPosthogSource(
                 from: window.from,
                 to: window.to,
                 nativeLimit: resolvePosthogNativeLimit(parsed.page.limit),
+                walkHealth: [],
             };
         })()
         : decodeScanGeometry(parsed.page.continuation.token, configuration.environments.length);
@@ -658,12 +702,20 @@ export async function scanPosthogSource(
         && nextOffset > geometry.offset;
     const nonAdvancing = page.hasMore && !advances;
 
+    // This page's own erasable facts join the ones the walk arrived with, and the
+    // union travels on. A stuck environment is exactly the case: the walk moves
+    // to the next one and would otherwise report the pass as clean.
+    const walkHealth = new Set<PosthogScanStickyReasonV1>(geometry.walkHealth);
+    if (page.malformedRowCount > 0) walkHealth.add(POSTHOG_FAILURE_CODES.malformedRows);
+    if (nonAdvancing) walkHealth.add(POSTHOG_FAILURE_CODES.paginationNonAdvancing);
+    const carried: PosthogScanGeometry = { ...geometry, walkHealth: [...walkHealth] };
+
     const next: PosthogScanGeometry | null = advances && nextOffset !== null
-        ? { ...geometry, offset: nextOffset }
+        ? { ...carried, offset: nextOffset }
         : geometry.environmentIndex + 1 < configuration.environments.length
             // An exhausted or stuck environment moves to the next selected one at
             // offset zero inside the same frozen window.
-            ? { ...geometry, environmentIndex: geometry.environmentIndex + 1, offset: 0 }
+            ? { ...carried, environmentIndex: geometry.environmentIndex + 1, offset: 0 }
             : null;
 
     // A token wider than the protocol admits is not a token: it is a member of a closed
@@ -675,6 +727,7 @@ export async function scanPosthogSource(
         nonAdvancing,
         unresumable: next !== null && token === null,
         finished: next === null,
+        walkHealth,
     });
 
     if (token === null) {
@@ -702,6 +755,8 @@ function resolvePageEvidence(input: Readonly<{
     nonAdvancing: boolean;
     unresumable: boolean;
     finished: boolean;
+    /** This page's own erasable facts unioned with every earlier page's. */
+    walkHealth: ReadonlySet<PosthogScanStickyReasonV1>;
 }>): TriageSourceScanEvidenceV1 {
     if (input.malformedRowCount > 0) {
         return Object.freeze({
@@ -721,6 +776,13 @@ function resolvePageEvidence(input: Readonly<{
             kind: 'partial' as const,
             reason: POSTHOG_FAILURE_CODES.continuationUnmintable,
         });
+    }
+    // Nothing this page saw, but something an earlier one did. Only a walk that
+    // arrives here with an empty set may finish clean.
+    for (const reason of POSTHOG_SCAN_STICKY_REASONS_V1) {
+        if (input.walkHealth.has(reason)) {
+            return Object.freeze({ kind: 'partial' as const, reason });
+        }
     }
     if (!input.finished) {
         return Object.freeze({

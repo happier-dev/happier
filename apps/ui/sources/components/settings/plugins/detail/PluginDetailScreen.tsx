@@ -72,6 +72,10 @@ function PluginDetailCurrentContent(props: Readonly<{
               * on the machine selected here. Showing only the origin left the
               * reader editing a machine the screen never named.
               */}
+            <MachineAdministrationTargetSelector
+                selection={props.state.administrationTargetSelection}
+                testIDPrefix="settings.plugins.detail.administration.target"
+            />
             <PluginMachineExecutionOriginSelectorView
                 selection={selection}
                 testIDPrefix="settings.plugins.detail.executionOrigin"

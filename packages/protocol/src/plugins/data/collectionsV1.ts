@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import {
+  derivePluginCollectionIdentityTagV1,
   isAccountScopedBlobCiphertextForKind,
   openAccountScopedBlobCiphertext,
   sealAccountScopedBlobCiphertext,
@@ -1012,6 +1013,54 @@ export type NormalizedPluginAccountCollectionContractV1 = Readonly<{
    */
   identityFields: readonly string[];
 }>;
+
+export type PluginCollectionIdentityTagOutcomeV1 =
+  | Readonly<{ status: 'resolved'; tag: string }>
+  | Readonly<{
+    status: 'failed';
+    /** The contract does not declare this field as a mode-derived identity. */
+    reason: 'field-not-declared' | 'account-material-mismatch';
+  }>;
+
+/**
+ * The contract-bound identity-tag resolution every realm uses.
+ *
+ * `identityFields` is the admitted contract's single declaration of which
+ * fields hold a mode-derived identity, and it is what the Account
+ * encryption-transition owner reads to refuse a transition it cannot relocate.
+ * Admitting a wider set would let a plugin mint a mode-bound value that owner
+ * cannot see, so the admit/refuse decision lives here beside the contract
+ * rather than being restated by each realm adapter. The derivation itself
+ * remains `derivePluginCollectionIdentityTagV1`: the mode, version, plugin,
+ * collection and field are stamped from host state, and only the components
+ * come from the caller.
+ */
+export function resolvePluginCollectionIdentityTagV1(input: Readonly<{
+  contract: NormalizedPluginAccountCollectionContractV1;
+  accountEncryptionMode: 'plain' | 'e2ee';
+  material: AccountScopedCryptoMaterial | null;
+  field: string;
+  components: readonly string[];
+}>): PluginCollectionIdentityTagOutcomeV1 {
+  if (!input.contract.identityFields.includes(input.field)) {
+    return { status: 'failed', reason: 'field-not-declared' };
+  }
+  try {
+    return {
+      status: 'resolved',
+      tag: derivePluginCollectionIdentityTagV1({
+        accountEncryptionMode: input.accountEncryptionMode,
+        material: input.material,
+        pluginId: input.contract.pluginId,
+        collectionId: input.contract.collectionId,
+        field: input.field,
+        components: input.components,
+      }),
+    };
+  } catch {
+    return { status: 'failed', reason: 'account-material-mismatch' };
+  }
+}
 
 /** Exact authenticated read of one release-admitted persisted contract. */
 export const PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1 = '/v1/plugins/data/contract';

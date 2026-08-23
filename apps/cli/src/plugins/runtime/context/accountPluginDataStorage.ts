@@ -38,43 +38,40 @@ import {
     PluginCollectionCandidatePreparationSourcePageResultV1Schema,
     PluginCollectionCandidatePreparationStageRequestV1Schema,
     PluginCollectionCandidatePreparationStageResultV1Schema,
-    PluginCollectionContentEnvelopeV1Schema,
     PluginCollectionGetRequestV1Schema,
     PluginCollectionGetResultV1Schema,
     PluginCollectionMutationErrorV1Schema,
     PluginCollectionMutationRequestV1Schema,
     PluginCollectionMutationResultV1Schema,
-    PluginCollectionPrivatePayloadV1Schema,
-    PluginCollectionProjectionV1Schema,
     PluginCollectionQueryRequestV1Schema,
     PluginCollectionQueryResultV1Schema,
     PluginCollectionReadErrorV1Schema,
     PluginCollectionRowIdV1Schema,
     compilePluginJsonSchema,
+    decodePluginCollectionLogicalRowV1,
+    encodePluginCollectionLogicalValueV1,
     assertPluginAccountStorageEnvelopeForModeV1,
     isValidPluginJsonSchemaValue,
     measurePluginCollectionMutationRequestDecompositionV1,
     measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
-    openPluginCollectionPrivatePayloadV1,
     resolveEffectivePluginCollectionLimitsV1,
     openPluginAccountStoragePrivatePayloadV1,
     normalizeStrictJsonValue,
     sealPluginAccountStoragePrivatePayloadV1,
-    sealPluginCollectionPrivatePayloadV1,
     splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1,
     type AccountEncryptionCurrentnessResponse,
     type AccountScopedCryptoMaterial,
     type NormalizedPluginAccountCollectionContractV1,
+    type PluginCollectionLogicalDecodeFailureReasonV1,
+    type PluginCollectionLogicalEncodeFailureReasonV1,
     type PluginAccountCollectionContributionV1,
     type PluginCollectionCandidatePreparationBindingV1,
     type PluginCollectionContractRefV1,
     type PluginDataCollectionsCapabilities,
-    type PluginCollectionContentEnvelopeV1,
     type PluginCollectionMutationOperationV1,
     type PluginCollectionMutationRequestV1,
     type PluginCollectionMutationResultV1,
-    type PluginCollectionProjectionV1,
     type PluginCollectionRowV1,
     type PluginAccountStorageRowV1,
 } from '@happier-dev/protocol';
@@ -394,23 +391,6 @@ function asJsonObject(value: JsonValue): Readonly<Record<string, JsonValue>> | n
         : null;
 }
 
-function hasOwn(value: Readonly<Record<string, unknown>>, key: string): boolean {
-    return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function createJsonRecord(): Record<string, JsonValue> {
-    return Object.create(null) as Record<string, JsonValue>;
-}
-
-function setJsonRecordValue(record: Record<string, JsonValue>, key: string, value: JsonValue): void {
-    Object.defineProperty(record, key, {
-        value,
-        enumerable: true,
-        writable: false,
-        configurable: false,
-    });
-}
-
 /**
  * Account KV logical-key semantics live in the Protocol owner so the daemon and
  * the direct Plugin UI client cannot drift. The daemon keeps only the
@@ -503,25 +483,42 @@ function parseCollectionError(value: unknown, kind: 'read' | 'mutation'): Plugin
     );
 }
 
-function ensureExactProjection(input: Readonly<{
-    contract: NormalizedPluginAccountCollectionContractV1;
-    rowId: string;
-    projection: PluginCollectionProjectionV1;
-}>): PluginCollectionProjectionV1 {
-    const fields = Object.keys(input.projection);
-    const expected = new Set(input.contract.serverReadable);
-    if (fields.length !== expected.size || fields.some((field) => !expected.has(field))) {
-        throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection projection does not match its admitted server-readable fields');
+/**
+ * The daemon's translation of the shared Protocol codec's encode failures into
+ * this realm's `PluginError` vocabulary. Missing Account crypto material is an
+ * Account-availability fact; every other reason is an invalid authored value.
+ */
+function collectionEncodeFailureError(
+    reason: PluginCollectionLogicalEncodeFailureReasonV1,
+): PluginError {
+    switch (reason) {
+        case 'value-schema-invalid':
+            return dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection value does not satisfy its admitted schema');
+        case 'row-identity-invalid':
+            return dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection row identity is invalid');
+        case 'projection-invalid':
+            return dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection server-readable projection is invalid');
+        case 'private-payload-invalid':
+            return dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection private payload is invalid');
+        case 'encryption-material-unavailable':
+            return dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Account encryption material is unavailable');
     }
-    for (const field of input.contract.serverReadable) {
-        if (!hasOwn(input.projection, field)) {
-            throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection projection omitted an admitted field');
-        }
-        if (field === input.contract.rowIdField && input.projection[field] !== input.rowId) {
-            throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection projection row identity does not match the row');
-        }
+}
+
+/** Every decode failure is a stored-row/protocol fact, never an author mistake. */
+function collectionDecodeFailureError(
+    reason: PluginCollectionLogicalDecodeFailureReasonV1,
+): PluginError {
+    switch (reason) {
+        case 'content-mode-mismatch':
+            return dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection content does not match the current Account encryption mode');
+        case 'projection-mismatch':
+            return dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection projection does not match its admitted server-readable fields');
+        case 'private-payload-overlaps-projection':
+            return dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection private payload overlaps an admitted projection field');
+        case 'row-schema-invalid':
+            return dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection row does not satisfy its admitted schema');
     }
-    return input.projection;
 }
 
 function splitLogicalPut(input: Readonly<{
@@ -532,63 +529,27 @@ function splitLogicalPut(input: Readonly<{
     randomBytes: (length: number) => Uint8Array;
 }>): Extract<PluginCollectionMutationOperationV1, { kind: 'put' }> {
     const value = asJsonObject(input.value);
-    if (!value || !isValidPluginJsonSchemaValue(input.collection.validate, value)) {
+    if (!value) {
         throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection value does not satisfy its admitted schema');
     }
-    const rowIdCandidate = value[input.collection.contract.rowIdField];
-    if (typeof rowIdCandidate !== 'string') {
-        throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection row identity must be a string');
-    }
-    let rowId: string;
-    try {
-        rowId = PluginCollectionRowIdV1Schema.parse(rowIdCandidate);
-    } catch {
-        throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection row identity is invalid');
-    }
-
-    const projection = createJsonRecord();
-    for (const field of input.collection.contract.serverReadable) {
-        const projected = hasOwn(value, field) ? value[field]! : null;
-        setJsonRecordValue(projection, field, projected);
-    }
-    let parsedProjection: PluginCollectionProjectionV1;
-    try {
-        parsedProjection = PluginCollectionProjectionV1Schema.parse(projection);
-    } catch {
-        throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection server-readable projection is invalid');
-    }
-    ensureExactProjection({ contract: input.collection.contract, rowId, projection: parsedProjection });
-
-    const privatePayload = createJsonRecord();
-    const reserved = new Set([
-        input.collection.contract.rowIdField,
-        ...input.collection.contract.serverReadable,
-    ]);
-    for (const [field, fieldValue] of Object.entries(value)) {
-        if (!reserved.has(field)) setJsonRecordValue(privatePayload, field, fieldValue);
-    }
-    let content: PluginCollectionContentEnvelopeV1;
-    try {
-        content = input.encryptionMode === 'plain'
-            ? PluginCollectionContentEnvelopeV1Schema.parse({ t: 'plain', v: privatePayload })
-            : PluginCollectionContentEnvelopeV1Schema.parse({
-                t: 'encrypted',
-                c: sealPluginCollectionPrivatePayloadV1({
-                    material: input.material ?? (() => { throw dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Account encryption material is unavailable'); })(),
-                    payload: PluginCollectionPrivatePayloadV1Schema.parse(privatePayload),
-                    randomBytes: input.randomBytes,
-                }),
-            });
-    } catch (error) {
-        if (isPluginError(error)) throw error;
-        throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection private payload is invalid');
-    }
+    const encoded = encodePluginCollectionLogicalValueV1({
+        contract: input.collection.contract,
+        isValidLogicalValue: (candidate) => isValidPluginJsonSchemaValue(
+            input.collection.validate,
+            candidate,
+        ),
+        value,
+        encryptionMode: input.encryptionMode,
+        material: input.material,
+        randomBytes: input.randomBytes,
+    });
+    if (encoded.status === 'failed') throw collectionEncodeFailureError(encoded.reason);
     return {
         kind: 'put',
-        rowId,
+        rowId: encoded.rowId,
         expectedRevision: 'absent',
-        content,
-        projection: parsedProjection,
+        content: encoded.content,
+        projection: encoded.projection,
     };
 }
 
@@ -598,47 +559,22 @@ function mergeLogicalRow<TValue extends PluginAccountCollectionValue<PluginAccou
     encryptionMode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
 }>): PluginCollectionRow<TValue> {
-    let privatePayload: Record<string, JsonValue> | null;
-    if (input.encryptionMode === 'plain') {
-        privatePayload = input.row.content.t === 'plain' ? input.row.content.v : null;
-    } else {
-        privatePayload = input.row.content.t === 'encrypted' && input.material
-            ? openPluginCollectionPrivatePayloadV1({ material: input.material, ciphertext: input.row.content.c })
-            : null;
-    }
-    if (!privatePayload) {
-        throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection content does not match the current Account encryption mode');
-    }
-    const projection = ensureExactProjection({
+    const decoded = decodePluginCollectionLogicalRowV1<TValue>({
         contract: input.collection.contract,
-        rowId: input.row.rowId,
-        projection: input.row.projection,
+        isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(
+            input.collection.validate,
+            value,
+        ),
+        row: input.row,
+        encryptionMode: input.encryptionMode,
+        material: input.material,
     });
-    const logical = createJsonRecord();
-    const reserved = new Set([
-        input.collection.contract.rowIdField,
-        ...input.collection.contract.serverReadable,
-    ]);
-    for (const [field, value] of Object.entries(privatePayload)) {
-        if (reserved.has(field)) {
-            throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection private payload overlaps an admitted projection field');
-        }
-        setJsonRecordValue(logical, field, value);
-    }
-    for (const field of input.collection.contract.serverReadable) {
-        const value = projection[field];
-        // The Data transport uses null for an absent optional scalar column.
-        // Reconstructing that sentinel as a logical field would turn absence
-        // into an invalid explicit null for ordinary non-nullable properties.
-        if (value !== null) setJsonRecordValue(logical, field, value!);
-    }
-    if (!hasOwn(logical, input.collection.contract.rowIdField)) {
-        setJsonRecordValue(logical, input.collection.contract.rowIdField, input.row.rowId);
-    }
-    if (!isLogicalCollectionValue<TValue>(input.collection.validate, logical)) {
-        throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection row does not satisfy its admitted schema');
-    }
-    return Object.freeze({ rowId: input.row.rowId, revision: input.row.revision, value: logical });
+    if (decoded.status === 'failed') throw collectionDecodeFailureError(decoded.reason);
+    return Object.freeze({
+        rowId: decoded.rowId,
+        revision: decoded.revision,
+        value: decoded.value,
+    });
 }
 
 function isLogicalCollectionValue<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(
@@ -1714,44 +1650,37 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     material,
                 });
 
-                // `identityFields` is the contract's single declaration of
-                // which fields hold a mode-derived identity, and it is what the
-                // Account encryption-transition owner reads to refuse a
-                // transition it cannot relocate. Admitting the wider
-                // row-id-plus-index set here would let a plugin mint a
-                // mode-bound value the transition owner cannot see, which is
-                // then silently rekeyed past and stranded at an address the
-                // plugin can no longer derive.
-                const declaredIdentityFields = new Set<string>(
-                    collection.contract.identityFields,
-                );
-
                 const bound: PluginAccountCollectionForDefinition<TDefinition> = Object.freeze({
                     async identityTag(
                         request: Readonly<{ field: string; components: readonly string[] }>,
                         options?: Readonly<{ signal?: AbortSignal }>,
                     ) {
                         // The admitted contract, not the caller, decides which
-                        // purposes exist: an undeclared field is an undeclared
-                        // derivation domain and is rejected rather than stamped
-                        // through.
-                        if (!declaredIdentityFields.has(request.field)) {
-                            throw dataError(
-                                COLLECTION_INVALID_VALUE_CODE,
-                                'Collection identity tag names a field the admitted contract does not declare',
-                            );
-                        }
+                        // purposes exist, and that admit/refuse decision lives
+                        // with the contract in Protocol so the daemon and the
+                        // direct Plugin UI client cannot drift.
                         const credentials = await currentCredentials(options?.signal);
                         const encryption = await currentEncryption(credentials, options?.signal);
                         await assertCurrentAccount(credentials, options?.signal);
-                        return derivePluginCollectionIdentityTagV1({
+                        const resolved = resolvePluginCollectionIdentityTagV1({
+                            contract: collection.contract,
                             accountEncryptionMode: encryption.mode,
                             material: encryption.material,
-                            pluginId: lifecycle.pluginId,
-                            collectionId: collection.contract.collectionId,
                             field: request.field,
                             components: request.components,
                         });
+                        if (resolved.status === 'failed') {
+                            throw resolved.reason === 'field-not-declared'
+                                ? dataError(
+                                    COLLECTION_INVALID_VALUE_CODE,
+                                    'Collection identity tag names a field the admitted contract does not declare',
+                                )
+                                : dataError(
+                                    ACCOUNT_DATA_UNAVAILABLE_CODE,
+                                    'Account encryption material is unavailable',
+                                );
+                        }
+                        return resolved.tag;
                     },
                     async get(rowId: string, options?: Readonly<{ signal?: AbortSignal }>) {
                         const credentials = await currentCredentials(options?.signal);

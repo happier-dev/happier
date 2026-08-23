@@ -350,12 +350,11 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
                   params.externalSessionsActiveServerId,
               }
             : {}),
-          ...(params.reloadController.currentGlobalExternalSessions
-            ? {
-                currentGlobalExternalSessionsRouter:
-                  params.reloadController.currentGlobalExternalSessions,
-              }
-            : {}),
+          // Required on the controller contract, so this is unconditional: a
+          // registry that silently self-targeted would reintroduce predecessor
+          // routing for every long-lived plugin context it builds.
+          currentGlobalExternalSessionsRouter:
+            params.reloadController.currentGlobalExternalSessions,
           ...(candidate.preparedActivationGraphsByPluginId
             ? {
                 preparedActivationGraphsByPluginId:
