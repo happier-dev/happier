@@ -8,6 +8,10 @@ import {
     type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import {
+    TRIAGE_WORKSPACE_MODES_V1,
+    type TriageWorkspaceModeV1,
+} from '../sessions/entrySessionWorkspace.js';
 import { readExactKeys } from './storedValue.js';
 
 /**
@@ -77,12 +81,7 @@ export const MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1 = 64 * 1024;
  * directly is what lets the action's declared mode BE the request instead of
  * being restated at the gate.
  */
-export const TRIAGE_ACTION_WORKSPACE_MODES_V1 = [
-    'reference_only',
-    'repository',
-    'pull_request',
-] as const;
-export type TriageActionWorkspaceModeV1 = (typeof TRIAGE_ACTION_WORKSPACE_MODES_V1)[number];
+export type TriageActionWorkspaceModeV1 = TriageWorkspaceModeV1;
 
 /** Whether the resolved prompt lands in the composer or is sent immediately. */
 export const TRIAGE_ACTION_DELIVERIES_V1 = ['compose', 'send'] as const;
@@ -172,6 +171,54 @@ export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freez
     }),
 ] as readonly TriageActionV1[]);
 
+/**
+ * The ONE offered-action decision.
+ *
+ * It takes no layout, no mount, no platform and no source body — which is why
+ * the same set renders in the wide split composition and the compact stacked
+ * one, and why a source's own detail body can never add or remove a control.
+ * Declared order is preserved: reordering is a person's configuration, not a
+ * rule this function reapplies.
+ *
+ * A disabled action is retained and configured and is offered nowhere, so the
+ * filter is the two members that decide it and nothing else. There is no
+ * subject-to-mode derivation left here: the action's declared `workspaceMode`
+ * IS the request its press makes.
+ */
+export function planTriageOfferedActionsV1(
+    actions: readonly TriageActionV1[],
+    workflowSubject: TriageSourceWorkflowSubjectV1,
+): readonly TriageActionV1[] {
+    return actions.filter(
+        (action) => action.enabled && action.appliesTo.includes(workflowSubject),
+    );
+}
+
+/**
+ * The translation key of a control still showing its shipped words.
+ *
+ * A label a person may rewrite cannot carry a translation key — their words are
+ * their words in every locale. The three seeded labels are not that: until
+ * somebody edits one it is Happier's own copy, and rendering `Ask` untranslated
+ * on ten locales to buy configurability would be a capability lost for nothing.
+ * So the key is resolved from the stored record rather than stored in it: a
+ * seeded id whose label is still the seeded label translates, and the first
+ * rename ends that for exactly that action.
+ */
+const SEEDED_ACTION_TITLE_KEYS_V1: Readonly<Record<string, string>> = Object.freeze({
+    ask: 'plugins.triage.surface.session.ask',
+    fix: 'plugins.triage.surface.session.fix',
+    review: 'plugins.triage.surface.session.review',
+});
+
+export function readTriageActionTitleKeyV1(action: TriageActionV1): string | null {
+    const seeded = TRIAGE_DEFAULT_ACTIONS_V1.find(
+        (candidate) => candidate.actionId === action.actionId,
+    );
+    if (seeded === undefined || seeded.label !== action.label) return null;
+    return SEEDED_ACTION_TITLE_KEYS_V1[action.actionId] ?? null;
+}
+
 /** The parsed absence: the seed, which needs no write to exist. */
 export const TRIAGE_SEEDED_ACTIONS_V1: TriageActionsSettingV1 = Object.freeze({
     v: 1,
@@ -194,6 +241,7 @@ export type TriageActionsReadV1 = Readonly<{
 export type TriageActionsRejectionV1 =
     | 'actionId'
     | 'label'
+    | 'enabled'
     | 'appliesTo'
     | 'duplicateSubject'
     | 'profileId'
@@ -260,7 +308,7 @@ function readClosedValue<TValue extends string>(
         : null);
 }
 
-const readWorkspaceMode = readClosedValue(TRIAGE_ACTION_WORKSPACE_MODES_V1);
+const readWorkspaceMode = readClosedValue(TRIAGE_WORKSPACE_MODES_V1);
 const readDelivery = readClosedValue(TRIAGE_ACTION_DELIVERIES_V1);
 const readSubject = readClosedValue(ALL_SUBJECTS);
 
@@ -276,7 +324,7 @@ function readAppliesTo(raw: unknown): Outcome<readonly TriageSourceWorkflowSubje
         if (subject === null) return { ok: false, reason: 'appliesTo' };
         // Deduplicating silently would make one press decide which of two
         // identical rows the reader thought they were editing.
-        if (subjects.includes(subject)) continue;
+        if (subjects.includes(subject)) return { ok: false, reason: 'duplicateSubject' };
         subjects.push(subject);
     }
     return { ok: true, value: subjects };
@@ -325,7 +373,7 @@ function readAction(actionId: string, draft: Readonly<{
 }>): Outcome<TriageActionV1> {
     const label = readBoundedString(draft.label, MAX_TRIAGE_ACTION_LABEL_UTF8_BYTES_V1);
     if (label === null) return { ok: false, reason: 'label' };
-    if (typeof draft.enabled !== 'boolean') return { ok: false, reason: 'target' };
+    if (typeof draft.enabled !== 'boolean') return { ok: false, reason: 'enabled' };
     const appliesTo = readAppliesTo(draft.appliesTo);
     if (!appliesTo.ok) return appliesTo;
     const profileId = draft.profileId === null
@@ -359,7 +407,7 @@ function readAction(actionId: string, draft: Readonly<{
  * upstream owner to recover it from.
  */
 export function parseTriageActions(raw: unknown): TriageActionsReadV1 {
-    if (raw === undefined || raw === null) return { kind: 'absent', value: { v: 1, actions: [] } };
+    if (raw === undefined || raw === null) return { kind: 'absent', value: TRIAGE_SEEDED_ACTIONS_V1 };
     // A value this build declines to read must not be replaced by the seed
     // either: the seed is what ABSENT means, and offering it for an unreadable
     // value is exactly how a newer client's catalogue gets overwritten.

@@ -32,7 +32,8 @@ import { parseTriageComposerEntryAttachmentValue } from './attachmentValue.js';
  * Fresh exact resolution immediately before an Agent dispatch
  * (`core/COMPOSER.md` §5).
  *
- * The persisted attachment value carries identity and nothing else, so this is
+ * The persisted attachment value carries identity plus the one routing hint and
+ * nothing else — no snapshot, no prose — so this is
  * where an attached entry is actually read — under the exact connection the
  * user attached it with, through the currently admitted source contribution,
  * on every dispatch including queued, restarted and retried Messages. Anything
@@ -244,7 +245,7 @@ async function resolveOne(
             ? 'This entry was attached under a connection to a different source.'
             : 'This attachment can no longer be read.');
     }
-    const { entryRef, sourceInstance } = parsed.value;
+    const { entryRef, sourceInstance, lastKnownLocator } = parsed.value;
 
     // 1. The current admitted contribution named by the entry itself — never a
     //    Triage-local source registry and never a source-id branch.
@@ -267,6 +268,13 @@ async function resolveOne(
     }
 
     // 3. The source's authoritative read. No handle is retained past this call.
+    //
+    //    The attached routing hint travels with it, unchanged. It is the only
+    //    evidence that can name the provider scope of an entry an ACCOUNT-WIDE
+    //    connection discovered — the configured instance names none — and this
+    //    resolver is not the parser of a source's own opaque token, so it never
+    //    rewrites, shortens or re-derives one. An absent hint stays absent
+    //    rather than becoming an empty locator the source would interpret.
     let observation: TriageGetResultV1;
     try {
         observation = await context.executeGet(
@@ -279,6 +287,7 @@ async function resolveOne(
                     collisionScope: entryRef.collisionScope,
                     entryId: entryRef.entryId,
                 },
+                ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
             },
             context.options,
         );
@@ -290,8 +299,21 @@ async function resolveOne(
     }
 
     // 4. Typed outcomes only. Nothing here rebinds, follows or repairs.
+    //
+    //    This is also the gate the routing hint rests on. A route is mutable and
+    //    an entry number is not unique across provider scopes, so a stale hint
+    //    can reach a DIFFERENT entry that answers perfectly well — and acting on
+    //    it would run the user's prompt against the wrong pull request. The
+    //    immutable identity is compared to what was attached, and a disagreement
+    //    is refused with the one remedy that actually repairs it: read the list
+    //    again and attach the entry from its current route.
     if (!sameLocalRef(observation.localRef, entryRef)) {
-        return blocked(attachment.instanceId, 'invalid', false, 'Its source answered about a different entry.');
+        return blocked(
+            attachment.instanceId,
+            'invalid',
+            false,
+            'Its source answered about a different entry. Refresh and attach it again.',
+        );
     }
     switch (observation.kind) {
         case 'present':

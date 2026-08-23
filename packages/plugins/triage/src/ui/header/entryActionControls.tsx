@@ -7,9 +7,10 @@ import type {
 } from '@happier-dev/triage-protocol/v1';
 
 import {
-  planTriageEntryActionsV1,
-  type TriageEntryActionV1,
-} from '../../settings/entryActions.js';
+  planTriageOfferedActionsV1,
+  readTriageActionTitleKeyV1,
+  type TriageActionV1,
+} from '../../settings/actions.js';
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 
 /**
@@ -24,7 +25,7 @@ import type { TriageActionTargetV1 } from '../state/actionTarget.js';
  *
  * It is deliberately thin, and it decides nothing about the actions themselves.
  * Which actions exist, what they are called and what each one needs on disk are
- * the configured record's (`settings/entryActions.ts`); which of them this entry
+ * the configured record's (`settings/actions.ts`); which of them this entry
  * is offered is that module's one planner. What is left here is what a reader
  * may press and what a press reports — not a destination, a creation key, a
  * workspace, a link, an open or a retry, all of which stay in
@@ -33,7 +34,7 @@ import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 
 /** The exact selected entry a press was made for, and the action it pressed. */
 export type TriageEntryActionRequestV1 = Readonly<{
-  action: TriageEntryActionV1;
+  action: TriageActionV1;
   entryRef: TriageEntryRefV1;
   sourceInstanceId: TriageSourceInstanceIdV1;
 }>;
@@ -42,7 +43,7 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
   /** The one aggregate action target; it reads `selection`, never `focus`. */
   target: TriageActionTargetV1;
   /** The configured catalog. Filtering it for this entry happens in one place. */
-  actions: readonly TriageEntryActionV1[];
+  actions: readonly TriageActionV1[];
   workflowSubject: TriageSourceWorkflowSubjectV1;
   /**
    * Whether the currently selected source contribution declares the admitted
@@ -64,7 +65,7 @@ export function TriageEntryActionControls(
 ): React.ReactElement {
   const { target, actions, workflowSubject, preparesReviewWorkspace, onAction } = props;
   const offered = React.useMemo(
-    () => planTriageEntryActionsV1(actions, workflowSubject),
+    () => planTriageOfferedActionsV1(actions, workflowSubject),
     [actions, workflowSubject],
   );
 
@@ -94,11 +95,15 @@ export function TriageEntryActionControls(
       <Row gap="small" align="center">
         {offered.map((action) => {
           const blocked = action.workspaceMode === 'pull_request' && !preparesReviewWorkspace;
+          // A renamed control shows the person's own words in every locale; a
+          // still-shipped one keeps its translation. `titleKey` is therefore
+          // resolved from the record, never stored in it.
+          const titleKey = readTriageActionTitleKeyV1(action);
           return (
             <Button
-              key={action.id}
-              titleKey={action.titleKey}
-              title={action.title}
+              key={action.actionId}
+              {...(titleKey === null ? {} : { titleKey })}
+              title={action.label}
               variant={action.workspaceMode === 'reference_only' ? 'secondary' : 'primary'}
               disabled={blocked}
               onPress={() => { onAction({ action, entryRef, sourceInstanceId }); }}

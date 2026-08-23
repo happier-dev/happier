@@ -122,6 +122,9 @@ function TriagePickerRow(props: Readonly<{
                 entryRef: row.entryRef,
                 sourceInstance: row.mutation.sourceInstance,
                 presentation: row.mutation.presentation,
+                ...(row.mutation.lastKnownLocator === undefined
+                    ? {}
+                    : { lastKnownLocator: row.mutation.lastKnownLocator }),
             });
         if (outcome.kind === 'refused') {
             dispatch({ kind: 'failed', action: 'attachment', reason: outcome.reason });
