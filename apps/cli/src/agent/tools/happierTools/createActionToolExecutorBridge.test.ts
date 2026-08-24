@@ -368,6 +368,78 @@ describe('createActionToolExecutorBridge', () => {
     ]);
   });
 
+  it('binds only explicitly declared session machine defaults and keeps historical session ids explicit', async () => {
+    const calls: unknown[] = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'agent',
+      defaultSessionMachineId: 'machine-1',
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return { ok: true, result: { ok: true } };
+        },
+      },
+    });
+
+    await bridge.executeActionByToolName('action_execute', {
+      actionId: 'memory.search',
+      input: { query: { text: 'handoff' } },
+    }, 'current-session');
+    await bridge.executeActionByToolName('action_execute', {
+      actionId: 'memory.get_window',
+      input: { seqFrom: 10, seqTo: 20 },
+    }, 'current-session');
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'memory.search',
+        input: { machineId: 'machine-1', query: { text: 'handoff' } },
+        ctx: expect.objectContaining({ defaultSessionMachineId: 'machine-1' }),
+      }),
+      expect.objectContaining({
+        actionId: 'memory.get_window',
+        input: { machineId: 'machine-1', seqFrom: 10, seqTo: 20 },
+      }),
+    ]);
+  });
+
+  it('applies the same declared contextual defaults to trusted plugin actions', async () => {
+    const calls: unknown[] = [];
+    const pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[] = [{
+      toolId: 'acme.memory/search-tool',
+      actionId: 'acme.memory/search',
+      name: 'acme_memory_search',
+      title: 'Search Acme memory',
+      description: 'Search memory.',
+      inputSchema: {
+        type: 'object',
+        properties: { machineId: { type: 'string' }, query: { type: 'string' } },
+        required: ['machineId', 'query'],
+        additionalProperties: false,
+      },
+      contextualDefaults: { machineId: 'current_session_machine' },
+      surfaces: ['agent'],
+    }];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'agent',
+      defaultSessionMachineId: 'machine-1',
+      pluginToolCatalog,
+      executor: {
+        execute: async (actionId, input) => {
+          calls.push({ actionId, input });
+          return { ok: true, result: { ok: true } };
+        },
+      },
+    });
+
+    await bridge.executeActionByToolName('acme_memory_search', { query: 'handoff' }, 'session-1');
+
+    expect(calls).toEqual([{
+      actionId: 'acme.memory/search',
+      input: { machineId: 'machine-1', query: 'handoff' },
+    }]);
+  });
+
   it('preserves explicit direct action tool session ids on external mcp', async () => {
     const calls: unknown[] = [];
     const bridge = createActionToolExecutorBridge({

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { ActionDefinitionSlashV1 } from '../../actions/actionDefinitionV1.js';
 import { ActionSafetySchema } from '../../actions/safety.js';
+import { ActionContextualDefaultsSchema } from '../../actions/contextualDefaults.js';
 import { ActionOperationDeclarationV1Schema } from '../../actions/operations/v1.js';
 import {
   createActionInputHintsSchemasWithStaticOptionsOnly,
@@ -494,6 +495,7 @@ export const PluginActionContributionV2Schema = z.object({
   placementBindings: PluginActionPlacementBindingsV2Schema.optional(),
   slash: PluginActionSlashV2Schema.optional(),
   inputSchema: PluginJsonSchemaV2Schema.optional(),
+  contextualDefaults: ActionContextualDefaultsSchema.optional(),
   inputHints: PluginActionInputHintsV2Schema.optional(),
   connectedAccountPurposeBindings: z.array(
     PluginActionConnectedAccountPurposeBindingV2Schema,
@@ -544,6 +546,26 @@ export const PluginActionContributionV2Schema = z.object({
   }
 
   const inputSchema = value.inputSchema;
+  if (value.contextualDefaults) {
+    if (!declaresTraversableObjectInput(inputSchema)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['inputSchema'],
+        message: 'Contextual defaults require an object inputSchema.',
+      });
+    } else {
+      for (const [field] of Object.entries(value.contextualDefaults)) {
+        const leaves = resolveDeclaredInputLeaves(inputSchema!, field);
+        if (!leaves || !leaves.every((leaf) => leaf.type === 'string')) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['contextualDefaults', field],
+            message: 'Contextual defaults must target a declared root string input field.',
+          });
+        }
+      }
+    }
+  }
   const purposeBindings = value.connectedAccountPurposeBindings ?? [];
   const bindingPaths = new Set<string>();
   const bindingPurposes = new Set<string>();

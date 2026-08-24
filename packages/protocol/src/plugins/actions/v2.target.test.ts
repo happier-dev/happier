@@ -61,6 +61,41 @@ describe('plugin executable contribution target grammar', () => {
     }).success).toBe(false);
   });
 
+  it('accepts only declared root string fields as host-stamped contextual defaults', () => {
+    const action = {
+      id: 'search-memory',
+      title: localized,
+      scopes: ['session'],
+      surfaces: ['agent'],
+      execution: daemonExecution,
+      dangerLevel: 'safe' as const,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          machineId: { type: 'string' as const },
+          query: { type: 'string' as const },
+        },
+        required: ['machineId', 'query'],
+        additionalProperties: false,
+      },
+      contextualDefaults: {
+        machineId: 'current_session_machine' as const,
+      },
+    };
+
+    expect(PluginActionContributionV2Schema.parse(action).contextualDefaults).toEqual(
+      action.contextualDefaults,
+    );
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action,
+      contextualDefaults: { sessionId: 'current_session' },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action,
+      contextualDefaults: { query: 'current_session_machine' },
+    }).success).toBe(false);
+  });
+
   it('keeps Tool input hints structurally static-only', () => {
     expectTypeOf<NonNullable<PluginToolContributionV2['inputHints']>['fields'][number]>()
       .not.toHaveProperty('optionsSourceId');

@@ -1,7 +1,6 @@
 import { listBuiltInHappierTools, type BuiltInHappierToolsSurface } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import {
-    actionAcceptsContextualSessionId,
     createPluginJsonSchemaZodObjectAdapter,
     type ActionsSettingsV1,
     type ApprovalRequestOriginV1,
@@ -10,6 +9,7 @@ import { createActionToolNameToIdMap } from '@/agent/tools/happierTools/actionTo
 import type { HappierBuiltInToolDefinition } from '@/agent/tools/happierTools/types';
 import { z } from 'zod';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
+import { projectSessionBoundActionToolInputSchema } from '@/agent/tools/happierTools/actionToolContext';
 
 type ToolRegistrar = Readonly<{
     registerTool: (name: string, meta: unknown, handler: (args: unknown, extra?: unknown) => Promise<unknown>) => void;
@@ -37,23 +37,24 @@ function buildSessionAgentApprovalOrigin(params: Readonly<{
     };
 }
 
-function withOptionalContextualSessionIdInputSchema(actionId: string | null | undefined, inputSchema: unknown): unknown {
-    if (!actionId || !actionAcceptsContextualSessionId(actionId) || !(inputSchema instanceof z.ZodObject)) {
-        return inputSchema;
-    }
-
-    const shape = inputSchema.shape as Record<string, z.ZodTypeAny>;
-    if (!Object.prototype.hasOwnProperty.call(shape, 'sessionId')) {
-        return inputSchema;
-    }
-
-    return inputSchema.safeExtend({
-        sessionId: shape.sessionId.optional(),
-    });
-}
-
-function toMcpToolInputSchema(actionId: string | null | undefined, inputSchema: unknown): z.ZodType {
-    const contextualInputSchema = withOptionalContextualSessionIdInputSchema(actionId, inputSchema);
+function toMcpToolInputSchema(params: Readonly<{
+    actionId: string | null | undefined;
+    inputSchema: unknown;
+    sessionId: string;
+    sessionMachineId?: string | null;
+    pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
+}>): z.ZodType {
+    const contextualInputSchema = params.actionId
+        ? projectSessionBoundActionToolInputSchema({
+            actionId: params.actionId,
+            inputSchema: params.inputSchema,
+            context: {
+                defaultSessionId: params.sessionId,
+                defaultSessionMachineId: params.sessionMachineId,
+            },
+            pluginToolCatalog: params.pluginToolCatalog,
+        })
+        : params.inputSchema;
     return toMcpToolObjectSchema(contextualInputSchema, 'inputSchema');
 }
 
@@ -106,6 +107,7 @@ export function registerHappierMcpBuiltInTools(
     server: ToolRegistrar,
     params: Readonly<{
         sessionId: string;
+        sessionMachineId?: string | null;
         surface: BuiltInHappierToolsSurface;
         actionsSettings?: ActionsSettingsV1 | null;
         getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
@@ -141,7 +143,13 @@ export function registerHappierMcpBuiltInTools(
             {
                 description: tool.description,
                 title: tool.title,
-                inputSchema: toMcpToolInputSchema(actionId, tool.inputSchema),
+                inputSchema: toMcpToolInputSchema({
+                    actionId,
+                    inputSchema: tool.inputSchema,
+                    sessionId: params.sessionId,
+                    sessionMachineId: params.sessionMachineId,
+                    pluginToolCatalog: params.pluginToolCatalog,
+                }),
                 ...(tool.outputSchema === undefined ? {} : {
                     outputSchema: toMcpToolObjectSchema(tool.outputSchema, 'outputSchema'),
                 }),
@@ -162,6 +170,7 @@ export function registerHappierMcpBuiltInTools(
                         toolName: tool.name,
                         args,
                         sessionId,
+                        sessionMachineId: params.sessionMachineId,
                         surface: params.surface,
                         actionsSettings: currentActionsSettings,
                         getActionsSettings: readActionsSettings,

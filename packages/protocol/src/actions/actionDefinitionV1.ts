@@ -11,6 +11,7 @@ import {
 } from './metadata.js';
 import { ActionSafetySchema } from './safety.js';
 import { ActionOperationDeclarationV1Schema } from './operations/v1.js';
+import { ActionContextualDefaultsSchema } from './contextualDefaults.js';
 import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../plugins/_shared.js';
 
 const LooseJsonObjectSchema = PluginLooseJsonObjectSchema;
@@ -126,6 +127,7 @@ export const ActionDefinitionSummaryV1Schema = z
     examples: ActionDefinitionExamplesV1Schema,
     surfaces: SerializedActionSurfaceSchema,
     toolExposure: ActionToolExposureSchema.optional(),
+    contextualDefaults: ActionContextualDefaultsSchema.optional(),
     inputHints: ActionInputHintsSchema.nullable(),
     outputSchema: LooseJsonObjectSchema.optional(),
     execution: ActionExecutionDescriptorV1Schema.optional(),

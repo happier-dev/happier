@@ -12,6 +12,7 @@ import {
   type ActionsSettingsV1,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
+import { projectSessionBoundActionToolInputSchema } from './actionToolContext';
 
 export const actionSpecSearchSchema = z.object({
   query: z.string().optional(),
@@ -142,6 +143,10 @@ export async function getActionSpecForSurface(
   surface: 'mcp' | 'cli' | 'agent',
   isActionEnabled: (id: ActionId) => boolean,
   actionsSettings?: ActionsSettingsV1 | null,
+  context?: Readonly<{
+    defaultSessionId?: string | null;
+    defaultSessionMachineId?: string | null;
+  }>,
 ): Promise<ActionSpecDiscoveryResult<GetActionSpecPayload>> {
   const parsed = actionSpecGetSchema.safeParse(args);
   if (!parsed.success) return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid params' };
@@ -163,7 +168,20 @@ export async function getActionSpecForSurface(
         actionsSettings: actionsSettings ?? null,
       });
     }
-    return { ok: true, result: { actionSpec: actionSpecToActionDefinitionV1(spec) } };
+    const actionSpec = actionSpecToActionDefinitionV1(spec);
+    return {
+      ok: true,
+      result: {
+        actionSpec: {
+          ...actionSpec,
+          inputSchema: projectSessionBoundActionToolInputSchema({
+            actionId: spec.id,
+            inputSchema: actionSpec.inputSchema,
+            context: context ?? {},
+          }) as typeof actionSpec.inputSchema,
+        },
+      },
+    };
   } catch {
     return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Unknown action spec' };
   }

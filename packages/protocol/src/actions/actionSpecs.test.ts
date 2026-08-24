@@ -12,7 +12,7 @@ import {
   ExecutionRunStopResponseSchema,
 } from '../execution/runs/index.js';
 import { serializeActionSpec } from './actionCatalog.js';
-import { ActionInputHintsSchema, ActionSpecSchema, PUBLIC_ACTION_IDS, PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SESSION_TRANSCRIPT_GET_MAX_LIMIT, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, actionAcceptsContextualSessionId, getActionSpec, isActionSpecSurfacedOn, isInternalActionId, isPluginProvenanceOnlyActionId, isPluginSurfaceExcludedActionId, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, projectSessionSpawnNewApiRequest, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
+import { ActionInputHintsSchema, ActionSpecSchema, PUBLIC_ACTION_IDS, PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SESSION_TRANSCRIPT_GET_MAX_LIMIT, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, getActionContextualDefaults, getActionSpec, isActionSpecSurfacedOn, isInternalActionId, isPluginProvenanceOnlyActionId, isPluginSurfaceExcludedActionId, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, projectSessionSpawnNewApiRequest, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
 import { resolveRuntimeActionSurfaces } from './surfaces.js';
 import type { ActionSpec } from './actionSpecs.js';
 import {
@@ -3401,11 +3401,19 @@ describe('Action Spec Registry', () => {
     ]));
   });
 
-  it('identifies actions that accept contextual session ids', () => {
-    expect(actionAcceptsContextualSessionId('session.terminalComposer.clear')).toBe(true);
-    expect(actionAcceptsContextualSessionId('review.start')).toBe(true);
-    expect(actionAcceptsContextualSessionId('session.list')).toBe(false);
-    expect(actionAcceptsContextualSessionId('not.real.action')).toBe(false);
+  it('declares exact contextual defaults without inferring identifier semantics from field names', () => {
+    expect(getActionContextualDefaults('session.terminalComposer.clear')).toEqual({
+      sessionId: 'current_session',
+    });
+    expect(getActionContextualDefaults('review.start')).toEqual({ sessionId: 'current_session' });
+    expect(getActionContextualDefaults('memory.search')).toEqual({
+      machineId: 'current_session_machine',
+    });
+    expect(getActionContextualDefaults('memory.get_window')).toEqual({
+      machineId: 'current_session_machine',
+    });
+    expect(getActionContextualDefaults('session.list')).toBeNull();
+    expect(getActionContextualDefaults('not.real.action')).toBeNull();
   });
 
   it('exposes session open action spec', () => {

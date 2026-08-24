@@ -3,13 +3,13 @@ import {
   type ActionsSettingsV1,
   type ApprovalRequestOriginV1,
   type ResolvedActionOption,
-  actionAcceptsContextualSessionId,
 } from '@happier-dev/protocol';
 import { createActionToolNameToIdMap } from './actionToolCatalog';
 import type { ResolveActionOptionsInput } from './actionSpecDiscovery';
 import { normalizeExecutionRunToolResult } from './executionRunToolResult';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
+import { bindContextualActionToolInput } from './actionToolContext';
 
 type ActionExecutorResult = Readonly<
   | { ok: true; result: unknown }
@@ -22,6 +22,7 @@ type ActionExecutorLike = Readonly<{
     input: unknown,
     ctx: Readonly<{
       defaultSessionId: string;
+      defaultSessionMachineId?: string | null;
       surface: 'mcp' | 'cli' | 'agent';
       approvalOrigin?: ApprovalRequestOriginV1 | null;
       callerPermissionMode?: string | null;
@@ -95,6 +96,7 @@ function normalizeActionToolResult(
 
 async function buildActionExecutorContext(params: Readonly<{
   defaultSessionId: string;
+  defaultSessionMachineId?: string | null;
   surface: 'mcp' | 'cli' | 'agent';
   options?: ActionToolExecutionOptions;
   resolveCallerPermissionMode?: (() => Promise<string | null> | string | null) | null;
@@ -105,6 +107,7 @@ async function buildActionExecutorContext(params: Readonly<{
   expectedContributorImmutableGenerationId?: string;
 }>): Promise<Readonly<{
   defaultSessionId: string;
+  defaultSessionMachineId?: string | null;
   surface: 'mcp' | 'cli' | 'agent';
   approvalOrigin?: ApprovalRequestOriginV1 | null;
   callerPermissionMode?: string | null;
@@ -142,6 +145,7 @@ async function buildActionExecutorContext(params: Readonly<{
     : null;
   return {
     defaultSessionId: params.defaultSessionId,
+    ...(params.defaultSessionMachineId ? { defaultSessionMachineId: params.defaultSessionMachineId } : {}),
     surface: params.surface,
     ...(params.options?.approvalOrigin ? { approvalOrigin: params.options.approvalOrigin } : {}),
     ...(actionRequestId ? { actionRequestId } : {}),
@@ -217,24 +221,6 @@ function readActionOptionsPayload(payload: unknown): DynamicActionOptionsResult 
   };
 }
 
-function hasUsableSessionId(value: unknown): boolean {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function withDefaultSessionIdInput(actionId: string, input: unknown, defaultSessionId: string): unknown {
-  const normalizedDefaultSessionId = String(defaultSessionId ?? '').trim();
-  if (!normalizedDefaultSessionId || !actionAcceptsContextualSessionId(actionId) || !isInputRecord(input)) {
-    return input;
-  }
-  if (hasUsableSessionId(input.sessionId)) {
-    return input;
-  }
-  return {
-    ...input,
-    sessionId: normalizedDefaultSessionId,
-  };
-}
-
 export function createActionToolExecutorBridge(params: Readonly<{
   executor: ActionExecutorLike;
   isActionEnabled?: (id: ActionId) => boolean;
@@ -247,6 +233,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
   getSessionAgentSpawnPolicyV1?: (() => unknown) | null;
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
+  defaultSessionMachineId?: string | null;
 }>): Readonly<{
   executeActionByToolName: (
     toolName: string,
@@ -276,18 +263,21 @@ export function createActionToolExecutorBridge(params: Readonly<{
         if (!actionId) {
           return { ok: false, errorCode: 'invalid_action_input', error: 'Missing actionId' };
         }
-        const actionInput = withDefaultSessionIdInput(
+        const actionInput = bindContextualActionToolInput({
           actionId,
-          argsRecord && Object.prototype.hasOwnProperty.call(argsRecord, 'input')
+          input: argsRecord && Object.prototype.hasOwnProperty.call(argsRecord, 'input')
             ? normalizeActionExecuteInput(argsRecord.input)
             : {},
-          defaultSessionId,
-        );
+          context: { defaultSessionId, defaultSessionMachineId: params.defaultSessionMachineId },
+          registry: params.registry,
+          pluginToolCatalog: params.pluginToolCatalog,
+        });
         return normalizeActionToolResult(actionId, await params.executor.execute(
           actionId as ActionId,
           actionInput,
           await buildActionExecutorContext({
             defaultSessionId,
+            defaultSessionMachineId: params.defaultSessionMachineId,
             surface,
             options,
             resolveCallerPermissionMode: params.resolveCallerPermissionMode,
@@ -309,12 +299,19 @@ export function createActionToolExecutorBridge(params: Readonly<{
         return { ok: false, errorCode: 'unknown_tool', error: `Unknown action-backed tool: ${toolName}` };
       }
 
-      const actionInput = withDefaultSessionIdInput(actionId, toolArgs, defaultSessionId);
+      const actionInput = bindContextualActionToolInput({
+        actionId,
+        input: toolArgs,
+        context: { defaultSessionId, defaultSessionMachineId: params.defaultSessionMachineId },
+        registry: params.registry,
+        pluginToolCatalog: params.pluginToolCatalog,
+      });
       return normalizeActionToolResult(actionId, await params.executor.execute(
         actionId as ActionId,
         actionInput,
         await buildActionExecutorContext({
           defaultSessionId,
+          defaultSessionMachineId: params.defaultSessionMachineId,
           surface,
           options,
           resolveCallerPermissionMode: params.resolveCallerPermissionMode,

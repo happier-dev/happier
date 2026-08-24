@@ -351,6 +351,15 @@ import {
 import { ActionApprovalSchema, type ActionApproval } from './actionApprovalMetadata.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import {
+  ActionContextualDefaultsSchema,
+  type ActionContextualDefaults,
+} from './contextualDefaults.js';
+
+export {
+  ActionContextualDefaultsSchema,
+  type ActionContextualDefaults,
+} from './contextualDefaults.js';
 
 export {
   RuntimeActionHostEffectClassSchema,
@@ -544,6 +553,7 @@ export const ActionSpecSchema = z.object({
     .optional(),
   prompting: ActionPromptingSchema.optional(),
   toolExposure: ActionToolExposureSchema.optional(),
+  contextualDefaults: ActionContextualDefaultsSchema.optional(),
   operation: ActionOperationDeclarationV1Schema.optional(),
   /** Host-owned admission floor; public callers never supply this in Action input. */
   requiredAuthority: ActionRequiredAuthoritySchema.optional(),
@@ -689,6 +699,7 @@ export type ActionSpecWithoutApproval = Readonly<{
   examples?: ParsedActionSpec['examples'];
   prompting?: ParsedActionSpec['prompting'];
   toolExposure?: ParsedActionSpec['toolExposure'];
+  contextualDefaults?: ParsedActionSpec['contextualDefaults'];
   operation?: ParsedActionSpec['operation'];
   requiredAuthority?: ParsedActionSpec['requiredAuthority'];
   executionPlacement?: ParsedActionSpec['executionPlacement'];
@@ -9249,14 +9260,123 @@ function resolveActionPluginCallerPolicy(
   return requiresPolicy ? policy ?? HOST_DOMAIN_PLUGIN_CALLER_POLICY : policy;
 }
 
+const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
+  'reviews.comments.create',
+  'reviews.comments.list',
+  'browser.recording.attachToComposer',
+  'localServices.inventory.list',
+  'localServices.inventory.refresh',
+  'localServices.launcher.snapshot',
+  'localServices.launcher.start',
+  'localServices.launcher.openPreview',
+  'localServices.launcher.registerPreview',
+  'localServices.launcher.history.clear',
+  'localServices.preview.openOrCreate',
+  'localServices.preview.status',
+  'localServices.preview.revoke',
+  'localServices.publicPreview.create',
+  'localServices.publicPreview.status',
+  'localServices.publicPreview.revoke',
+  'localServices.publicPreview.copyUrl',
+  'peerMediation.observability.snapshot',
+  'sessions.external.operation.status.get',
+  'sessions.external.operation.cancel',
+  'sessions.external.operation.resume',
+  'sessions.external.operation.retry',
+  'sessions.external.operation.discard',
+  'action.options.resolve',
+  'review.start',
+  'subagents.plan.start',
+  'subagents.delegate.start',
+  'voice_agent.start',
+  'execution.run.start',
+  'execution.run.list',
+  'execution.run.get',
+  'execution.run.send',
+  'execution.run.ensure',
+  'execution.run.ensure_or_start',
+  'execution.run.stream.start',
+  'execution.run.stream.read',
+  'execution.run.stream.cancel',
+  'execution.run.stop',
+  'execution.run.action',
+  'execution.run.wait',
+  'session.open',
+  'session.fork',
+  'session.rollback',
+  'session.checkpoint_code_rollback',
+  'session.checkpoint',
+  'session.restore',
+  'session.handoff',
+  'session.handoff.prepare_target',
+  'review.engines.list',
+  'session.message.send',
+  'session.stop',
+  'session.terminalComposer.clear',
+  'session.pendingInput.interruptAndRun',
+  'session.title.set',
+  'session.permission_mode.set',
+  'session.model.set',
+  'session.archive',
+  'session.unarchive',
+  'session.status.get',
+  'session.work_state.get',
+  'session.goal.get',
+  'session.goal.set',
+  'session.goal.clear',
+  'session.usageLimit.waitResume.enable',
+  'session.usageLimit.waitResume.cancel',
+  'session.usageLimit.checkNow',
+  'session.usageLimit.consumeResetCredit',
+  'session.vendor_plugin_catalog.list',
+  'session.skill_catalog.list',
+  'session.history.get',
+  'session.transcript.get',
+  'session.events.get',
+  'session.wait.idle',
+  'session.permission.respond',
+  'session.permission.remote.pending.list',
+  'session.permission.remote.respond',
+  'session.permission.remote.grants.list',
+  'session.permission.remote.grants.revoke',
+  'session.user_action.answer',
+  'session.mode.set',
+  'session.target.primary.set',
+  'session.activity.get',
+  'session.messages.recent.get',
+  'ui.voice_agent.teleport',
+  'memory.ensure_up_to_date',
+  'transcript.page',
+  'transcript.readAfter',
+  'transcript.follow',
+  'transcript.unfollow',
+  'transcript.import',
+  'transcript.search',
+  'sessions.external.follow',
+  'sessions.external.unfollow',
+  'sessions.external.backgroundFollow.set',
+  'sessions.external.status.get',
+]);
+
+function resolveBuiltInActionContextualDefaults(actionId: ActionId): ActionContextualDefaults | undefined {
+  if (actionId === 'memory.search' || actionId === 'memory.get_window') {
+    return { machineId: 'current_session_machine' };
+  }
+  return CURRENT_SESSION_CONTEXT_ACTION_IDS.has(actionId)
+    ? { sessionId: 'current_session' }
+    : undefined;
+}
+
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze(
   ACTION_SPECS_WITH_PUBLIC_EXPOSURE.map((spec): ActionSpec => {
     const pluginCallerPolicy = resolveActionPluginCallerPolicy(spec);
+    const contextualDefaults = resolveBuiltInActionContextualDefaults(spec.id);
     return {
       ...spec,
       requiredAuthority: resolveActionRequiredAuthority(spec),
       executionPlacement: resolveActionExecutionPlacement(spec),
       ...(pluginCallerPolicy ? { pluginCallerPolicy } : {}),
+      ...(contextualDefaults ? { contextualDefaults } : {}),
       placements: [...spec.placements],
       approval: resolveApprovalMetadataForActionId(spec.id),
     };
@@ -9332,25 +9452,17 @@ export function getActionSpec(id: ActionId): ActionSpec {
   return spec;
 }
 
-function actionInputSchemaHasSessionId(spec: Pick<ActionSpec, 'inputSchema'>): boolean {
-  if (!(spec.inputSchema instanceof z.ZodObject)) return false;
-  const shape = spec.inputSchema.shape as Record<string, unknown>;
-  return Object.prototype.hasOwnProperty.call(shape, 'sessionId');
-}
-
-function actionInputHintsDeclareSessionId(spec: Pick<ActionSpec, 'inputHints'>): boolean {
-  return spec.inputHints?.fields.some((field) => field.path === 'sessionId') === true;
-}
-
-export function actionAcceptsContextualSessionId(action: ActionId | string | ActionSpec): boolean {
+export function getActionContextualDefaults(
+  action: ActionId | string | ActionSpec,
+): ActionContextualDefaults | null {
   const spec = typeof action === 'string'
     ? (() => {
       const parsed = ActionIdSchema.safeParse(action);
       return parsed.success ? getActionSpec(parsed.data) : null;
     })()
     : action;
-  if (!spec) return false;
-  return actionInputSchemaHasSessionId(spec) || actionInputHintsDeclareSessionId(spec);
+  if (!spec) return null;
+  return spec.contextualDefaults ?? null;
 }
 
 /**

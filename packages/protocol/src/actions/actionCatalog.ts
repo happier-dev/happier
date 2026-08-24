@@ -144,6 +144,7 @@ export function serializeActionSpec(
     surfaces: spec.surfaces,
     inputHints: projection.inputHints ?? null,
     ...(spec.toolExposure ? { toolExposure: spec.toolExposure } : {}),
+    ...(spec.contextualDefaults ? { contextualDefaults: spec.contextualDefaults } : {}),
     ...(spec.outputSchema ? { outputSchema: zodSchemaToJsonSchemaObject(spec.outputSchema) } : {}),
     ...(spec.execution ? { execution: spec.execution } : {}),
     ...(spec.sideEffectClass ? { sideEffectClass: spec.sideEffectClass } : {}),
