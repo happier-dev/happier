@@ -285,16 +285,23 @@ export function createHappierMcpServer(
       executionRunAction: async (_sessionId, request) => await executionRuns.action(request),
       executionRunWait: async (_sessionId, request) => await executionRuns.wait(request),
 
-      daemonMemorySearch: async ({ query }): Promise<MemorySearchResultV1> => {
-        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
-        return MemorySearchResultV1Schema.parse(res);
-      },
-      daemonMemoryGetWindow: async ({ sessionId, seqFrom, seqTo }): Promise<MemoryWindowV1> => {
-        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, { v: 1, sessionId, seqFrom, seqTo });
-        return MemoryWindowV1Schema.parse(res);
-      },
-      daemonMemoryEnsureUpToDate: async ({ sessionId }) =>
-        await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, sessionId ? { sessionId } : {}),
+      ...(credentials
+        ? {}
+        : {
+          // Compatibility MCP clients without Account credentials can only reach
+          // the daemon already bound to their session. Authenticated callers keep
+          // the canonical machine-aware dependencies from createCliActionDeps.
+          daemonMemorySearch: async ({ query }): Promise<MemorySearchResultV1> => {
+            const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
+            return MemorySearchResultV1Schema.parse(res);
+          },
+          daemonMemoryGetWindow: async ({ sessionId, seqFrom, seqTo }): Promise<MemoryWindowV1> => {
+            const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, { v: 1, sessionId, seqFrom, seqTo });
+            return MemoryWindowV1Schema.parse(res);
+          },
+          daemonMemoryEnsureUpToDate: async ({ sessionId }) =>
+            await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, sessionId ? { sessionId } : {}),
+        }),
 
       promptRegistryInstall: async (args) => {
         if (!args.installTarget) {
@@ -338,10 +345,12 @@ export function createHappierMcpServer(
     sessionAgentSpawnPolicyV1: readSessionAgentSpawnPolicyV1(),
     getSessionAgentSpawnPolicyV1: readSessionAgentSpawnPolicyV1,
     pluginToolCatalog: opts?.pluginToolCatalog,
+    defaultSessionMachineId: sessionLocation?.machineId ?? null,
   });
 
   const { toolNames } = registerHappierMcpBuiltInTools(mcp as any, {
     sessionId: client.sessionId,
+    sessionMachineId: sessionLocation?.machineId ?? null,
     surface: toolSurface,
     actionsSettings: readActionsSettings(),
     getActionsSettings: readActionsSettings,
