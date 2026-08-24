@@ -1,6 +1,7 @@
 export {
     createWorkspaceCheckoutWithScmWorkspace,
     materializeWorkspaceCheckoutWithScmWorkspace,
+    realizeWorkspaceCheckoutWithResolvedScmSelection,
     realizeWorkspaceCheckoutWithScmWorkspace,
 } from './workspace/workspaceCheckoutOperations';
 export {

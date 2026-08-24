@@ -9,12 +9,15 @@ export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest = Readonl
     sourcePath: string;
     displayName: string;
     baseRef: string | null;
+    branchMode: 'new' | 'existing';
     targetPath: string | null;
 }>;
 
 export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult = Readonly<{
     kind: ScmWorkspaceIntegrationWorkspaceCheckoutKind;
     targetPath: string;
+    branchName: string;
+    created: boolean;
 }>;
 
 export function createScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest(input: Readonly<{
@@ -24,6 +27,7 @@ export function createScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest
         kind: ScmWorkspaceIntegrationWorkspaceCheckoutKind;
         displayName: string;
         baseRef?: string | null;
+        branchMode: 'new' | 'existing';
     }>;
 }>): ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest {
     return {
@@ -31,6 +35,7 @@ export function createScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest
         sourcePath: input.sourcePath,
         displayName: input.checkoutCreation.displayName,
         baseRef: input.checkoutCreation.baseRef ?? null,
+        branchMode: input.checkoutCreation.branchMode,
         targetPath: input.targetPath ?? null,
     };
 }
@@ -59,6 +64,12 @@ export function resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBaseRe
     return input.baseRef;
 }
 
+export function resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBranchMode(
+    input: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest,
+): 'new' | 'existing' {
+    return input.branchMode;
+}
+
 export function resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationTargetPath(
     input: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest,
 ): string | null {
@@ -74,6 +85,7 @@ export function createScmWorkspaceIntegrationWorkspaceCheckoutCreationRequestFro
             kind: input.kind,
             displayName: input.displayName,
             baseRef: input.baseRef,
+            branchMode: input.branchMode,
         },
     });
 }
@@ -92,6 +104,7 @@ export function createScmWorkspaceIntegrationWorkspaceCheckoutMaterializationReq
             kind: input.kind,
             displayName: input.displayName,
             baseRef: input.baseRef,
+            branchMode: input.branchMode,
         },
     });
 }
@@ -102,6 +115,8 @@ export function createScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult(
     return {
         kind: input.kind,
         targetPath: input.targetPath,
+        branchName: input.branchName,
+        created: input.created,
     };
 }
 

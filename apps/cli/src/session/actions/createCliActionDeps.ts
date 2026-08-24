@@ -1422,6 +1422,22 @@ export function createCliActionDeps(params: Readonly<{
     if (!params.credentials) {
       return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
     }
+    const inputRecord = input && typeof input === 'object' && !Array.isArray(input)
+      ? input as Readonly<Record<string, unknown>>
+      : {};
+    if (actionId === 'scm.reviewWorkspace.materializePrepared') {
+      const selectedRoot = normalizeStringValue(inputRecord.cwd);
+      if (!selectedRoot) {
+        return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
+      }
+      return await executeScmActionOperation({
+        actionId,
+        input: inputRecord,
+        workingDirectory: selectedRoot,
+        accessPolicy: { kind: 'restrictedRoots', roots: [selectedRoot] },
+        ...(context.signal ? { signal: context.signal } : {}),
+      });
+    }
     const sessionId = normalizeStringValue(context.defaultSessionId);
     if (!sessionId) {
       return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
@@ -1476,9 +1492,6 @@ export function createCliActionDeps(params: Readonly<{
       };
     }
 
-    const inputRecord = input && typeof input === 'object' && !Array.isArray(input)
-      ? input as Readonly<Record<string, unknown>>
-      : {};
     const sessionBoundInput = actionId === 'scm.repository.clone'
       ? inputRecord
       : actionId === 'scm.pullRequest.prepareWorktree'

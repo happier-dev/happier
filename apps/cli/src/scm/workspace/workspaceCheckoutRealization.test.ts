@@ -8,8 +8,6 @@ import {
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBaseRef,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationDisplayName,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationKind,
-    resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationResultKind,
-    resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationResultTargetPath,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationSourcePath,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationTargetPath,
 } from './workspaceCheckoutRealization';
@@ -23,6 +21,7 @@ describe('workspaceCheckoutRealization', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: 'origin/main',
+                branchMode: 'new',
             },
         });
 
@@ -40,6 +39,7 @@ describe('workspaceCheckoutRealization', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: null,
+                branchMode: 'new',
             },
         });
 
@@ -54,6 +54,7 @@ describe('workspaceCheckoutRealization', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: 'origin/main',
+                branchMode: 'new',
             },
         });
 
@@ -62,6 +63,7 @@ describe('workspaceCheckoutRealization', () => {
             sourcePath: '/repo',
             displayName: 'feature-auth',
             baseRef: 'origin/main',
+            branchMode: 'new',
         });
         expect(createScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequestFromRealization(request)).toEqual({
             kind: 'git_worktree',
@@ -69,6 +71,7 @@ describe('workspaceCheckoutRealization', () => {
             targetPath: '/repo/.worktrees/feature-auth',
             displayName: 'feature-auth',
             baseRef: 'origin/main',
+            branchMode: 'new',
         });
     });
 
@@ -76,9 +79,15 @@ describe('workspaceCheckoutRealization', () => {
         const result = createScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult({
             kind: 'git_worktree',
             targetPath: '/repo/.worktrees/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
         });
 
-        expect(resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationResultKind(result)).toBe('git_worktree');
-        expect(resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationResultTargetPath(result)).toBe('/repo/.worktrees/feature-auth');
+        expect(result).toEqual({
+            kind: 'git_worktree',
+            targetPath: '/repo/.worktrees/feature-auth',
+            branchName: 'feature-auth',
+            created: true,
+        });
     });
 });

@@ -16,6 +16,7 @@ describe('workspaceCheckoutCreation', () => {
                 kind: 'git_worktree',
                 displayName: 'feature-auth',
                 baseRef: 'origin/main',
+                branchMode: 'new',
             },
         });
 

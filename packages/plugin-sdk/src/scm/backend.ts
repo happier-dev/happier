@@ -279,11 +279,14 @@ export type WorkspaceCheckoutCreationRequest = Readonly<{
     sourcePath: string;
     displayName: string;
     baseRef: string | null;
+    branchMode: 'new' | 'existing';
 }>;
 
 export type WorkspaceCheckoutCreationResult = Readonly<{
     kind: CreatableWorkspaceCheckoutKind;
     targetPath: string;
+    branchName: string;
+    created: boolean;
 }>;
 
 export type WorkspaceCheckoutMaterializationRequest = Readonly<{
@@ -292,10 +295,13 @@ export type WorkspaceCheckoutMaterializationRequest = Readonly<{
     targetPath: string;
     displayName: string;
     baseRef: string | null;
+    branchMode: 'new' | 'existing';
 }>;
 
 export type WorkspaceCheckoutMaterializationResult = Readonly<{
     targetPath: string;
+    branchName: string;
+    created: boolean;
 }>;
 
 export type WorkspaceCheckoutRealizationRequest = Readonly<{
@@ -303,12 +309,15 @@ export type WorkspaceCheckoutRealizationRequest = Readonly<{
     sourcePath: string;
     displayName: string;
     baseRef: string | null;
+    branchMode: 'new' | 'existing';
     targetPath: string | null;
 }>;
 
 export type WorkspaceCheckoutRealizationResult = Readonly<{
     kind: CreatableWorkspaceCheckoutKind;
     targetPath: string;
+    branchName: string;
+    created: boolean;
 }>;
 
 export type WorkspaceTransferEntry = Readonly<{

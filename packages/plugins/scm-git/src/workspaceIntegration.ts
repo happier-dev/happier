@@ -16,18 +16,21 @@ import {
 } from './workspace/checkoutMaterialization.js';
 import {
     resolveScmWorkspaceIntegrationWorkspaceCheckoutCreationBaseRef,
+    resolveScmWorkspaceIntegrationWorkspaceCheckoutCreationBranchMode,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutCreationDisplayName,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutCreationKind,
 } from './workspace/workspaceCheckoutCreation.js';
 import { resolveScmWorkspaceIntegrationPortableWorkspacePathRelativePath } from './workspace/portableWorkspacePath.js';
 import {
     resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationBaseRef,
+    resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationBranchMode,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationDisplayName,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationKind,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationTargetPath,
 } from './workspace/workspaceCheckoutMaterialization.js';
 import {
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBaseRef,
+    resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBranchMode,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationDisplayName,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationKind,
     resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationSourcePath,
@@ -115,11 +118,14 @@ export async function createGitWorkspaceCheckout(
         repoRoot: resolveGitRepoRoot(input.context),
         displayName: resolveScmWorkspaceIntegrationWorkspaceCheckoutCreationDisplayName(input.workspaceCheckoutCreation),
         baseRef: resolveScmWorkspaceIntegrationWorkspaceCheckoutCreationBaseRef(input.workspaceCheckoutCreation),
+        branchMode: resolveScmWorkspaceIntegrationWorkspaceCheckoutCreationBranchMode(input.workspaceCheckoutCreation),
     });
 
     return {
         kind: checkoutKind,
         targetPath: created.targetPath,
+        branchName: created.branchName,
+        created: !created.reused,
     };
 }
 
@@ -127,18 +133,27 @@ export async function materializeGitWorkspaceSourceCheckout(
     input: ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationInput,
 ): Promise<Readonly<{
     targetPath: string;
+    branchName: string;
+    created: boolean;
 }>> {
     const checkoutKind = resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationKind(input.workspaceCheckoutMaterialization);
     if (checkoutKind !== 'git_worktree') {
         throw new Error(`Unsupported Git workspace checkout materialization kind: ${checkoutKind}`);
     }
 
-    return await materializeGitWorkspaceCheckoutAtPath({
+    const materialized = await materializeGitWorkspaceCheckoutAtPath({
         repoRoot: resolveGitRepoRoot(input.context),
         targetPath: resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationTargetPath(input.workspaceCheckoutMaterialization),
         displayName: resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationDisplayName(input.workspaceCheckoutMaterialization),
         baseRef: resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationBaseRef(input.workspaceCheckoutMaterialization),
+        branchMode: resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationBranchMode(input.workspaceCheckoutMaterialization),
     });
+
+    return {
+        targetPath: materialized.targetPath,
+        branchName: materialized.branchName,
+        created: !materialized.reused,
+    };
 }
 
 export async function realizeGitWorkspaceCheckout(
@@ -156,11 +171,14 @@ export async function realizeGitWorkspaceCheckout(
             targetPath,
             displayName: resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationDisplayName(input.workspaceCheckoutRealization),
             baseRef: resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBaseRef(input.workspaceCheckoutRealization),
+            branchMode: resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBranchMode(input.workspaceCheckoutRealization),
         });
 
         return {
             kind: checkoutKind,
             targetPath: materialized.targetPath,
+            branchName: materialized.branchName,
+            created: !materialized.reused,
         };
     }
 
@@ -171,6 +189,7 @@ export async function realizeGitWorkspaceCheckout(
             sourcePath: resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationSourcePath(input.workspaceCheckoutRealization),
             displayName: resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationDisplayName(input.workspaceCheckoutRealization),
             baseRef: resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBaseRef(input.workspaceCheckoutRealization),
+            branchMode: resolveScmWorkspaceIntegrationWorkspaceCheckoutRealizationBranchMode(input.workspaceCheckoutRealization),
         },
     });
 }

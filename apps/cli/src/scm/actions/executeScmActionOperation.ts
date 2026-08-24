@@ -19,6 +19,8 @@ import {
     type ScmPullRequestPrepareWorktreeResponse,
     type ScmPullRequestRunStackedRequest,
     type ScmPullRequestRunStackedResponse,
+    type ScmReviewWorkspaceMaterializePreparedRequest,
+    type ScmReviewWorkspaceMaterializePreparedResponse,
     type ScmRepositoryCloneInput,
     type ScmRepositoryCloneOutput,
     type ScmRepositoryInitRequest,
@@ -29,6 +31,7 @@ import {
 
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import { realizeWorkspaceCheckoutWithResolvedScmSelection } from '@/scm/workspace';
 import { notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
 import {
     runScmHostingRepositoryDescribePublishTargetsRoute,
@@ -134,6 +137,51 @@ function runLocalScmAction(params: ExecuteScmActionOperationParams & Readonly<{
                 runWithBackend: async ({ context, selection }) => selection.backend.pullRequestPrepareWorktree
                     ? await selection.backend.pullRequestPrepareWorktree({ context, request })
                     : notRepositoryResponse<ScmPullRequestPrepareWorktreeResponse>(),
+            }));
+        }
+        case 'scm.reviewWorkspace.materializePrepared': {
+            const request = params.input as ScmReviewWorkspaceMaterializePreparedRequest;
+            return runMutation(async () => await runScmRoute<
+                ScmReviewWorkspaceMaterializePreparedRequest,
+                ScmReviewWorkspaceMaterializePreparedResponse
+            >({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmReviewWorkspaceMaterializePreparedResponse>(),
+                runWithBackend: async ({ context, selection }) => {
+                    try {
+                        const realized = await realizeWorkspaceCheckoutWithResolvedScmSelection({
+                            sourcePath: context.cwd,
+                            checkoutCreation: {
+                                kind: 'git_worktree',
+                                displayName: request.displayName,
+                                baseRef: request.baseRef,
+                                branchMode: request.branchMode,
+                            },
+                            context,
+                            selection,
+                        });
+                        if (!realized) {
+                            return {
+                                success: false,
+                                error: 'SCM workspace materialization is unavailable',
+                                errorCode: 'FEATURE_UNSUPPORTED',
+                            };
+                        }
+                        return {
+                            success: true,
+                            targetPath: realized.targetPath,
+                            branchName: realized.branchName,
+                            created: realized.created,
+                        };
+                    } catch (error) {
+                        return {
+                            success: false,
+                            error: error instanceof Error ? error.message : String(error),
+                            errorCode: 'COMMAND_FAILED',
+                        };
+                    }
+                },
             }));
         }
         case 'scm.pullRequest.runStacked': {

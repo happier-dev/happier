@@ -126,10 +126,15 @@ describe('git workspace integration', () => {
                     targetPath: targetRoot,
                     displayName: 'feature/auth',
                     baseRef: 'main',
+                    branchMode: 'new',
                 },
             }));
 
-            expect(materialized).toEqual({ targetPath: await realpath(targetRoot) });
+            expect(materialized).toEqual({
+                targetPath: await realpath(targetRoot),
+                branchName: 'feature/auth',
+                created: true,
+            });
 
             await expect(runGit(targetRoot, ['rev-parse', '--show-toplevel'])).resolves.toBe(await realpath(targetRoot));
             await expect(runGit(targetRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])).resolves.toBe('feature/auth');
@@ -174,6 +179,7 @@ describe('git workspace integration', () => {
                     targetPath: restoredRoot,
                     displayName: 'feature-auth',
                     baseRef: 'main',
+                    branchMode: 'existing',
                 },
             }));
             const restoredIdentity = await runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: restoredRoot }));
@@ -181,6 +187,8 @@ describe('git workspace integration', () => {
             expect(realizedCheckout).toEqual({
                 kind: 'git_worktree',
                 targetPath: restoredIdentity?.registeredWorktreePath,
+                branchName: 'feature-auth',
+                created: false,
             });
             expect(restoredIdentity).toEqual(expect.objectContaining({
                 branchName: 'feature-auth',
@@ -221,12 +229,15 @@ describe('git workspace integration', () => {
                     sourcePath: join(sourceRoot, 'packages/app'),
                     displayName: 'feature/auth',
                     baseRef: 'main',
+                    branchMode: 'new',
                 },
             }));
 
             expect(createdCheckout).toEqual({
                 kind: 'git_worktree',
                 targetPath: await realpath(createdRoot),
+                branchName: 'feature/auth',
+                created: true,
             });
 
             await expect(runGit(createdRoot, ['rev-parse', '--show-toplevel'])).resolves.toBe(await realpath(createdRoot));
@@ -234,6 +245,52 @@ describe('git workspace integration', () => {
             await expect(runGit(createdRoot, ['rev-parse', '--git-common-dir'])).resolves.toBe(await realpath(join(sourceRoot, '.git')));
         } finally {
             await rm(sourceRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('reuses an existing branch worktree at a non-default path without creating a suffixed checkout', async () => {
+        const repoRoot = await makeTempDir('git-workspace-integration-reuse-repo-');
+        const existingWorktreeRoot = await makeTempDir('git-workspace-integration-reuse-existing-');
+
+        try {
+            await runGit(repoRoot, ['init']);
+            await configureGitRepo(repoRoot);
+            await runGit(repoRoot, ['branch', '-M', 'main']);
+            await mkdir(join(repoRoot, 'packages/app'), { recursive: true });
+            await writeTrackedFile(repoRoot, 'README.md', 'main\n');
+            await writeTrackedFile(repoRoot, 'packages/app/index.ts', 'export const app = true;\n');
+            await runGit(repoRoot, ['commit', '-m', 'initial']);
+            await runGit(repoRoot, ['branch', 'feature/auth']);
+            await runGit(repoRoot, ['worktree', 'add', existingWorktreeRoot, 'feature/auth']);
+
+            const reusedCheckout = await runWithRealGitScmRuntime(() => createGitWorkspaceCheckout({
+                context: {
+                    cwd: repoRoot,
+                    projectKey: `test:${repoRoot}`,
+                    detection: {
+                        isRepo: true,
+                        rootPath: repoRoot,
+                        mode: '.git',
+                    },
+                },
+                workspaceCheckoutCreation: {
+                    kind: 'git_worktree',
+                    sourcePath: join(repoRoot, 'packages/app'),
+                    displayName: 'feature/auth',
+                    baseRef: 'main',
+                    branchMode: 'existing',
+                },
+            }));
+
+            expect(reusedCheckout).toEqual({
+                kind: 'git_worktree',
+                targetPath: await realpath(existingWorktreeRoot),
+                branchName: 'feature/auth',
+                created: false,
+            });
+        } finally {
+            await rm(existingWorktreeRoot, { recursive: true, force: true });
+            await rm(repoRoot, { recursive: true, force: true });
         }
     });
 

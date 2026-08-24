@@ -10,25 +10,15 @@ import {
   SCM_OPERATION_ERROR_CODES,
   SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
 } from '@happier-dev/plugin-sdk/scm';
-import { mkdir } from 'node:fs/promises';
-
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode } from '../remote.js';
-import { parseGitWorktreeListPorcelain } from '../worktreeListParser.js';
 import {
-    WORKTREE_RELATIVE_PARENT_DIR,
-    buildWorktreeRelativePath,
     hasForbiddenGitRefName,
     normalizeWorktreeDisplayName,
 } from './worktreeName.js';
-import {
-    GIT_WORKTREE_NAME_ATTEMPT_LIMIT,
-    gitWorktreeNameForAttempt,
-    isGitWorktreeAlreadyExistsFailure,
-    runGitWorktreeAdd,
-} from './gitWorktreeAdd.js';
+import { createGitWorkspaceCheckoutAtDefaultPath } from './materializeGitWorkspaceCheckout.js';
 
 function normalizeBaseRef(value: string | null | undefined): string | null {
     const trimmed = String(value ?? '').trim();
@@ -170,77 +160,30 @@ export async function gitWorktreeCreate(input: {
     const resolvedBaseRef = branchMode === 'existing'
         ? null
         : explicitBaseRef ?? await resolveImplicitBaseRef(input.context);
-
-    if (branchMode === 'existing') {
-        const listed = await runScmCommand({
-            bin: 'git',
-            cwd: resolvedPaths.repositoryRootPath,
-            args: ['worktree', 'list', '--porcelain'],
-            timeoutMs: 15_000,
-            env: buildScmNonInteractiveEnv(),
-        });
-        if (listed.success) {
-            const existing = parseGitWorktreeListPorcelain({
-                worktreesOutput: listed.stdout,
-                currentWorktreePath: resolvedPaths.sourceRootPath,
-                mainWorktreePath: resolvedPaths.repositoryRootPath,
-            }).find((worktree) => worktree.branch === displayName);
-            if (existing) {
-                return {
-                    success: true,
-                    worktreePath: existing.path,
-                    branchName: displayName,
-                    sourceRootPath: resolvedPaths.sourceRootPath,
-                    repositoryRootPath: resolvedPaths.repositoryRootPath,
-                };
-            }
-        }
-    }
-
-    await mkdir(`${resolvedPaths.repositoryRootPath}/${WORKTREE_RELATIVE_PARENT_DIR}`, { recursive: true });
-
-    const tryCreate = async (branchName: string): Promise<ScmWorktreeCreateResponse> => {
-        const relativeWorktreePath = buildWorktreeRelativePath(branchName);
-        const result = await runGitWorktreeAdd({
+    try {
+        const materialized = await createGitWorkspaceCheckoutAtDefaultPath({
             repoRoot: resolvedPaths.repositoryRootPath,
-            worktreePath: relativeWorktreePath,
-            branchName,
-            branchMode,
+            displayName,
             baseRef: resolvedBaseRef,
+            branchMode,
         });
-
-        if (!result.success) {
-            return {
-                success: false,
-                worktreePath: '',
-                branchName: '',
-                error: result.stderr || 'Failed to create worktree',
-                errorCode: mapGitErrorCode(result.stderr),
-            };
-        }
-
         return {
             success: true,
-            worktreePath: `${resolvedPaths.repositoryRootPath}/${relativeWorktreePath}`,
-            branchName,
+            worktreePath: materialized.targetPath,
+            branchName: materialized.branchName,
             sourceRootPath: resolvedPaths.sourceRootPath,
             repositoryRootPath: resolvedPaths.repositoryRootPath,
         };
-    };
-
-    const initialAttempt = await tryCreate(displayName);
-    if (initialAttempt.success || !isGitWorktreeAlreadyExistsFailure(initialAttempt.error)) {
-        return initialAttempt;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+            success: false,
+            worktreePath: '',
+            branchName: '',
+            error: message || 'Failed to create worktree',
+            errorCode: mapGitErrorCode(message),
+        };
     }
-
-    for (let attempt = 2; attempt <= GIT_WORKTREE_NAME_ATTEMPT_LIMIT; attempt += 1) {
-        const retry = await tryCreate(gitWorktreeNameForAttempt(displayName, attempt));
-        if (retry.success || !isGitWorktreeAlreadyExistsFailure(retry.error)) {
-            return retry;
-        }
-    }
-
-    return initialAttempt;
 }
 
 export async function gitWorktreeRemove(input: {
