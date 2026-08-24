@@ -60,7 +60,12 @@ test('release risk classification treats shared wire and encryption contracts as
   assert.equal(risks.compatibilityAnalysisRequired, true);
   assert.equal(risks.sessionContinuity, true);
   assert.equal(risks.relayUpgrade, true);
-  assert.deepEqual(Object.keys(risks.reasons).sort(), ['compatibilityAnalysis', 'relayUpgrade', 'sessionContinuity']);
+  assert.deepEqual(Object.keys(risks.reasons).sort(), [
+    'compatibilityAnalysis',
+    'pluginSdkPackageChanged',
+    'relayUpgrade',
+    'sessionContinuity',
+  ]);
 });
 
 test('release risk classification requests semantic compatibility review without inventing a heavy scenario', () => {
@@ -95,3 +100,18 @@ test('release risk classification separates public plugin package changes from h
     'packages/plugin-sdk/src/registration/registration.ts',
   ]);
 });
+
+for (const changedPath of [
+  'packages/plugin-sdk/scripts/apiSurfaceCli.mjs',
+  'packages/protocol/src/actions/actionSpecs.ts',
+  'packages/agents/src/runtime/agentRuntime.ts',
+  'scripts/api-governance/declarationDiff.mjs',
+  'packages/cli-common/src/firstPartyRuntime/installVersionedPayload.ts',
+  'packages/release-runtime/src/releaseRings.ts',
+]) {
+  test(`release risk classification includes a plugin SDK declaration source or bundled dependency change: ${changedPath}`, () => {
+    const risks = classifyReleaseValidationRisks([changedPath]);
+
+    assert.equal(risks.pluginSdkPackageChanged, true, changedPath);
+  });
+}

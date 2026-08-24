@@ -13,6 +13,20 @@ function git(cwd, args) {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
 }
 
+function executable(path, source) {
+  writeFileSync(path, source, { encoding: 'utf8', mode: 0o755 });
+  chmodSync(path, 0o755);
+}
+
+function npmLookupEnvironment(bin) {
+  return {
+    ...process.env,
+    GITHUB_REPOSITORY: '',
+    GH_REPO: '',
+    PATH: `${bin}:${process.env.PATH ?? ''}`,
+  };
+}
+
 test('exact finalized candidate versions preserve allocated dev and preview identities without reallocating', async () => {
   const { validateExactRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
 
@@ -392,4 +406,96 @@ test('plugin SDK pair allocation advances only after both pair packages have the
   });
 
   assert.equal(result.version, '0.1.0-preview.8');
+});
+
+test('authoritative npm E404 means an empty version set for a first plugin SDK pair publication', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+  const root = join(tmpdir(), `happier-rolling-npm-e404-${process.pid}-${Date.now()}`);
+  const bin = join(root, 'bin');
+
+  try {
+    mkdirSync(bin, { recursive: true });
+    executable(join(bin, 'git'), '#!/bin/sh\nexit 0\n');
+    executable(join(bin, 'npm'), '#!/bin/sh\nprintf "npm error code E404\\n" >&2\nexit 1\n');
+
+    const result = await resolveRollingPublishVersion({
+      repoRoot: root,
+      productId: 'plugin_sdk',
+      channel: 'preview',
+      baseVersion: '0.1.0',
+      publishSurface: 'npm',
+      env: npmLookupEnvironment(bin),
+    });
+
+    assert.equal(result.version, '0.1.0-preview.1');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('authoritative npm E404 lets a partial plugin SDK pair reuse the already published version', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+  const root = join(tmpdir(), `happier-rolling-npm-e404-catch-up-${process.pid}-${Date.now()}`);
+  const bin = join(root, 'bin');
+
+  try {
+    mkdirSync(bin, { recursive: true });
+    executable(join(bin, 'git'), '#!/bin/sh\nexit 0\n');
+    executable(join(bin, 'npm'), `#!/bin/sh
+if [ "$2" = "@happier-dev/plugin-sdk" ]; then
+  printf '["0.1.0-preview.7"]\\n'
+  exit 0
+fi
+printf 'npm error code E404\\n' >&2
+exit 1
+`);
+
+    const result = await resolveRollingPublishVersion({
+      repoRoot: root,
+      productId: 'plugin_sdk',
+      channel: 'preview',
+      baseVersion: '0.1.0',
+      publishSurface: 'npm',
+      env: npmLookupEnvironment(bin),
+    });
+
+    assert.equal(result.version, '0.1.0-preview.7');
+    assert.match(result.source, /npm:catch-up/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('npm authentication, network, timeout, and parse failures remain unavailable', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+  const root = join(tmpdir(), `happier-rolling-npm-fail-closed-${process.pid}-${Date.now()}`);
+  const bin = join(root, 'bin');
+
+  try {
+    mkdirSync(bin, { recursive: true });
+    executable(join(bin, 'git'), '#!/bin/sh\nexit 0\n');
+
+    for (const [label, npmSource] of [
+      ['authentication', '#!/bin/sh\nprintf "npm error code E401\\n" >&2\nexit 1\n'],
+      ['network', '#!/bin/sh\nprintf "npm error code ECONNRESET\\n" >&2\nexit 1\n'],
+      ['timeout', '#!/bin/sh\nprintf "npm error code ETIMEDOUT\\n" >&2\nexit 1\n'],
+      ['parse', '#!/bin/sh\nprintf "{not-json"\n'],
+    ]) {
+      executable(join(bin, 'npm'), npmSource);
+      await assert.rejects(
+        resolveRollingPublishVersion({
+          repoRoot: root,
+          productId: 'plugin_sdk',
+          channel: 'preview',
+          baseVersion: '0.1.0',
+          publishSurface: 'npm',
+          env: npmLookupEnvironment(bin),
+        }),
+        /unable to inspect every npm package/i,
+        `${label} must fail closed`,
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

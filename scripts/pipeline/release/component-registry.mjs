@@ -28,6 +28,14 @@ export const components = Object.freeze({
     id: 'cli_stack_shared',
     changedPrefixes: ['packages/cli-common/'],
   },
+  release_runtime: {
+    id: 'release_runtime',
+    changedPrefixes: ['packages/release-runtime/'],
+  },
+  api_governance: {
+    id: 'api_governance',
+    changedPrefixes: ['scripts/api-governance/'],
+  },
   ui_dependencies: {
     id: 'ui_dependencies',
     changedPrefixes: [
@@ -102,16 +110,16 @@ export const versionedComponents = Object.freeze({
   plugin_sdk: {
     id: 'plugin_sdk',
     baselineTagPrefix: 'plugin-sdk-v',
-    // Plugin actions are protocol-backed, so a protocol change changes the
-    // package candidate even when the package source itself did not move.
-    changedWhen: ['plugin_sdk', 'shared'],
+    // The package bundles protocol, agent, CLI-common, and release-runtime
+    // workspaces, so changes there alter the emitted package candidate.
+    changedWhen: ['plugin_sdk', 'shared', 'cli_stack_shared', 'release_runtime', 'api_governance'],
   },
   sdk: {
     id: 'sdk',
     baselineTagPrefix: 'sdk-v',
     // The package bundles protocol and agent runtime dependencies, so source
     // changes there alter the emitted SDK tarball even without an SDK edit.
-    changedWhen: ['sdk', 'shared'],
+    changedWhen: ['sdk', 'shared', 'api_governance'],
   },
 });
 

@@ -45,6 +45,7 @@ const RISK_PATTERNS = Object.freeze({
   // deliberately separate from the host↔plugin runtime compatibility seam.
   pluginSdkPackageChanged: Object.freeze([
     /^packages\/plugin-(?:sdk|ui)\//u,
+    /^packages\/(?:agents|cli-common|protocol|release-runtime)\//u,
     /^scripts\/api-governance\//u,
   ]),
   pluginRuntimeCompatibilityRisk: Object.freeze([

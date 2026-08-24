@@ -251,7 +251,7 @@ function collectNpmVersions(npmPackage, opts) {
       cwd: opts.cwd,
       env: { ...process.env, ...opts.env },
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 20_000,
     }).trim();
     /** @type {unknown} */
@@ -263,7 +263,12 @@ function collectNpmVersions(npmPackage, opts) {
       return { ok: true, values: [parsed.trim()] };
     }
     return { ok: true, values: [] };
-  } catch {
+  } catch (error) {
+    const failure = /** @type {{ status?: unknown; stdout?: unknown; stderr?: unknown }} */ (error);
+    const output = `${String(failure.stdout ?? '')}\n${String(failure.stderr ?? '')}`;
+    if (failure.status === 1 && /\bnpm (?:ERR!|error) code E404\b/iu.test(output)) {
+      return { ok: true, values: [] };
+    }
     return { ok: false, values: [] };
   }
 }

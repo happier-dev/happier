@@ -47,11 +47,24 @@ test('plugin SDK pair and public SDK each have a release component, while bundle
   assert.equal(agents.sdk, true);
 });
 
-test('packages/cli-common changes trigger cli/stack/server versioned component bumps', () => {
-  const classified = classifyChangedPaths([
-    'packages/cli-common/src/firstPartyRuntime/installVersionedPayload.ts',
-  ]);
+for (const changedPath of [
+  'packages/plugin-sdk/scripts/apiSurfaceCli.mjs',
+  'packages/protocol/src/actions/actionSpecs.ts',
+  'packages/agents/src/runtime/agentRuntime.ts',
+  'scripts/api-governance/declarationDiff.mjs',
+  'packages/cli-common/src/firstPartyRuntime/installVersionedPayload.ts',
+  'packages/release-runtime/src/releaseRings.ts',
+]) {
+  test(`plugin SDK declaration source or bundled dependency change triggers a plugin SDK candidate: ${changedPath}`, () => {
+    const classified = classifyChangedPaths([changedPath]);
+    const versioned = deriveVersionedComponentChanges(classified);
 
+    assert.equal(versioned.plugin_sdk, true, changedPath);
+  });
+}
+
+test('packages/cli-common changes trigger cli/stack/server versioned component bumps', () => {
+  const classified = classifyChangedPaths(['packages/cli-common/src/firstPartyRuntime/installVersionedPayload.ts']);
   assert.equal(classified.cli_stack_shared, true);
 
   const versioned = deriveVersionedComponentChanges(classified);
