@@ -31,6 +31,7 @@ const VISIBILITIES = new Set(['author', 'host']);
 const SYMBOL_KINDS = new Set(['type', 'value']);
 const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
   ['./host/registration', new Map([
+    ['createPluginActionHandlerNotStartedError', 'value'],
     ['createPluginRegistrationScope', 'value'],
     ['PluginRegistrationRight', 'type'],
     ['PluginAgentRuntimeRegistration', 'type'],

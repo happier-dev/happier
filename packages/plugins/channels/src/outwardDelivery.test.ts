@@ -3,6 +3,7 @@ import type {
   ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
 import type {
   TargetedContributionPointRef,
   TargetedContributionSnapshot,
@@ -946,11 +947,9 @@ describe('Channels control-response outward custody', () => {
       } as const;
       if (options.expectedExecutionOrigin?.materializationRef.materializationId
         !== currentExecutionOrigin.materializationRef.materializationId) {
-        throw Object.assign(new PluginError({
+        throw createPluginActionHandlerNotStartedError({
           code: 'plugin_action_handler_missing',
           message: 'No committed target handler exists',
-        }), {
-          actionHandlerInvocation: 'notStarted' as const,
         });
       }
       return {

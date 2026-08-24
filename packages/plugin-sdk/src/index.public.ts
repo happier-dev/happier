@@ -78,7 +78,6 @@ export type { Disposable } from './lifecycle.js';
 export type { JsonValue } from './identity.js';
 export type { LoggerService } from './services/core.js';
 export type { MessageActionAvailableSnapshotV1 } from './invocation.js';
-export type { PluginActivationModule } from './activation.js';
 export type { PluginApi } from './activation.js';
 export type { PluginClientActivationModule } from './activation.js';
 export type { PluginClientApi } from './activation.js';

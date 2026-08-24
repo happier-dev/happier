@@ -47,7 +47,6 @@ export type { MessageActionAvailableSnapshotV1 } from './invocation.js';
 export type { PluginAccountCollectionMigrationRuntimeProjection } from './definePlugin.js';
 export type { PluginActionOperationContextV1 } from './invocation.js';
 export type { PluginActionOperationProgressUpdateV1 } from './invocation.js';
-export type { PluginActivationModule } from './activation.js';
 export type { PluginApi } from './activation.js';
 export type { PluginCancellationOptions } from './lifecycle.js';
 export type { PluginCleanup } from './activation.js';

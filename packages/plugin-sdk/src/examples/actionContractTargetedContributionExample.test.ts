@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
-import type { PluginActivationModule } from '@happier-dev/plugin-sdk';
+import type { DefinedPlugin } from '@happier-dev/plugin-sdk';
 
 import { parsePluginManifest, type PluginManifest } from '../manifest.js';
 import * as targetedContributionsHost from '../host/targeted-contributions/index.public.js';
@@ -37,7 +37,7 @@ const authoringSupportMetadataPath = join(examplesRoot, 'authoring-support.json'
 
 type ExampleActivationEntry = Readonly<{
     manifest: PluginManifest;
-    activate: PluginActivationModule['activate'];
+    activate: DefinedPlugin['activate'];
 }>;
 
 type ExampleName =

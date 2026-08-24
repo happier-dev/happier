@@ -26,8 +26,8 @@ import {
 } from '@happier-dev/protocol';
 import type {
     JsonValue,
+    DefinedPlugin,
     PluginAccountCollectionMigrationRuntimeProjection,
-    PluginActivationModule,
     PluginApi,
     PluginClientApi,
     PluginInvocationContext,
@@ -88,7 +88,7 @@ const minimalManifestDocumentationPath = join(pluginDocsRoot, 'manifest', 'index
 
 type PublicAuthoringSourceActivationEntry = Readonly<{
     manifest: PluginManifest;
-    activate: PluginActivationModule['activate'];
+    activate: DefinedPlugin['activate'];
     collectionMigrations: PluginAccountCollectionMigrationRuntimeProjection;
 }>;
 
@@ -1518,7 +1518,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         const exampleRoot = join(examplesRoot, 'advanced-package-root');
         const module = await import(pathToFileURL(join(exampleRoot, 'index.ts')).href) as Readonly<{
             manifest: PluginManifest;
-            activate: PluginActivationModule['activate'];
+            activate: DefinedPlugin['activate'];
         }>;
         const runnerLeaf = await import(pathToFileURL(
             join(exampleRoot, 'agent', 'reviewAgent.ts'),

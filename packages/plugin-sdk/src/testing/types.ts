@@ -1,4 +1,5 @@
-import type { PluginActivationModule, PluginApi } from '../activation.js';
+import type { PluginApi } from '../activation.js';
+import type { DefinedPlugin } from '../definePlugin.js';
 import type { PluginContributionLocalId, JsonValue } from '../identity.js';
 import type {
     MessageActionAvailableSnapshotV1,
@@ -110,7 +111,11 @@ export type PluginTestkitOptions = Readonly<{
      * families exercised by the test.
      */
     manifest: PluginTestkitManifest;
-    module: PluginActivationModule;
+    /**
+     * The compiled activation half of the one public author path. Authors pass
+     * the `definePlugin(...)` result; the raw module shape is host-internal.
+     */
+    module: Pick<DefinedPlugin, 'activate'>;
     /**
      * Explicit contributed-Action targets resolved by this synthetic host.
      * The testkit stamps caller provenance from its own current materialization;

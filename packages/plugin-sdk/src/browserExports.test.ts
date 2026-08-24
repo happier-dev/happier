@@ -110,7 +110,7 @@ describe('browser-safe package exports', () => {
         });
     });
 
-    it('bundles the canonical registration transaction as the only runtime export', async () => {
+    it('bundles the canonical registration transaction and host-proven Action failure factory', async () => {
         const registrationEntry = normalizePath(resolve(
             import.meta.dirname,
             './host/registration/index.ts',
@@ -148,7 +148,10 @@ describe('browser-safe package exports', () => {
                 },
                 load(id) {
                     if (id !== '\0virtual:plugin-registration-browser-realm-entry') return null;
-                    return `export { createPluginRegistrationScope } from ${JSON.stringify(registrationEntry)};`;
+                    return `export {
+                        createPluginActionHandlerNotStartedError,
+                        createPluginRegistrationScope,
+                    } from ${JSON.stringify(registrationEntry)};`;
                 },
                 generateBundle() {
                     for (const id of this.getModuleIds()) emittedModules.add(id);
@@ -182,7 +185,10 @@ describe('browser-safe package exports', () => {
         if (!entryChunk || entryChunk.type !== 'chunk') {
             throw new Error('Vite did not emit the registration transaction entry chunk');
         }
-        expect(entryChunk.exports).toEqual(['createPluginRegistrationScope']);
+        expect(entryChunk.exports).toEqual([
+            'createPluginActionHandlerNotStartedError',
+            'createPluginRegistrationScope',
+        ]);
     }, 60_000);
 
     it('publishes the canonical root and manifest entrypoints without retired browser aliases', () => {

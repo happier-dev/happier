@@ -36,7 +36,6 @@ export type {
     PluginJsonValueV2,
     PluginReference,
 } from './identity.js';
-export type { PluginActivationModule } from './activation.js';
 export type { PluginClientActivationModule } from './activation.js';
 export type { PluginClientApi } from './activation.js';
 export type { PluginRequestInterceptorDefinition } from './definePlugin.js';

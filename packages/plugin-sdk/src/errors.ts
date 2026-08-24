@@ -33,7 +33,10 @@ export class PluginError extends Error {
     readonly diagnostics?: readonly PluginDiagnosticData[];
     readonly data: PluginErrorData;
 
-    constructor(data: Omit<PluginErrorData, 'name'>, options?: ErrorOptions) {
+    constructor(
+        data: Omit<PluginErrorData, 'name' | 'actionHandlerInvocation'>,
+        options?: ErrorOptions,
+    ) {
         super(data.message ?? data.code, options);
         // The recognizer proves the contract from this name, so a subclass that
         // reassigns it would silently stop being a PluginError everywhere. A
@@ -50,14 +53,6 @@ export class PluginError extends Error {
         this.details = data.details;
         this.remediation = data.remediation;
         this.diagnostics = data.diagnostics;
-        if (data.actionHandlerInvocation !== undefined) {
-            Object.defineProperty(this, 'actionHandlerInvocation', {
-                value: data.actionHandlerInvocation,
-                enumerable: true,
-                writable: false,
-                configurable: false,
-            });
-        }
         this.data = {
             name: 'PluginError',
             code: data.code,
@@ -66,9 +61,6 @@ export class PluginError extends Error {
             ...(data.details === undefined ? {} : { details: data.details }),
             ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
             ...(data.diagnostics === undefined ? {} : { diagnostics: data.diagnostics }),
-            ...(data.actionHandlerInvocation === undefined
-                ? {}
-                : { actionHandlerInvocation: data.actionHandlerInvocation }),
         };
     }
 }

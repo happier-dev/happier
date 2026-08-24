@@ -110,9 +110,6 @@ function readCanonicalPluginError(error: Error, code: string | undefined): Plugi
     const details = readOwnDataProperty(data, 'details');
     const remediation = readOwnDataProperty(data, 'remediation');
     const diagnostics = readOwnDataProperty(data, 'diagnostics');
-    const actionHandlerInvocation = readOwnDataProperty(data, 'actionHandlerInvocation') === 'notStarted'
-        ? 'notStarted' as const
-        : undefined;
     const candidate = Object.assign(
         new Error(typeof message === 'string' ? message : code),
         {
@@ -127,16 +124,10 @@ function readCanonicalPluginError(error: Error, code: string | undefined): Plugi
                 ...(details === undefined ? {} : { details }),
                 ...(remediation === undefined ? {} : { remediation }),
                 ...(diagnostics === undefined ? {} : { diagnostics }),
-                ...(actionHandlerInvocation === undefined
-                    ? {}
-                    : { actionHandlerInvocation }),
             }),
             ...(details === undefined ? {} : { details }),
             ...(remediation === undefined ? {} : { remediation }),
             ...(diagnostics === undefined ? {} : { diagnostics }),
-            ...(actionHandlerInvocation === undefined
-                ? {}
-                : { actionHandlerInvocation }),
         },
     );
     if (!isPluginError(candidate)) return null;
@@ -198,9 +189,6 @@ export function sanitizeNativeAgentSessionBoundaryError(
             ...(pluginError.details === undefined ? {} : { details: pluginError.details }),
             ...(pluginError.remediation === undefined ? {} : { remediation: pluginError.remediation }),
             ...(pluginError.diagnostics === undefined ? {} : { diagnostics: pluginError.diagnostics }),
-            ...(pluginError.actionHandlerInvocation === undefined
-                ? {}
-                : { actionHandlerInvocation: pluginError.actionHandlerInvocation }),
         });
         if (stack !== undefined) {
             sanitized.stack = stack;

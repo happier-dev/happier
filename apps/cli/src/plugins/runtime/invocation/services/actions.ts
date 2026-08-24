@@ -5,6 +5,7 @@ import {
     type PluginInvocationContributionIdentity,
     type PluginInvocationOriginSurface,
 } from '@happier-dev/plugin-sdk';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
 import type {
     AdmittedTargetedOperationExecutionOptions,
     AdmittedTargetedOperationExecutionWithOriginOptions,
@@ -267,7 +268,7 @@ function requireAdmittedTargetedOperationExecutionBinding(
         throw invalidAdmittedTargetedOperationHandle();
     }
     if (binding.targetImmutableGenerationId !== seed.immutableGenerationId) {
-        throw actionHandlerNotStartedError({
+        throw createPluginActionHandlerNotStartedError({
             code: 'plugin_action_generation_retired',
             message: 'Admitted targeted operation target generation is no longer current',
         });
@@ -276,20 +277,9 @@ function requireAdmittedTargetedOperationExecutionBinding(
 }
 
 function invalidAdmittedTargetedOperationHandle(): PluginError {
-    return actionHandlerNotStartedError({
+    return createPluginActionHandlerNotStartedError({
         code: 'plugin_admitted_targeted_operation_handle_invalid',
         message: 'Admitted targeted operation handle is invalid',
-    });
-}
-
-function actionHandlerNotStartedError(input: Readonly<{
-    code: string;
-    message: string;
-    details?: JsonValue;
-}>): PluginError {
-    return new PluginError({
-        ...input,
-        actionHandlerInvocation: 'notStarted',
     });
 }
 
@@ -302,7 +292,7 @@ function readExpectedExecutionOrigin(expectedExecutionOrigin: unknown): PluginMa
     if (expectedExecutionOrigin === undefined) return undefined;
     const parsed = PluginMachineExecutionOriginV1Schema.safeParse(expectedExecutionOrigin);
     if (!parsed.success) {
-        throw actionHandlerNotStartedError({
+        throw createPluginActionHandlerNotStartedError({
             code: 'plugin_action_execution_origin_invalid',
             message: 'Expected target execution origin is invalid',
         });
@@ -320,39 +310,39 @@ function throwIfInactive(
     beforeActionHandler = false,
 ): void {
     if (!seed.isGenerationCurrent() || seed.signal.aborted) {
-        throw new PluginError({
+        const error = {
             code: 'plugin_action_generation_retired',
             message: 'Plugin generation retired before the action result could be admitted',
             ...(details === undefined ? {} : { details }),
-            ...(beforeActionHandler ? { actionHandlerInvocation: 'notStarted' as const } : {}),
-        });
+        };
+        throw beforeActionHandler ? createPluginActionHandlerNotStartedError(error) : new PluginError(error);
     }
     if (signal.aborted) {
-        throw new PluginError({
+        const error = {
             code: 'plugin_action_aborted',
             message: 'Plugin action invocation was aborted',
             ...(details === undefined ? {} : { details }),
-            ...(beforeActionHandler ? { actionHandlerInvocation: 'notStarted' as const } : {}),
-        });
+        };
+        throw beforeActionHandler ? createPluginActionHandlerNotStartedError(error) : new PluginError(error);
     }
 }
 
 function selectedActionInputInvalid(): PluginError {
-    return actionHandlerNotStartedError({
+    return createPluginActionHandlerNotStartedError({
         code: 'plugin_selected_action_input_invalid',
         message: 'Selected Action input does not match the admitted operation',
     });
 }
 
 function selectedActionInputUnavailable(): PluginError {
-    return actionHandlerNotStartedError({
+    return createPluginActionHandlerNotStartedError({
         code: 'plugin_selected_action_input_unavailable',
         message: 'Selected Action input is unavailable for the admitted operation',
     });
 }
 
 function mountedCallerUnavailable(): PluginError {
-    return actionHandlerNotStartedError({
+    return createPluginActionHandlerNotStartedError({
         code: 'plugin_mounted_caller_unavailable',
         message: 'Mounted plugin caller is no longer current',
     });
@@ -556,15 +546,15 @@ function contributedActionFailureError(
     result: Extract<ContributedActionInvocationResult, { status: 'failed' | 'unavailable' | 'invalid' }>,
 ): PluginError {
     const payload = readPluginActionFailureAuthorPayload(result.data);
-    return new PluginError({
+    const error = {
         code: result.code,
         message: result.message,
         ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
         ...payload,
-        ...(result.actionHandlerInvocation === undefined
-            ? {}
-            : { actionHandlerInvocation: result.actionHandlerInvocation }),
-    });
+    };
+    return result.actionHandlerInvocation === 'notStarted'
+            ? createPluginActionHandlerNotStartedError(error)
+        : new PluginError(error);
 }
 
 export function createPluginInvocationActionsService(params: Readonly<{
@@ -591,14 +581,14 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const parsedExpectedExecutionOrigin = readExpectedExecutionOrigin(expectedExecutionOrigin);
         const actionCaller = resolvePluginActionCaller(params.seed);
         if (!actionCaller) {
-            throw actionHandlerNotStartedError({
+            throw createPluginActionHandlerNotStartedError({
                 code: 'plugin_action_caller_unavailable',
                 message: 'Plugin Action calls require current host-stamped caller provenance',
             });
         }
         const caller = resolveContributedActionCaller(params.seed, actionCaller);
         if (!caller) {
-            throw actionHandlerNotStartedError({
+            throw createPluginActionHandlerNotStartedError({
                 code: 'plugin_action_caller_unavailable',
                 message: 'Plugin contributed action calls require host-stamped caller provenance',
             });

@@ -200,6 +200,11 @@ const defineSurfaceContribution = undefined as never; /* @sdk-negative-type-case
 /* @sdk-negative-type-case:src-publicSurfaceContraction-test-ts-206:LS0gdGhlIG1hbmlmZXN0IGlzIHRoZSBzb2xlIGF1dGhvcmluZyBwYXRoIGZvciBVSSB0cmFuc2xhdGlvbnMu:aW1wb3J0IHsgZGVmaW5lVWlUcmFuc2xhdGlvbnMgfSBmcm9tICcuL3VpLmpzJzs */
 const defineUiTranslations = undefined as never; /* @sdk-negative-type-case-end */
 
+/* @sdk-negative-type-case:src-publicSurfaceContraction-test-ts-207:LS0gdGhlIGNvbXBpbGVkIGFjdGl2YXRpb24gbW9kdWxlIHNoYXBlIGlzIGhvc3QtaW50ZXJuYWw7IGF1dGhvcnMgdXNlIGRlZmluZVBsdWdpbiguLi4pLg:aW1wb3J0IHR5cGUgeyBQbHVnaW5BY3RpdmF0aW9uTW9kdWxlIH0gZnJvbSAnLi9pbmRleC5qcyc7 */
+type PluginActivationModule = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-publicSurfaceContraction-test-ts-208:LS0gdGhlIGNvbXBpbGVkIGFjdGl2YXRpb24gbW9kdWxlIHNoYXBlIGlzIGhvc3QtaW50ZXJuYWwgb24gdGhlIGJyb3dzZXIgcm9vdCB0b28u:aW1wb3J0IHR5cGUgeyBQbHVnaW5BY3RpdmF0aW9uTW9kdWxlIGFzIFBsdWdpbkFjdGl2YXRpb25Nb2R1bGVCcm93c2VyUm9vdCB9IGZyb20gJy4vaW5kZXguYnJvd3Nlci5qcyc7 */
+type PluginActivationModuleBrowserRoot = never; /* @sdk-negative-type-case-end */
+
 describe('supported preview surface contraction', () => {
     it('keeps the negative compile contract in the TypeScript program', () => {
         expect(true).toBe(true);

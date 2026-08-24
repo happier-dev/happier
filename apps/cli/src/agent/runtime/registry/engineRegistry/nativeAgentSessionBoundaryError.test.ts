@@ -3,6 +3,7 @@ import {
     registerSensitiveDiagnosticValues,
 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
 import { describe, expect, it } from 'vitest';
 
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
@@ -185,6 +186,22 @@ describe('native Agent session boundary error sanitization', () => {
 
         expect(projected).toBe(foreignPluginError);
         expect(isPluginError(projected)).toBe(true);
+    });
+
+    it('does not transplant Action handler provenance while rebuilding a safe PluginError shape', () => {
+        const hostStamped = createPluginActionHandlerNotStartedError({
+            code: 'plugin_action_handler_missing',
+            message: 'No committed target handler exists',
+        });
+
+        const sanitized = sanitizeNativeAgentSessionBoundaryError(
+            hostStamped,
+            true,
+        ) as PluginError;
+
+        expect(isPluginError(sanitized)).toBe(true);
+        expect(sanitized).not.toHaveProperty('actionHandlerInvocation');
+        expect(sanitized.data).not.toHaveProperty('actionHandlerInvocation');
     });
 
     it('bounds plugin failure message, stack, and opaque code without replacing stable PluginError codes', () => {

@@ -5,6 +5,7 @@ import {
     isPluginError,
     PluginError,
 } from './errors.js';
+import { createPluginActionHandlerNotStartedError } from './host/registration/index.js';
 
 describe('isPluginError', () => {
     it('recognizes the public fields produced by PluginError construction', () => {
@@ -68,13 +69,23 @@ describe('PluginError', () => {
         expect(() => new RenamedPluginError()).toThrow(TypeError);
         expect(isPluginError(new PluginError({ code: 'renamed_subclass' }))).toBe(true);
     });
+
+    it('does not let author constructor data mint the host-only not-started fact', () => {
+        const error = new PluginError({
+            code: 'author_failure_after_effect',
+            actionHandlerInvocation: 'notStarted',
+        } as never);
+
+        expect(error).not.toHaveProperty('actionHandlerInvocation');
+        expect(error.data).not.toHaveProperty('actionHandlerInvocation');
+        expect(isPluginActionHandlerInvocationKnownNotStarted(error)).toBe(false);
+    });
 });
 
 describe('isPluginActionHandlerInvocationKnownNotStarted', () => {
     it('proves the not-started claim only through the canonical PluginError contract', () => {
-        const canonical = new PluginError({
+        const canonical = createPluginActionHandlerNotStartedError({
             code: 'plugin_action_unavailable',
-            actionHandlerInvocation: 'notStarted',
         });
         // A plain object may name itself `PluginError` and claim the handler
         // never ran. Believing it would let a retry duplicate an effect that
@@ -100,9 +111,8 @@ describe('isPluginActionHandlerInvocationKnownNotStarted', () => {
     });
 
     it('accepts a separately bundled SDK copy of the same canonical contract', () => {
-        const canonical = new PluginError({
+        const canonical = createPluginActionHandlerNotStartedError({
             code: 'plugin_action_unavailable',
-            actionHandlerInvocation: 'notStarted',
         });
         // A second SDK copy in the same realm produces the identical public
         // shape without sharing this module's class identity.

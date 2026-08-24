@@ -359,7 +359,10 @@ describe('CORE-A curated package exports', () => {
         )).toThrow();
 
         const registrationApi = await import('@happier-dev/plugin-sdk/host/registration');
-        expect(Object.keys(registrationApi)).toEqual(['createPluginRegistrationScope']);
+        expect(Object.keys(registrationApi)).toEqual([
+            'createPluginActionHandlerNotStartedError',
+            'createPluginRegistrationScope',
+        ]);
         expectTypeOf<PackagePluginRuntimeRegistration>()
             .toEqualTypeOf<SourcePluginRuntimeRegistration>();
     });

@@ -22,7 +22,7 @@ import type {
     ContributedActionExecutionWithOriginResult,
 } from '../actions/service.js';
 import type { PluginCleanup } from '../activation.js';
-import { isPluginError, PluginError } from '../errors.js';
+import { PluginError } from '../errors.js';
 import {
     parsePluginManifest,
     type ParsedPluginManifest,
@@ -40,6 +40,7 @@ import { arePluginMachineExecutionOriginsEqual } from '../executionOrigin.js';
 import type { PresentationService } from '../interactions.js';
 import type { PluginCancellationOptions } from '../lifecycle.js';
 import {
+    createPluginActionHandlerNotStartedError,
     createPluginRegistrationScope,
     type PluginRuntimeRegistration,
 } from '../host/registration/index.js';
@@ -309,10 +310,9 @@ function createSyntheticPluginImmutableGenerationId(pluginId: string): string {
 }
 
 function invalidAdmittedTargetedOperationHandle(): PluginError {
-    return new PluginError({
+    return createPluginActionHandlerNotStartedError({
         code: 'plugin_admitted_targeted_operation_handle_invalid',
         message: 'Admitted targeted operation handle is invalid',
-        actionHandlerInvocation: 'notStarted',
     });
 }
 
@@ -334,7 +334,7 @@ function parseAdmittedTargetedOperationInput(
     } catch {
         // A throwing target parser rejects before the contributor Action runs.
     }
-    throw actionHandlerNotStartedError({
+    throw createPluginActionHandlerNotStartedError({
         code: 'plugin_targeted_operation_input_invalid',
         message: 'Targeted operation input does not match the target protocol',
     });
@@ -353,16 +353,6 @@ function parseAdmittedTargetedOperationResult(
     throw new PluginError({
         code: 'plugin_targeted_operation_result_invalid',
         message: 'Targeted operation result does not match the target protocol',
-    });
-}
-
-function actionHandlerNotStartedError(input: Readonly<{
-    code: string;
-    message: string;
-}>): PluginError {
-    return new PluginError({
-        ...input,
-        actionHandlerInvocation: 'notStarted',
     });
 }
 
@@ -1037,14 +1027,14 @@ export async function createPluginTestkit(
         ): Promise<TestkitActionTargetInvocationResult> => {
             const caller = resolvePluginActionCaller(source);
             if (!caller) {
-                throw actionHandlerNotStartedError({
+                throw createPluginActionHandlerNotStartedError({
                     code: 'plugin_action_caller_unavailable',
                     message: 'Plugin contributed Action calls require current host-stamped caller provenance',
                 });
             }
             const target = actionTargets.get(action.pluginId);
             if (!target) {
-                throw actionHandlerNotStartedError({
+                throw createPluginActionHandlerNotStartedError({
                     code: 'plugin_action_unavailable',
                     message: `Plugin contributed Action target '${action.pluginId}' is unavailable`,
                 });
@@ -1071,7 +1061,7 @@ export async function createPluginTestkit(
                 throw invalidAdmittedTargetedOperationHandle();
             }
             if (binding.targetImmutableGenerationId !== syntheticImmutableGenerationId) {
-                throw actionHandlerNotStartedError({
+                throw createPluginActionHandlerNotStartedError({
                     code: 'plugin_action_generation_retired',
                     message: 'Admitted targeted operation target generation is no longer current',
                 });
@@ -1091,7 +1081,7 @@ export async function createPluginTestkit(
 
             const action = readPluginContributionRef(actionOrRef);
             if (!action) {
-                throw actionHandlerNotStartedError({
+                throw createPluginActionHandlerNotStartedError({
                     code: 'plugin_action_unavailable',
                     message: 'Plugin contributed Action target is invalid',
                 });
@@ -1203,7 +1193,7 @@ export async function createPluginTestkit(
             code: string;
             message: string;
         }>): PluginError => invocationOptions.contributedTarget === true
-            ? actionHandlerNotStartedError(input)
+            ? createPluginActionHandlerNotStartedError(input)
             : new PluginError(input);
         if (state !== 'active') {
             throw preHandlerFailure({
@@ -1236,8 +1226,6 @@ export async function createPluginTestkit(
         const messageAction = invocationOptions.messageAction === undefined
             ? undefined
             : Object.freeze(MessageActionAvailableSnapshotV1Schema.parse(invocationOptions.messageAction));
-        let handlerStarted = false;
-        let handlerError: unknown;
         const result = await invocation.invoke(invocationOptions.input, {
             ...(invocationOptions.signal ? { signal: invocationOptions.signal } : {}),
             handler: async ({ input, qualifiedId, signal }) => {
@@ -1263,20 +1251,14 @@ export async function createPluginTestkit(
                     }),
                     ui: invocationOptions.presentation ?? defaultPresentation,
                 });
-                handlerStarted = true;
-                try {
-                    return await handler(input, context);
-                } catch (error) {
-                    handlerError = error;
-                    throw error;
-                }
+                return await handler(input, context);
             },
         });
         if (result.status === 'executed') return result.value;
         // The canonical projection carries the target's own `retryable` signal
         // and published payload, so an author's test observes the same failure
         // contract a real plugin-to-plugin call delivers.
-        throw new PluginError({
+        const errorData = {
             code: result.code,
             message: result.message,
             ...(result.status !== 'failed' || result.retryable === undefined
@@ -1285,13 +1267,12 @@ export async function createPluginTestkit(
             ...(result.status === 'failed'
                 ? readPluginActionFailureAuthorPayload(result.data)
                 : {}),
-            ...(isPluginError(handlerError)
-                && handlerError.actionHandlerInvocation !== undefined
-                ? { actionHandlerInvocation: handlerError.actionHandlerInvocation }
-                : invocationOptions.contributedTarget === true && !handlerStarted
-                ? { actionHandlerInvocation: 'notStarted' as const }
-                : {}),
-        });
+        };
+        const hostProvedNotStarted = result.status === 'unavailable'
+            && result.actionHandlerInvocation === 'notStarted';
+        throw hostProvedNotStarted
+            ? createPluginActionHandlerNotStartedError(errorData)
+            : new PluginError(errorData);
     }
 
     const actionTarget = Object.freeze({
@@ -1321,7 +1302,7 @@ export async function createPluginTestkit(
                     || invocationLifetime.signal.aborted
                     || targetInvocation.admittedTargetedOperation.contributorImmutableGenerationId
                         !== syntheticImmutableGenerationId)) {
-                throw actionHandlerNotStartedError({
+                throw createPluginActionHandlerNotStartedError({
                     code: 'plugin_action_generation_retired',
                     message: 'The admitted contributor generation is no longer current',
                 });
@@ -1331,7 +1312,7 @@ export async function createPluginTestkit(
             );
             if (!materialization.success
                 || materialization.data.pluginId !== targetInvocation.caller.pluginId) {
-                throw actionHandlerNotStartedError({
+                throw createPluginActionHandlerNotStartedError({
                     code: 'plugin_action_caller_unavailable',
                     message: 'Plugin contributed Action calls require current host-stamped caller provenance',
                 });
@@ -1342,7 +1323,7 @@ export async function createPluginTestkit(
                 ? resolveCurrentPluginExecutionOrigin()
                 : null;
             if (requiresExecutionOrigin && !beforeExecutionOrigin) {
-                throw actionHandlerNotStartedError({
+                throw createPluginActionHandlerNotStartedError({
                     code: 'plugin_action_execution_origin_unavailable',
                     message: 'Current target execution origin is unavailable',
                 });
@@ -1353,7 +1334,7 @@ export async function createPluginTestkit(
                     targetInvocation.expectedExecutionOrigin,
                     beforeExecutionOrigin,
                 )) {
-                throw actionHandlerNotStartedError({
+                throw createPluginActionHandlerNotStartedError({
                     code: 'plugin_action_execution_origin_mismatch',
                     message: 'Expected target execution origin does not match the current target',
                 });

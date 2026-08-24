@@ -83,6 +83,13 @@ const HOST_REGISTRATION_SYMBOL = Object.freeze({
   realm: 'any',
 });
 
+const HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL = Object.freeze({
+  ...HOST_REGISTRATION_SYMBOL,
+  exportName: 'createPluginActionHandlerNotStartedError',
+  sourceModule: 'src/host/registration/actionHandlerInvocation.ts',
+  sourceExport: 'createPluginActionHandlerNotStartedError',
+});
+
 const HOST_REGISTRATION_TYPE_SYMBOLS = Object.freeze([
   'PluginRegistrationRight',
   'PluginAgentRuntimeRegistration',
@@ -140,6 +147,7 @@ const HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS = Object.freeze([
 })));
 
 const HOST_SYMBOLS = Object.freeze([
+  HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
   HOST_REGISTRATION_SYMBOL,
   ...HOST_REGISTRATION_TYPE_SYMBOLS,
   HOST_FILE_LOCK_RECLAIM_SYMBOL,
@@ -494,6 +502,7 @@ test('projects symbols without posture metadata while preserving structured depr
       {
         specifier: './host/registration',
         symbols: [
+          HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
           {
             exportName: 'createPluginRegistrationScope',
             kind: 'value',
@@ -564,6 +573,11 @@ test('projects symbols without posture metadata while preserving structured depr
     },
     {
       exportName: 'PluginRuntimeRegistration',
+      replacement: undefined,
+      removalCondition: undefined,
+    },
+    {
+      exportName: 'createPluginActionHandlerNotStartedError',
       replacement: undefined,
       removalCondition: undefined,
     },
@@ -804,7 +818,7 @@ test('host inventory requires the exact complete approved symbol and kind set pe
     })),
     (error) => error instanceof ApiSurfaceValidationError
       && error.diagnostics.includes(
-        'symbols[5] host export ./host/fs/json-owner-file-lock:reclaimJsonOwnerFileLockSnapshot must have value kind',
+        'symbols[6] host export ./host/fs/json-owner-file-lock:reclaimJsonOwnerFileLockSnapshot must have value kind',
       ),
   );
 });
@@ -955,6 +969,7 @@ test('generation uses locale-independent code-point ordering for emitted symbols
         exportName: 'AService',
         sourceExport: 'AService',
       },
+      HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
       HOST_REGISTRATION_SYMBOL,
       ...HOST_REGISTRATION_TYPE_SYMBOLS,
       HOST_FILE_LOCK_RECLAIM_SYMBOL,
