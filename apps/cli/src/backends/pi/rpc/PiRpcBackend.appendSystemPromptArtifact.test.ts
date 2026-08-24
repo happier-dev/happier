@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -113,6 +113,72 @@ describe('PiRpcBackend append-system-prompt artifact delivery', () => {
 
     await expect(ensuring).rejects.toThrow('disposed');
     expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it('removes already-materialized protected artifacts when later materialization fails', async () => {
+    const candidate = new PiRpcBackend({
+      cwd: '/tmp',
+      command: process.execPath,
+      args: [],
+      appendSystemPromptText: 'PROMPT-CONTENT',
+      toolsBridgeConfigText: '{"v":1}',
+    });
+    backend = candidate;
+    const priv = candidate as unknown as {
+      toolsBridgeConfigArtifact: { path: string } | null;
+      ensureProcess(): Promise<void>;
+      resolveToolsBridgeConfigArgs(): Promise<string[]>;
+      resolveAppendSystemPromptArgs(): Promise<string[]>;
+    };
+    const resolveToolsBridgeConfigArgs = priv.resolveToolsBridgeConfigArgs.bind(priv);
+    let materializedPath = '';
+    vi.spyOn(priv, 'resolveToolsBridgeConfigArgs').mockImplementation(async () => {
+      const args = await resolveToolsBridgeConfigArgs();
+      materializedPath = args[1]!;
+      return args;
+    });
+    vi.spyOn(priv, 'resolveAppendSystemPromptArgs').mockRejectedValue(new Error('prompt materialization failed'));
+
+    await expect(priv.ensureProcess()).rejects.toThrow('prompt materialization failed');
+
+    expect(materializedPath).not.toBe('');
+    expect(priv.toolsBridgeConfigArtifact).toBeNull();
+    expect(existsSync(materializedPath)).toBe(false);
+  });
+
+  it('removes protected artifacts when synchronous process setup fails', async () => {
+    const candidate = new PiRpcBackend({
+      cwd: '/tmp',
+      command: process.execPath,
+      args: [],
+      appendSystemPromptText: 'PROMPT-CONTENT',
+      toolsBridgeConfigText: '{"v":1}',
+    });
+    backend = candidate;
+    const priv = candidate as unknown as {
+      appendSystemPromptArtifact: { path: string } | null;
+      toolsBridgeConfigArtifact: { path: string } | null;
+      ensureProcess(): Promise<void>;
+      resolveProtectedSpawnArtifactArgs(): Promise<string[]>;
+      spawnRpcProcess(params: Readonly<{ args: string[] }>): void;
+    };
+    const resolveProtectedSpawnArtifactArgs = priv.resolveProtectedSpawnArtifactArgs.bind(priv);
+    let materializedPaths: string[] = [];
+    vi.spyOn(priv, 'resolveProtectedSpawnArtifactArgs').mockImplementation(async () => {
+      const args = await resolveProtectedSpawnArtifactArgs();
+      materializedPaths = [args[1]!, args[3]!];
+      return args;
+    });
+    vi.spyOn(priv, 'spawnRpcProcess').mockImplementation(() => {
+      throw new Error('synchronous spawn setup failed');
+    });
+
+    await expect(priv.ensureProcess()).rejects.toThrow('synchronous spawn setup failed');
+
+    expect(materializedPaths).toHaveLength(2);
+    expect(priv.appendSystemPromptArtifact).toBeNull();
+    expect(priv.toolsBridgeConfigArtifact).toBeNull();
+    expect(materializedPaths.every((path) => !existsSync(path))).toBe(true);
   });
 
   it('passes a protected file path in argv instead of the literal prompt text', async () => {

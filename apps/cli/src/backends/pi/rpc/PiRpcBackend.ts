@@ -1101,8 +1101,9 @@ export class PiRpcBackend implements AgentBackend {
         if (
           this.isCurrentPendingTurn(pendingTurn)
           && !pendingTurn.agentStartObserved
-          && state?.isStreaming !== true
-          && state?.isCompacting !== true
+          && state !== null
+          && state.isStreaming === false
+          && state.isCompacting === false
         ) {
           this.resolvePendingTurn();
         }
@@ -1263,13 +1264,9 @@ export class PiRpcBackend implements AgentBackend {
     await this.runProcessTransition(async () => {
       if (this.disposed) throw new Error('Pi backend is disposed');
       if (this.process) return;
-      const protectedArgs = await this.resolveProtectedSpawnArtifactArgs();
-      if (this.disposed) {
-        await this.cleanupProtectedSpawnArtifacts();
-        throw new Error('Pi backend is disposed');
-      }
-      if (this.process) return;
-      this.spawnRpcProcess({ args: [...this.options.args, ...protectedArgs] });
+      await this.spawnRpcProcessWithProtectedArtifacts({
+        argsBeforeProtected: this.options.args,
+      });
     });
   }
 
@@ -1319,6 +1316,26 @@ export class PiRpcBackend implements AgentBackend {
       ...(await this.resolveToolsBridgeConfigArgs()),
       ...(await this.resolveAppendSystemPromptArgs()),
     ];
+  }
+
+  private async spawnRpcProcessWithProtectedArtifacts(params: Readonly<{
+    argsBeforeProtected: ReadonlyArray<string>;
+    argsAfterProtected?: ReadonlyArray<string>;
+  }>): Promise<void> {
+    try {
+      const protectedArgs = await this.resolveProtectedSpawnArtifactArgs();
+      if (this.disposed) throw new Error('Pi backend is disposed');
+      this.spawnRpcProcess({
+        args: [
+          ...params.argsBeforeProtected,
+          ...protectedArgs,
+          ...(params.argsAfterProtected ?? []),
+        ],
+      });
+    } catch (error) {
+      await this.cleanupProtectedSpawnArtifacts();
+      throw error;
+    }
   }
 
   private spawnRpcProcess(params: Readonly<{ args: string[] }>): void {
@@ -1583,18 +1600,9 @@ export class PiRpcBackend implements AgentBackend {
     lifecycle?: PiRpcSessionOpenLifecycle;
   }>): Promise<PiRpcStateData> {
     await this.stopRpcProcessForRestart();
-    const protectedArgs = await this.resolveProtectedSpawnArtifactArgs();
-    if (this.disposed) {
-      await this.cleanupProtectedSpawnArtifacts();
-      throw new Error('Pi backend is disposed');
-    }
-    this.spawnRpcProcess({
-      args: [
-        ...this.options.args,
-        ...protectedArgs,
-        '--session',
-        params.sessionArg,
-      ],
+    await this.spawnRpcProcessWithProtectedArtifacts({
+      argsBeforeProtected: this.options.args,
+      argsAfterProtected: ['--session', params.sessionArg],
     });
 
     try {
