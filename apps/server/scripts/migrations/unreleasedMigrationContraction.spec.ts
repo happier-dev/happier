@@ -78,6 +78,14 @@ const supersededDevMigrationIds = [
     "20260725103000_normalize_predecessor_mysql_schema",
 ] as const;
 
+const consolidatedAuthMigrationId = "20260822150000_auth_hardening_and_api_tokens";
+
+const supersededAuthMigrationIds = [
+    "20260822150000_add_key_challenge_v2",
+    "20260822160000_add_account_token_epoch",
+    "20260822170000_add_account_api_tokens",
+] as const;
+
 async function exists(path: string): Promise<boolean> {
     return await access(path).then(() => true, () => false);
 }
@@ -115,6 +123,27 @@ describe("unreleased migration contraction", () => {
                 `superseded Dev migration remains ${providerRoot}/${migrationId}`,
             ).toBe(false);
         }
+    });
+
+    it.each(providerRoots)("creates the auth hardening and API-token schema from one unreleased migration for %s", async (providerRoot) => {
+        expect(
+            await exists(join(serverRoot, providerRoot, consolidatedAuthMigrationId, "migration.sql")),
+            `missing consolidated auth migration ${providerRoot}/${consolidatedAuthMigrationId}`,
+        ).toBe(true);
+
+        for (const migrationId of supersededAuthMigrationIds) {
+            expect(
+                await exists(join(serverRoot, providerRoot, migrationId)),
+                `superseded auth migration remains ${providerRoot}/${migrationId}`,
+            ).toBe(false);
+        }
+
+        const sql = await migrationSql(providerRoot, consolidatedAuthMigrationId);
+        expect(sql).toContain("KeyChallengeV2");
+        expect(sql).toContain("tokenEpoch");
+        expect(sql).toContain("AccountApiToken");
+        expect(sql).toContain("secretDigest");
+        expect(sql).toContain("AccountApiToken_accountId_fkey");
     });
 
     it.each(providerRoots)("creates the final Dev models directly for %s", async (providerRoot) => {

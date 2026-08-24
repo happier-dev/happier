@@ -230,15 +230,15 @@ model AutomationEventSourceCatalogStatus {
         expect(AccountApiTokensCreateActionInputV1Schema.safeParse({ label: `${atPublicLimit}a` }).success).toBe(false);
 
         const postgresMigration = readFileSync(
-            join(import.meta.dirname, "../prisma/migrations/20260822170000_add_account_api_tokens/migration.sql"),
+            join(import.meta.dirname, "../prisma/migrations/20260822150000_auth_hardening_and_api_tokens/migration.sql"),
             "utf8",
         );
         const sqliteMigration = readFileSync(
-            join(import.meta.dirname, "../prisma/sqlite/migrations/20260822170000_add_account_api_tokens/migration.sql"),
+            join(import.meta.dirname, "../prisma/sqlite/migrations/20260822150000_auth_hardening_and_api_tokens/migration.sql"),
             "utf8",
         );
         const mysqlMigration = readFileSync(
-            join(import.meta.dirname, "../prisma/mysql/migrations/20260822170000_add_account_api_tokens/migration.sql"),
+            join(import.meta.dirname, "../prisma/mysql/migrations/20260822150000_auth_hardening_and_api_tokens/migration.sql"),
             "utf8",
         );
         const postgresSchema = readFileSync(join(import.meta.dirname, "../prisma/schema.prisma"), "utf8");

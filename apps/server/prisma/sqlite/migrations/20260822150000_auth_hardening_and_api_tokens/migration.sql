@@ -1,4 +1,22 @@
 -- CreateTable
+CREATE TABLE "KeyChallengeV2" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "nonce" TEXT NOT NULL,
+    "issuedAt" DATETIME NOT NULL,
+    "expiresAt" DATETIME NOT NULL,
+    "audienceOrigin" TEXT NOT NULL,
+    "audienceServerIdentityId" TEXT,
+    "expectedAccountId" TEXT,
+    "consumedAt" DATETIME
+);
+
+-- CreateIndex
+CREATE INDEX "KeyChallengeV2_expiresAt_idx" ON "KeyChallengeV2"("expiresAt");
+
+-- AlterTable
+ALTER TABLE "Account" ADD COLUMN "tokenEpoch" INTEGER NOT NULL DEFAULT 0;
+
+-- CreateTable
 CREATE TABLE "AccountApiToken" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "accountId" TEXT NOT NULL,
