@@ -195,9 +195,20 @@ test('the shared CLI passes one generic publication provenance contract to every
       write: true,
       check: false,
       json: false,
+      sourcePrepared: false,
       publishedVersion: '1.2.3',
       previousPublishedInventoryPath: '/workspace/published/api-surface.json',
     },
+  );
+
+  assert.equal(
+    parseApiGovernanceCliArgs([
+      '--profile',
+      'plugin-sdk',
+      '--check',
+      '--source-prepared',
+    ], '/workspace').sourcePrepared,
+    true,
   );
   assert.throws(
     () => parseApiGovernanceCliArgs([
@@ -208,6 +219,36 @@ test('the shared CLI passes one generic publication provenance contract to every
     ], '/workspace'),
     /--previous-published-inventory requires --published-version/u,
   );
+});
+
+test('the SDK profile projects identical declaration bytes from repo and package working directories', async () => {
+  const packageRoot = join(REPOSITORY_ROOT, 'packages', 'sdk');
+  const projectionModuleUrl = new URL('./emittedDeclarationSurface.mjs', import.meta.url).href;
+  const projectionScript = [
+    "import { createHash } from 'node:crypto';",
+    "import { readFile } from 'node:fs/promises';",
+    `import { projectPreparedDeclarationSurface } from ${JSON.stringify(projectionModuleUrl)};`,
+    `const packageRoot = ${JSON.stringify(packageRoot)};`,
+    "const packageJson = JSON.parse(await readFile(`${packageRoot}/package.json`, 'utf8'));",
+    'const declarationReport = projectPreparedDeclarationSurface({',
+    '  packageRoot,',
+    '  packageJson,',
+    "  title: 'SDK public declaration report',",
+    '  bundledDependencies: packageJson.bundledDependencies ?? [],',
+    '}).declarationReport;',
+    "process.stdout.write(createHash('sha256').update(declarationReport).digest('hex'));",
+  ].join('\n');
+  const projectFrom = (cwd) => {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', projectionScript], {
+      cwd,
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout || `signal=${String(result.signal)}`);
+    return result.stdout;
+  };
+
+  assert.equal(projectFrom(REPOSITORY_ROOT), projectFrom(packageRoot));
 });
 
 test('plugin package scripts prepare declarations and invoke the shared governance owner', async () => {
@@ -301,6 +342,25 @@ test('plugin package scripts prepare declarations and invoke the shared governan
   }
 });
 
+test('the plugin-sdk prepared-source profile validates emitted declarations without re-entering source projection', async () => {
+  const root = await createPackedPluginSdkFixture();
+  try {
+    const current = await runApiGovernance({
+      profileId: 'plugin-sdk',
+      packageRoot: root,
+      packageRootKind: 'source-complete-publication-sandbox',
+      sourcePrepared: true,
+      write: false,
+      check: true,
+    });
+
+    assert.equal(current.status, 'current');
+    assert.deepEqual(current.files.map((file) => file.path), ['api-declarations.md']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('the plugin-ui profile detects a reachable emitted declaration drift even when source is unchanged', async () => {
   const root = await createEntrypointFixture();
   try {
@@ -358,12 +418,26 @@ test('the plugin-ui profile detects a reachable emitted declaration drift even w
   }
 });
 
+test('the plugin-sdk profile keeps an extracted final candidate check-only', async () => {
+  await assert.rejects(
+    () => runApiGovernance({
+      profileId: 'plugin-sdk',
+      packageRoot: join(tmpdir(), 'not-read-before-write-is-rejected'),
+      packageRootKind: 'extracted-final-candidate',
+      write: true,
+      check: false,
+    }),
+    /Packed plugin-sdk declaration verification is check-only/u,
+  );
+});
+
 test('the plugin-sdk profile verifies a packed candidate declaration graph without source files', async () => {
   const root = await createPackedPluginSdkFixture();
   try {
     const current = await runApiGovernance({
       profileId: 'plugin-sdk',
       packageRoot: root,
+      packageRootKind: 'extracted-final-candidate',
       write: false,
       check: true,
     });
@@ -381,6 +455,7 @@ test('the plugin-sdk profile verifies a packed candidate declaration graph witho
     const drift = await runApiGovernance({
       profileId: 'plugin-sdk',
       packageRoot: root,
+      packageRootKind: 'extracted-final-candidate',
       write: false,
       check: true,
     });
@@ -398,6 +473,7 @@ test('the plugin-sdk profile verifies a packed candidate declaration graph witho
       () => runApiGovernance({
         profileId: 'plugin-sdk',
         packageRoot: root,
+        packageRootKind: 'extracted-final-candidate',
         write: false,
         check: true,
       }),
@@ -528,6 +604,69 @@ test('the future SDK profile uses the same entrypoint projection when its packag
     assert.deepEqual(
       JSON.parse(await readFile(join(root, 'api-surface.json'), 'utf8')).symbols.map((symbol) => symbol.since),
       ['1.0.0'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('generic profiles persist the Plugin SDK structured deprecation facts from prepared declarations', async () => {
+  for (const [profileId, packageName] of [
+    ['plugin-ui', '@happier-dev/plugin-ui'],
+    ['sdk', '@happier-dev/sdk'],
+  ]) {
+    const root = await createEntrypointFixture(packageName);
+    try {
+      await writeFile(join(root, 'dist/current-run.d.ts'), [
+        "export declare function legacyRun(): import('./hidden.js').Hidden;",
+        '',
+      ].join('\n'), 'utf8');
+      await writeFile(join(root, 'dist/index.d.ts'), [
+        '/** @deprecated CurrentRun; remove when callers migrate to CurrentRun */',
+        "export { legacyRun as run } from './current-run.js';",
+        '',
+      ].join('\n'), 'utf8');
+
+      await runApiGovernance({
+        profileId,
+        packageRoot: root,
+        write: true,
+        check: false,
+      });
+
+      const inventory = JSON.parse(await readFile(join(root, 'api-surface.json'), 'utf8'));
+      assert.deepEqual(inventory.symbols, [{
+        specifier: '.',
+        exportName: 'run',
+        kind: 'value',
+        declarationModule: 'dist/index.d.ts',
+        declarationExport: 'run',
+        replacement: 'CurrentRun',
+        removalCondition: 'callers migrate to CurrentRun',
+      }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('generic profiles reject deprecation prose outside the Plugin SDK structured form', async () => {
+  const root = await createEntrypointFixture('@happier-dev/plugin-ui');
+  try {
+    await writeFile(join(root, 'dist/index.d.ts'), [
+      '/** @deprecated Use CurrentRun */',
+      "export declare function run(): import('./hidden.js').Hidden;",
+      '',
+    ].join('\n'), 'utf8');
+
+    await assert.rejects(
+      () => runApiGovernance({
+        profileId: 'plugin-ui',
+        packageRoot: root,
+        write: true,
+        check: false,
+      }),
+      /must document a deprecation as "@deprecated <replacement>; remove when <condition>"/u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

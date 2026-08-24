@@ -12,6 +12,7 @@ export function parseApiGovernanceCliArgs(args, cwd = process.cwd()) {
   let write = false;
   let check = false;
   let json = false;
+  let sourcePrepared = false;
   let publishedVersion;
   let previousPublishedInventoryPath;
   for (let index = 0; index < args.length; index += 1) {
@@ -42,6 +43,10 @@ export function parseApiGovernanceCliArgs(args, cwd = process.cwd()) {
       json = true;
       continue;
     }
+    if (argument === '--source-prepared') {
+      sourcePrepared = true;
+      continue;
+    }
     if (argument === '--published-version') {
       const value = args[index + 1];
       if (!value || value.startsWith('--')) throw new Error('--published-version requires a value');
@@ -69,6 +74,7 @@ export function parseApiGovernanceCliArgs(args, cwd = process.cwd()) {
     write,
     check,
     json,
+    sourcePrepared,
     publishedVersion,
     previousPublishedInventoryPath,
   });

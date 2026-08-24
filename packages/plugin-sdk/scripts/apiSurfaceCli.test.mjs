@@ -18,6 +18,8 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
+  collectCanonicalSourceGraph,
+  createApiSurfaceProgressReporter,
   renderCliSummary,
   runApiSurfaceCli,
   runApiSurfaceMaterializer,
@@ -28,6 +30,63 @@ import * as apiSurfaceCli from './apiSurfaceCli.mjs';
 const CLI_PATH = fileURLToPath(new URL('./apiSurfaceCli.mjs', import.meta.url));
 
 let currentPackageSourceReportPromise;
+
+test('API-surface progress reporting identifies phase and elapsed cost', () => {
+  const lines = [];
+  const readings = [100, 125, 180];
+  const report = createApiSurfaceProgressReporter({
+    now: () => readings.shift(),
+    write: (line) => lines.push(line),
+  });
+
+  report('source-preflight');
+  report('realm-closure');
+
+  assert.deepEqual(lines, [
+    'api-surface: phase=source-preflight deltaMs=25 totalMs=25\n',
+    'api-surface: phase=realm-closure deltaMs=55 totalMs=80\n',
+  ]);
+});
+
+test('canonical source graph parses a shared physical module once per invocation', async () => {
+  const shared = Object.freeze({
+    sourceModule: 'src/shared.ts',
+    absolutePath: '/fixture/src/shared.ts',
+    physicalPath: '/fixture/src/shared.ts',
+    contents: 'export const shared = true;',
+  });
+  const roots = [
+    Object.freeze({
+      sourceModule: 'src/a.ts',
+      absolutePath: '/fixture/src/a.ts',
+      physicalPath: '/fixture/src/a.ts',
+      contents: "export { shared } from './shared.js';",
+    }),
+    Object.freeze({
+      sourceModule: 'src/b.ts',
+      absolutePath: '/fixture/src/b.ts',
+      physicalPath: '/fixture/src/b.ts',
+      contents: "export { shared } from './shared.js';",
+    }),
+  ];
+  const parseCounts = new Map();
+
+  const graph = await collectCanonicalSourceGraph({
+    roots,
+    collectRelativeModuleSpecifiersImpl(source) {
+      parseCounts.set(source.physicalPath, (parseCounts.get(source.physicalPath) ?? 0) + 1);
+      return source === shared ? [] : ['./shared.js'];
+    },
+    async resolveRelativeSourceEdgeImpl() {
+      return Object.freeze({ source: shared });
+    },
+  });
+
+  assert.equal(graph.size, 3);
+  assert.equal(parseCounts.get(shared.physicalPath), 1);
+  assert.equal(parseCounts.get(roots[0].physicalPath), 1);
+  assert.equal(parseCounts.get(roots[1].physicalPath), 1);
+});
 
 function readCurrentPackageSourceReport() {
   currentPackageSourceReportPromise ??= runApiSurfaceSourceHarnessForTests({

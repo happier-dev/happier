@@ -1,6 +1,8 @@
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
 
+import { parseStructuredDeprecationTags } from './structuredDeprecation.mjs';
+
 /**
  * The single compiler configuration every public-surface reader uses. The
  * author signature-closure assertion and the declaration report must answer
@@ -19,10 +21,13 @@ export const PUBLIC_SURFACE_PROGRAM_OPTIONS = Object.freeze({
 });
 
 /** Creates the shared public-surface program from absolute entry module paths. */
-export function createPublicSurfaceProgram(rootNames) {
+export function createPublicSurfaceProgram(rootNames, currentDirectory) {
+  const host = ts.createCompilerHost(PUBLIC_SURFACE_PROGRAM_OPTIONS);
+  host.getCurrentDirectory = () => resolve(currentDirectory);
   return ts.createProgram({
     rootNames: [...new Set(rootNames)].sort(),
     options: PUBLIC_SURFACE_PROGRAM_OPTIONS,
+    host,
   });
 }
 
@@ -118,8 +123,8 @@ function isRelativeModulePath(modulePath) {
  * candidate tarball even before the artifact bundler has copied it beneath the
  * target package. A resolver can legitimately reach a workspace/root copy at
  * that point; ownership follows the declared tarball payload, not that staging
- * location. Nested dependencies remain foreign unless they are independently
- * declared bundled packages.
+ * location. A nested dependency becomes bundled payload only when the
+ * prepared declaration graph resolves it beneath one of those roots.
  */
 function virtualBundledDeclarationModule(bundledNames, declaration) {
   const sourceFile = declaration.getSourceFile();
@@ -139,12 +144,12 @@ function virtualBundledDeclarationModule(bundledNames, declaration) {
  * separately. A `bundledDependencies` entry is vendored into this package's own
  * tarball, so its declarations are shipped payload of this package's public
  * surface and belong in this record — nothing else will ever publish them.
- * Anything under a further nested `node_modules` is an ordinary resolved
- * dependency, versioned by `package.json` rather than by this record.
+ * A dependency nested below a declared bundled root is also tarball payload;
+ * its declaration graph must remain visible because it cannot be versioned
+ * independently by a consumer of this tarball.
  *
- * This answers "does this package ship it?". Whether a vendored declaration is
- * then recorded in full or named as an edge is `recordOwnedDeclarations`'
- * decision, and it differs between publication and reachability.
+ * This answers "does this package ship it?". The projection records shipped
+ * declarations in full and names every other package as an edge.
  */
 function ownedDeclarationModule(packageRoot, bundledRoots, bundledNames, declaration) {
   const relativeModule = packageRelativeModule(packageRoot, declaration.getSourceFile().fileName);
@@ -154,13 +159,7 @@ function ownedDeclarationModule(packageRoot, bundledRoots, bundledNames, declara
   const segments = relativeModule.split('/');
   const nestedIndex = segments.indexOf('node_modules');
   if (nestedIndex === -1) return relativeModule;
-  if (segments.indexOf('node_modules', nestedIndex + 1) !== -1) return null;
   return bundledRoots.some((root) => relativeModule.startsWith(root)) ? relativeModule : null;
-}
-
-/** Whether an owned module is vendored payload rather than this package's own source. */
-function isVendoredModule(bundledRoots, sourceModule) {
-  return bundledRoots.some((root) => sourceModule.startsWith(root));
 }
 
 function resolvedSymbol(checker, symbol) {
@@ -194,6 +193,31 @@ function publishedExportKind(checker, exported) {
   if (isExplicitTypeOnlyExport(exported)) return 'type';
   const symbol = resolvedSymbol(checker, exported);
   return (symbol.flags & ts.SymbolFlags.Value) === 0 ? 'type' : 'value';
+}
+
+function deprecationDocumentNode(declaration) {
+  if (ts.isExportSpecifier(declaration)) return declaration.parent.parent;
+  if (ts.isNamespaceExport(declaration)) return declaration.parent;
+  return declaration;
+}
+
+function structuredDeprecationForPublishedExport(exported, entrypoint) {
+  const owner = `Prepared declaration ${entrypoint.sourceModule} export ${exported.name}`;
+  const deprecations = orderedDeclarations(exported)
+    .map((declaration) => parseStructuredDeprecationTags(
+      ts.getJSDocTags(deprecationDocumentNode(declaration)),
+      owner,
+    ))
+    .filter((deprecation) => deprecation.replacement !== undefined);
+  if (deprecations.length === 0) return Object.freeze({});
+  const [first] = deprecations;
+  if (deprecations.some((deprecation) => (
+    deprecation.replacement !== first.replacement
+    || deprecation.removalCondition !== first.removalCondition
+  ))) {
+    throw new Error(`${owner} declares conflicting structured deprecations`);
+  }
+  return first;
 }
 
 function keptModifiers(node) {
@@ -453,12 +477,14 @@ export function projectEntrypointExportRows({ program, packageRoot, entrypoints 
       continue;
     }
     for (const exported of checker.getExportsOfModule(moduleSymbol)) {
+      const deprecation = structuredDeprecationForPublishedExport(exported, entrypoint);
       rows.push(Object.freeze({
         specifier: entrypoint.specifier,
         exportName: exported.name,
         kind: publishedExportKind(checker, exported),
         sourceModule: entrypoint.sourceModule,
         sourceExport: exported.name,
+        ...deprecation,
       }));
     }
   }
@@ -540,17 +566,13 @@ export function projectPublicDeclarationReport({
    * The declarations a symbol contributes to the record, recording a named edge
    * for the rest.
    *
-   * Publication rows record a vendored declaration in full: it is shipped
-   * payload of this package's tarball, so nothing else will ever publish it.
-   * The reachability walk stops at that same boundary instead. A vendored
-   * declaration reached from a signature is the vendored package's own internal
-   * contract — it carries no published export, its version is pinned by
-   * `package.json`, and the checker collapses its deep generics to `any`, so
-   * inlining it and recursing through it buys bulk that cannot produce the
-   * reviewable diff this record exists for. The named edge keeps the
-   * attribution at a fraction of the size.
+   * Every declaration physically beneath a declared bundled root ships in this
+   * tarball. Record it in full and continue traversal so a transitive bundled
+   * signature cannot change silently. A declaration outside those roots remains
+   * a named package edge because the consumer resolves and versions it
+   * independently.
    */
-  const recordOwnedDeclarations = (symbol, { includeVendored }) => {
+  const recordOwnedDeclarations = (symbol) => {
     const owned = [];
     for (const declaration of orderedDeclarations(symbol)) {
       const sourceModule = ownedDeclarationModule(
@@ -559,7 +581,7 @@ export function projectPublicDeclarationReport({
         bundledNames,
         declaration,
       );
-      if (sourceModule !== null && (includeVendored || !isVendoredModule(bundledRoots, sourceModule))) {
+      if (sourceModule !== null) {
         owned.push({ declaration, sourceModule });
         continue;
       }
@@ -590,7 +612,7 @@ export function projectPublicDeclarationReport({
       unresolved.push(`${row.specifier}:${row.exportName}`);
       continue;
     }
-    const owned = recordOwnedDeclarations(symbol, { includeVendored: true });
+    const owned = recordOwnedDeclarations(symbol);
     if (owned.length === 0) {
       publishedBlocks.push(renderBlock(
         heading,
@@ -629,7 +651,7 @@ export function projectPublicDeclarationReport({
     if (!located) continue;
     const symbol = resolvedSymbol(checker, located);
     if ((symbol.flags & ts.SymbolFlags.TypeParameter) !== 0) continue;
-    for (const entry of recordOwnedDeclarations(symbol, { includeVendored: false })) {
+    for (const entry of recordOwnedDeclarations(symbol)) {
       const key = declarationKey(entry.declaration);
       if (emittedDeclarationKeys.has(key)) continue;
       emittedDeclarationKeys.add(key);
@@ -658,12 +680,12 @@ export function projectPublicDeclarationReport({
     '> change without a reviewable diff. Implementation bodies, initializers, private',
     '> class members and comments are omitted; inferred value and return types are',
     '> materialized.',
-    '> Every published export is recorded in full, including one a `bundledDependencies`',
-    '> package declares, because this tarball vendors it and nothing else will publish it.',
-    '> Reachability then stops at that boundary: a declaration reached only through a',
-    '> signature, and declared by another package — vendored or resolved separately — is',
-    '> recorded as a named edge, because that package owns its own internals and',
-    '> `package.json` already pins the version that supplies them.',
+    '> Every published export and reachable declaration physically beneath a',
+    '> `bundledDependencies` package is recorded in full, including nested bundled',
+    '> dependencies, because this tarball vendors it and nothing else will publish it.',
+    '> A declaration reached only through a signature and resolved outside that bundled',
+    '> payload is recorded as a named edge, because the consumer resolves and versions',
+    '> that package independently.',
     '> Whether a difference is breaking or additive stays a publishing decision.',
     '',
     '## Published exports',

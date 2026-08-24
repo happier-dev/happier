@@ -30,6 +30,8 @@ const ENTRYPOINT_INVENTORY_SYMBOL_KEYS = Object.freeze([
   'declarationModule',
   'declarationExport',
   'since',
+  'replacement',
+  'removalCondition',
 ]);
 const ENTRYPOINT_INVENTORY_SYMBOL_KINDS = new Set(['type', 'value']);
 const ENTRYPOINT_INVENTORY_DECLARATION_MODULE = /^dist\/[A-Za-z0-9][A-Za-z0-9._/-]*\.d\.ts$/u;
@@ -174,12 +176,31 @@ function validateEntrypointInventory(input, packageName) {
       if (hasSince && !isExactCanonicalPublishedVersion(symbol.since)) {
         diagnostics.push(`${location}.since must be exact canonical semver`);
       }
+      const hasReplacement = Object.hasOwn(symbol, 'replacement');
+      const hasRemovalCondition = Object.hasOwn(symbol, 'removalCondition');
+      if (hasReplacement !== hasRemovalCondition) {
+        diagnostics.push(`${location} deprecation requires replacement and removalCondition together`);
+      }
+      if (hasReplacement && (typeof symbol.replacement !== 'string' || symbol.replacement.length === 0)) {
+        diagnostics.push(`${location}.replacement must be a non-empty string`);
+      }
+      if (
+        hasRemovalCondition
+        && (typeof symbol.removalCondition !== 'string' || symbol.removalCondition.length === 0)
+      ) {
+        diagnostics.push(`${location}.removalCondition must be a non-empty string`);
+      }
       const valid = validSpecifier
         && validExportName
         && ENTRYPOINT_INVENTORY_SYMBOL_KINDS.has(symbol.kind)
         && validDeclarationModule
         && validDeclarationExport
-        && (!hasSince || isExactCanonicalPublishedVersion(symbol.since));
+        && (!hasSince || isExactCanonicalPublishedVersion(symbol.since))
+        && hasReplacement === hasRemovalCondition
+        && (!hasReplacement || (typeof symbol.replacement === 'string' && symbol.replacement.length > 0))
+        && (!hasRemovalCondition || (
+          typeof symbol.removalCondition === 'string' && symbol.removalCondition.length > 0
+        ));
       if (valid) {
         const normalized = {
           specifier: symbol.specifier,
@@ -188,6 +209,10 @@ function validateEntrypointInventory(input, packageName) {
           declarationModule: symbol.declarationModule,
           declarationExport: symbol.declarationExport,
           ...(hasSince ? { since: symbol.since } : {}),
+          ...(hasReplacement ? {
+            replacement: symbol.replacement,
+            removalCondition: symbol.removalCondition,
+          } : {}),
         };
         const key = entrypointSymbolKey(normalized);
         if (symbolKeys.has(key)) {
@@ -297,6 +322,10 @@ function projectEntrypointInventory({ packageName, entrypoints, rows }) {
       kind: row.kind,
       declarationModule: row.sourceModule,
       declarationExport: row.sourceExport,
+      ...(row.replacement === undefined ? {} : {
+        replacement: row.replacement,
+        removalCondition: row.removalCondition,
+      }),
     })),
   }, packageName);
 }
@@ -507,14 +536,27 @@ async function runEntrypointDeclarationProfile(profile, options) {
 }
 
 async function runPluginSdkProfile(profile, options) {
-  if (options.packageRoot !== undefined) {
-    return runPackedPluginSdkProfile(profile, options);
+  const packageRoot = resolve(options.packageRoot ?? join(REPOSITORY_ROOT, profile.packageRoot));
+  if (options.sourcePrepared === true) {
+    return runPackedPluginSdkProfile(profile, { ...options, packageRoot });
   }
-  const modulePath = pathToFileURL(join(REPOSITORY_ROOT, profile.packageRoot, 'scripts/apiSurfaceCli.mjs')).href;
+  if (options.packageRoot === undefined && options.packageRootKind !== undefined) {
+    throw new Error('Plugin SDK packageRootKind requires an explicit packageRoot');
+  }
+  if (options.packageRoot !== undefined) {
+    const packageRootKind = options.packageRootKind ?? 'extracted-final-candidate';
+    if (packageRootKind === 'extracted-final-candidate') {
+      return runPackedPluginSdkProfile(profile, options);
+    }
+    if (packageRootKind !== 'source-complete-publication-sandbox') {
+      throw new Error(`Unknown Plugin SDK packageRootKind: ${packageRootKind}`);
+    }
+  }
+  const modulePath = pathToFileURL(join(packageRoot, 'scripts/apiSurfaceCli.mjs')).href;
   const { runApiSurfaceCli } = await import(modulePath);
   const report = await runApiSurfaceCli({
     ...options,
-    packageRoot: options.packageRoot ?? join(REPOSITORY_ROOT, profile.packageRoot),
+    packageRoot,
   });
   return Object.freeze({ ...report, profileId: profile.id });
 }
@@ -578,6 +620,9 @@ async function runPackedPluginSdkProfile(profile, options) {
 /** Runs exactly one profile through the shared API-governance authority. */
 export async function runApiGovernance(options) {
   const profile = API_GOVERNANCE_PROFILES[options.profileId];
+  if (options.sourcePrepared === true && profile?.kind !== 'plugin-sdk') {
+    throw new Error('--source-prepared is supported only by the plugin-sdk profile');
+  }
   if (profile === undefined) {
     throw new Error(`Unknown API governance profile: ${options.profileId}`);
   }

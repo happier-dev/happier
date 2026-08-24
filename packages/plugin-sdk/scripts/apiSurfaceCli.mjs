@@ -39,6 +39,7 @@ import {
 } from '../../../scripts/api-governance/emittedDeclarationSurface.mjs';
 import { assertVendoredWorkspaceDeclarationsAreCurrent } from './vendoredWorkspaceDeclarations.mjs';
 import { summarizeDeclarationDiff } from '../../../scripts/api-governance/declarationDiff.mjs';
+import { parseStructuredDeprecationTags } from '../../../scripts/api-governance/structuredDeprecation.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), '..');
@@ -523,6 +524,43 @@ async function resolveRelativeSourceEdge({
   return null;
 }
 
+export async function collectCanonicalSourceGraph({
+  roots,
+  collectRelativeModuleSpecifiersImpl = collectRelativeModuleSpecifiers,
+  resolveRelativeSourceEdgeImpl = resolveRelativeSourceEdge,
+  ...resolutionOptions
+}) {
+  const graph = new Map();
+  const queued = new Set();
+  const pending = [];
+  const enqueue = (source) => {
+    const key = source.physicalPath.toLowerCase();
+    if (queued.has(key)) return;
+    queued.add(key);
+    pending.push(source);
+  };
+  for (const root of roots) enqueue(root);
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    const currentKey = current.physicalPath.toLowerCase();
+    const edges = [];
+    for (const moduleSpecifier of collectRelativeModuleSpecifiersImpl(current)) {
+      const edge = await resolveRelativeSourceEdgeImpl({
+        importer: current,
+        moduleSpecifier,
+        ...resolutionOptions,
+      });
+      if (!edge) continue;
+      edges.push(edge);
+      if (edge.source) enqueue(edge.source);
+    }
+    graph.set(currentKey, Object.freeze(edges));
+  }
+
+  return graph;
+}
+
 async function assertCanonicalSourcesDoNotReachGeneratedBarrels({
   inventory,
   sources,
@@ -545,6 +583,13 @@ async function assertCanonicalSourcesDoNotReachGeneratedBarrels({
   );
   const sourceByModule = new Map(sources.map((source) => [source.sourceModule, source]));
   const checkedRoots = new Set();
+  const sourceGraph = await collectCanonicalSourceGraph({
+    roots: sources,
+    packageRoot,
+    physicalPackageRoot,
+    generatedOutputByLogicalPath,
+    generatedOutputByPhysicalPath,
+  });
 
   for (const symbol of inventory.symbols) {
     const rootKey = `${symbol.specifier}\0${symbol.sourceModule}`;
@@ -557,28 +602,19 @@ async function assertCanonicalSourcesDoNotReachGeneratedBarrels({
       : undefined;
     if (!root || !generatedEntrypoint) continue;
 
-    const pending = [root];
+    const pending = [root.physicalPath.toLowerCase()];
     const visitedPhysicalPaths = new Set();
     while (pending.length > 0) {
-      const current = pending.pop();
-      const physicalKey = current.physicalPath.toLowerCase();
+      const physicalKey = pending.pop();
       if (visitedPhysicalPaths.has(physicalKey)) continue;
       visitedPhysicalPaths.add(physicalKey);
-      for (const moduleSpecifier of collectRelativeModuleSpecifiers(current)) {
-        const edge = await resolveRelativeSourceEdge({
-          importer: current,
-          moduleSpecifier,
-          packageRoot,
-          physicalPackageRoot,
-          generatedOutputByLogicalPath,
-          generatedOutputByPhysicalPath,
-        });
+      for (const edge of sourceGraph.get(physicalKey) ?? []) {
         if (edge?.generatedOutput === generatedEntrypoint) {
           throw new Error(
             `API surface canonical source ${root.sourceModule} reaches its generated entrypoint barrel ${generatedEntrypoint.relativePath}`,
           );
         }
-        if (edge?.source) pending.push(edge.source);
+        if (edge?.source) pending.push(edge.source.physicalPath.toLowerCase());
       }
     }
   }
@@ -1948,19 +1984,10 @@ function publicationSpecDeprecation(statement, publicationSpecModule) {
       `API surface publication spec ${publicationSpecModule} must not use publisher-owned @since metadata`,
     );
   }
-  const deprecated = /@deprecated\s+([\s\S]+?);\s*remove when\s+([\s\S]+?)\s*\*\//u.exec(text);
-  if (deprecated) {
-    return {
-      replacement: deprecated[1].trim(),
-      removalCondition: deprecated[2].trim(),
-    };
-  }
-  if (/@deprecated\b/u.test(text)) {
-    throw new Error(
-      `API surface publication spec ${publicationSpecModule} must document a deprecation as "@deprecated <replacement>; remove when <condition>"`,
-    );
-  }
-  return {};
+  return parseStructuredDeprecationTags(
+    ts.getJSDocTags(statement),
+    `API surface publication spec ${publicationSpecModule}`,
+  );
 }
 
 function assertSourceHasNoRetiredPerSymbolPosture(source) {
@@ -2289,6 +2316,7 @@ async function prepareApiSurfaceMaterialization(
   const publicSurfaceProgram = () => {
     sharedPublicSurfaceProgram ??= createPublicSurfaceProgram(
       preflightedSourceModules.map((source) => source.absolutePath),
+      packageRoot,
     );
     return sharedPublicSurfaceProgram;
   };
@@ -2532,11 +2560,24 @@ export async function runApiSurfaceCli(options) {
   });
 }
 
+export function createApiSurfaceProgressReporter({
+  now = () => performance.now(),
+  write = (line) => process.stderr.write(line),
+} = {}) {
+  const startedAt = now();
+  let previousAt = startedAt;
+  return (phase) => {
+    const currentAt = now();
+    write(
+      `api-surface: phase=${phase} deltaMs=${Math.round(currentAt - previousAt)} totalMs=${Math.round(currentAt - startedAt)}\n`,
+    );
+    previousAt = currentAt;
+  };
+}
+
 export async function main(args = process.argv.slice(2)) {
   const options = parseApiSurfaceCliArgs(args);
-  const onProgress = (phase) => {
-    process.stderr.write(`api-surface: phase=${phase}\n`);
-  };
+  const onProgress = createApiSurfaceProgressReporter();
   const report = options.materializeSource
     ? await runApiSurfaceMaterializer({ ...options, onProgress })
     : await runApiSurfaceCli({ ...options, onProgress });

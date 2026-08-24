@@ -5,6 +5,7 @@ import {
   projectPublishedInventoryProvenance,
   projectRetainedInventoryProvenance,
 } from '../../../scripts/api-governance/publicationProvenance.mjs';
+import { formatStructuredDeprecation } from '../../../scripts/api-governance/structuredDeprecation.mjs';
 
 const ENTRYPOINT_KEYS = Object.freeze([
   'specifier',
@@ -623,7 +624,7 @@ function symbolDocumentationDoc(symbol) {
   const tags = [];
   if (symbol.since !== undefined) tags.push(`@since ${symbol.since}`);
   if (symbol.replacement !== undefined) {
-    tags.push(`@deprecated ${symbol.replacement}; remove when ${symbol.removalCondition}`);
+    tags.push(formatStructuredDeprecation(symbol));
   }
   if (tags.length === 0) return '';
   if (tags.length === 1) return `/** ${tags[0]} */\n`;

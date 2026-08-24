@@ -61,6 +61,7 @@ export function projectPreparedDeclarationSurface({
   const reportEntrypoints = declarationEntrypointRows(entrypoints);
   const program = createPublicSurfaceProgram(
     reportEntrypoints.map((entrypoint) => resolve(packageRoot, entrypoint.sourceModule)),
+    packageRoot,
   );
   const rows = projectEntrypointExportRows({
     program,

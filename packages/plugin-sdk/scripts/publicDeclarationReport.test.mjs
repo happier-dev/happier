@@ -86,7 +86,7 @@ async function createFixture({ timeoutOptional, hiddenValueOptional = true }) {
 
 function projectFixtureReport(root) {
   return projectPublicDeclarationReport({
-    program: createPublicSurfaceProgram([resolve(root, CONTRACT_MODULE)]),
+    program: createPublicSurfaceProgram([resolve(root, CONTRACT_MODULE)], root),
     packageRoot: root,
     title: 'Fixture public declaration report',
     rows: ROWS,
@@ -172,7 +172,7 @@ test('a published row the report cannot resolve fails instead of silently shrink
   try {
     assert.throws(
       () => projectPublicDeclarationReport({
-        program: createPublicSurfaceProgram([resolve(root, CONTRACT_MODULE)]),
+        program: createPublicSurfaceProgram([resolve(root, CONTRACT_MODULE)], root),
         packageRoot: root,
         title: 'Fixture public declaration report',
         rows: [...ROWS, Object.freeze({
@@ -208,12 +208,19 @@ const VENDORED_ROWS = Object.freeze([
   }),
 ]);
 
-async function createVendoredFixture() {
+async function createVendoredFixture({
+  directMarkerOptional = true,
+  transitiveMarkerOptional = true,
+} = {}) {
   // `node_modules` resolution reports the real path, so the fixture root must
   // already be one or every vendored declaration reads as another package's.
   const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-declaration-report-vendored-')));
   await mkdir(join(root, 'src'), { recursive: true });
   await mkdir(join(root, 'node_modules', 'vendor-pkg'), { recursive: true });
+  await mkdir(join(root, 'node_modules', 'vendor-pkg', 'node_modules', 'transitive-pkg'), {
+    recursive: true,
+  });
+  await mkdir(join(root, 'node_modules', 'external-pkg'), { recursive: true });
   await writeFile(
     join(root, 'package.json'),
     `${JSON.stringify({
@@ -237,10 +244,59 @@ async function createVendoredFixture() {
   );
   await writeFile(join(root, 'node_modules', 'vendor-pkg', 'index.js'), 'export const vendorPublished = { marker: "vendor-published" };\n', 'utf8');
   await writeFile(
+    join(root, 'node_modules', 'vendor-pkg', 'node_modules', 'transitive-pkg', 'package.json'),
+    `${JSON.stringify({
+      name: 'transitive-pkg',
+      version: '1.0.0',
+      type: 'module',
+      types: './index.d.ts',
+      exports: { '.': { types: './index.d.ts', default: './index.js' } },
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  await writeFile(
+    join(root, 'node_modules', 'vendor-pkg', 'node_modules', 'transitive-pkg', 'index.js'),
+    'export {};\n',
+    'utf8',
+  );
+  await writeFile(
+    join(root, 'node_modules', 'vendor-pkg', 'node_modules', 'transitive-pkg', 'index.d.ts'),
+    [
+      'export type TransitiveHidden = Readonly<{',
+      `  transitiveMarker${transitiveMarkerOptional ? '?' : ''}: string;`,
+      '}>;',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  await writeFile(
+    join(root, 'node_modules', 'external-pkg', 'package.json'),
+    `${JSON.stringify({
+      name: 'external-pkg',
+      version: '1.0.0',
+      type: 'module',
+      types: './index.d.ts',
+      exports: { '.': { types: './index.d.ts', default: './index.js' } },
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  await writeFile(join(root, 'node_modules', 'external-pkg', 'index.js'), 'export {};\n', 'utf8');
+  await writeFile(
+    join(root, 'node_modules', 'external-pkg', 'index.d.ts'),
+    'export type ExternalOnly = Readonly<{ externalMarker: string }>;\n',
+    'utf8',
+  );
+  await writeFile(
     join(root, VENDOR_MODULE),
     [
-      'export type VendorDeep = Readonly<{ deepMarker: string }>;',
-      'export type VendorEnvelope = Readonly<{ nested: VendorDeep }>;',
+      "import type { TransitiveHidden } from 'transitive-pkg';",
+      "import type { ExternalOnly } from 'external-pkg';",
+      '',
+      'export type VendorEnvelope = Readonly<{',
+      `  directMarker${directMarkerOptional ? '?' : ''}: string;`,
+      '  nested: TransitiveHidden;',
+      '  external: ExternalOnly;',
+      '}>;',
       'export declare const vendorPublished: Readonly<{ marker: "vendor-published" }>;',
       '',
     ].join('\n'),
@@ -261,37 +317,69 @@ async function createVendoredFixture() {
   return root;
 }
 
-test('a vendored declaration is published in full but is a leaf of the reachability walk', async () => {
-  const root = await createVendoredFixture();
+test('the declaration record follows hidden direct and transitive bundled declarations while retaining external edges', async () => {
+  const optionalRoot = await createVendoredFixture({
+    directMarkerOptional: true,
+    transitiveMarkerOptional: true,
+  });
+  const requiredRoot = await createVendoredFixture({
+    directMarkerOptional: false,
+    transitiveMarkerOptional: false,
+  });
   try {
-    const report = projectPublicDeclarationReport({
-      program: createPublicSurfaceProgram([resolve(root, CONTRACT_MODULE)]),
-      packageRoot: root,
+    const optionalReport = projectPublicDeclarationReport({
+      program: createPublicSurfaceProgram([resolve(optionalRoot, CONTRACT_MODULE)], optionalRoot),
+      packageRoot: optionalRoot,
       title: 'Fixture public declaration report',
       rows: VENDORED_ROWS,
       bundledDependencies: ['vendor-pkg'],
     });
-    const published = report.slice(
-      report.indexOf('## Published exports'),
-      report.indexOf('## Reachable package-owned declarations'),
+    const requiredReport = projectPublicDeclarationReport({
+      program: createPublicSurfaceProgram([resolve(requiredRoot, CONTRACT_MODULE)], requiredRoot),
+      packageRoot: requiredRoot,
+      title: 'Fixture public declaration report',
+      rows: VENDORED_ROWS,
+      bundledDependencies: ['vendor-pkg'],
+    });
+    const published = optionalReport.slice(
+      optionalReport.indexOf('## Published exports'),
+      optionalReport.indexOf('## Reachable package-owned declarations'),
     );
-    const reachable = report.slice(
-      report.indexOf('## Reachable package-owned declarations'),
-      report.indexOf('## Referenced declarations owned by other packages'),
+    const optionalReachable = optionalReport.slice(
+      optionalReport.indexOf('## Reachable package-owned declarations'),
+      optionalReport.indexOf('## Referenced declarations owned by other packages'),
     );
-    const edges = report.slice(report.indexOf('## Referenced declarations owned by other packages'));
+    const requiredReachable = requiredReport.slice(
+      requiredReport.indexOf('## Reachable package-owned declarations'),
+      requiredReport.indexOf('## Referenced declarations owned by other packages'),
+    );
+    const edges = optionalReport.slice(optionalReport.indexOf('## Referenced declarations owned by other packages'));
 
     // A vendored declaration this package publishes stays recorded in full:
     // nothing else will ever publish it.
     assert.match(published, /Declared by `node_modules\/vendor-pkg\/index\.d\.ts` as `vendorPublished`\./u);
     assert.match(published, /const vendorPublished: Readonly<\{\s*marker: "vendor-published";\s*\}>;/u);
 
-    // A vendored declaration merely reached from a published signature is a
-    // named edge, not an inlined block, and the walk does not descend past it.
-    assert.doesNotMatch(reachable, /VendorEnvelope/u);
-    assert.doesNotMatch(report, /VendorDeep/u);
-    assert.match(edges, /- `vendor-pkg#VendorEnvelope`/u);
+    // Direct and nested declarations beneath a declared bundle root both ship
+    // in this candidate, so their hidden optionality must reach the record.
+    assert.match(optionalReachable, /node_modules\/vendor-pkg\/index\.d\.ts` — `VendorEnvelope`/u);
+    assert.match(optionalReachable, /directMarker\?: string;/u);
+    assert.match(
+      optionalReachable,
+      /node_modules\/vendor-pkg\/node_modules\/transitive-pkg\/index\.d\.ts` — `TransitiveHidden`/u,
+    );
+    assert.match(optionalReachable, /transitiveMarker\?: string;/u);
+    assert.match(requiredReachable, /directMarker: string;/u);
+    assert.match(requiredReachable, /transitiveMarker: string;/u);
+    assert.doesNotMatch(requiredReachable, /(?:direct|transitive)Marker\?: string;/u);
+    assert.notEqual(optionalReport, requiredReport);
+
+    // A package that is resolved independently of the declared bundle tree is
+    // still only a named edge, even when the fixture has it installed nearby.
+    assert.match(edges, /- `external-pkg#ExternalOnly`/u);
+    assert.doesNotMatch(optionalReachable, /externalMarker/u);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(optionalRoot, { recursive: true, force: true });
+    await rm(requiredRoot, { recursive: true, force: true });
   }
 });
