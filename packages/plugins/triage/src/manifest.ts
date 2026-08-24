@@ -59,6 +59,18 @@ import {
   TriageLinkEntryToSessionInputV1Schema,
 } from './actions/sessionLinksProtocol.js';
 import {
+  createTriageAdministerActionActionHandler,
+  createTriageReadActionsActionHandler,
+} from './actions/actionsCatalog.js';
+import {
+  TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1,
+  TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1,
+  TriageAdministerActionInputV1Schema,
+  TriageAdministerActionResultV1Schema,
+  TriageReadActionsInputV1Schema,
+  TriageReadActionsResultV1Schema,
+} from './actions/actionsCatalogProtocol.js';
+import {
   createTriageAdministerSavedViewActionHandler,
   createTriageReadSavedViewsActionHandler,
 } from './actions/savedViews.js';
@@ -88,6 +100,7 @@ import {
   CORPUS_USER_MARKS_COLLECTION_ID,
 } from './corpus/collections/ids.js';
 import { TRIAGE_DISPLAY_NAME } from './displayName.js';
+import { TRIAGE_ACTIONS_SETTINGS_CONTRIBUTION_V1 } from './settings/actionsContribution.js';
 import { TRIAGE_SAVED_VIEWS_SETTINGS_CONTRIBUTION_V1 } from './settings/savedViewsContribution.js';
 import {
   TRIAGE_ENTRIES_COMPACT_ARTIFACT_ID_V1,
@@ -344,9 +357,41 @@ function createTriagePlugin() {
         resultSchema: TriageAdministerSavedViewResultV1Schema,
         run: createTriageAdministerSavedViewActionHandler(),
       },
+      [TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1]: {
+        title: 'Read the configured actions',
+        description: 'Reads the configured set of things a reader can start from a pull request, issue or error group.',
+        scopes: ['global'],
+        // The caller is this plugin's own mounted action editor, which holds a
+        // Host API with actions and no Settings member of its own.
+        surfaces: ['plugin'],
+        dangerLevel: 'safe',
+        execution: { target: 'daemon' },
+        inputSchema: TriageReadActionsInputV1Schema,
+        resultSchema: TriageReadActionsResultV1Schema,
+        run: createTriageReadActionsActionHandler(),
+      },
+      [TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1]: {
+        title: 'Add, change, remove or reorder an action',
+        description: 'Creates, renames, disables, reconfigures, removes or reorders one configured action.',
+        scopes: ['global'],
+        surfaces: ['plugin'],
+        // It writes durable Account state, and the exact inverse is one press
+        // away; nothing outside Happier is touched.
+        dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
+        inputSchema: TriageAdministerActionInputV1Schema,
+        resultSchema: TriageAdministerActionResultV1Schema,
+        run: createTriageAdministerActionActionHandler(),
+      },
     },
     settings: {
       [TRIAGE_SAVED_VIEWS_SETTINGS_CONTRIBUTION_V1.id]: TRIAGE_SAVED_VIEWS_SETTINGS_CONTRIBUTION_V1,
+      // Declared here or it does not exist. The retired `triage.agentSelection`
+      // built a whole setting, a choices resolver and a contribution that this
+      // object never named, and it was dead for weeks with every source test
+      // green — so `packagedManifest.test.ts` asserts the PACKAGED bytes carry
+      // this field, not that this line exists.
+      [TRIAGE_ACTIONS_SETTINGS_CONTRIBUTION_V1.id]: TRIAGE_ACTIONS_SETTINGS_CONTRIBUTION_V1,
     },
     /**
      * The four mounted surfaces this package actually ships.

@@ -1,9 +1,19 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginSettingsMutationResult } from '@happier-dev/plugin-sdk';
+import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import {
+    defineProtocolArray,
+    defineProtocolLiteral,
+    defineProtocolObject,
+    defineProtocolString,
+    defineProtocolUnion,
+} from '@happier-dev/plugin-sdk/protocol';
 import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+    TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1,
+    TriageSourceWorkflowSubjectV1Schema,
     normalizeTriageSingleLineV1,
     type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -23,8 +33,8 @@ import { readExactKeys } from './storedValue.js';
  *
  *  - `appliesTo` — which subjects it is offered on;
  *  - `profileId` — which Launch Profile supplies the Session defaults;
- *  - `promptInvocationToken` — which Prompt Library invocation supplies the task
- *    instruction;
+ *  - `promptInvocationId` — which Prompt Library invocation supplies the task
+ *    instruction, by its STABLE id;
  *  - `workspaceMode` — what the start needs materialized;
  *  - `delivery` — whether the resolved prompt is composed or sent.
  *
@@ -55,8 +65,6 @@ import { readExactKeys } from './storedValue.js';
 /** The one versioned Account Settings key this document owns. */
 export const TRIAGE_ACTIONS_SETTING_ID_V1 = 'triage.actions';
 
-/** At most this many actions: this is one Settings value, not one field per action. */
-export const MAX_TRIAGE_ACTIONS_V1 = 32;
 /** Label bound, measured in UTF-8 bytes after trimming, not in characters. */
 export const MAX_TRIAGE_ACTION_LABEL_UTF8_BYTES_V1 = 64;
 /**
@@ -71,6 +79,26 @@ export const MAX_TRIAGE_ACTION_PROFILE_ID_LENGTH_V1 = 256;
  * how a Settings record overflows.
  */
 export const MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1 = 64 * 1024;
+
+/**
+ * The opaque Settings revision token, bounded by the owner that already bounds
+ * one on a host Action boundary.
+ *
+ * The value is minted by the host Settings record and is never interpreted
+ * here: Triage compares it and echoes it, and reading a number out of it would
+ * make this a second opinion about what a revision means. But it has to cross
+ * an Action wire, so the wire needs a length — and picking one would be exactly
+ * the sanity number this program keeps removing.
+ *
+ * `packages/protocol/src/plugins/settingsAdministration.ts` already answers the
+ * same question for the same kind of token: the `expectedRevision` a settings
+ * administration Action carries is `z.string().trim().min(1).max(512)`. That is
+ * the canonical bound on a plugin-visible Settings revision at an Action
+ * boundary, so it is the one used here rather than a Triage invention, and
+ * `actions.test.ts` pins it against that owner's own schema so a change there
+ * fails here.
+ */
+export const MAX_TRIAGE_SETTINGS_REVISION_TOKEN_LENGTH_V1 = 512;
 
 /**
  * What a start needs materialized, in the orchestrator's own three pairings.
@@ -90,10 +118,23 @@ export type TriageActionDeliveryV1 = (typeof TRIAGE_ACTION_DELIVERIES_V1)[number
 /**
  * Which arm the action runs, stated rather than inferred.
  *
- * `promptInvocationToken` is the Prompt Library's own public handle — the token
- * a person types in a composer — and it is stored as a reference, never as a
- * copied body: Triage holds no prompt text, so editing the prompt in the Library
- * changes what every action using it sends.
+ * `promptInvocationId` is `PromptInvocationEntryV1.id`
+ * (`packages/protocol/src/prompts/library/promptInvocationsV1.ts`) — the
+ * Library's own STABLE identity, deliberately not its `token`. The token is the
+ * slash name a person types and may rename at will; storing it here would mean
+ * renaming `/explain` to `/discuss` silently breaks every configured action
+ * that referenced it, with no upstream owner to recover the reference from.
+ *
+ * It is stored as a reference, never as a copied body: Triage holds no prompt
+ * text, so editing the prompt in the Library changes what every action using it
+ * sends.
+ *
+ * **The Library owns WHICH content resolves; the action owns WHETHER it is
+ * composed or sent.** `PromptInvocationEntryV1.behavior`
+ * (`insert | insert_on_send | insert_and_send`) is the composer-command
+ * affordance for somebody typing that slash token, and it does NOT override
+ * `delivery`: a person who configured an action to send did not also ask the
+ * Library to decide that for them.
  *
  * `delivery` is meaningful with or without a prompt. With one it says whether
  * the body is composed or sent; without one it says whether the Session opens
@@ -102,11 +143,20 @@ export type TriageActionDeliveryV1 = (typeof TRIAGE_ACTION_DELIVERIES_V1)[number
 export type TriageActionTargetV1 =
     | Readonly<{
         kind: 'agent';
-        promptInvocationToken: string | null;
+        promptInvocationId: string | null;
         delivery: TriageActionDeliveryV1;
     }>
-    /** The incumbent `review.start` contract owns its engines and its scope. */
-    | Readonly<{ kind: 'reviewStart' }>;
+    /**
+     * The incumbent `review.start` contract owns its engines and its scope.
+     *
+     * It carries a prompt reference and no `delivery`, because `review.start`
+     * has exactly one delivery — it starts runs — but its `instructions` are a
+     * required, user-authored field. Answering that from the same Prompt
+     * Library reference the agent arm uses is what keeps ONE place a person
+     * configures what they want looked at; leaving it unanswerable would have
+     * made this arm depend on prose Triage invented.
+     */
+    | Readonly<{ kind: 'reviewStart'; promptInvocationId: string | null }>;
 
 export type TriageActionV1 = Readonly<{
     /** Stable within the Account; the three seeded actions carry literal ids. */
@@ -132,14 +182,185 @@ const ALL_SUBJECTS: readonly TriageSourceWorkflowSubjectV1[] =
     Object.freeze([...TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1]);
 
 /**
+ * THE action grammar — one declaration, three projections.
+ *
+ * An action record is expressed in exactly one place and then PROJECTED to
+ * everywhere a boundary needs to state it: the declared Account Settings field
+ * (`settings/actionsContribution.ts`), the two catalog Actions' wire contracts
+ * (`actions/actionsCatalogProtocol.ts`), and the maximum-encoded-value
+ * derivation that proves both fit the host's Action byte gate.
+ *
+ * It exists because the alternative was tried and failed. The declaration used
+ * to be a hand-written JSON Schema that spelled the same members a second time,
+ * and it drifted: it declared `reviewStart` as a CLOSED object of `{ kind }`
+ * alone while this owner's record — and the wire, and the seed shipped in this
+ * very file — carry `promptInvocationId` on that arm. The host compiles the
+ * declaration with `compilePluginJsonSchema` and REFUSES a `set` whose value
+ * fails it, so the divergence was not a documentation gap: the "Run code
+ * review" action Happier ships could not be written back, and every catalog
+ * containing one was unstorable with a perfectly valid record in front of the
+ * person. Nothing caught it because no test crossed that validator.
+ *
+ * A projection cannot drift from its source. That is the whole reason the
+ * second and third spellings are gone rather than merely corrected.
+ *
+ * It is a grammar, not the authority. The rules a JSON Schema cannot state —
+ * single-line normalization, UTF-8 byte bounds measured after trimming, the
+ * refusal of a repeated subject, the whole-value ceiling and the CAS decision —
+ * stay with the reader and writer below, which are strictly stricter than this
+ * shape. Every member here is a reference or a closed vocabulary, so there is
+ * nowhere on any of the three boundaries to express a condition, a step, a
+ * retry, a variable, a branch or a hook.
+ */
+
+const triageActionIdSchema = defineProtocolString({
+    minLength: 1,
+    maxLength: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
+const triageActionLabelSchema = defineProtocolString({
+    minLength: 1,
+    maxLength: MAX_TRIAGE_ACTION_LABEL_UTF8_BYTES_V1,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
+const triageActionProfileIdSchema = defineProtocolString({
+    minLength: 1,
+    maxLength: MAX_TRIAGE_ACTION_PROFILE_ID_LENGTH_V1,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
+/**
+ * The Prompt Library's own STABLE invocation id, carried as a reference.
+ *
+ * It is `PromptInvocationEntryV1.id`, never the renameable `token`: a slash
+ * command a person renames must not silently break every action configured
+ * against it. Triage stores no prompt body and no boundary here carries one —
+ * editing the invocation in the Library changes what every action naming it
+ * sends — and an id that names no invocation is a resolution failure the press
+ * reports, not a stored-value failure a schema could have caught.
+ */
+const triagePromptInvocationIdSchema = defineProtocolString({
+    minLength: 1,
+    maxLength: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
+const triageNullablePromptInvocationIdSchema = defineProtocolUnion([
+    triagePromptInvocationIdSchema,
+    defineProtocolLiteral(null),
+]);
+
+export const TriageActionWorkspaceModeV1Schema = defineProtocolUnion([
+    defineProtocolLiteral('reference_only'),
+    defineProtocolLiteral('repository'),
+    defineProtocolLiteral('pull_request'),
+]);
+
+export const TriageActionDeliveryV1Schema = defineProtocolUnion([
+    defineProtocolLiteral('compose'),
+    defineProtocolLiteral('send'),
+]);
+
+/**
+ * The arm is a member, so nothing on any boundary infers it from a label.
+ *
+ * An `agent` action starts a Session and hands the agent a resolved prompt; a
+ * `reviewStart` action targets the incumbent `review.start` contract, which
+ * owns its own engines and scope — but not its `instructions`, which are a
+ * required user-authored field, so it carries the same Prompt Library reference
+ * and no `delivery` (starting runs is the only delivery it has).
+ */
+export const TriageActionTargetV1Schema = defineProtocolUnion([
+    defineProtocolObject({
+        kind: defineProtocolLiteral('agent'),
+        promptInvocationId: triageNullablePromptInvocationIdSchema,
+        delivery: TriageActionDeliveryV1Schema,
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        kind: defineProtocolLiteral('reviewStart'),
+        promptInvocationId: triageNullablePromptInvocationIdSchema,
+    }, { policy: 'closed' }),
+]);
+
+export const TriageActionAppliesToV1Schema = defineProtocolArray(
+    TriageSourceWorkflowSubjectV1Schema,
+    {
+        // One entry per subject at most: the record refuses a repeated subject
+        // rather than deduplicating it, so a wider array could only ever be
+        // rejected downstream.
+        maxItems: TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1.length,
+    },
+);
+
+/** Everything an action is, minus the identity the writer owns. */
+export const TRIAGE_ACTION_DRAFT_MEMBERS_V1 = {
+    label: triageActionLabelSchema,
+    enabled: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
+    appliesTo: TriageActionAppliesToV1Schema,
+    profileId: defineProtocolUnion([triageActionProfileIdSchema, defineProtocolLiteral(null)]),
+    workspaceMode: TriageActionWorkspaceModeV1Schema,
+    target: TriageActionTargetV1Schema,
+} as const;
+
+export const TriageActionIdV1Schema = triageActionIdSchema;
+
+/** The opaque host revision, carried across the wire and never interpreted. */
+export const TriageSettingsRevisionV1Schema = defineProtocolString({
+    minLength: 1,
+    maxLength: MAX_TRIAGE_SETTINGS_REVISION_TOKEN_LENGTH_V1,
+});
+
+export const TriageActionRecordV1Schema = defineProtocolObject({
+    actionId: triageActionIdSchema,
+    ...TRIAGE_ACTION_DRAFT_MEMBERS_V1,
+}, { policy: 'closed' });
+
+export const TriageActionRecordsV1Schema = defineProtocolArray(TriageActionRecordV1Schema);
+
+/** The stored `triage.actions` value, exactly as `toStoredValue` emits it. */
+export const TriageActionsSettingValueV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    actions: TriageActionRecordsV1Schema,
+}, { policy: 'closed' });
+
+/**
+ * The stored value's grammar as the declarative Settings field states it.
+ *
+ * The projection drops the draft marker the Action-facing JSON Schema carries:
+ * `PluginSettingFieldSchemaV2Schema` is a strict grammar with no `$schema`
+ * member, so the marker that makes an Action schema self-describing is exactly
+ * what a Settings declaration must not carry. Nothing else is altered — the
+ * members, bounds, closed vocabularies and `additionalProperties: false` are
+ * the source's own.
+ */
+export function triageActionsSettingFieldJsonSchemaV1(): PluginJsonSchema {
+    const { $schema: _draftMarker, ...fieldSchema } = TriageActionsSettingValueV1Schema
+        .jsonSchema as PluginJsonSchema & Readonly<{ $schema?: string }>;
+    return fieldSchema;
+}
+
+/**
  * The shipped seed.
  *
- * Ask and Fix carry the two pairings the retired intent union expressed for
- * every subject, and Review is the pull-request arm that reaches the incumbent
- * `review.start` contract — the one capability no agent action can stand in for.
- * "Review with agent" is not seeded because it is an ordinary agent action a
- * person composes from the same five answers; seeding it would imply the two
- * arms are one control with a mode.
+ * Four actions, because the user asked for four things and two of them are
+ * genuinely different user actions that happen to share the word "review":
+ *
+ *  - **Ask** — read the entry, change nothing, every subject.
+ *  - **Fix** — repair it in the project the reader selected, every subject.
+ *  - **Review** — an ordinary AGENT action on a pull request: it starts a
+ *    Session with the reader's own profile and prompt and asks that agent to
+ *    review the change. This is the arm that works today.
+ *  - **Run code review** — the incumbent `review.start` contract with its own
+ *    engines and scope, which no agent action can stand in for.
+ *
+ * Seeding only the `review.start` arm would have shipped a control that is
+ * disabled in every packaged configuration, because `review.start` needs a
+ * prepared review workspace no shipped source declares — while the arm that
+ * WOULD run was left for the reader to compose. Their labels are what tells
+ * them apart in the header; nothing infers the arm from the label
+ * (`PLAN.md` §0a A1), and `target.kind` states it on both.
  */
 export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freeze([
     Object.freeze({
@@ -149,7 +370,7 @@ export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freez
         appliesTo: ALL_SUBJECTS,
         profileId: null,
         workspaceMode: 'reference_only',
-        target: Object.freeze({ kind: 'agent', promptInvocationToken: null, delivery: 'compose' }),
+        target: Object.freeze({ kind: 'agent', promptInvocationId: null, delivery: 'compose' }),
     }),
     Object.freeze({
         actionId: 'fix',
@@ -158,7 +379,7 @@ export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freez
         appliesTo: ALL_SUBJECTS,
         profileId: null,
         workspaceMode: 'repository',
-        target: Object.freeze({ kind: 'agent', promptInvocationToken: null, delivery: 'compose' }),
+        target: Object.freeze({ kind: 'agent', promptInvocationId: null, delivery: 'compose' }),
     }),
     Object.freeze({
         actionId: 'review',
@@ -166,8 +387,20 @@ export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freez
         enabled: true,
         appliesTo: Object.freeze(['pullRequest'] as const),
         profileId: null,
+        // A pull request an agent reviews still runs in the reader's selected
+        // project: reviewing a change does not require the source-prepared
+        // worktree that `review.start` needs to describe exact commits.
+        workspaceMode: 'repository',
+        target: Object.freeze({ kind: 'agent', promptInvocationId: null, delivery: 'compose' }),
+    }),
+    Object.freeze({
+        actionId: 'code-review',
+        label: 'Run code review',
+        enabled: true,
+        appliesTo: Object.freeze(['pullRequest'] as const),
+        profileId: null,
         workspaceMode: 'pull_request',
-        target: Object.freeze({ kind: 'reviewStart' }),
+        target: Object.freeze({ kind: 'reviewStart', promptInvocationId: null }),
     }),
 ] as readonly TriageActionV1[]);
 
@@ -209,6 +442,7 @@ const SEEDED_ACTION_TITLE_KEYS_V1: Readonly<Record<string, string>> = Object.fre
     ask: 'plugins.triage.surface.session.ask',
     fix: 'plugins.triage.surface.session.fix',
     review: 'plugins.triage.surface.session.review',
+    'code-review': 'plugins.triage.surface.session.codeReview',
 });
 
 export function readTriageActionTitleKeyV1(action: TriageActionV1): string | null {
@@ -247,14 +481,23 @@ export type TriageActionsRejectionV1 =
     | 'profileId'
     | 'workspaceMode'
     | 'target'
-    | 'promptInvocationToken'
+    | 'promptInvocationId'
     | 'delivery'
     | 'reorder'
-    | 'actionLimit'
     | 'valueTooLarge';
 
 export type TriageActionsMutationResultV1 =
-    | Readonly<{ status: 'applied'; actionId: string | null; value: TriageActionsSettingV1 }>
+    | Readonly<{
+        status: 'applied';
+        actionId: string | null;
+        value: TriageActionsSettingV1;
+        /**
+         * The revision the applied value now sits at, so the caller can make a
+         * second edit without a round trip — and, more importantly, cannot make
+         * one against the revision it already spent.
+         */
+        revision: string;
+    }>
     /** Another writer won; the caller re-reads rather than forcing its value. */
     | Readonly<{ status: 'conflict' }>
     | Readonly<{ status: 'unknownAction' }>
@@ -271,12 +514,32 @@ export type TriageActionDraftV1 = Readonly<{
     target: TriageActionTargetV1;
 }>;
 
-export type TriageActionCommandV1 =
+/**
+ * The revision the CALLER read the catalog at, required on every write.
+ *
+ * Re-reading immediately before the write and CASing against that fresh
+ * revision — which is what this owner used to do — only makes the final `set`
+ * atomic. It cannot notice a change made while somebody had the editor open,
+ * because the value it compares was read AFTER that change landed. A person who
+ * opened the editor, went away, came back and pressed Save would silently
+ * overwrite whatever their other device stored in between, and the write would
+ * report `applied`.
+ *
+ * So the revision travels with the intent: the caller states which catalog it
+ * was looking at, and a write against a catalog that has moved is the same
+ * `conflict` a losing race already produced. One value, compared once, with no
+ * merge and no queue — the loser re-reads and decides again with the truth in
+ * front of them.
+ */
+type TriageActionCommandBaseV1 = Readonly<{ expectedRevision: string }>;
+
+export type TriageActionCommandV1 = TriageActionCommandBaseV1 & (
     | (TriageActionDraftV1 & Readonly<{ kind: 'create' }>)
     | (TriageActionDraftV1 & Readonly<{ kind: 'update'; actionId: string }>)
     | Readonly<{ kind: 'delete'; actionId: string }>
     /** An exact permutation of the stored set; nothing is added or dropped here. */
-    | Readonly<{ kind: 'reorder'; actionIds: readonly string[] }>;
+    | Readonly<{ kind: 'reorder'; actionIds: readonly string[] }>
+);
 
 export type TriageActionsDepsV1 = Readonly<{
     settings: Pick<ScopedSettingsService, 'snapshot' | 'set'>;
@@ -330,33 +593,45 @@ function readAppliesTo(raw: unknown): Outcome<readonly TriageSourceWorkflowSubje
     return { ok: true, value: subjects };
 }
 
+/**
+ * The stored Prompt Library reference, read once for both target arms.
+ *
+ * It is the Library's own STABLE id and is deliberately NOT re-validated
+ * against that Library's contents here: an id naming no invocation is a
+ * resolution failure the press reports with the person's own configuration in
+ * front of them, not a stored-value failure that makes the whole catalogue
+ * unreadable the moment somebody deletes one prompt.
+ */
+function readPromptInvocationId(raw: unknown): Outcome<string | null> {
+    if (raw === null) return { ok: true, value: null };
+    const value = readBoundedString(raw, MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1);
+    return value === null
+        ? { ok: false, reason: 'promptInvocationId' }
+        : { ok: true, value };
+}
+
 function readTarget(raw: unknown): Outcome<TriageActionTargetV1> {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
         return { ok: false, reason: 'target' };
     }
     const kind = (raw as Readonly<Record<string, unknown>>).kind;
     if (kind === 'reviewStart') {
-        return readExactKeys(raw, ['kind']) === null
-            ? { ok: false, reason: 'target' }
-            : { ok: true, value: { kind: 'reviewStart' } };
+        const reviewCandidate = readExactKeys(raw, ['kind', 'promptInvocationId']);
+        if (reviewCandidate === null) return { ok: false, reason: 'target' };
+        const reviewPrompt = readPromptInvocationId(reviewCandidate.promptInvocationId);
+        if (!reviewPrompt.ok) return reviewPrompt;
+        return { ok: true, value: { kind: 'reviewStart', promptInvocationId: reviewPrompt.value } };
     }
     if (kind !== 'agent') return { ok: false, reason: 'target' };
-    const candidate = readExactKeys(raw, ['kind', 'promptInvocationToken', 'delivery']);
+    const candidate = readExactKeys(raw, ['kind', 'promptInvocationId', 'delivery']);
     if (candidate === null) return { ok: false, reason: 'target' };
 
-    // The token is stored as the Prompt Library's own handle and is deliberately
-    // NOT re-validated against that Library's grammar here: restating it would
-    // be a second spelling of one rule, and a token naming no invocation is a
-    // resolution failure the start reports, not a stored-value failure.
-    const promptInvocationToken = candidate.promptInvocationToken === null
-        ? null
-        : readBoundedString(candidate.promptInvocationToken, MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1);
-    if (promptInvocationToken === null && candidate.promptInvocationToken !== null) {
-        return { ok: false, reason: 'promptInvocationToken' };
-    }
+    const prompt = readPromptInvocationId(candidate.promptInvocationId);
+    if (!prompt.ok) return prompt;
+    const promptInvocationId = prompt.value;
     const delivery = readDelivery(candidate.delivery);
     if (delivery === null) return { ok: false, reason: 'delivery' };
-    return { ok: true, value: { kind: 'agent', promptInvocationToken, delivery } };
+    return { ok: true, value: { kind: 'agent', promptInvocationId, delivery } };
 }
 
 /**
@@ -421,7 +696,6 @@ export function parseTriageActions(raw: unknown): TriageActionsReadV1 {
     }
     const candidate = readExactKeys(raw, ['v', 'actions']);
     if (!candidate || candidate.v !== 1 || !Array.isArray(candidate.actions)) return unreadable;
-    if (candidate.actions.length > MAX_TRIAGE_ACTIONS_V1) return unreadable;
 
     const actions: TriageActionV1[] = [];
     const ids = new Set<string>();
@@ -471,10 +745,10 @@ function toStoredValue(value: TriageActionsSettingV1): JsonValue {
             profileId: action.profileId,
             workspaceMode: action.workspaceMode,
             target: action.target.kind === 'reviewStart'
-                ? { kind: 'reviewStart' }
+                ? { kind: 'reviewStart', promptInvocationId: action.target.promptInvocationId }
                 : {
                     kind: 'agent',
-                    promptInvocationToken: action.target.promptInvocationToken,
+                    promptInvocationId: action.target.promptInvocationId,
                     delivery: action.target.delivery,
                 },
         })),
@@ -490,11 +764,16 @@ export async function readTriageActions(deps: Readonly<{
     return { ...read, revision: snapshot.revision };
 }
 
+/** The verdict before the write: identical to the public one, minus the revision only a settled write can state. */
+type TriageActionsAppliedPlanV1 =
+    | Readonly<{ status: 'applied'; actionId: string | null; value: TriageActionsSettingV1 }>
+    | Exclude<TriageActionsMutationResultV1, Readonly<{ status: 'applied' }>>;
+
 function applyCommand(
     current: TriageActionsSettingV1,
     command: TriageActionCommandV1,
     mintActionId: () => string,
-): TriageActionsMutationResultV1 {
+): TriageActionsAppliedPlanV1 {
     if (command.kind === 'delete') {
         if (!current.actions.some((action) => action.actionId === command.actionId)) {
             return { status: 'unknownAction' };
@@ -512,6 +791,14 @@ function applyCommand(
     if (command.kind === 'reorder') {
         // An exact permutation, or nothing. A shorter list would delete actions
         // under the guise of reordering, and a repeated id would duplicate one.
+        //
+        // The length is checked because nothing below can: every member of a
+        // shorter list is a known, unique, stored id, so a loop that only
+        // validates members accepts the deletion whole. That is the shape the
+        // comment above already claimed and the code did not have.
+        if (command.actionIds.length !== current.actions.length) {
+            return { status: 'rejected', reason: 'reorder' };
+        }
 
         const byId = new Map(current.actions.map((action) => [action.actionId, action]));
         const actions: TriageActionV1[] = [];
@@ -537,9 +824,6 @@ function applyCommand(
         return { status: 'applied', actionId: command.actionId, value: { v: 1, actions } };
     }
 
-    if (current.actions.length >= MAX_TRIAGE_ACTIONS_V1) {
-        return { status: 'rejected', reason: 'actionLimit' };
-    }
     const actionId = mintActionId();
     const parsed = readAction(actionId, command);
     if (!parsed.ok) return { status: 'rejected', reason: parsed.reason };
@@ -556,10 +840,11 @@ function applyCommand(
 /**
  * The one typed create/update/delete/reorder write.
  *
- * It reads the authoritative record, validates the whole resulting value, and
- * writes it against the revision it read. A losing write returns the typed
- * `conflict` and the caller re-reads: there is no last-writer-wins merge and no
- * hidden local copy.
+ * It reads the authoritative record, refuses a command aimed at a revision the
+ * caller no longer holds, validates the whole resulting value, and writes it
+ * against that same revision. A losing write returns the typed `conflict` and
+ * the caller re-reads: there is no last-writer-wins merge and no hidden local
+ * copy.
  *
  * An absent record is edited as the SEED rather than as an empty set, so the
  * first action a person adds does not silently delete Ask, Fix and Review. The
@@ -576,6 +861,12 @@ export async function mutateTriageAction(
 ): Promise<TriageActionsMutationResultV1> {
     const options = deps.signal ? { signal: deps.signal } : undefined;
     const snapshot = await deps.settings.snapshot(options);
+    // The caller's own revision, compared BEFORE anything is computed. A write
+    // aimed at a catalogue that has since moved is refused whether or not the
+    // final `set` would have raced: the person is looking at a set that no
+    // longer exists, and applying their intent to a different one is the
+    // silent overwrite this comparison exists to prevent.
+    if (snapshot.revision !== command.expectedRevision) return { status: 'conflict' };
     const read = parseTriageActions(snapshot.values[TRIAGE_ACTIONS_SETTING_ID_V1]);
     // Refusing here is what keeps a newer client's catalogue alive: this build
     // cannot merge into a value it cannot read, so it declines rather than
@@ -590,8 +881,12 @@ export async function mutateTriageAction(
         return { status: 'rejected', reason: 'valueTooLarge' };
     }
 
+    let mutation: PluginSettingsMutationResult;
     try {
-        await deps.settings.set(TRIAGE_ACTIONS_SETTING_ID_V1, stored, {
+        // The same revision goes to the host, so a writer that lands between
+        // this read and this write still loses. The caller comparison above
+        // covers the window the host cannot see; this covers the one it can.
+        mutation = await deps.settings.set(TRIAGE_ACTIONS_SETTING_ID_V1, stored, {
             expectedRevision: snapshot.revision,
             ...(deps.signal ? { signal: deps.signal } : {}),
         });
@@ -601,5 +896,5 @@ export async function mutateTriageAction(
         }
         throw error;
     }
-    return applied;
+    return { ...applied, revision: mutation.revision };
 }
