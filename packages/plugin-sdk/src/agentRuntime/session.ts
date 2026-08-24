@@ -1,12 +1,9 @@
 import type { PermissionIntent } from '@happier-dev/agents';
-import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 
 import type { JsonValue } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { AgentSessionConversationRollbackControl } from './controls.js';
-
-export type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 
 export type AgentSessionConnectedAccountSelection = Readonly<{
   purpose: string;
@@ -116,6 +113,247 @@ export type AgentSessionProviderBinding = Readonly<{
 }>;
 
 export type AgentSessionProviderCheckpoint = JsonValue;
+
+type RuntimeEventBase = Readonly<{
+  sequence: number;
+  sessionId: string;
+  emittedAtMs: number;
+}>;
+
+type RuntimeTurnEvent = RuntimeEventBase & Readonly<{
+  turnId: string;
+  agentTurnId?: string;
+}>;
+
+type RuntimeEventDiagnostic = PluginDiagnosticData;
+
+type RuntimeEventInputIds = [string, ...string[]];
+
+type RuntimeEventDelivery =
+  | Readonly<{ kind: 'newTurn'; turnId: string }>
+  | Readonly<{ kind: 'followUp'; turnId: string }>
+  | Readonly<{ kind: 'steer'; turnId: string }>;
+
+type RuntimeEventUsageTokens = Readonly<{
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}>;
+
+type RuntimeEventUsageCost = Readonly<{
+  reportedUsd: number;
+  estimatedUsd: number;
+  invoiceUsd?: number;
+  billingContext?:
+    | 'api_usage'
+    | 'subscription_included'
+    | 'subscription_with_possible_overage'
+    | 'unknown';
+  costSource?:
+    | 'provider_reported'
+    | 'provider_reported_api_equivalent'
+    | 'pricing_estimate'
+    | 'invoice'
+    | 'none';
+  currency: string;
+  breakdown?: Record<string, number>;
+  effectiveUsd?: number;
+}>;
+
+type RuntimeEventContextUsage = Readonly<{
+  v: 1;
+  modelId: string | null;
+  usedTokens: number;
+  windowTokens: number | null;
+  totalProcessedTokens: number | null;
+  baselineTokens: number | null;
+  isAutoCompactEnabled: boolean | null;
+  categories: Array<Readonly<{
+    key: string;
+    label: string | null;
+    tokens: number;
+  }>> | null;
+  observedAtMs: number;
+  source: 'provider_live' | 'provider_turn' | 'derived_estimate';
+}>;
+
+type RuntimeCompactionEvent = RuntimeEventBase & Readonly<{
+  kind: 'context-compaction';
+  compactionId: string;
+  turnId?: string;
+  trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+  retryAttempt?: number;
+}>;
+
+/**
+ * Public declaration projection of the Protocol-owned runtime event union.
+ * The Protocol schema remains the sole validation and semantic owner; this
+ * structural SDK declaration keeps external author closures independent from
+ * the host-private Protocol package.
+ */
+export type AgentSessionRuntimeEvent =
+  | (RuntimeEventBase & Readonly<{
+      kind: 'input-accepted';
+      inputIds: RuntimeEventInputIds;
+      delivery: RuntimeEventDelivery;
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'input-rejected';
+      inputIds: RuntimeEventInputIds;
+      diagnostic: RuntimeEventDiagnostic;
+      retryable: boolean;
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'input-custody-unknown';
+      inputIds: RuntimeEventInputIds;
+      issue: RuntimeEventDiagnostic;
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'input-delivery-failed';
+      inputIds: RuntimeEventInputIds;
+      delivery: Exclude<RuntimeEventDelivery, Readonly<{ kind: 'steer'; turnId: string }>>;
+      issue: RuntimeEventDiagnostic;
+      duplicateRisk: 'possible' | 'likely' | 'unknown';
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'provider-session-id';
+      providerSessionId: string;
+      nativeSessionLogPath?: string;
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'available-commands';
+      commands: Array<Readonly<{
+        name: string;
+        description?: string;
+      }>>;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'turn-start';
+      startedBy: 'host' | 'provider';
+      causedByTurnId?: string;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{ kind: 'turn-progress' }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'turn-agent-id-observed';
+      agentTurnId: string;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{ kind: 'turn-complete' }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'turn-failed';
+      diagnostic: RuntimeEventDiagnostic;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'turn-cancelled';
+      cause:
+        | 'user'
+        | 'hostShutdown'
+        | 'sessionDispose'
+        | 'runtimeRecovery'
+        | 'providerCancelled'
+        | 'providerInterrupted'
+        | 'unknown';
+      diagnostic?: RuntimeEventDiagnostic;
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'runtime-ended';
+      cause: 'providerEnded' | 'connectionLost' | 'processExited' | 'protocolError' | 'unknown';
+      retryable: boolean;
+      diagnostic?: RuntimeEventDiagnostic;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'message-delta';
+      channel: 'assistant' | 'reasoning';
+      text: string;
+      sidechainId?: string;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'tool-call';
+      toolCallId: string;
+      toolName: string;
+      input: JsonValue;
+      sidechainId?: string;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'tool-progress';
+      toolCallId: string;
+      progress: JsonValue;
+      sidechainId?: string;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'tool-result';
+      toolCallId: string;
+      output: JsonValue;
+      isError?: boolean;
+      sidechainId?: string;
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'transcript-message-committed';
+      messageId: string;
+      role: 'user' | 'assistant' | 'reasoning';
+      text: string;
+      turnId?: string;
+      sidechainId?: string;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'file-edit';
+      editId: string;
+      path: string;
+      description?: string;
+      diff?: string;
+      oldContent?: string;
+      newContent?: string;
+      sidechainId?: string;
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'usage-observed';
+      observationId: string;
+      turnId?: string;
+      source: string;
+      scope: 'turn_delta' | 'session_cumulative' | 'session_final';
+      modelId?: string;
+      tokens?: RuntimeEventUsageTokens;
+      cost?: RuntimeEventUsageCost;
+      context?: RuntimeEventContextUsage;
+    }>)
+  | (RuntimeTurnEvent & Readonly<{
+      kind: 'turn-rollback-boundary';
+      agentRollbackOrdinal?: number;
+      providerCheckpoint?: AgentSessionProviderCheckpoint;
+    }>)
+  | (RuntimeEventBase & Readonly<{
+      kind: 'runtime-activity-snapshot';
+      state: 'active' | 'idle' | 'unknown';
+      activeCount: number;
+    }>)
+  | (RuntimeCompactionEvent & Readonly<{
+      phase: 'started';
+      tokenCountBefore?: number;
+      tokenCountSource?: 'providerReported' | 'providerEstimated' | 'derivedEstimate';
+    }>)
+  | (RuntimeCompactionEvent & Readonly<{ phase: 'progress' }>)
+  | (RuntimeCompactionEvent & Readonly<{
+      phase: 'completed';
+      tokenCountBefore?: number;
+      tokenCountAfter?: number;
+      tokenCountSource?: 'providerReported' | 'providerEstimated' | 'derivedEstimate';
+      continuation?: 'paused';
+      pauseReason?: 'agentIdleAfterCompaction';
+    }>)
+  | (RuntimeCompactionEvent & Readonly<{
+      phase: 'failed';
+      diagnostic: RuntimeEventDiagnostic;
+    }>)
+  | (RuntimeCompactionEvent & Readonly<{
+      phase: 'cancelled';
+      diagnostic?: RuntimeEventDiagnostic;
+    }>)
+  | (RuntimeCompactionEvent & Readonly<{
+      phase: 'outcomeUnknown';
+      diagnostic: RuntimeEventDiagnostic;
+    }>);
 
 export type AgentSessionRuntimeAuthApplyRequest = Readonly<{
   serviceId: string;

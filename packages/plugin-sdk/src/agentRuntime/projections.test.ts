@@ -394,12 +394,16 @@ describe('Agent runtime package-local publication projection', () => {
     }
   }, 120_000);
 
-  it('aliases the canonical Agent runtime event instead of copying its model', () => {
+  it('projects the canonical Agent runtime event through a declaration-neutral SDK type', () => {
     const program = createSdkProgram();
 
-    expect(exportedSymbol(program, 'src/agentRuntime/session.ts', 'AgentSessionRuntimeEvent')).toBe(
+    expect(exportedSymbol(program, 'src/agentRuntime/session.ts', 'AgentSessionRuntimeEvent')).not.toBe(
       ownerSymbol(program, '@happier-dev/protocol/runtime', 'AgentSessionRuntimeEvent'),
     );
+    expectTypeOf<AgentSessionRuntimeEvent>()
+      .toMatchTypeOf<CanonicalAgentSessionRuntimeEvent>();
+    expectTypeOf<CanonicalAgentSessionRuntimeEvent>()
+      .toMatchTypeOf<AgentSessionRuntimeEvent>();
   }, 120_000);
 
   it('refines helper-only signatures without changing canonical runtime values or public shapes', () => {
@@ -417,25 +421,26 @@ describe('Agent runtime package-local publication projection', () => {
       .toBe(canonicalAgentSessionRuntimeEventSchema);
     expectTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionProviderBindingV1Schema.parse>>()
       .toEqualTypeOf<AgentSessionProviderBinding>();
-    expectTypeOf<AgentSessionProviderBinding['upstream']>()
-      .toEqualTypeOf<AgentSessionProviderBindingUpstream>();
     // The author declarations are structural copies so an emitted external
     // closure never names the private Protocol package. They must stay exactly
-    // interchangeable with the canonical owners in both directions.
+    // interchangeable with the canonical owners in both directions. The SDK
+    // copy is deliberately `Readonly`, which is the one difference this
+    // equality tolerates: every member name, optionality and literal member
+    // still has to match the settings owner exactly.
     expectTypeOf<ConnectedServicesProviderStateSharingPolicyV1>()
-      .toEqualTypeOf<CanonicalConnectedServicesProviderStateSharingPolicyV1>();
+      .toEqualTypeOf<Readonly<CanonicalConnectedServicesProviderStateSharingPolicyV1>>();
     expectTypeOf<AgentSessionProviderBindingUpstream>()
       .toMatchTypeOf<CanonicalAgentSessionProviderBinding['upstream']>();
     expectTypeOf<CanonicalAgentSessionProviderBinding['upstream']>()
       .toMatchTypeOf<AgentSessionProviderBindingUpstream>();
     expectTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionRuntimeEventSchema.parse>>()
-      .toEqualTypeOf<AgentSessionRuntimeEvent>();
+      .toMatchTypeOf<AgentSessionRuntimeEvent>();
+    expectTypeOf<AgentSessionRuntimeEvent>()
+      .toMatchTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionRuntimeEventSchema.parse>>();
     expectTypeOf<CanonicalAgentSessionProviderBinding>()
       .toMatchTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionProviderBindingV1Schema.parse>>();
     expectTypeOf<CanonicalAgentSessionRuntimeEvent>()
       .toMatchTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionRuntimeEventSchema.parse>>();
-    expectTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionRuntimeEventSchema.parse>>()
-      .toMatchTypeOf<AgentSessionRuntimeEvent>();
     expectTypeOf<AgentSessionRuntimeEvent>()
       .toMatchTypeOf<ReturnType<typeof agentRuntimeProjection.AgentSessionRuntimeEventSchema.parse>>();
     expectTypeOf<ForkAvailabilityRequestV1['parentMetadata']>()
