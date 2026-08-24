@@ -166,6 +166,9 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             {exitLayer ? (
                 <View
                     pointerEvents="none"
+                    aria-hidden={true}
+                    accessibilityElementsHidden={true}
+                    importantForAccessibility="no-hide-descendants"
                     style={[
                         styles.exitLayer,
                         cssTransitionStyle('exit', props.reducedMotion),
@@ -345,6 +348,9 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             {exitLayer ? (
                 <Animated.View
                     pointerEvents="none"
+                    aria-hidden={true}
+                    accessibilityElementsHidden={true}
+                    importantForAccessibility="no-hide-descendants"
                     style={[
                         styles.exitLayer,
                         {

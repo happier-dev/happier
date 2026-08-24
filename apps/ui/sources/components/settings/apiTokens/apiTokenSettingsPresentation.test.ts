@@ -58,10 +58,10 @@ describe('API-token Settings presentation', () => {
         expect(expired).toMatchObject({ status: 'expired', statusVariant: 'neutral' });
     });
 
-    it('maps typed auth, offline, account-mismatch, and generic failures to designed states', () => {
+    it('maps typed auth and transport failures to designed states', () => {
         expect(resolveApiTokenOperationErrorMessageKey('present_user_required')).toBe('settingsApiTokens.errors.presentUserRequired');
         expect(resolveApiTokenOperationErrorMessageKey('auth_unavailable')).toBe('settingsApiTokens.errors.offline');
-        expect(resolveApiTokenOperationErrorMessageKey('account_mismatch')).toBe('settingsApiTokens.errors.accountMismatch');
+        expect(resolveApiTokenOperationErrorMessageKey('network_error')).toBe('settingsApiTokens.errors.offline');
         expect(resolveApiTokenOperationErrorMessageKey('anything_else')).toBe('settingsApiTokens.errors.unavailable');
     });
 });

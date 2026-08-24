@@ -118,6 +118,41 @@ describe('createApiTokenSettingsController', () => {
         });
     });
 
+    it('preserves the active operation projection when another request is attempted while it is busy', async () => {
+        let finishRevoke!: (value: ActionExecuteResult) => void;
+        const pendingRevoke = new Promise<ActionExecuteResult>((resolve) => { finishRevoke = resolve; });
+        const harness = createHarness([pendingRevoke]);
+        harness.controller.setCreateDraft({ label: 'Second token', expiryPreset: '90d' });
+
+        const revoke = harness.controller.revokeToken(TOKEN_A.tokenId);
+        const activeState = harness.controller.getState();
+        expect(activeState).toMatchObject({
+            createDraft: { label: 'Second token', expiryPreset: '90d' },
+            operation: 'revoke',
+            operationTokenId: TOKEN_A.tokenId,
+            operationError: null,
+            operationNotice: null,
+        });
+
+        await harness.controller.refresh();
+        await expect(harness.controller.createToken()).resolves.toBeUndefined();
+        await expect(harness.controller.revokeToken(TOKEN_B.tokenId)).resolves.toBe(false);
+        await expect(harness.controller.revokeAllTokens()).resolves.toBeNull();
+        await expect(harness.controller.signOutEverywhere()).resolves.toBe(false);
+
+        expect(harness.controller.getState()).toEqual(activeState);
+        expect(harness.execute).toHaveBeenCalledOnce();
+
+        finishRevoke(ok({ revoked: true }));
+        await expect(revoke).resolves.toBe(true);
+        expect(harness.controller.getState()).toMatchObject({
+            operation: null,
+            operationTokenId: null,
+            operationError: null,
+            operationNotice: 'revoked',
+        });
+    });
+
     it('retains the create draft after a typed failure and reveals a successful secret only in controller memory', async () => {
         const harness = createHarness([
             { ok: false, errorCode: 'present_user_required', error: 'present_user_required' },
@@ -149,6 +184,32 @@ describe('createApiTokenSettingsController', () => {
             { label: TOKEN_A.label, expiresAt: '2026-11-20T12:00:00.000Z' },
             expect.objectContaining({ surface: 'ui', actionCaller: { kind: 'host' } }),
         );
+    });
+
+    it('keeps the create flow open while minting so a one-time secret cannot be lost', async () => {
+        let finishCreate!: (value: ActionExecuteResult) => void;
+        const pendingCreate = new Promise<ActionExecuteResult>((resolve) => { finishCreate = resolve; });
+        const harness = createHarness([pendingCreate]);
+        const confirmDismiss = vi.fn(async () => true);
+        harness.controller.setCreateDraft({ label: TOKEN_A.label, expiryPreset: '90d' });
+
+        const create = harness.controller.createToken();
+        expect(harness.controller.getState()).toMatchObject({ createPending: true, reveal: null });
+
+        await expect(harness.controller.requestRevealDismiss(confirmDismiss, 'shared')).resolves.toBe(false);
+        expect(confirmDismiss).not.toHaveBeenCalled();
+        expect(harness.controller.getState()).toMatchObject({ createPending: true, reveal: null });
+
+        finishCreate(ok({
+            token: `hap_v1_${TOKEN_A.tokenId}_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`,
+            apiToken: TOKEN_A,
+        }));
+        await create;
+
+        expect(harness.controller.getState()).toMatchObject({
+            createPending: false,
+            reveal: { token: expect.stringContaining('hap_v1_') },
+        });
     });
 
     it('warns once for every unacknowledged dismissal path, never traps, and clears the secret on permitted exit', async () => {

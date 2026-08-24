@@ -19,6 +19,7 @@ import {
     type AccountApiTokensRevokeActionOutputV1,
     type AccountApiTokensRevokeAllActionInputV1,
     type AccountApiTokensRevokeAllActionOutputV1,
+    type ActionExecuteFailure,
 } from '@happier-dev/protocol';
 import type { z } from 'zod';
 
@@ -42,8 +43,14 @@ type CapturedActiveAccountApiTokens = Readonly<{
 
 const UNAVAILABLE_MESSAGE = 'account_api_tokens_unavailable';
 
+type CurrentAccountApiTokensResult<T> = T | ActionExecuteFailure;
+
 function unavailable(): never {
     throw new Error(UNAVAILABLE_MESSAGE);
+}
+
+function networkFailure(): ActionExecuteFailure {
+    return { ok: false, errorCode: 'network_error', error: 'network_error' };
 }
 
 function isCurrent(captured: CapturedActiveAccountApiTokens): boolean {
@@ -70,7 +77,7 @@ async function requestCurrentAccountApiTokens<
     inputSchema: TInputSchema,
     outputSchema: TOutputSchema,
     options?: CurrentAccountApiTokensOptionsV1,
-): Promise<z.output<TOutputSchema>> {
+): Promise<CurrentAccountApiTokensResult<z.output<TOutputSchema>>> {
     const request = inputSchema.parse(input);
     if (options?.signal?.aborted) return unavailable();
 
@@ -85,22 +92,33 @@ async function requestCurrentAccountApiTokens<
 
     try {
         if (controller.signal.aborted || !isCurrent(captured)) return unavailable();
-
         const authority = await captureSessionRequestAuthorityForServerAccountScope({
             scope: captured.lifetime.scope,
             activeRequest: (requestPath, init) => apiSocket.request(requestPath, init),
         });
         if (controller.signal.aborted || !isCurrent(captured)) return unavailable();
 
-        const response = await authority.request(path, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(request),
-            signal: controller.signal,
-        });
+        let response: Response;
+        try {
+            response = await authority.request(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request),
+                signal: controller.signal,
+            });
+        } catch {
+            if (controller.signal.aborted || !isCurrent(captured)) return unavailable();
+            return networkFailure();
+        }
         if (controller.signal.aborted || !isCurrent(captured) || !response.ok) return unavailable();
 
-        const parsed = outputSchema.safeParse(await response.json());
+        let body: unknown;
+        try {
+            body = await response.json();
+        } catch {
+            return unavailable();
+        }
+        const parsed = outputSchema.safeParse(body);
         if (controller.signal.aborted || !isCurrent(captured) || !parsed.success) return unavailable();
         return parsed.data;
     } catch {
@@ -118,7 +136,7 @@ async function requestCurrentAccountApiTokens<
 export async function createCurrentAccountApiToken(
     input: AccountApiTokensCreateActionInputV1,
     options?: CurrentAccountApiTokensOptionsV1,
-): Promise<AccountApiTokensCreateActionOutputV1> {
+): Promise<CurrentAccountApiTokensResult<AccountApiTokensCreateActionOutputV1>> {
     return await requestCurrentAccountApiTokens(
         ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
         input,
@@ -131,7 +149,7 @@ export async function createCurrentAccountApiToken(
 export async function listCurrentAccountApiTokens(
     input: AccountApiTokensListActionInputV1,
     options?: CurrentAccountApiTokensOptionsV1,
-): Promise<AccountApiTokensListActionOutputV1> {
+): Promise<CurrentAccountApiTokensResult<AccountApiTokensListActionOutputV1>> {
     return await requestCurrentAccountApiTokens(
         ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
         input,
@@ -144,7 +162,7 @@ export async function listCurrentAccountApiTokens(
 export async function revokeCurrentAccountApiToken(
     input: AccountApiTokensRevokeActionInputV1,
     options?: CurrentAccountApiTokensOptionsV1,
-): Promise<AccountApiTokensRevokeActionOutputV1> {
+): Promise<CurrentAccountApiTokensResult<AccountApiTokensRevokeActionOutputV1>> {
     return await requestCurrentAccountApiTokens(
         ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1,
         input,
@@ -157,7 +175,7 @@ export async function revokeCurrentAccountApiToken(
 export async function revokeAllCurrentAccountApiTokens(
     input: AccountApiTokensRevokeAllActionInputV1,
     options?: CurrentAccountApiTokensOptionsV1,
-): Promise<AccountApiTokensRevokeAllActionOutputV1> {
+): Promise<CurrentAccountApiTokensResult<AccountApiTokensRevokeAllActionOutputV1>> {
     return await requestCurrentAccountApiTokens(
         ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
         input,

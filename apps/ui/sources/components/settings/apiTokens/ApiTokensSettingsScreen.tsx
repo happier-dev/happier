@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/auth/context/AuthContext';
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ShimmerView } from '@/components/ui/feedback/ShimmerView';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -19,7 +20,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { Modal } from '@/modal';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import {
     createApiTokenSettingsController,
@@ -38,6 +41,89 @@ function resolveOperationNotice(notice: 'revoked' | 'revokedAll' | 'signedOutEve
     if (notice === 'revoked') return t('settingsApiTokens.notices.revoked');
     if (notice === 'revokedAll') return t('settingsApiTokens.notices.revokedAll');
     return t('settingsApiTokens.notices.signedOutEverywhere');
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+const API_TOKEN_EXPIRING_WINDOW_MS = 7 * DAY_MS;
+const SKELETON_TITLE = '██████████';
+const SKELETON_METADATA = '████████████████';
+
+function resolveNextRelativeTimeChangeAt(atMs: number, nowMs: number): number | null {
+    if (!Number.isFinite(atMs)) return null;
+    const elapsedMs = nowMs - atMs;
+    if (elapsedMs < MINUTE_MS) return atMs + MINUTE_MS;
+
+    const minutes = Math.floor(elapsedMs / MINUTE_MS);
+    if (minutes < 60) return atMs + (minutes + 1) * MINUTE_MS;
+
+    const hours = Math.floor(elapsedMs / HOUR_MS);
+    if (hours < 24) return atMs + (hours + 1) * HOUR_MS;
+
+    const days = Math.floor(elapsedMs / DAY_MS);
+    return atMs + (days + 1) * DAY_MS;
+}
+
+function resolveNextApiTokenPresentationChangeAt(
+    tokens: readonly Readonly<{ createdAt: string; lastUsedAt: string | null; expiresAt: string | null }>[],
+    nowMs: number,
+): number | null {
+    let nextAt: number | null = null;
+    const consider = (candidate: number | null): void => {
+        if (candidate === null || !Number.isFinite(candidate) || candidate <= nowMs) return;
+        nextAt = nextAt === null ? candidate : Math.min(nextAt, candidate);
+    };
+
+    for (const token of tokens) {
+        consider(resolveNextRelativeTimeChangeAt(Date.parse(token.createdAt), nowMs));
+        if (token.lastUsedAt) consider(resolveNextRelativeTimeChangeAt(Date.parse(token.lastUsedAt), nowMs));
+
+        const expiresAtMs = token.expiresAt ? Date.parse(token.expiresAt) : Number.NaN;
+        if (!Number.isFinite(expiresAtMs)) continue;
+        const expiringAtMs = expiresAtMs - API_TOKEN_EXPIRING_WINDOW_MS;
+        if (nowMs < expiringAtMs) consider(expiringAtMs);
+        else if (nowMs < expiresAtMs) consider(expiresAtMs);
+    }
+
+    return nextAt;
+}
+
+function useApiTokenSettingsClock(
+    tokens: readonly Readonly<{ createdAt: string; lastUsedAt: string | null; expiresAt: string | null }>[],
+    active: boolean,
+): number {
+    const [nowMs, setNowMs] = React.useState(() => Date.now());
+    const tokensRef = React.useRef(tokens);
+    tokensRef.current = tokens;
+    const timingKey = tokens.map((token) => [
+        token.createdAt,
+        token.lastUsedAt ?? '',
+        token.expiresAt ?? '',
+    ].join('\u001f')).join('\u001e');
+
+    React.useEffect(() => {
+        if (!active || tokensRef.current.length === 0) return undefined;
+
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        let disposed = false;
+        const scheduleNextChange = () => {
+            const currentNowMs = Date.now();
+            setNowMs((previousNowMs) => previousNowMs === currentNowMs ? previousNowMs : currentNowMs);
+
+            const nextAtMs = resolveNextApiTokenPresentationChangeAt(tokensRef.current, currentNowMs);
+            if (nextAtMs === null || disposed) return;
+            timeout = setTimeout(scheduleNextChange, Math.max(1, nextAtMs - currentNowMs + 1));
+        };
+
+        scheduleNextChange();
+        return () => {
+            disposed = true;
+            if (timeout) clearTimeout(timeout);
+        };
+    }, [active, timingKey]);
+
+    return nowMs;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -91,24 +177,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         opacity: 0.55,
     },
-    skeletonRow: {
-        height: Platform.select({ ios: 68, default: 76 }),
-        paddingHorizontal: 16,
-        justifyContent: 'center',
-        gap: 8,
-    },
-    skeletonTitle: {
-        width: '42%',
-        height: 14,
-        borderRadius: 6,
-        backgroundColor: theme.colors.surface.inset,
-    },
-    skeletonSubtitle: {
-        width: '68%',
-        height: 11,
-        borderRadius: 5,
-        backgroundColor: theme.colors.surface.inset,
-    },
     feedback: {
         ...Typography.default(),
         fontSize: 13,
@@ -136,6 +204,9 @@ function TokenRow(props: Readonly<{
     controller: ApiTokenSettingsController;
     token: ReturnType<typeof buildApiTokenRowPresentation>['token'];
     nowMs: number;
+    operation: 'revoke' | 'revokeAll' | 'signOutEverywhere' | null;
+    operationTokenId: string | null;
+    actionsPending: boolean;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -147,6 +218,7 @@ function TokenRow(props: Readonly<{
         : presentation.status === 'expiring'
             ? t('settingsApiTokens.status.expiring')
             : null;
+    const revokingThisToken = props.operation === 'revoke' && props.operationTokenId === props.token.tokenId;
 
     const revoke = React.useCallback(async () => {
         const confirmed = await Modal.confirm(
@@ -166,8 +238,9 @@ function TokenRow(props: Readonly<{
         title: t('settingsApiTokens.revoke.confirm'),
         icon: 'trash' as const,
         destructive: true,
+        disabled: props.actionsPending,
         onPress: revoke,
-    }], [props.token.tokenId, revoke]);
+    }], [props.actionsPending, props.token.tokenId, revoke]);
 
     return (
         <Item
@@ -217,6 +290,8 @@ function TokenRow(props: Readonly<{
                 />
             )}
             rightElementOutsidePressable
+            disabled={props.actionsPending}
+            loading={revokingThisToken}
             showChevron={false}
         />
     );
@@ -227,12 +302,25 @@ function SkeletonRows() {
     return (
         <ItemGroup title={t('settingsApiTokens.tokens')}>
             {[0, 1, 2].map((index) => (
-                <ShimmerView key={index} animationEnabled style={styles.skeletonRow}>
-                    <View testID={`settings-api-tokens-skeleton:${index}`} style={styles.skeletonRow}>
-                        <View style={styles.skeletonTitle} />
-                        <View style={styles.skeletonSubtitle} />
-                    </View>
-                </ShimmerView>
+                <View
+                    key={index}
+                    testID={`settings-api-tokens-skeleton:${index}`}
+                    aria-hidden={true}
+                    accessibilityElementsHidden={true}
+                    importantForAccessibility="no-hide-descendants"
+                >
+                    <ShimmerView animationEnabled>
+                        <Item
+                            testID={`settings-api-tokens-skeleton-row:${index}`}
+                            mode="info"
+                            title={SKELETON_TITLE}
+                            subtitle={<Text style={styles.metadataLabel}>{SKELETON_METADATA}</Text>}
+                            icon={<Icon name="key" size={24} />}
+                            showChevron={false}
+                            showDivider={false}
+                        />
+                    </ShimmerView>
+                </View>
             ))}
         </ItemGroup>
     );
@@ -243,12 +331,20 @@ function ApiTokenListRetry(props: Readonly<{
     error: string | null;
     testID: string;
     retryTestID: string;
+    disabled: boolean;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     return (
         <ItemGroup>
-            <View testID={props.testID} style={styles.listErrorContainer}>
+            <View
+                testID={props.testID}
+                style={styles.listErrorContainer}
+                accessibilityRole="alert"
+                accessibilityLiveRegion="assertive"
+                role="alert"
+                aria-live="assertive"
+            >
                 <CenteredInfoTile
                     icon={<Icon name="warning" size={30} color={theme.colors.state.danger.foreground} />}
                     title={t('settingsApiTokens.errors.listTitle')}
@@ -259,6 +355,7 @@ function ApiTokenListRetry(props: Readonly<{
                         size="normal"
                         title={t('common.retry')}
                         testID={props.retryTestID}
+                        disabled={props.disabled}
                         action={props.controller.refresh}
                     />
                 </View>
@@ -279,21 +376,40 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
         ownedControllerRef.current = createApiTokenSettingsController();
     }
     const controller = props.controller ?? ownedControllerRef.current!;
+    const activeServerAccountScope = useActiveServerAccountScope();
     const state = useApiTokenSettingsControllerState(controller);
     const presentation = resolveApiTokenListPresentation(state);
     const reducedMotion = useReducedMotionPreference();
-    const nowMs = Date.now();
+    const hostActivelyViewed = useHostActivelyViewed();
     const tokenListTransitionKey = state.tokens.map((token) => token.tokenId).join(',') || 'empty';
     const showsTokenList = presentation === 'list' || presentation === 'listWithRetry';
     const showsEmptyState = presentation === 'empty' || presentation === 'emptyWithRetry';
     const showsRefreshRetry = presentation === 'listWithRetry' || presentation === 'emptyWithRetry';
+    const nowMs = useApiTokenSettingsClock(state.tokens, hostActivelyViewed && showsTokenList);
+    const actionsPending = state.phase === 'loading'
+        || state.isRefreshing
+        || state.createPending
+        || state.operation !== null;
+    const announcedOperationNoticeRef = React.useRef<typeof state.operationNotice | null>(null);
 
     React.useEffect(() => {
         void controller.refresh();
         return () => {
             if (!props.controller) controller.retire();
         };
-    }, [controller, props.controller]);
+    }, [
+        activeServerAccountScope?.accountId,
+        activeServerAccountScope?.serverId,
+        controller,
+        props.controller,
+    ]);
+
+    React.useEffect(() => {
+        const previousNotice = announcedOperationNoticeRef.current;
+        announcedOperationNoticeRef.current = state.operationNotice;
+        if (!state.operationNotice || state.operationNotice === previousNotice) return;
+        announceAccessibilityMessage(resolveOperationNotice(state.operationNotice));
+    }, [state.operationNotice]);
 
     const revokeAll = React.useCallback(async () => {
         const confirmed = await Modal.confirm(
@@ -324,6 +440,7 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
             refreshControl={(
                 <RefreshControl
                     refreshing={state.isRefreshing}
+                    enabled={!actionsPending}
                     onRefresh={() => void controller.refresh()}
                     tintColor={theme.colors.text.secondary}
                 />
@@ -337,6 +454,7 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                         size="normal"
                         title={t('settingsApiTokens.create.button')}
                         testID="settings-api-tokens-create"
+                        disabled={actionsPending}
                         onPress={() => showApiTokenCreateModal(controller)}
                     />
                     {state.isRefreshing && state.tokens.length > 0 ? (
@@ -354,6 +472,7 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                     error={state.listError}
                     testID="settings-api-tokens-list-error"
                     retryTestID="settings-api-tokens-list-retry"
+                    disabled={actionsPending}
                 />
             ) : null}
             {showsTokenList || showsEmptyState ? (
@@ -377,7 +496,15 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                     ) : (
                         <ItemGroup title={t('settingsApiTokens.tokens')}>
                             {state.tokens.map((token) => (
-                                <TokenRow key={token.tokenId} controller={controller} token={token} nowMs={nowMs} />
+                                <TokenRow
+                                    key={token.tokenId}
+                                    controller={controller}
+                                    token={token}
+                                    nowMs={nowMs}
+                                    operation={state.operation}
+                                    operationTokenId={state.operationTokenId}
+                                    actionsPending={actionsPending}
+                                />
                             ))}
                         </ItemGroup>
                     )}
@@ -389,6 +516,7 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                     error={state.listError}
                     testID="settings-api-tokens-refresh-error"
                     retryTestID="settings-api-tokens-refresh-retry"
+                    disabled={actionsPending}
                 />
             ) : null}
 
@@ -400,6 +528,9 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                             ? t(resolveApiTokenOperationErrorMessageKey(state.operationError))
                             : resolveOperationNotice(state.operationNotice!)}
                         titleStyle={[styles.feedback, state.operationError ? styles.error : styles.notice]}
+                        accessibilityRole={state.operationError ? 'alert' : undefined}
+                        accessibilityLiveRegion={state.operationError ? 'assertive' : 'none'}
+                        webRole={state.operationError ? 'alert' : undefined}
                         icon={<Icon
                             name={state.operationError ? 'warning' : 'check-circle'}
                             size={22}
@@ -417,7 +548,7 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                     subtitle={t('settingsApiTokens.revokeAll.subtitle')}
                     icon={<Icon name="trash" size={24} color={theme.colors.state.danger.foreground} />}
                     destructive
-                    disabled={state.tokens.length === 0 || state.operation !== null}
+                    disabled={state.tokens.length === 0 || actionsPending}
                     loading={state.operation === 'revokeAll'}
                     onPress={revokeAll}
                 />
@@ -427,7 +558,7 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                     subtitle={t('settingsApiTokens.signOutEverywhere.subtitle')}
                     icon={<Icon name="sign-out" size={24} color={theme.colors.state.danger.foreground} />}
                     destructive
-                    disabled={state.operation !== null}
+                    disabled={actionsPending}
                     loading={state.operation === 'signOutEverywhere'}
                     onPress={signOutEverywhere}
                 />

@@ -46,5 +46,9 @@ describe('SoftSlideTransitionFrame native blur', () => {
         );
 
         expect(screen.findAllByType('BlurView')).toHaveLength(2);
+        expect(screen.findByTestId('soft-exit-layer')?.props).toMatchObject({
+            accessibilityElementsHidden: true,
+            importantForAccessibility: 'no-hide-descendants',
+        });
     });
 });

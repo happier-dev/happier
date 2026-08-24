@@ -74,6 +74,11 @@ describe('SoftSlideTransitionFrame', () => {
         expect(currentStyle.filter).toBe('blur(10px)');
         expect(exitStyle.filter).toBe('blur(0px)');
         expect(exitStyle.transitionProperty).toBe('opacity, transform, filter');
+        expect(screen.findByTestId('soft-exit-layer')?.props).toMatchObject({
+            'aria-hidden': true,
+            accessibilityElementsHidden: true,
+            importantForAccessibility: 'no-hide-descendants',
+        });
     });
 
     it('keeps outgoing and incoming web slides mounted during a reduced-motion crossfade', async () => {

@@ -47,6 +47,5 @@ export function resolveApiTokenOperationErrorMessageKey(error: string | null): T
     if (error === 'auth_unavailable' || error === 'offline' || error === 'network_error') {
         return 'settingsApiTokens.errors.offline';
     }
-    if (error === 'account_mismatch') return 'settingsApiTokens.errors.accountMismatch';
     return 'settingsApiTokens.errors.unavailable';
 }

@@ -5,7 +5,6 @@ import { useRouter } from 'expo-router';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -94,12 +93,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 4,
         borderRadius: 8,
     },
-    actionSettingsLinkFocused: {
+    webFocusRing: {
         ...(Platform.select({
             web: {
                 outlineStyle: 'solid',
                 outlineWidth: 2,
-                outlineColor: theme.colors.border.strong,
+                outlineColor: theme.colors.border.focus,
                 outlineOffset: -2,
             },
             default: {},
@@ -158,7 +157,132 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         color: theme.colors.button.secondary.tint,
     },
+    copyFeedbackContent: {
+        position: 'relative',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    copyFeedbackLayer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+    },
+    copyFeedbackOverlay: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+    },
 }));
+
+function ApiTokenCopyFeedbackContent(props: Readonly<{
+    copied: boolean;
+    color: string;
+}>) {
+    const styles = stylesheet;
+    const progress = React.useRef(new Animated.Value(props.copied ? 1 : 0)).current;
+
+    React.useEffect(() => {
+        const animation = Animated.timing(progress, {
+            toValue: props.copied ? 1 : 0,
+            duration: motionTokens.durationMs.fast,
+            easing: motionTokens.easing.standard,
+            useNativeDriver: true,
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [progress, props.copied]);
+
+    const hiddenFromAccessibility = {
+        accessibilityElementsHidden: true,
+        importantForAccessibility: 'no-hide-descendants' as const,
+    };
+
+    return (
+        <View style={styles.copyFeedbackContent}>
+            <Animated.View
+                {...hiddenFromAccessibility}
+                style={[styles.copyFeedbackLayer, {
+                    opacity: progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                }]}
+            >
+                <Icon name="copy" size={18} color={props.color} />
+                <Text style={styles.copyText}>{t('settingsApiTokens.reveal.copy')}</Text>
+            </Animated.View>
+            <Animated.View
+                {...hiddenFromAccessibility}
+                style={[styles.copyFeedbackLayer, styles.copyFeedbackOverlay, { opacity: progress }]}
+            >
+                <Icon name="check" size={18} color={props.color} />
+                <Text style={styles.copyText}>{t('settingsApiTokens.reveal.copied')}</Text>
+            </Animated.View>
+        </View>
+    );
+}
+
+function ApiTokenRevealDone(props: Readonly<{
+    revealKey: string;
+    reducedMotion: boolean;
+    onClose: () => void;
+}>) {
+    const progress = React.useRef(new Animated.Value(props.reducedMotion ? 1 : 0)).current;
+    const [revealed, setRevealed] = React.useState(props.reducedMotion);
+
+    React.useEffect(() => {
+        if (props.reducedMotion) {
+            progress.setValue(1);
+            setRevealed(true);
+            return;
+        }
+        progress.setValue(0);
+        setRevealed(false);
+        const animation = Animated.timing(progress, {
+            toValue: 1,
+            delay: motionTokens.durationMs.fast * 3,
+            duration: stepTransitionTokens.durationMs.enter,
+            easing: stepTransitionTokens.easing,
+            useNativeDriver: true,
+        });
+        const revealTimer = setTimeout(
+            () => setRevealed(true),
+            motionTokens.durationMs.fast * 3 + stepTransitionTokens.durationMs.enter,
+        );
+        animation.start();
+        return () => {
+            clearTimeout(revealTimer);
+            animation.stop();
+        };
+    }, [progress, props.reducedMotion, props.revealKey]);
+
+    return (
+        <Animated.View
+            testID="settings-api-tokens-reveal-stage-done"
+            pointerEvents={revealed ? 'auto' : 'none'}
+            accessibilityElementsHidden={!revealed}
+            importantForAccessibility={revealed ? 'auto' : 'no-hide-descendants'}
+            style={{
+                opacity: progress,
+                transform: props.reducedMotion ? [] : [{
+                    translateY: progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [stepTransitionTokens.translatePx, 0],
+                    }),
+                }],
+            }}
+        >
+            <RoundButton
+                size="normal"
+                title={t('common.done')}
+                testID="settings-api-tokens-reveal-done"
+                disabled={!revealed}
+                onPress={props.onClose}
+            />
+        </Animated.View>
+    );
+}
 
 function ApiTokenRevealStages(props: Readonly<{
     revealKey: string;
@@ -175,7 +299,7 @@ function ApiTokenRevealStages(props: Readonly<{
 
     React.useEffect(() => {
         activeAnimationRef.current?.stop();
-        const stageProgresses = [successProgress, warningProgress, secretProgress];
+        const stageProgresses = [successProgress, secretProgress, warningProgress];
 
         if (props.reducedMotion) {
             stageProgresses.forEach((progress) => progress.setValue(1));
@@ -217,8 +341,8 @@ function ApiTokenRevealStages(props: Readonly<{
         return (
             <Animated.View testID="settings-api-tokens-reveal-reduced-fade" style={{ gap: 18, opacity: reducedOpacity }}>
                 {props.success}
-                {props.warning}
                 {props.secret}
+                {props.warning}
             </Animated.View>
         );
     }
@@ -238,11 +362,11 @@ function ApiTokenRevealStages(props: Readonly<{
             <Animated.View testID="settings-api-tokens-reveal-stage-success" style={stageStyle(successProgress)}>
                 {props.success}
             </Animated.View>
-            <Animated.View testID="settings-api-tokens-reveal-stage-warning" style={stageStyle(warningProgress)}>
-                {props.warning}
-            </Animated.View>
             <Animated.View testID="settings-api-tokens-reveal-stage-secret" style={stageStyle(secretProgress)}>
                 {props.secret}
+            </Animated.View>
+            <Animated.View testID="settings-api-tokens-reveal-stage-warning" style={stageStyle(warningProgress)}>
+                {props.warning}
             </Animated.View>
         </View>
     );
@@ -269,15 +393,20 @@ export function ApiTokenCreateModal(props: Readonly<{
     const footer = React.useMemo(() => (
         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
             {reveal ? (
-                <RoundButton
-                    size="normal"
-                    title={t('common.done')}
-                    testID="settings-api-tokens-reveal-done"
-                    onPress={props.onClose}
+                <ApiTokenRevealDone
+                    revealKey={reveal.token}
+                    reducedMotion={reducedMotion}
+                    onClose={props.onClose}
                 />
             ) : (
                 <>
-                    <RoundButton size="normal" display="inverted" title={t('common.cancel')} onPress={props.onClose} />
+                    <RoundButton
+                        size="normal"
+                        display="inverted"
+                        title={t('common.cancel')}
+                        disabled={state.createPending}
+                        onPress={props.onClose}
+                    />
                     <RoundButton
                         size="normal"
                         title={t('settingsApiTokens.create.submit')}
@@ -289,7 +418,7 @@ export function ApiTokenCreateModal(props: Readonly<{
                 </>
             )}
         </View>
-    ), [props.controller, props.onClose, reveal, state.createDraft.label, state.createPending]);
+    ), [props.controller, props.onClose, reducedMotion, reveal, state.createDraft.label, state.createPending]);
 
     useModalCardChrome(props.setChrome, React.useMemo(() => ({
         kind: 'card' as const,
@@ -346,17 +475,19 @@ export function ApiTokenCreateModal(props: Readonly<{
                                     accessibilityLiveRegion="polite"
                                     focusable
                                     onPress={copy}
-                                    style={styles.copyRow}
+                                    style={(interactionState) => {
+                                        const webState = interactionState as typeof interactionState & { focused?: boolean };
+                                        return [
+                                            styles.copyRow,
+                                            webState.focused === true ? styles.webFocusRing : null,
+                                            { opacity: interactionState.pressed ? 0.7 : 1 },
+                                        ];
+                                    }}
                                 >
-                                    <Icon
-                                        name={copyFeedback.isCopied('token') ? 'check' : 'copy'}
-                                        size={18}
+                                    <ApiTokenCopyFeedbackContent
+                                        copied={copyFeedback.isCopied('token')}
                                         color={theme.colors.button.secondary.tint}
                                     />
-                                    <Text style={styles.copyText}>
-                                        {copyFeedback.isCopied('token') ? t('settingsApiTokens.reveal.copied') : t('settingsApiTokens.reveal.copy')}
-                                    </Text>
-                                    <CopiedPill visible={copyFeedback.isCopied('token')} testID="settings-api-tokens-copy-feedback" />
                                 </Pressable>
                                 {copyError ? (
                                     <Text accessibilityLiveRegion="assertive" style={styles.error} testID="settings-api-tokens-copy-error">
@@ -378,6 +509,7 @@ export function ApiTokenCreateModal(props: Readonly<{
                                 value={state.createDraft.label}
                                 placeholder={t('settingsApiTokens.create.labelPlaceholder')}
                                 placeholderTextColor={theme.colors.input.placeholder}
+                                editable={!state.createPending}
                                 onChangeText={(label) => props.controller.setCreateDraft({ ...state.createDraft, label })}
                                 style={styles.input}
                                 returnKeyType="done"
@@ -396,9 +528,19 @@ export function ApiTokenCreateModal(props: Readonly<{
                                             key={preset}
                                             testID={`settings-api-tokens-expiry-${preset}`}
                                             accessibilityRole="radio"
-                                            accessibilityState={{ checked: selected }}
+                                            accessibilityState={{ checked: selected, disabled: state.createPending }}
+                                            aria-checked={Platform.OS === 'web' ? selected : undefined}
+                                            disabled={state.createPending}
                                             onPress={() => props.controller.setCreateDraft({ ...state.createDraft, expiryPreset: preset })}
-                                            style={[styles.preset, selected ? styles.presetSelected : null]}
+                                            style={(interactionState) => {
+                                                const webState = interactionState as typeof interactionState & { focused?: boolean };
+                                                return [
+                                                    styles.preset,
+                                                    selected ? styles.presetSelected : null,
+                                                    webState.focused === true ? styles.webFocusRing : null,
+                                                    { opacity: interactionState.pressed ? 0.7 : 1 },
+                                                ];
+                                            }}
                                         >
                                             <Text style={[styles.presetText, selected ? styles.presetTextSelected : null]}>
                                                 {t(`settingsApiTokens.create.expiryOptions.${preset}`)}
@@ -414,7 +556,9 @@ export function ApiTokenCreateModal(props: Readonly<{
                                 testID="settings-api-tokens-action-settings"
                                 accessibilityRole="link"
                                 accessibilityLabel={t('settingsApiTokens.create.actionSettingsLink')}
+                                accessibilityState={{ disabled: state.createPending }}
                                 focusable
+                                disabled={state.createPending}
                                 onPress={() => {
                                     props.onClose();
                                     router.push('/settings/actions');
@@ -427,7 +571,7 @@ export function ApiTokenCreateModal(props: Readonly<{
                                             minWidth: minimumInteractiveTargetSize,
                                             minHeight: minimumInteractiveTargetSize,
                                         },
-                                        webState.focused === true ? styles.actionSettingsLinkFocused : null,
+                                        webState.focused === true ? styles.webFocusRing : null,
                                         { opacity: interactionState.pressed ? 0.7 : 1 },
                                     ];
                                 }}

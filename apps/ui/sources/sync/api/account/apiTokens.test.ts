@@ -22,11 +22,14 @@ afterEach(() => {
 async function loadClient(params?: Readonly<{
     retireBeforeRequest?: boolean;
     responseForPath?: (path: string) => unknown;
+    throwForPath?: (path: string) => unknown;
 }>) {
     let current = true;
     let generation = 1;
     const retireCallbacks = new Set<() => void>();
     const transport = vi.fn(async (path: string, _init?: RequestInit) => {
+        const thrown = params?.throwForPath?.(path);
+        if (thrown !== undefined) throw thrown;
         const body = params?.responseForPath?.(path) ?? (
             path.endsWith('/create') ? created
                 : path.endsWith('/list') ? { tokens: [token] }
@@ -120,5 +123,17 @@ describe('current-Account API-token Action transport', () => {
                 : { tokens: [token] },
         });
         await expect(malformed.listCurrentAccountApiTokens({})).rejects.toThrow('account_api_tokens_unavailable');
+    });
+
+    it('returns a typed network failure so the Action boundary can preserve the designed offline retry state', async () => {
+        const client = await loadClient({
+            throwForPath: (path) => path.endsWith('/list') ? new Error('network down') : undefined,
+        });
+
+        await expect(client.listCurrentAccountApiTokens({})).resolves.toEqual({
+            ok: false,
+            errorCode: 'network_error',
+            error: 'network_error',
+        });
     });
 });

@@ -192,6 +192,7 @@ export function createApiTokenSettingsController(
             return () => listeners.delete(listener);
         },
         async refresh() {
+            if (retired || activeRequest) return;
             const hadContent = state.phase === 'ready';
             publish({
                 ...state,
@@ -229,6 +230,7 @@ export function createApiTokenSettingsController(
             publish({ ...state, createDraft: DEFAULT_DRAFT, createError: null });
         },
         async createToken() {
+            if (retired || activeRequest) return;
             const label = state.createDraft.label.trim();
             if (!label) {
                 publish({ ...state, createError: 'label_required' });
@@ -270,12 +272,14 @@ export function createApiTokenSettingsController(
             publish({ ...state, reveal: null, createDraft: DEFAULT_DRAFT, createError: null });
         },
         async requestRevealDismiss(confirm) {
+            if (state.createPending) return false;
             if (!state.reveal) return true;
             if (!state.reveal.acknowledged && !(await confirm())) return false;
             publish({ ...state, reveal: null, createDraft: DEFAULT_DRAFT, createError: null });
             return true;
         },
         async revokeToken(tokenId) {
+            if (retired || activeRequest) return false;
             publish({ ...state, operation: 'revoke', operationTokenId: tokenId, operationError: null, operationNotice: null });
             const result = await run({
                 actionId: 'account.apiTokens.revoke',
@@ -298,6 +302,7 @@ export function createApiTokenSettingsController(
             return true;
         },
         async revokeAllTokens() {
+            if (retired || activeRequest) return null;
             publish({ ...state, operation: 'revokeAll', operationTokenId: null, operationError: null, operationNotice: null });
             const result = await run({
                 actionId: 'account.apiTokens.revokeAll',
@@ -319,6 +324,7 @@ export function createApiTokenSettingsController(
             return result.value.revokedCount;
         },
         async signOutEverywhere() {
+            if (retired || activeRequest) return false;
             publish({ ...state, operation: 'signOutEverywhere', operationTokenId: null, operationError: null, operationNotice: null });
             const result = await run({
                 actionId: 'account.sessions.signOutEverywhere',
