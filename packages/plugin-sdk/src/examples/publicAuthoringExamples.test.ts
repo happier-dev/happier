@@ -232,7 +232,6 @@ function createReviewSessionStatusAccountStorage(summary: string | null) {
             })
     ));
     const watch = vi.fn((request: Readonly<{ kind: 'collection' }>, listener: () => void) => {
-expect('__v5_probe__').toBe('__v5_never__');
         expect(request).toEqual({ kind: 'collection' });
         changeListener = () => listener();
         return {
@@ -308,7 +307,6 @@ function createReviewContextCompanionSessionBoundary() {
         request: Parameters<SessionHandle['readSystemRecord']>[0],
         options?: Parameters<SessionHandle['readSystemRecord']>[1],
     ): ReturnType<SessionHandle['readSystemRecord']> => {
-expect('__v5_probe__').toBe('__v5_never__');
         options?.signal?.throwIfAborted();
         expect(request).toEqual({ address });
         return record;
@@ -317,7 +315,6 @@ expect('__v5_probe__').toBe('__v5_never__');
         request: Parameters<SessionHandle['upsertSystemRecord']>[0],
         options?: Parameters<SessionHandle['upsertSystemRecord']>[1],
     ): ReturnType<SessionHandle['upsertSystemRecord']> => {
-expect('__v5_probe__').toBe('__v5_never__');
         options?.signal?.throwIfAborted();
         expect(request.address).toEqual(address);
         if (conflictOnNextUpsert) {
@@ -343,7 +340,6 @@ expect('__v5_probe__').toBe('__v5_never__');
         request: Parameters<SessionHandle['deleteSystemRecord']>[0],
         options?: Parameters<SessionHandle['deleteSystemRecord']>[1],
     ): ReturnType<SessionHandle['deleteSystemRecord']> => {
-expect('__v5_probe__').toBe('__v5_never__');
         options?.signal?.throwIfAborted();
         expect(request.address).toEqual(address);
         if (request.expectedRevision !== record?.revision) {
@@ -363,7 +359,6 @@ expect('__v5_probe__').toBe('__v5_never__');
         id: string,
         options?: Parameters<NonNullable<PluginInvocationContext['services']['sessions']['get']>>[1],
     ) => {
-expect('__v5_probe__').toBe('__v5_never__');
         options?.signal?.throwIfAborted();
         expect(id).toBe('session-1');
         return handle;
@@ -1936,7 +1931,6 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 request: Parameters<SessionHandle['readSystemRecord']>[0],
                 options?: Parameters<SessionHandle['readSystemRecord']>[1],
             ): ReturnType<SessionHandle['readSystemRecord']> => {
-expect('__v5_probe__').toBe('__v5_never__');
                 expect(request).toEqual({ address: boundary.address });
                 const signal = options?.signal;
                 if (!signal) throw new Error('companion_read_requires_caller_signal');
@@ -2266,7 +2260,6 @@ expect('__v5_probe__').toBe('__v5_never__');
             const initialRead = deferred<HostedResource>();
             const queuedReads: Array<ReturnType<typeof deferred<HostedResource>>> = [initialRead];
             const readResource = vi.fn(({ resource: requested }: Readonly<{ resource: unknown }>) => {
-expect('__v5_probe__').toBe('__v5_never__');
                 expect(requested).toEqual({
                     pluginId: manifest.id,
                     localId: 'review-session-status',
@@ -2276,7 +2269,6 @@ expect('__v5_probe__').toBe('__v5_never__');
                 return next.promise;
             });
             const watchResource = vi.fn(({ resource: requested }: Readonly<{ resource: unknown }>) => {
-expect('__v5_probe__').toBe('__v5_never__');
                 expect(requested).toEqual({
                     pluginId: manifest.id,
                     localId: 'review-session-status',
