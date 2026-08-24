@@ -17,6 +17,8 @@ export type { VoiceConnectionMediaHost } from '../client.js';
 export type { VoiceGuidanceAvailability } from '../client.js';
 export type { VoiceHostedConversationService } from '../client.js';
 export type { VoiceMicSession } from '../client.js';
+export type { VoiceOutputFocusApplication } from '../client.js';
+export type { VoiceOutputFocusState } from '../client.js';
 export type { VoiceMicrophoneMode } from '../client.js';
 export type { VoiceOutputInterruptionResolution } from '../client.js';
 export type { VoiceProviderConversationService } from '../client.js';

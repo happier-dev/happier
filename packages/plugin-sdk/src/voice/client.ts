@@ -139,6 +139,13 @@ export type VoiceRealtimeConnectionCloseReason = Readonly<{
     detail?: string;
 }>;
 export type VoiceOutputInterruptionResolution = 'false_alarm' | 'confirmed';
+/**
+ * Host-owned audio-focus policy for one connection's provider-neutral output.
+ * `suspended` keeps the connection and attempt alive while making its output
+ * inaudible; it is not a provider turn-cancellation instruction.
+ */
+export type VoiceOutputFocusState = 'active' | 'ducked' | 'suspended';
+export type VoiceOutputFocusApplication = 'applied' | 'unsupported';
 
 export type VoiceRealtimeConnection = Readonly<{
     readonly kind: 'websocket_pcm' | 'webrtc' | 'sdk_handle';
@@ -168,6 +175,11 @@ export type VoiceRealtimeConnection = Readonly<{
     playbackCursorMs(): number | null;
     beginOutputInterruptionCandidate(): 'retained' | 'ducked' | 'unsupported';
     resolveOutputInterruptionCandidate(resolution: VoiceOutputInterruptionResolution): void;
+    /**
+     * Applies the host's current audio-focus policy. Implementations must retain
+     * a non-active state until a late media/output attachment is available.
+     */
+    setOutputFocusState?(state: VoiceOutputFocusState): VoiceOutputFocusApplication;
 }>;
 
 export type VoiceSdkHandleConnectionDriver = Readonly<{
@@ -184,6 +196,7 @@ export type VoiceSdkHandleConnectionDriver = Readonly<{
     sendControl(event: VoiceRealtimeJsonValue): Promise<void>;
     beginOutputInterruptionCandidate?(): ReturnType<VoiceRealtimeConnection['beginOutputInterruptionCandidate']>;
     resolveOutputInterruptionCandidate?(resolution: VoiceOutputInterruptionResolution): void;
+    setOutputFocusState?(state: VoiceOutputFocusState): void;
     close(reason: VoiceRealtimeConnectionCloseReason): Promise<void>;
 }>;
 
