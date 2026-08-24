@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { lstat, mkdtemp, writeFile, mkdir, realpath, rm, readFile, symlink } from 'node:fs/promises';
+import { cp, lstat, mkdtemp, writeFile, mkdir, realpath, rm, readFile, symlink } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,6 +19,7 @@ import {
   resolvePackDirForComponent,
   resolvePackSandboxWorkspaceRelDirs,
 } from './pack.mjs';
+import { runApiGovernance } from '../../../scripts/api-governance/apiGovernance.mjs';
 
 test('public toolchain pack staging derives its required external inputs from one generator-owned selector', async () => {
   const { resolvePublicToolchainRequiredInputStagingRelDirs } = await import(
@@ -606,6 +607,7 @@ test('exportPackSandboxTarball runs public API governance against the transforme
         apiGovernance: { profileId: 'plugin-ui' },
       },
       createPackSandboxImpl: async () => sandboxRoot,
+      validatePublicationApiGovernanceImpl: async () => ({ status: 'current' }),
       preparePublicationApiGovernanceImpl: async (input) => {
         calls.push(input);
         const transformed = JSON.parse(await readFile(join(sandboxPackDir, 'package.json'), 'utf8'));
@@ -667,6 +669,109 @@ test('exportPackSandboxTarball runs public API governance against the transforme
       removedSymbolsAreBreaking: false,
       humanReviewRequired: false,
     });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('exportPackSandboxTarball rejects API declaration drift introduced only in the exact final tarball', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-final-api-governance-'));
+  const sandboxRoot = join(root, 'sandbox');
+  const sandboxPackDir = join(sandboxRoot, 'packages', 'plugin-ui');
+  const destinationDir = join(root, 'destination');
+  const archiveRoot = join(root, 'archive');
+  const archivePackageDir = join(archiveRoot, 'package');
+  const candidateVersion = '0.1.0-preview.12';
+  const tarballName = `happier-dev-plugin-ui-${candidateVersion}.tgz`;
+  const tarballPath = join(sandboxPackDir, tarballName);
+  const runTar = (args, options = {}) => {
+    const result = spawnSync('tar', args, {
+      cwd: options.cwd,
+      encoding: 'utf8',
+    });
+    if (result.status !== 0) {
+      throw new Error(result.stderr || `tar exited ${result.status}`);
+    }
+    return result.stdout;
+  };
+  try {
+    await mkdir(join(sandboxPackDir, 'dist'), { recursive: true });
+    await mkdir(destinationDir);
+    await writeFile(join(sandboxPackDir, 'package.json'), JSON.stringify({
+      name: '@happier-dev/plugin-ui',
+      version: '0.0.0',
+      private: true,
+      type: 'module',
+      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+      exports: {
+        '.': {
+          types: './dist/index.d.ts',
+          default: './dist/index.js',
+        },
+      },
+    }));
+    await writeFile(
+      join(sandboxPackDir, 'dist', 'index.d.ts'),
+      'export interface Candidate { value: string; }\n',
+    );
+    await writeFile(join(sandboxPackDir, 'dist', 'index.js'), 'export {};\n');
+
+    await assert.rejects(
+      () => exportPackSandboxTarball({
+        monorepoRoot: root,
+        packageRelDir: 'packages/plugin-ui',
+        destinationDir,
+        packageVersion: candidateVersion,
+        publication: {
+          expectedPackageName: '@happier-dev/plugin-ui',
+          requiredFiles: ['API.md', 'api-declarations.md', 'api-surface.json'],
+          apiGovernance: { profileId: 'plugin-ui' },
+        },
+        createPackSandboxImpl: async () => sandboxRoot,
+        preparePublicationApiGovernanceImpl: async () => {
+          const report = await runApiGovernance({
+            profileId: 'plugin-ui',
+            packageRoot: sandboxPackDir,
+            packageRootKind: 'source-complete-publication-sandbox',
+            write: true,
+          });
+          return {
+            summary: {
+              status: report.status,
+              previousVersion: null,
+              removedSymbolsAreBreaking: false,
+              humanReviewRequired: false,
+            },
+          };
+        },
+        runCaptureImpl: async (command, args, options) => {
+          if (command === 'npm' && args.includes('--dry-run')) return 'dry-run';
+          if (command === 'npm') {
+            await writeFile(
+              join(sandboxPackDir, 'dist', 'index.d.ts'),
+              'export interface Candidate { value: number; }\n',
+            );
+            await mkdir(archivePackageDir, { recursive: true });
+            for (const relativePath of [
+              'package.json',
+              'API.md',
+              'api-declarations.md',
+              'api-surface.json',
+              'dist',
+            ]) {
+              await cp(join(sandboxPackDir, relativePath), join(archivePackageDir, relativePath), {
+                recursive: true,
+              });
+            }
+            runTar(['-czf', tarballPath, '-C', archiveRoot, 'package']);
+            return tarballName;
+          }
+          if (command === 'tar') return runTar(args, options);
+          throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+        },
+      }),
+      /exact final tarball API governance.*drift/u,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

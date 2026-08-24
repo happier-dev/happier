@@ -1297,6 +1297,41 @@ async function preparePublicationApiGovernance(input) {
   });
 }
 
+async function validatePublicationApiGovernance({
+  tarballPath,
+  profileId,
+  runCaptureImpl,
+  sandboxPackDir,
+  env,
+}) {
+  const extractionRoot = await mkdtemp(join(tmpdir(), 'hstack-pack-api-governance-'));
+  try {
+    await runCaptureImpl('tar', ['-xf', tarballPath, '-C', extractionRoot], {
+      cwd: sandboxPackDir,
+      env,
+    });
+    const packageRoot = join(extractionRoot, 'package');
+    const { runApiGovernance, renderApiGovernanceSummary } = await import(
+      '../../../scripts/api-governance/apiGovernance.mjs'
+    );
+    const report = await runApiGovernance({
+      profileId,
+      packageRoot,
+      packageRootKind: 'extracted-final-candidate',
+      check: true,
+    });
+    if (!isPlainRecord(report) || report.status !== 'current') {
+      const summary = isPlainRecord(report)
+        ? renderApiGovernanceSummary(report).trim()
+        : 'shared governance owner returned an invalid report';
+      throw new Error(`[pack] exact final tarball API governance drift for ${profileId}: ${summary}`);
+    }
+    return report;
+  } finally {
+    await rm(extractionRoot, { recursive: true, force: true });
+  }
+}
+
 function assertNoWorkspaceResolution(manifest) {
   for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies']) {
     const entries = manifest[field];
@@ -1318,6 +1353,7 @@ async function validatePublicationTarball({
   env,
   config,
   packageVersion,
+  validatePublicationApiGovernanceImpl,
 }) {
   if (!tarPaths.includes('package/package.json')) {
     throw new Error('[pack] public tarball is missing package/package.json');
@@ -1364,6 +1400,20 @@ async function validatePublicationTarball({
       throw new Error(`[pack] public tarball peer dependency did not retain expected range: ${peerName}`);
     }
   }
+  if (config.apiGovernance) {
+    const report = await validatePublicationApiGovernanceImpl({
+      tarballPath,
+      profileId: config.apiGovernance.profileId,
+      runCaptureImpl,
+      sandboxPackDir,
+      env,
+    });
+    if (!isPlainRecord(report) || report.status !== 'current') {
+      throw new Error(
+        `[pack] exact final tarball API governance drift for ${config.apiGovernance.profileId}`,
+      );
+    }
+  }
 }
 
 export async function exportPackSandboxTarball({
@@ -1377,6 +1427,7 @@ export async function exportPackSandboxTarball({
   runCaptureImpl = runCapture,
   removeTempDir = rm,
   preparePublicationApiGovernanceImpl = preparePublicationApiGovernance,
+  validatePublicationApiGovernanceImpl = validatePublicationApiGovernance,
 }) {
   const resolvedDestinationDir = await validatePackExportDestinationDir(destinationDir);
   const sandboxRoot = await createPackSandboxImpl({ monorepoRoot, packageRelDir });
@@ -1410,6 +1461,7 @@ export async function exportPackSandboxTarball({
         sandboxPackDir,
         config: publicationConfig,
         packageVersion: String(packageVersion),
+        validatePublicationApiGovernanceImpl,
       });
     }
     if (publicationConfig?.apiGovernance) {
