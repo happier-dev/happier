@@ -55,6 +55,7 @@ import {
     type StructuredQuestionLike,
 } from '@/agent/questions/normalizeStructuredQuestionAnswersV1';
 import { buildAskUserQuestionAnswersForClaude } from './askUserQuestionAnswersForClaude';
+import { normalizeClaudeAskUserQuestionInputForPublication } from './normalizeClaudeAskUserQuestionInput';
 
 type PermissionResponse = PermissionRpcPayload;
 
@@ -595,9 +596,10 @@ export class PermissionHandler {
         };
 
         if (isAskUserQuestionToolName(context.toolName) && response.approved && response.structuredAnswersV1) {
+            const providerInput = this.pendingRequestMetadata.get(context.requestId)?.input ?? context.toolInput;
             const baseInput =
-                context.toolInput && typeof context.toolInput === 'object' && !Array.isArray(context.toolInput)
-                    ? (context.toolInput as Record<string, unknown>)
+                providerInput && typeof providerInput === 'object' && !Array.isArray(providerInput)
+                    ? (providerInput as Record<string, unknown>)
                     : {};
             logger.debug(
                 `[AskUserQuestion] Resolving canCallTool with ${Object.keys(response.structuredAnswersV1).length} answer(s) via updatedInput`,
@@ -788,12 +790,13 @@ export class PermissionHandler {
         signal: AbortSignal,
         opts?: { suggestions?: unknown; sourceLocalId?: string | null }
     ): Promise<PermissionResult> {
+        const publicationInput = normalizeClaudeAskUserQuestionInputForPublication(toolName, input);
         if (signal.aborted) {
             return this.permissionCoordinator.requestDecision(
                 {
                     requestId: id,
                     toolName,
-                    toolInput: input,
+                    toolInput: publicationInput,
                     kind: resolveAgentRequestKind(toolName),
                     sourceLocalId: typeof opts?.sourceLocalId === 'string' ? opts.sourceLocalId : null,
                     permissionSuggestions: Array.isArray(opts?.suggestions) ? opts.suggestions : null,
@@ -815,7 +818,7 @@ export class PermissionHandler {
             {
                 requestId: id,
                 toolName,
-                toolInput: input,
+                toolInput: publicationInput,
                 kind: resolveAgentRequestKind(toolName),
                 sourceLocalId: typeof opts?.sourceLocalId === 'string' ? opts.sourceLocalId : null,
                 permissionSuggestions: Array.isArray(opts?.suggestions) ? opts.suggestions : null,
