@@ -175,6 +175,8 @@ import { PluginTerminalHostError } from '@/plugins/runtime/context/terminalHost'
 import { createCurrentSessionPresentationService } from '@/session/presentation/currentSessionPresentationService';
 import { registerCurrentSessionUiBinding } from '@/session/presentation/currentSessionUiBindings';
 import { readStoredCredentials } from '@/persistence';
+import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
+import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
 import {
     createNativeAgentSessionPublications,
     type NativeAgentSessionPublications,
@@ -896,6 +898,10 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     }>;
     publications: NativeAgentSessionPublications['services'];
     readToolExecutionCapability: () => NonNullable<AgentRuntime['toolExecution']>['capability'] | null;
+    accountSettings?: Readonly<Record<string, unknown>>;
+    profileId?: string | null;
+    sessionMachineId?: string | null;
+    memoryRecallGuidanceEnabled?: boolean;
 }>): AgentSessionHostServices {
     const isSessionScopeCurrent = (): boolean => {
         let current = false;
@@ -1128,6 +1134,48 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
             });
         },
     });
+    const happierTools: NonNullable<AgentSessionHostServices['happierTools']> = Object.freeze({
+        async resolveNativeBridge(request, options) {
+            assertSessionScopeAvailable('happier-tools');
+            const signal = combineSessionOperationSignal(params.signal, options?.signal);
+            signal.throwIfAborted();
+            const argsPrefix = [
+                'tools',
+                'call',
+                '--source',
+                'happier',
+                '--agent-bridge',
+                '--session-id',
+                params.sessionId,
+                '--directory',
+                params.directory,
+            ];
+            const launch = buildHappyCliSubprocessLaunchSpec(argsPrefix);
+            const env = Object.fromEntries(
+                Object.entries(launch.env ?? {}).filter((entry): entry is [string, string] => (
+                    typeof entry[1] === 'string'
+                )),
+            );
+            return Object.freeze({
+                v: 1 as const,
+                sessionId: params.sessionId,
+                directory: params.directory,
+                systemPrompt: typeof request.systemPrompt === 'string' ? request.systemPrompt : '',
+                tools: resolveSessionNativeToolDescriptors({
+                    accountSettings: params.accountSettings ?? {},
+                    profileId: params.profileId ?? null,
+                    sessionId: params.sessionId,
+                    sessionMachineId: params.sessionMachineId ?? null,
+                    memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled === true,
+                }),
+                launch: Object.freeze({
+                    executablePath: launch.filePath,
+                    argsPrefix: Object.freeze([...launch.args]),
+                    ...(Object.keys(env).length === 0 ? {} : { env: Object.freeze(env) }),
+                }),
+            });
+        },
+    });
     const terminalHost = params.terminalHost
         ? createPublicNativeAgentSessionTerminalHostService(params.terminalHost)
         : undefined;
@@ -1146,6 +1194,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
         mcp,
         workflowActivity,
         toolExecution,
+        happierTools,
     });
 }
 
@@ -4300,6 +4349,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         signal,
                         isCurrent: identity.isCurrent,
                         session: hostRuntimeParams.session,
+                        accountSettings: hostRuntimeParams.accountSettings ?? {},
+                        profileId: typeof hostRuntimeParams.metadata.profileId === 'string'
+                            ? hostRuntimeParams.metadata.profileId
+                            : null,
+                        sessionMachineId: hostRuntimeParams.machineId,
+                        memoryRecallGuidanceEnabled: hostRuntimeParams.memoryRecallGuidanceEnabled,
                         ...(terminalHostScope ? { terminalHost: terminalHostScope.service } : {}),
                         publications: publications.services,
                         readToolExecutionCapability: () => runtime?.toolExecution?.capability ?? null,
