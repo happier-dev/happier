@@ -1,5 +1,6 @@
 import { db } from "@/storage/db";
 import * as privacyKit from "privacy-kit";
+import { isPublicAccountScopedKvKey } from "./reservedAccountScopedKvRow";
 
 export interface KVBulkGetResult {
     values: Array<{
@@ -17,11 +18,14 @@ export async function kvBulkGet(
     ctx: { uid: string },
     keys: string[]
 ): Promise<KVBulkGetResult> {
+    const publicKeys = keys.filter(isPublicAccountScopedKvKey);
+    if (publicKeys.length === 0) return { values: [] };
+
     const results = await db.userKVStore.findMany({
         where: {
             accountId: ctx.uid,
             key: {
-                in: keys
+                in: publicKeys
             },
             value: {
                 not: null  // Exclude deleted entries

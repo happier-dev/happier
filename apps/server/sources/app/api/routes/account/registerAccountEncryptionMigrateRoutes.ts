@@ -30,6 +30,7 @@ import { eventRouter } from "@/app/events/eventRouter";
 import { buildAccountSettingsChangedUpdate } from "@/app/events/eventPayloadBuilders";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { migrateNewSessionDraftsForAccountModeInTx } from "@/app/account/sessionDrafts/sessionDraftService";
 import { recordAccountSettingsSnapshotsForWrite } from "@/app/accountSettings/accountSettingsHistoryRepository";
 
 class AccountEncryptionMigrationCredentialRejectedError extends Error {
@@ -55,7 +56,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const userId = request.userId;
-        const { toMode, expectedSettingsVersion, settingsContent, connectedServices, automations, keyProof } = request.body;
+        const { toMode, expectedSettingsVersion, settingsContent, connectedServices, automations, sessionDrafts, keyProof } = request.body;
 
         const encryptionEnv = readEncryptionFeatureEnv(process.env);
 
@@ -245,6 +246,25 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     }
                 }
 
+                const sessionDraftMigration = await migrateNewSessionDraftsForAccountModeInTx(tx, {
+                    accountId: userId,
+                    toMode,
+                    directive: sessionDrafts,
+                });
+                if (sessionDraftMigration.status === "requiresUpgrade") {
+                    return { type: "session-drafts-require-upgrade" as const };
+                }
+                if (sessionDraftMigration.status === "incomplete") {
+                    return { type: "session-drafts-migration-incomplete" as const };
+                }
+                if (sessionDraftMigration.status === "versionMismatch") {
+                    return {
+                        type: "session-drafts-version-mismatch" as const,
+                        address: sessionDraftMigration.address,
+                        currentRevision: sessionDraftMigration.currentRevision,
+                    };
+                }
+
                 const nextSettingsDbValue =
                     toMode === "plain"
                         ? storePlainAccountSettingsDbValue({ accountId: userId, content: settingsContent })
@@ -413,7 +433,12 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     });
                 });
 
-                return { type: "success" as const, mode: toMode, settingsVersion: expectedSettingsVersion + 1 };
+                return {
+                    type: "success" as const,
+                    mode: toMode,
+                    settingsVersion: expectedSettingsVersion + 1,
+                    sessionDraftRecords: sessionDrafts ? sessionDraftMigration.records : undefined,
+                };
             });
 
             if (result.type === "internal-error") return reply.code(500).send({ error: "internal" });
@@ -426,6 +451,19 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
             }
             if (result.type === "version-mismatch") {
                 return reply.code(409).send({ error: "version-mismatch", currentVersion: result.currentVersion });
+            }
+            if (result.type === "session-drafts-version-mismatch") {
+                return reply.code(409).send({
+                    error: "session_drafts_version_mismatch",
+                    address: result.address,
+                    currentRevision: result.currentRevision,
+                });
+            }
+            if (result.type === "session-drafts-require-upgrade") {
+                return reply.code(400).send({ error: "session_drafts_require_upgrade" });
+            }
+            if (result.type === "session-drafts-migration-incomplete") {
+                return reply.code(400).send({ error: "session_drafts_migration_incomplete" });
             }
             if (result.type === "connected-services-not-empty") {
                 return reply.code(400).send({ error: "connected_services_not_empty" });
@@ -444,6 +482,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                 success: true,
                 mode: result.mode,
                 settingsVersion: result.settingsVersion,
+                ...(result.sessionDraftRecords ? { sessionDrafts: { records: result.sessionDraftRecords } } : {}),
             });
         } catch (error) {
             if (error instanceof AccountEncryptionMigrationCredentialRejectedError) {

@@ -75,6 +75,10 @@ export type SessionFoldersFeatureEnv = Readonly<{
   foldersEnabled: boolean;
 }>;
 
+export type SessionDraftsFeatureEnv = Readonly<{
+  draftsEnabled: boolean;
+}>;
+
 export type MachineTransferFeatureEnv = Readonly<{
   directPeerEnabled: boolean;
   serverRoutedEnabled: boolean;
@@ -325,6 +329,12 @@ export function readSessionAgentSwitchingFeatureEnv(env: NodeJS.ProcessEnv): Ses
 export function readSessionFoldersFeatureEnv(env: NodeJS.ProcessEnv): SessionFoldersFeatureEnv {
   return {
     foldersEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsFoldersEnabled], true),
+  };
+}
+
+export function readSessionDraftsFeatureEnv(env: NodeJS.ProcessEnv): SessionDraftsFeatureEnv {
+  return {
+    draftsEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsDraftsEnabled], true),
   };
 }
 

@@ -8,10 +8,20 @@ import {
   readMachineTransferFeatureEnv,
   readPetsFeatureEnv,
   readSessionAgentSwitchingFeatureEnv,
+  readSessionDraftsFeatureEnv,
   readSessionHandoffFeatureEnv,
   readSessionUsageLimitRecoveryFeatureEnv,
   readTerminalFeatureEnv,
 } from './readFeatureEnv';
+
+describe('readSessionDraftsFeatureEnv', () => {
+  it('defaults the server capability on and honors an explicit disable', () => {
+    expect(readSessionDraftsFeatureEnv({}).draftsEnabled).toBe(true);
+    expect(readSessionDraftsFeatureEnv({
+      HAPPIER_FEATURE_SESSIONS_DRAFTS__ENABLED: '0',
+    }).draftsEnabled).toBe(false);
+  });
+});
 
 describe('readConnectedServicesFeatureEnv', () => {
   it('defaults child gates to true when env is unset', () => {

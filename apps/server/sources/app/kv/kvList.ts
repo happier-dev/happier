@@ -1,5 +1,9 @@
 import { db } from "@/storage/db";
 import * as privacyKit from "privacy-kit";
+import {
+    ACCOUNT_SESSION_DRAFT_KV_PREFIX,
+    isPublicAccountScopedKvKey,
+} from "./reservedAccountScopedKvRow";
 
 export interface KVListOptions {
     prefix?: string;
@@ -22,18 +26,23 @@ export async function kvList(
     ctx: { uid: string },
     options?: KVListOptions
 ): Promise<KVListResult> {
+    if (options?.prefix?.startsWith(ACCOUNT_SESSION_DRAFT_KV_PREFIX)) {
+        return { items: [] };
+    }
+
     const where: any = {
         accountId: ctx.uid,
         value: {
             not: null  // Exclude deleted entries (null values)
-        }
+        },
+        NOT: {
+            key: { startsWith: ACCOUNT_SESSION_DRAFT_KV_PREFIX },
+        },
     };
 
     // Add prefix filter if specified
     if (options?.prefix) {
-        where.key = {
-            startsWith: options.prefix
-        };
+        where.key = { startsWith: options.prefix };
     }
 
     const results = await db.userKVStore.findMany({
@@ -46,6 +55,7 @@ export async function kvList(
 
     return {
         items: results
+            .filter(r => isPublicAccountScopedKvKey(r.key))
             .filter(r => r.value !== null)  // Extra safety check
             .map(r => ({
                 key: r.key,
