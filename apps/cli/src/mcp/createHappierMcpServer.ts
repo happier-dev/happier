@@ -14,6 +14,7 @@ import type { Credentials } from '@/persistence';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createDaemonMemoryActionDeps } from '@/session/actions/createDaemonMemoryActionDeps';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
   PromptRegistryInstallRequestV1Schema,
   PromptRegistryInstallResponseV1Schema,
@@ -181,7 +182,29 @@ export function createHappierMcpServer(
       executionRunWait: async (_sessionId, request) => await executionRuns.wait(request),
 
       ...createDaemonMemoryActionDeps({
-        invoke: async ({ method, request }) => await sessionScopedRpc(method, request),
+        invoke: async ({ machineId, method, request }) => {
+          const selectedMachineId = machineId.trim();
+          const sessionMachineId = typeof sessionLocation?.machineId === 'string'
+            ? sessionLocation.machineId.trim()
+            : '';
+          if (sessionMachineId && selectedMachineId === sessionMachineId) {
+            return await sessionScopedRpc(method, request);
+          }
+          if (credentials) {
+            return await callMachineRpc({
+              credentials,
+              machineId: selectedMachineId,
+              method,
+              request,
+            });
+          }
+          if (sessionMachineId) {
+            throw new Error('Cross-machine memory access requires authenticated machine RPC');
+          }
+          // Compatibility clients that do not expose a session machine and do not
+          // provide credentials can only address their already-bound local daemon.
+          return await sessionScopedRpc(method, request);
+        },
       }),
 
       promptRegistryInstall: async (args) => {

@@ -26,6 +26,7 @@ vi.mock('@/session/services/executionRuns', () => ({
 }));
 
 vi.mock('@/session/transport/rpc/machineRpc', () => ({
+  // Replace only the account machine-RPC boundary; the Agent bridge remains real.
   callMachineRpc,
 }));
 

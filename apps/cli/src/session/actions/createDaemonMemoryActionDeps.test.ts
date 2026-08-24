@@ -4,6 +4,7 @@ import { createDaemonMemoryActionDeps } from './createDaemonMemoryActionDeps';
 
 describe('createDaemonMemoryActionDeps', () => {
   it('routes memory actions through one typed daemon RPC adapter', async () => {
+    // Replace only the daemon RPC boundary; request projection and result parsing remain real.
     const invoke = vi.fn(async ({ method }: Readonly<{ method: string }>) => {
       if (method === 'daemon.memory.search') return { v: 1, ok: true, hits: [] };
       if (method === 'daemon.memory.getWindow') return { v: 1, snippets: [], citations: [] };
