@@ -71,15 +71,7 @@ test.describe('ui e2e: MCP settings quick install and new-session picker', () =>
         await gotoDomContentLoadedWithRetries(page, uiBaseUrl, 420_000);
         await waitForInitialAppUi({ page, timeoutMs: 420_000 });
 
-        const createAccountByTestId = page.getByTestId('welcome-create-account');
-        const createAccountByRole = page.getByRole('button', { name: 'Create account' });
-        const createAccount =
-            (await createAccountByTestId.count()) ? createAccountByTestId
-                : (await createAccountByRole.count()) ? createAccountByRole
-                    : null;
-        if (createAccount) {
-            await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-        }
+        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
         const connectDir = resolve(join(suiteDir, 't1-connect-daemon'));
         await mkdir(connectDir, { recursive: true });

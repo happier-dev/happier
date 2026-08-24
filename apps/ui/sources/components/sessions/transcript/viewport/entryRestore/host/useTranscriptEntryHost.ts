@@ -6,7 +6,6 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import { sync, type SessionViewportAnchorSnapshot, type SessionViewportSnapshot } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
-import { TRANSCRIPT_VISUAL_UPDATE_FALLBACK_TIMEOUT_MS } from '@/components/sessions/transcript/_constants';
 import type {
     TranscriptViewportTelemetryEvent,
     TranscriptViewportTelemetryObservationReason,
@@ -65,7 +64,6 @@ import type {
 } from '@/components/sessions/transcript/viewport/prepend/host/runTranscriptPrependOlderLoad';
 import type { TranscriptRenderWindowProjection } from '@/components/sessions/transcript/viewport/window/resolveTranscriptRenderWindowProjection';
 import type { TranscriptJumpTarget } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
-import { waitForVisualUpdateWithTimeout } from '@/components/sessions/transcript/pagination/waitForVisualUpdateWithTimeout';
 import type { TranscriptListRendererKind } from '@/components/sessions/transcript/viewport/shell/renderer/types';
 import type { TranscriptUserScrollIntentOwner, TranscriptUserScrollIntentTimestampReader } from '@/components/sessions/transcript/viewport/driver/userScrollIntentOwner';
 
@@ -264,6 +262,16 @@ export type TranscriptEntryHost = Readonly<{
     verifyNativeSliceEntryRestoreTransaction(): void;
     verifyWebEntryRestoreTransaction(): void;
 }>;
+
+/**
+ * How long to wait before re-testing a loader that answered `in_flight` or `not_ready`, and
+ * how many times. This is a poll cadence for a condition owned elsewhere — the older cursor
+ * being materialized, or another owner's load finishing — not a limit on how much history may
+ * be loaded. A handful of short waits covers cursor materialization after open; past that the
+ * condition is not transient and the fill stops rather than holding the loader hostage.
+ */
+const WEB_FILL_TRANSIENT_RETRY_MS = 25;
+const WEB_FILL_MAX_TRANSIENT_RETRIES = 6;
 
 export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): TranscriptEntryHost {
     const requestSessionOpenInitialFillRef = React.useRef<() => void>(() => {});
@@ -1223,6 +1231,93 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         if (deps.sessionOpenLatch.initialFillStatus() !== 'idle') return;
         if (deps.listLayoutHeight <= 0 || deps.listContentHeight <= 0) return;
         if (!deps.sessionOpenLatch.markInitialFillInProgress(deps.sessionId)) return;
+        const entersAtBottom = deps.sessionEntryViewportRef.current?.shouldFollowBottom !== false;
+        if (Platform.OS === 'web') {
+            // Web can paint the newest transcript immediately: keeping historical loads
+            // inside the session-open latch serialized network, decrypt, and render work
+            // before the session became interactive. So settle FIRST — nothing below this
+            // line is on the open critical path.
+            applySessionOpenLatchEffects(deps.sessionOpenLatch.onInitialFillSettled({
+                nowMs: Date.now(),
+                sessionId: deps.sessionId,
+            }).effects);
+
+            // Settling is not sufficient on its own. The older pager cannot arm on a
+            // NON-SCROLLABLE viewport — every threshold-validity path in
+            // `olderPaginationMachine` requires `scrollable === true`, so `inside` stays
+            // false and the arming branch is unreachable under `scroll`, `edge-reached`
+            // AND `layout-committed` alike (proved by execution in
+            // `olderPaginationMachine.underfilledWeb.test.ts`). A transcript whose newest
+            // page is short — a tail of collapsed tool calls, or a page of sidechain-routed
+            // raw events that add zero main-lane height — would therefore paint underfilled
+            // and never backfill, because there is nothing to scroll.
+            //
+            // So keep filling to scrollability, but do it AFTER settlement and with the
+            // prepend viewport preserved: the reader already has an interactive session and
+            // older rows land above their view instead of moving it.
+            // Bottom entries only. An ANCHORED entry is owned by entry restore, which
+            // materializes its anchor with its own `loadOlder({ preservePrependViewport: false })`
+            // behind `anchorLookupInFlightRef`. Running this fill alongside it put two
+            // viewport policies on one loader with no shared ownership, and — because a
+            // concurrent load answers `in_flight` — this loop counted those answers as
+            // no-progress and could exhaust `maxNoProgressLoads` without ever loading a page.
+            // Filling to bottom-scrollability is not the contract for an anchored entry anyway.
+            if (!entersAtBottom) return;
+            const webFillController = new AbortController();
+            deps.initialFillAbortRef.current?.abort();
+            deps.initialFillAbortRef.current = webFillController;
+            const webFillSignal = webFillController.signal;
+            fireAndForget((async () => {
+                // Same bounds as the open-phase loop, from the same owner — this is the same
+                // question ("how long may a fill chase sufficiency?"), so it must not grow a
+                // second answer. Being off the critical path buys latency, not licence: every
+                // page is still a request, a decrypt and a render.
+                const { budgetMs, maxNoProgressLoads } = resolveTranscriptInitialFillTuning({
+                    transcriptInitialFillBudgetMs: sync.getSyncTuning().transcriptInitialFillBudgetMs,
+                    transcriptInitialFillMaxNoProgressLoads: sync.getSyncTuning().transcriptInitialFillMaxNoProgressLoads,
+                });
+                const startedAtMs = Date.now();
+                // The no-progress counter alone does NOT bound this: a transcript whose pages
+                // each add a couple of px of displayable height resets it every iteration and
+                // would page the whole session to cross one viewport. The open-phase loop
+                // guards that with an absolute ceiling; so must this one.
+                const absoluteFillDeadlineMs = startedAtMs + budgetMs * 5;
+                let loadsWithoutProgress = 0;
+                let transientRetries = 0;
+                let contentHeightBaselinePx = deps.listContentHeightRef.current;
+                while (!webFillSignal.aborted) {
+                    if (deps.isScrollable() && deps.committedMessagesCount > 0) break;
+                    if (loadsWithoutProgress >= maxNoProgressLoads) break;
+                    if (Date.now() >= absoluteFillDeadlineMs) break;
+                    const result = await deps.loadOlder({ preservePrependViewport: true, showLoadingIndicator: false });
+                    if (!result || result.status === 'no_more') break;
+                    // Transient, and NOT this loop's failure. `not_ready` means the older cursor
+                    // has not been materialized yet — the common state immediately after open,
+                    // which is exactly when this runs — and `in_flight` means another owner holds
+                    // the loader. Counting either against the no-progress budget burns it on
+                    // someone else's work; giving up permanently leaves the underfilled transcript
+                    // this fill exists to prevent. So wait for the condition to clear and re-test.
+                    //
+                    // Bounded by an explicit count rather than the deadline alone: the deadline is
+                    // wall-clock, and a transient that never clears would otherwise spin against a
+                    // clock this loop does not advance.
+                    if (result.status === 'in_flight' || result.status === 'not_ready') {
+                        if (transientRetries >= WEB_FILL_MAX_TRANSIENT_RETRIES) break;
+                        transientRetries += 1;
+                        await new Promise((resolve) => setTimeout(resolve, WEB_FILL_TRANSIENT_RETRY_MS));
+                        continue;
+                    }
+                    transientRetries = 0;
+                    await Promise.resolve();
+                    await Promise.resolve();
+                    const contentHeightPx = deps.listContentHeightRef.current;
+                    const madeProgress = contentHeightPx > contentHeightBaselinePx + 1;
+                    contentHeightBaselinePx = madeProgress ? contentHeightPx : contentHeightBaselinePx;
+                    loadsWithoutProgress = madeProgress ? 0 : loadsWithoutProgress + 1;
+                }
+            })(), { tag: 'ChatList.webPostSettleFillToScrollable' });
+            return;
+        }
         deps.initialFillAbortRef.current?.abort();
         const controller = new AbortController();
         deps.initialFillAbortRef.current = controller;
@@ -1235,12 +1330,6 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         fireAndForget((async () => {
             if (shouldPinDuringInitialFill) {
                 deps.pinToBottomRespectingNativeMountSettle('initial-open');
-                if (Platform.OS === 'web') {
-                    await waitForVisualUpdateWithTimeout({
-                        waitForNextVisualUpdate: deps.waitForNextVisualUpdate,
-                        timeoutMs: TRANSCRIPT_VISUAL_UPDATE_FALLBACK_TIMEOUT_MS,
-                    });
-                }
             }
             const tuning = sync.getSyncTuning();
             const startedAtMs = Date.now();

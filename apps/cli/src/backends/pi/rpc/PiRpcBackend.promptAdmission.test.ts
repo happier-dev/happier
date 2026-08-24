@@ -221,7 +221,7 @@ describe('PiRpcBackend prompt admission', () => {
         },
       },
     });
-    await expect(submission.completion).rejects.toThrow('prompt rejected while busy');
+    await expect(submission.completion).rejects.toThrow(/prompt rejected while busy/u);
     await new Promise((resolve) => setTimeout(resolve, 50));
     await expect(submission.admission).resolves.toBe(admission);
   });

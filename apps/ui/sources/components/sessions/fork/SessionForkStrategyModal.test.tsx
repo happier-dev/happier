@@ -10,6 +10,7 @@ const forkSessionMock = vi.hoisted(() => vi.fn());
 const announceAccessibilityMessageMock = vi.hoisted(() => vi.fn());
 const completeSessionForkNavigationMock = vi.hoisted(() => vi.fn());
 const refreshSessionsMock = vi.hoisted(() => vi.fn());
+const acquireUserRequestLeaseMock = vi.hoisted(() => vi.fn(() => () => {}));
 const routerPushMock = vi.hoisted(() => vi.fn());
 const sessionsRef = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
@@ -40,7 +41,12 @@ vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
 vi.mock('@/components/sessions/transcript/forkContext/completeSessionForkNavigation', () => ({
     completeSessionForkNavigation: completeSessionForkNavigationMock,
 }));
-vi.mock('@/sync/sync', () => ({ sync: { refreshSessions: refreshSessionsMock } }));
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        acquireUserRequestLease: acquireUserRequestLeaseMock,
+        refreshSessions: refreshSessionsMock,
+    },
+}));
 vi.mock('expo-router', async (importOriginal) => {
     const actual = await importOriginal<Record<string, unknown>>();
     return { ...actual, router: { ...(actual.router as object), push: routerPushMock } };
@@ -98,6 +104,7 @@ beforeEach(() => {
     completeSessionForkNavigationMock.mockResolvedValue(undefined);
     refreshSessionsMock.mockReset();
     refreshSessionsMock.mockResolvedValue(undefined);
+    acquireUserRequestLeaseMock.mockClear();
     routerPushMock.mockReset();
     sessionsRef.current = {};
 });

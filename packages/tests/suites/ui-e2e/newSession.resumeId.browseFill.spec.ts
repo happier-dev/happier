@@ -194,7 +194,7 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
     await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
     await openNewSessionMachineSelection({ page, uiBaseUrl });
     const machineOption = page.locator(
-      `[data-testid="new-session-machine:${machineId}"], [data-testid="new-session-machine-option:${machineId}"]`,
+      `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`,
     );
     await expect(machineOption).not.toHaveCount(0, { timeout: 120_000 });
     await machineOption.first().click();

@@ -116,35 +116,37 @@ async function resolveExpoWebBaseUrl(params: {
       ? [`http://localhost:${params.expectedPort}`, `http://127.0.0.1:${params.expectedPort}`]
       : [];
 
-  const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
-  const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
-  const orderedCandidates: string[] = [];
-  const seen = new Set<string>();
+  let resolved: ResolvedExpoWebBaseUrl | null = null;
+  await waitFor(async () => {
+    const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
+    const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
+    const orderedCandidates: string[] = [];
+    const seen = new Set<string>();
 
-  for (const raw of [...stdoutCandidates, ...expectedCandidates, ...(expectedCandidates.length > 0 ? [] : defaultCandidates)]) {
-    const url = raw.trim().replace(/\/+$/, '');
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    orderedCandidates.push(url);
-  }
-
-  for (const url of orderedCandidates) {
-    const probe = await inspectUiWebEntryPage(url, params.env);
-    if (probe.isEntryPage) {
-      return { baseUrl: url, hasScriptTags: probe.hasScriptTags };
+    for (const raw of [...stdoutCandidates, ...expectedCandidates, ...(expectedCandidates.length > 0 ? [] : defaultCandidates)]) {
+      const url = raw.trim().replace(/\/+$/, '');
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      orderedCandidates.push(url);
     }
-  }
 
-  for (const url of expectedCandidates.length > 0 ? expectedCandidates : defaultCandidates) {
-    const probe = await inspectUiWebEntryPage(url, params.env);
-    if (probe.isEntryPage) return { baseUrl: url, hasScriptTags: probe.hasScriptTags };
-  }
+    for (const url of orderedCandidates) {
+      const probe = await inspectUiWebEntryPage(url, params.env);
+      if (!probe.isEntryPage) continue;
+      resolved = { baseUrl: url, hasScriptTags: probe.hasScriptTags };
+      return true;
+    }
+    return false;
+  }, {
+    timeoutMs: params.timeoutMs,
+    intervalMs: 250,
+    context: `Expo web entry page from ${params.stdoutPath}`,
+  });
 
-  if (orderedCandidates.length > 0) {
-    return { baseUrl: orderedCandidates[0] as string, hasScriptTags: false };
+  if (!resolved) {
+    throw new Error(`Failed to resolve Expo web baseUrl from stdout log: ${params.stdoutPath}`);
   }
-
-  throw new Error(`Failed to resolve Expo web baseUrl from stdout log: ${params.stdoutPath}`);
+  return resolved;
 }
 
 async function isMetroPackagerReady(baseUrl: string): Promise<boolean> {
@@ -164,11 +166,6 @@ export function resolveUiWebScriptFetchAttemptTimeoutMs(env: NodeJS.ProcessEnv, 
 
 export function resolveUiWebScriptHtmlRefreshRetryCount(env: NodeJS.ProcessEnv): number {
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT, 3);
-}
-
-export function resolveUiWebAllowScriptReadyTimeout(env: NodeJS.ProcessEnv): boolean {
-  const raw = String(env.HAPPIER_E2E_UI_WEB_ALLOW_SCRIPT_READY_TIMEOUT ?? '1').trim().toLowerCase();
-  return !(raw === '0' || raw === 'false' || raw === 'no' || raw === 'off');
 }
 
 type ScriptReadyProbe = 'ready' | 'retry' | 'refresh-html';
@@ -197,49 +194,39 @@ async function resolvePrimaryAppScriptUrl(baseUrl: string, env: NodeJS.ProcessEn
   return scripts.length > 0 ? selectPrimaryAppScriptUrl(scripts) : null;
 }
 
-async function waitForPrimaryAppScriptReady(baseUrl: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+async function waitForPrimaryAppScriptReady(baseUrl: string, env: NodeJS.ProcessEnv): Promise<void> {
   const totalTimeoutMs = resolveUiWebScriptFetchTotalTimeoutMs(env);
   const attemptTimeoutMs = resolveUiWebScriptFetchAttemptTimeoutMs(env, totalTimeoutMs);
   const htmlRefreshRetryCount = resolveUiWebScriptHtmlRefreshRetryCount(env);
   let primaryAppScriptUrl: string | null = null;
   let retryCountForCurrentScript = 0;
 
-  try {
-    await waitFor(async () => {
-      if (!primaryAppScriptUrl) {
-        primaryAppScriptUrl = await resolvePrimaryAppScriptUrl(baseUrl, env);
-        retryCountForCurrentScript = 0;
-      }
-      if (!primaryAppScriptUrl) {
-        const probe = await inspectUiWebEntryPage(baseUrl, env);
-        return probe.isEntryPage;
-      }
-      if (!primaryAppScriptUrl) return false;
-      const probe = await probeScriptReady(primaryAppScriptUrl, attemptTimeoutMs);
-      if (probe === 'ready') return true;
-      if (probe === 'refresh-html') {
-        primaryAppScriptUrl = null;
-        retryCountForCurrentScript = 0;
-        return false;
-      }
-      retryCountForCurrentScript += 1;
-      if (retryCountForCurrentScript >= htmlRefreshRetryCount) {
-        primaryAppScriptUrl = null;
-        retryCountForCurrentScript = 0;
-      }
+  await waitFor(async () => {
+    if (!primaryAppScriptUrl) {
+      primaryAppScriptUrl = await resolvePrimaryAppScriptUrl(baseUrl, env);
+      retryCountForCurrentScript = 0;
+    }
+    if (!primaryAppScriptUrl) {
       return false;
-    }, {
-      timeoutMs: totalTimeoutMs,
-      intervalMs: 250,
-      context: 'expo web primary script ready',
-    });
-    return true;
-  } catch (error) {
-    if (!resolveUiWebAllowScriptReadyTimeout(env)) {
-      throw error;
+    }
+    const probe = await probeScriptReady(primaryAppScriptUrl, attemptTimeoutMs);
+    if (probe === 'ready') return true;
+    if (probe === 'refresh-html') {
+      primaryAppScriptUrl = null;
+      retryCountForCurrentScript = 0;
+      return false;
+    }
+    retryCountForCurrentScript += 1;
+    if (retryCountForCurrentScript >= htmlRefreshRetryCount) {
+      primaryAppScriptUrl = null;
+      retryCountForCurrentScript = 0;
     }
     return false;
-  }
+  }, {
+    timeoutMs: totalTimeoutMs,
+    intervalMs: 250,
+    context: 'expo web primary script ready',
+  });
 }
 
 export async function startUiWebMetro(params: {
@@ -346,9 +333,7 @@ export async function startUiWebMetro(params: {
       { timeoutMs: resolveUiWebMetroStatusTimeoutMs(params.env), intervalMs: 250, context: 'metro /status ready' },
     );
 
-    if (resolved.hasScriptTags) {
-      await waitForPrimaryAppScriptReady(baseUrl, params.env);
-    }
+    await waitForPrimaryAppScriptReady(baseUrl, params.env);
   } catch (e) {
     await proc.stop().catch(() => {});
     const stdoutText = await readFile(stdoutPath, 'utf8').catch(() => '');

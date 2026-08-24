@@ -489,6 +489,7 @@ import { actionOperationStore } from './domains/actionOperations/actionOperation
 import { openActionOperationRevisionEphemeral } from './domains/actionOperations/actionOperationEphemeral';
 
 const SESSION_LIST_BACKGROUND_HYDRATION_SCROLL_SETTLE_MS = 180;
+const WEB_INITIAL_SESSION_MESSAGES_PAGE_SIZE = 12;
 
 /**
  * How long a successful `/v1/version` answer stays fresh.
@@ -5296,6 +5297,9 @@ class Sync {
               await fetchAndApplyMessages({
                   sessionId,
                   sessionEncryptionMode,
+                  limit: Platform.OS === 'web'
+                      ? WEB_INITIAL_SESSION_MESSAGES_PAGE_SIZE
+                      : this.getSessionMessagesPageSize(),
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                   isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
                   request: requestMessages,
@@ -5346,6 +5350,13 @@ class Sync {
                       sessionId,
                       sessionEncryptionMode,
                       afterSeq: cursor,
+                      // Deliberately the CONFIGURED page size on every platform, not the small
+                      // web first-paint page. This loop is bounded by
+                      // `messageMaxIncrementalPagesOnResume` (3), so the page size decides how
+                      // large a background gap can be absorbed incrementally: 3 x 150 = 450
+                      // messages, versus 3 x 12 = 36. Below that, a session that advanced while
+                      // backgrounded falls to `onIncrementalExhausted` -> `tail_reset_latest_page`,
+                      // which REPLACES transcript content instead of extending it.
                       limit: this.getSessionMessagesPageSize(),
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                       isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
@@ -5373,6 +5384,7 @@ class Sync {
                   await fetchAndApplyMessages({
                       sessionId,
                       sessionEncryptionMode,
+                      limit: this.getSessionMessagesPageSize(),
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                       isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
                       request: requestMessages,
@@ -6237,6 +6249,10 @@ class Sync {
                   sessionEncryptionMode,
                   scope: 'sidechain',
                   sidechainId: normalizedSidechainId,
+                  // The same configured page size the main initial fetch uses: this is the
+                  // sidechain's initial transcript load, so it must not silently keep the
+                  // server default when an account configures a different page size.
+                  limit: this.getSessionMessagesPageSize(),
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
                   isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
                   request: requestMessages,

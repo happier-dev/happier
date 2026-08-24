@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+const publishedVersionsFixture = JSON.stringify({ github: {}, npm: {} });
 
 test('publish-cli-binaries defaults to run-contracts=auto (skips locally)', async () => {
   const out = execFileSync(
@@ -14,6 +15,8 @@ test('publish-cli-binaries defaults to run-contracts=auto (skips locally)', asyn
       resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-cli-binaries.mjs'),
       '--channel',
       'preview',
+      '--version',
+      '0.2.10-preview.1',
       '--allow-stable',
       'false',
       '--check-installers',
@@ -22,7 +25,11 @@ test('publish-cli-binaries defaults to run-contracts=auto (skips locally)', asyn
     ],
     {
       cwd: repoRoot,
-      env: { ...process.env, GITHUB_ACTIONS: '' },
+      env: {
+        ...process.env,
+        GITHUB_ACTIONS: '',
+        HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
+      },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -39,6 +46,8 @@ test('publish-cli-binaries defaults to run-contracts=auto (runs on GitHub Action
       resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-cli-binaries.mjs'),
       '--channel',
       'preview',
+      '--version',
+      '0.2.10-preview.1',
       '--allow-stable',
       'false',
       '--check-installers',
@@ -47,7 +56,11 @@ test('publish-cli-binaries defaults to run-contracts=auto (runs on GitHub Action
     ],
     {
       cwd: repoRoot,
-      env: { ...process.env, GITHUB_ACTIONS: 'true' },
+      env: {
+        ...process.env,
+        GITHUB_ACTIONS: 'true',
+        HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
+      },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -64,6 +77,8 @@ test('publish-ui-web defaults to run-contracts=auto (skips locally)', async () =
       resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-ui-web.mjs'),
       '--channel',
       'preview',
+      '--version',
+      '0.2.10-preview.1',
       '--allow-stable',
       'false',
       '--check-installers',
@@ -72,7 +87,11 @@ test('publish-ui-web defaults to run-contracts=auto (skips locally)', async () =
     ],
     {
       cwd: repoRoot,
-      env: { ...process.env, GITHUB_ACTIONS: '' },
+      env: {
+        ...process.env,
+        GITHUB_ACTIONS: '',
+        HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: publishedVersionsFixture,
+      },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -81,4 +100,3 @@ test('publish-ui-web defaults to run-contracts=auto (skips locally)', async () =
 
   assert.doesNotMatch(out, /test:release:contracts/, 'local default should not run release contract tests');
 });
-

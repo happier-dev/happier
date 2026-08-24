@@ -369,6 +369,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string }>
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const newSessionWizardSectionPresentation = useSetting('newSessionWizardSectionPresentationV1');
     const newSessionWizardColumnsEnabled = useSetting('newSessionWizardColumnsEnabled');
+    const newSessionDefaultCheckoutMode = useSetting('newSessionDefaultCheckoutModeV1');
     const [profiles, setProfiles] = useSettingMutable('profiles');
     const lastUsedProfile = useSetting('lastUsedProfile');
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
@@ -716,6 +717,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string }>
     const {
         checkoutCreationDraft,
         setCheckoutCreationDraft,
+        checkoutSelectionExplicit,
         checkoutPickerOpen,
         setCheckoutPickerOpen,
         pendingGitWorktreeBaseRefRef,
@@ -724,11 +726,11 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string }>
         checkoutChipModel,
     } = useNewSessionCheckoutSelectionState({
         persistedDraft,
-        hydratedTempAuthoringDraft,
-        hydratedPersistedAuthoringDraft,
+        tempSessionData,
         selectedMachineId,
         selectedPath,
         repoScmSnapshot,
+        defaultCheckoutMode: newSessionDefaultCheckoutMode,
         autoOpenWorktreePickerKey: effectiveWorktreeRouteMode === 'new'
             ? `route:new:${selectedMachineId ?? ''}:${selectedPath}`
             : null,
@@ -1665,6 +1667,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string }>
         selectedMachineSpawnReadiness,
         selectedPath,
         checkoutCreationDraft,
+        checkoutSelectionExplicit,
         promptStore,
         agentType,
         backendTarget,

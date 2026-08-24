@@ -21,19 +21,6 @@ async function expectVisibleTestId(page: Page, testId: string): Promise<ReturnTy
   return locator;
 }
 
-async function createAccountIfNeeded(page: Page): Promise<void> {
-  const createAccountByTestId = page.getByTestId('welcome-create-account');
-  if (await createAccountByTestId.count()) {
-    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-    return;
-  }
-
-  const createAccountByRole = page.getByRole('button', { name: 'Create account' });
-  if (await createAccountByRole.count()) {
-    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-  }
-}
-
 async function openThemeProfiles(params: Readonly<{ page: Page; uiBaseUrl: string }>): Promise<void> {
   await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/settings/appearance?happier_hmr=0`, 180_000);
   await (await expectVisibleTestId(params.page, 'settings-appearance-themeProfiles')).click();
@@ -127,7 +114,7 @@ test.describe('ui e2e: custom theme profiles', () => {
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 420_000);
     await waitForInitialAppUi({ page, timeoutMs: 420_000 });
-    await createAccountIfNeeded(page);
+    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
     await openThemeProfiles({ page, uiBaseUrl });
 

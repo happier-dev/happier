@@ -33,4 +33,22 @@ describe('providers: runLoggedCommand log flush', () => {
       expect(stderr.length).toBeGreaterThan(50_000);
     });
   });
+
+  it('reports the captured log paths when a command fails', async () => {
+    await withTempDir({ prefix: 'spawn-logged-command-failure-' }, async ({ path: dir }) => {
+      const stdoutPath = join(dir, 'stdout.log');
+      const stderrPath = join(dir, 'stderr.log');
+
+      await expect(runLoggedCommand({
+        command: process.execPath,
+        args: ['-e', 'process.exit(7)'],
+        cwd: dir,
+        stdoutPath,
+        stderrPath,
+        timeoutMs: 30_000,
+      })).rejects.toThrow(new RegExp(
+        `${stdoutPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*${stderrPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+      ));
+    });
+  });
 });

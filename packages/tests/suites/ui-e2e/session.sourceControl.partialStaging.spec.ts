@@ -5,8 +5,7 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithPathFallback, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { clickScopedButtonByTestIdOrRole } from '../../src/testkit/uiE2e/clickScopedButtonByTestIdOrRole';
@@ -14,6 +13,7 @@ import { createGitRepoForPartialStagingFixture } from '../../src/testkit/uiE2e/g
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { toTestIdSafeValue } from '../../src/testkit/uiE2e/testIdSafeValue';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -131,43 +131,18 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
 
       await mkdir(testDir, { recursive: true });
 
-      const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
-        testDir,
-        cliHomeDir,
-        serverUrl: server.baseUrl,
-        webappUrl: uiBaseUrl,
-        env: {
-          ...process.env,
-          HOME: cliHomeDir,
-          CI: '1',
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_VARIANT: 'dev',
-          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-        },
-      });
-
-      await gotoDomContentLoadedWithPathFallback(page, cliLogin.connectUrl, '/terminal/connect', 180_000);
-      await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-      await page.getByTestId('terminal-connect-approve').click();
-      await cliLogin.waitForSuccess();
-
       const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
       const fakeClaudePath = fakeClaudeFixturePath();
 
-      runDaemon = await startTestDaemon({
+      runDaemon = await authenticateAndStartDaemon({
+        page,
         testDir,
-        happyHomeDir: cliHomeDir,
-        startupTimeoutMs: 180_000,
-        env: {
-          ...process.env,
+        cliHomeDir,
+        serverUrl: server.baseUrl,
+        uiBaseUrl,
+        daemonStartupTimeoutMs: 180_000,
+        extraEnv: {
           HOME: cliHomeDir,
-          CI: '1',
-          HAPPIER_HOME_DIR: cliHomeDir,
-          HAPPIER_SERVER_URL: server.baseUrl,
-          HAPPIER_WEBAPP_URL: uiBaseUrl,
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_VARIANT: 'dev',
-          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           // Machine-scoped RPC must be allowed to read the repo fixture directory.
           HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
@@ -211,6 +186,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       // Select one whole file from the SCM list. The second file will be selected partially
       // from its details pane through the explicit line-selection mode.
       const wholeFileToggle = rightPane.getByTestId(`scm-commit-selection-toggle-${toTestIdSafeValue(wholeFilePath)}`);
+      await rightPane.getByTestId('scm-commit-enter-selection').click();
       await expect(wholeFileToggle).toHaveCount(1, { timeout: 60_000 });
       await wholeFileToggle.click({ force: true });
       await expect(rightPane.getByTestId('scm-commit-selection-summary')).toContainText(/^1\b/, { timeout: 60_000 });

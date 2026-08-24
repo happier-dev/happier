@@ -372,7 +372,7 @@ describe('claudeRemoteAgentSdk abort repair', () => {
         });
 
         const runPromise = claudeRemoteAgentSdk({
-            sessionId: 'sess_1',
+            sessionId: null,
             transcriptPath,
             path: dir,
             claudeArgs: [],
@@ -463,7 +463,7 @@ describe('claudeRemoteAgentSdk abort repair', () => {
         }));
         let didSendFirst = false;
         const runPromise = claudeRemoteAgentSdk({
-            sessionId: 'sess_1',
+            sessionId: null,
             transcriptPath,
             path: dir,
             claudeArgs: [],
@@ -553,7 +553,7 @@ describe('claudeRemoteAgentSdk abort repair', () => {
         });
 
         const runPromise = claudeRemoteAgentSdk({
-            sessionId: 'sess_1',
+            sessionId: null,
             transcriptPath,
             path: dir,
             claudeArgs: [],

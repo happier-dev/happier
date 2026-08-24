@@ -8706,6 +8706,9 @@ settingsSession: {
         wizardColumnsTitle: "Layout a due colonne",
         wizardColumnsEnabledSubtitle: "Affianca i selettori correlati sugli schermi larghi.",
         wizardColumnsDisabledSubtitle: "Impila tutti i selettori della procedura in una colonna.",
+        defaultWorktreeTitle: "Crea un worktree per le nuove sessioni",
+        defaultWorktreeEnabledSubtitle: "Avvia ogni nuova sessione Git in un nuovo worktree.",
+        defaultWorktreeDisabledSubtitle: "Avvia le nuove sessioni Git nella cartella selezionata.",
         wizardPresentationTitle: "Layout dei selettori della procedura",
         wizardPresentationFooter:
           "Auto mantiene le sezioni brevi come liste e passa quelle lunghe a menu a discesa ricercabili.",

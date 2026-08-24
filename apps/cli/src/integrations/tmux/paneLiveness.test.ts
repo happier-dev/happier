@@ -34,7 +34,7 @@ describe('evaluateTmuxPaneLiveness', () => {
 
     const liveness = await evaluateTmuxPaneLiveness({ executor, target: 'happy:claude.1', observedAt: 43 });
 
-    expect(liveness.paneCurrentCommand).toContain('ANTHROPIC_API_KEY=[redacted-token]');
+    expect(liveness.paneCurrentCommand).toContain('ANTHROPIC_API_KEY: [REDACTED]');
     expect(liveness.paneCurrentCommand).not.toContain('sk-ant-secret-value');
   });
 

@@ -866,6 +866,18 @@ describe('sync.sendMessage optimistic thinking', () => {
             savePendingOutboxMessage(pendingOutboxFixture({ sessionId, localId, text: 'scope A' }), scopeA);
             savePendingOutboxMessage(pendingOutboxFixture({ sessionId, localId, text: 'scope B' }), scopeB);
 
+            runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url?: string; init?: RequestInit }) => {
+                if (request.url?.endsWith('/v1/features')) {
+                    return Response.json(buildServerFeaturesResponse());
+                }
+                const body = JSON.parse(String(request.init?.body)) as { localId: string };
+                return Response.json({
+                    terminal: true,
+                    requestedAction: { v: 1, kind: 'enqueue' },
+                    message: { id: `message-${body.localId}`, seq: 1, localId: body.localId },
+                });
+            });
+
             vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl) => ({
                 token: tokenForSub(serverUrl === serverAUrl ? 'account-a' : 'account-b'),
                 secret: Buffer.from(new Uint8Array(32).fill(serverUrl === serverAUrl ? 1 : 2)).toString('base64url'),
@@ -1186,7 +1198,8 @@ describe('sync.sendMessage optimistic thinking', () => {
                 expect.objectContaining({
                     id: 'first-message-local',
                     localId: 'first-message-local',
-                    deliveryStatus: 'accepted',
+                    deliveryStatus: 'queued',
+                    sendState: 'unconfirmed',
                     text: 'fallback please',
                 }),
             ]);
@@ -1201,7 +1214,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         storage.getState().applySessions([createSession({
             sessionId,
             metadata: {
-                version: '0.1.0',
+                version: '0.0.9',
             } as any,
         })]);
 

@@ -24,7 +24,8 @@ test('reusable tests calls make their run flags authoritative regardless of the 
 
   const defaultSuiteInputs = new Map([
     ['ui-e2e', 'run_ui_e2e'],
-    ['ui', 'run_ui'],
+    ['ui-unit', 'run_ui'],
+    ['ui-integration', 'run_ui'],
     ['shared-packages-unit', 'run_ui'],
     ['server', 'run_server'],
     ['server-db-contract', 'run_server_db_contract'],
@@ -47,6 +48,13 @@ test('reusable tests calls make their run flags authoritative regardless of the 
       `${jobName} must honor an explicit false input even when a scheduled caller invokes tests.yml`,
     );
   }
+
+  assert.equal(
+    testsWorkflow.jobs.ui.if,
+    '${{ always() && (!inputs.select_jobs_explicitly || inputs.run_ui) }}',
+    'the stable UI aggregate must honor explicit selection and still report both child outcomes',
+  );
+  assert.deepEqual(testsWorkflow.jobs.ui.needs, ['ui-unit', 'ui-integration']);
 
   assert.equal(
     testsWorkflow.jobs.stress.if,

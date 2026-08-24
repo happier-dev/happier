@@ -9,6 +9,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import {
   installDesktopPetOverlayBridgeProbe,
   readDesktopPetOverlayBridgeInvocations,
+  createDesktopPetOverlayWindowState,
   type DesktopPetOverlayBridgeInvocation,
 } from '../../src/testkit/pets/desktopPetOverlayBridgeProbe';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
@@ -200,7 +201,7 @@ test.describe('ui e2e: pets desktop overlay drag bridge', () => {
       enabled: true,
     });
 
-    await installDesktopPetOverlayBridgeProbe(page);
+    await installDesktopPetOverlayBridgeProbe(page, { windowState: createDesktopPetOverlayWindowState() });
     await gotoDomContentLoadedWithRetries(
       page,
       `${uiBaseUrl}/desktop/pet-overlay?happier_hmr=0&desktopPetOverlayWindow=1`,

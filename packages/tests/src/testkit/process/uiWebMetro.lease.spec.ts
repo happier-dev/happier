@@ -77,6 +77,127 @@ function readProcessStartTime(pid: number): string {
 }
 
 describe('startUiWebMetro', () => {
+    it('fails setup when the Expo entry page never publishes an application script', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-missing-script-'));
+
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url.endsWith('/status')) {
+                return {
+                    ok: true,
+                    headers: { get: () => 'text/plain' },
+                    text: async () => 'packager-status:running',
+                };
+            }
+            return {
+                ok: true,
+                headers: { get: () => 'text/html' },
+                text: async () => '<!doctype html><html><body>Expo app shell</body></html>',
+            };
+        }));
+
+        try {
+            await expect(startUiWebMetro({
+                testDir,
+                env: {
+                    HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '5000',
+                    HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '100',
+                    HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '20',
+                },
+                port: 19077,
+            })).rejects.toThrow(/expo web primary script ready/i);
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('fails setup when the primary Expo app script never becomes ready', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-script-ready-'));
+
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url.endsWith('/status')) {
+                return {
+                    ok: true,
+                    headers: { get: () => 'text/plain' },
+                    text: async () => 'packager-status:running',
+                };
+            }
+            if (url.endsWith('/index.js')) {
+                return {
+                    ok: true,
+                    headers: { get: () => 'text/plain' },
+                    text: async () => 'bundle not ready',
+                };
+            }
+            return {
+                ok: true,
+                headers: { get: () => 'text/html' },
+                text: async () => '<!doctype html><html><head><script src="/index.js"></script></head><body></body></html>',
+            };
+        }));
+
+        try {
+            await expect(startUiWebMetro({
+                testDir,
+                env: {
+                    HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '5000',
+                    HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '100',
+                    HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '20',
+                    HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT: '1',
+                },
+                port: 19077,
+            })).rejects.toThrow(/expo web primary script ready/i);
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('waits for the Expo app entry page instead of admitting a printed URL immediately', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-entry-ready-'));
+        let entryProbeCount = 0;
+
+        vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url.endsWith('/status')) {
+                return {
+                    ok: true,
+                    headers: { get: () => 'text/plain' },
+                    text: async () => 'packager-status:running',
+                };
+            }
+            if (url.endsWith('/index.js')) {
+                return {
+                    ok: true,
+                    headers: { get: () => 'application/javascript' },
+                    text: async () => 'globalThis.__HAPPIER_E2E__ = true;',
+                };
+            }
+            entryProbeCount += 1;
+            return {
+                ok: true,
+                headers: { get: () => 'text/html' },
+                text: async () => entryProbeCount < 5
+                    ? '<!doctype html><html><body>Metro Bundler</body></html>'
+                    : '<!doctype html><html><head><script src="/index.js"></script></head><body></body></html>',
+            };
+        }));
+
+        try {
+            const started = await startUiWebMetro({
+                testDir,
+                env: { HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '5000' },
+                port: 19077,
+            });
+
+            expect(entryProbeCount).toBeGreaterThanOrEqual(5);
+            expect(new URL(started.baseUrl).port).toBe('19077');
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
     it('reclaims stale metro leases from dead owners before launching Expo web', async () => {
         if (process.platform === 'win32') return;
 

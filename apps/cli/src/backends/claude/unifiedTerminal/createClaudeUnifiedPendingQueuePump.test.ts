@@ -182,8 +182,7 @@ describe('createClaudeUnifiedPendingQueuePump', () => {
 
     const abortController = new AbortController();
     const running = pump.start({ abortSignal: abortController.signal });
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(waitForNextInput).toHaveBeenCalledTimes(1);
     expect(injectPrompt).toHaveBeenCalledTimes(1);

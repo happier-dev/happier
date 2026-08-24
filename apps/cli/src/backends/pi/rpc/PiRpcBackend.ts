@@ -219,6 +219,8 @@ const PI_RPC_SESSION_OPEN_TIMEOUT_MS = 60_000;
 const DEFAULT_PI_RPC_COMPACTION_RESUME_GRACE_MS = 30_000;
 const DEFAULT_PI_RPC_AGENT_END_SETTLE_MS = 250;
 const DEFAULT_PI_RPC_AGENT_END_BUSY_GRACE_MS = 30_000;
+const PI_RPC_RECOVERABLE_ASSISTANT_ERROR_PATTERN =
+  /(?:context[_ -]?length[_ -]?exceeded|server[_ -]?is[_ -]?overloaded|service[_ -]?unavailable|websocket[^\n]*closed|\bECONN(?:RESET|REFUSED|ABORTED)\b)/iu;
 
 const PI_RPC_TURN_STALL_TIMEOUT_ENV = 'HAPPIER_PI_RPC_TURN_STALL_TIMEOUT_MS';
 const PI_RPC_COMPACTION_RESUME_GRACE_ENV = 'HAPPIER_PI_RPC_COMPACTION_RESUME_GRACE_MS';
@@ -1704,6 +1706,13 @@ export class PiRpcBackend implements AgentBackend {
     return errorMessage ?? 'Pi assistant message failed';
   }
 
+  private isRecoverablePiAssistantError(event: Record<string, unknown>): boolean {
+    const classification = this.classifyPiAssistantRuntimeAuthFailure(event);
+    if (classification) return classification.kind === 'capacity';
+    const detail = this.readPiAssistantErrorMessage(event);
+    return detail !== null && PI_RPC_RECOVERABLE_ASSISTANT_ERROR_PATTERN.test(detail);
+  }
+
   private classifyPiAssistantRuntimeAuthFailure(event: Record<string, unknown>) {
     const message = asRecord(event.message);
     return this.classifyPiRuntimeAuthFailure({
@@ -1784,12 +1793,15 @@ export class PiRpcBackend implements AgentBackend {
     // turn lifecycle (`agent_end`/willRetry, the compaction-resume grace, and the `get_state`
     // liveness probe) instead of this event. The recoverable error carries no surfaceable assistant
     // text, so suppressing the status here does not hide anything from the transcript.
-    if (!classification) return;
-    if (classification.kind === 'capacity') {
-      void this.reportPiRuntimeAuthFailureToDaemon(classification);
+    if (this.isRecoverablePiAssistantError(event)) {
+      if (classification) {
+        void this.reportPiRuntimeAuthFailureToDaemon(classification);
+      }
       return;
     }
-    void this.reportPiRuntimeAuthFailureToDaemon(classification);
+    if (classification) {
+      void this.reportPiRuntimeAuthFailureToDaemon(classification);
+    }
     this.surfacePiProviderFailure(failure, classification);
   }
 
@@ -1891,10 +1903,10 @@ export class PiRpcBackend implements AgentBackend {
           this.pendingTurn.agentEndActivityEpoch = null;
           this.cancelPendingTurnAgentEndSettle(this.pendingTurn);
           this.armPendingTurnInactivityTimer(this.pendingTurn);
-        } else if (this.pendingTurn.providerFailureDiagnostic) {
-          this.surfacePiProviderFailure(this.pendingTurn.providerFailureDiagnostic);
-          return;
-        } else if (this.pendingTurn.recoverableAssistantErrorObserved) {
+        } else if (
+          this.pendingTurn.recoverableAssistantErrorObserved ||
+          this.pendingTurn.providerFailureDiagnostic
+        ) {
           this.pendingTurn.agentEndObserved = false;
           this.pendingTurn.agentEndActivityEpoch = null;
           this.cancelPendingTurnAgentEndSettle(this.pendingTurn);
@@ -2402,8 +2414,25 @@ export class PiRpcBackend implements AgentBackend {
         const stopReason = asNonEmptyString(message.stopReason ?? message.stop_reason);
         pending.lastAssistantStopReason = stopReason;
         const errorMessage = asNonEmptyString(message.errorMessage ?? message.error_message ?? event.errorMessage ?? event.error_message);
-        pending.recoverableAssistantErrorObserved = stopReason === 'error' || Boolean(errorMessage);
+        const assistantFailed = stopReason === 'error' || Boolean(errorMessage);
+        pending.recoverableAssistantErrorObserved = assistantFailed
+          ? this.isRecoverablePiAssistantError(event)
+          : false;
+        if (!pending.recoverableAssistantErrorObserved) {
+          pending.providerFailureDiagnostic = null;
+        }
       }
+    }
+
+    if (
+      type === 'message_update' ||
+      type === 'tool_execution_start' ||
+      type === 'tool_execution_end'
+    ) {
+      // Provider work after a recoverable assistant error proves that Pi resumed
+      // the same turn. Do not let the earlier diagnostic poison its final agent_end.
+      pending.recoverableAssistantErrorObserved = false;
+      pending.providerFailureDiagnostic = null;
     }
 
     if (type === 'compaction_start') {

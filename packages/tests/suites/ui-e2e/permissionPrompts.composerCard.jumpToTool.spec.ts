@@ -9,6 +9,7 @@ import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
+import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { repoRootDir } from '../../src/testkit/paths';
 
@@ -45,7 +46,7 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
       dbProvider: 'sqlite',
       extraEnv: {
         // Keep web create-account stable (binding signature is not reliably available on web).
-        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
+        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys,providers.claude.unifiedTerminal',
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
         // Make presence timeouts fast enough for UI E2E reconnect flows.
         HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '60000',
@@ -84,41 +85,32 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
       throw new Error('daemon.state.controlToken is missing; cannot call daemon control server');
     }
 
-    const res = await fetch(`http://127.0.0.1:${params.daemon.state.httpPort}/spawn-session`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-happier-daemon-token': controlToken,
-      },
-      body: JSON.stringify({
+    const response = await daemonControlPostJson<unknown>({
+      port: params.daemon.state.httpPort,
+      path: '/spawn-session',
+      controlToken,
+      body: {
         directory: params.directory,
         ...(params.sessionId ? { sessionId: params.sessionId } : null),
         agent: 'claude',
         terminal: { mode: 'plain' },
         environmentVariables: params.env,
-      }),
-      signal: AbortSignal.timeout(params.timeoutMs),
+      },
+      timeoutMs: params.timeoutMs,
     });
 
-    const bodyText = await res.text().catch(() => '');
-    const parsed = (() => {
-      try {
-        return JSON.parse(bodyText) as any;
-      } catch {
-        return null;
-      }
-    })();
-
-    if (res.status === 200 && parsed?.success === true) {
-      const createdSessionId = parsed?.sessionId;
+    const parsed = typeof response.data === 'object' && response.data !== null
+      ? response.data as Record<string, unknown>
+      : null;
+    if (response.status === 200 && parsed?.success === true) {
+      const createdSessionId = parsed.sessionId;
       if (typeof createdSessionId !== 'string' || !createdSessionId.trim()) {
-        throw new Error(`daemon spawn-session did not return a sessionId: ${bodyText}`);
+        throw new Error(`daemon spawn-session did not return a sessionId: ${JSON.stringify(response.data)}`);
       }
       return String(createdSessionId);
     }
 
-    const detail = bodyText ? ` ${bodyText}` : '';
-    throw new Error(`Failed to spawn session runner in daemon: HTTP ${res.status}.${detail}`);
+    throw new Error(`Failed to spawn session runner in daemon: HTTP ${response.status}. ${JSON.stringify(response.data)}`);
   }
 
   test('shows composer permission card and view-tool navigates to the tool in transcript', async ({ page }, testInfo) => {

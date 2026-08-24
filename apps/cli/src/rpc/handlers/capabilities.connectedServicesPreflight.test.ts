@@ -49,10 +49,10 @@ describe('capabilities.invoke connected-service preflight', () => {
     process.env.HAPPIER_FAKE_CODEX_APP_SERVER_DELAY_MS = '1';
     const captureFile = join(tempDir, 'captured-env.json');
     process.env.HAPPIER_FAKE_CODEX_APP_SERVER_ENV_CAPTURE_FILE = captureFile;
-    process.env.OPENAI_API_KEY = undefined;
-    process.env.CODEX_API_KEY = undefined;
-    process.env.CODEX_HOME = undefined;
-    process.env.CODEX_SQLITE_HOME = undefined;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.CODEX_API_KEY;
+    delete process.env.CODEX_HOME;
+    delete process.env.CODEX_SQLITE_HOME;
 
     const credentials: Credentials = {
       token: 'test-happier-token',
@@ -172,10 +172,12 @@ describe('capabilities.invoke connected-service preflight', () => {
     });
     expect(updateConnectedServiceAuthGroupActiveProfile).not.toHaveBeenCalled();
     const captured = JSON.parse(readFileSync(captureFile, 'utf8')) as Record<string, unknown>;
-    expect(captured.CODEX_HOME).toBe(captured.CODEX_SQLITE_HOME);
     expect(captured.CODEX_AUTH_FILE_PRESENT).toBe(true);
     const materializedBase = join(tempDir, 'daemon', 'connected-services', 'materialized');
     expect(relative(materializedBase, String(captured.CODEX_HOME))).not.toMatch(/^\.\.(?:[\\/]|$)/u);
+    // Connected auth stays isolated while the default state-sharing policy keeps
+    // Codex's SQLite/session state rooted in the configured native home.
+    expect(relative(materializedBase, String(captured.CODEX_SQLITE_HOME))).toMatch(/^\.\.(?:[\\/]|$)/u);
     expect(String(captured.CODEX_HOME)).not.toBe(legacyGroupHome);
     expect(existsSync(String(captured.CODEX_HOME))).toBe(false);
   }, 90_000);

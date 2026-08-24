@@ -39,6 +39,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
     selectedPath: string;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
+    checkoutSelectionExplicit?: boolean;
     promptStore: NewSessionPromptStore;
     agentType: AgentId;
     backendTarget: BackendTargetRefV1 | null;
@@ -167,6 +168,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         // no longer re-renders per keystroke, so `currentAuthoringDraft` can lag the input.
         const draft = buildPersistedNewSessionDraftFromAuthoringDraft({
             draft: buildCurrentAuthoringDraft(effectiveAutomationDraft),
+            checkoutSelectionExplicit: params.checkoutSelectionExplicit,
             machineId: params.selectedMachineId,
             entryIntent: params.automationRequestedByRoute ? 'automation' : 'session',
             selectedSecretId: params.selectedSecretId,
@@ -186,6 +188,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         effectiveAutomationDraft,
         params.agentNewSessionOptionStateByAgentId,
         params.automationRequestedByRoute,
+        params.checkoutSelectionExplicit,
         params.getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         params.launchUserAttemptId,
         params.selectedMachineId,

@@ -24,6 +24,10 @@ describe('account session creation setting definitions', () => {
         expect(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.newSessionWizardColumnsEnabled.default).toBe(false);
     });
 
+    it('defaults new sessions to the selected folder', () => {
+        expect(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.newSessionDefaultCheckoutModeV1.default).toBe('current_path');
+    });
+
     it('keeps valid wizard presentation overrides and drops unknown section or presentation values', () => {
         const schema = ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.newSessionWizardSectionPresentationV1.schema;
         const parsed = schema.parse({

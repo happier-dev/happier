@@ -15,6 +15,7 @@ describe('settleSpawnSessionNonce', () => {
       timeoutMs: 5_000,
       pollIntervalMs: 10,
       sleep: immediateSleep,
+      now: () => 0,
     });
     expect(result).toEqual({ status: 'success', sessionId: 'sess_1' });
     expect(resolve).toHaveBeenCalledWith('nonce-1', 5_000);

@@ -40,7 +40,7 @@ describe('happier session delegate start (integration)', () => {
 
     const { encodeBase64: encodeBase64Session, encryptWithDataKey } = await import('@/api/encryption');
     const metadataCiphertext = encodeBase64Session(
-      encryptWithDataKey({ path: '/tmp', flavor: 'claude' }, dek),
+      encryptWithDataKey({ path: '/tmp', flavor: 'claude', machineId: 'machine-integration-1' }, dek),
       'base64',
     );
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
@@ -57,8 +57,8 @@ describe('happier session delegate start (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
-              activeAt: 0,
+              active: true,
+              activeAt: 2,
               metadata: metadataCiphertext,
               metadataVersion: 0,
               agentState: null,
@@ -66,6 +66,7 @@ describe('happier session delegate start (integration)', () => {
               pendingCount: 0,
               pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
+              machineId: 'machine-integration-1',
               share: null,
             },
           }),
@@ -99,7 +100,7 @@ describe('happier session delegate start (integration)', () => {
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted.intent).toBe('delegate');
         expect(decrypted.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
-        expect(decrypted.permissionMode).toBe('workspace_write');
+        expect(decrypted.permissionMode).toBe('read_only');
         expect(decrypted.intentInput?.backendTargetKey).toBe('agent:codex');
 
         const resultPayload = { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
@@ -145,6 +146,8 @@ describe('happier session delegate start (integration)', () => {
           'codex',
           '--instructions',
           'Delegate.',
+          '--permission-mode',
+          'read_only',
           '--json',
         ],
         {
@@ -165,6 +168,7 @@ describe('happier session delegate start (integration)', () => {
       expect(parsed.data?.sessionId).toBe('sess_integration_delegate_start_123');
       expect(parsed.data?.results?.length).toBe(1);
       expect(parsed.data?.results?.[0]?.key).toBe('agent:codex');
+      expect(parsed.data?.results?.[0]?.ok, JSON.stringify(parsed)).toBe(true);
     } finally {
       output.restore();
     }

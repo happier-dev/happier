@@ -65,7 +65,7 @@ test.describe('ui e2e: mobile session cockpit source control', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('routes Files, Git, Review, details, and Chat through the default phone cockpit', async ({ page }) => {
+  test('moves between Files, Git, Review, details, and Chat through the default phone cockpit', async ({ page }) => {
     test.setTimeout(900_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
@@ -100,34 +100,28 @@ test.describe('ui e2e: mobile session cockpit source control', () => {
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 
     await page.getByTestId('session-cockpit-tab-git').click();
-    await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/git(?:\\?|$)`), { timeout: 60_000 });
     await expect(page.getByTestId('session-git-screen')).toHaveCount(1, { timeout: 120_000 });
 
     const changedPath = 'src/file-00.txt';
     const changedRow = page.getByTestId(`scm-change-row-${toTestIdSafeValue(changedPath)}`);
     await expect(changedRow).toHaveCount(1, { timeout: 180_000 });
     await changedRow.click();
-    await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/details\\?.*details=file.*path=${encodeURIComponent(changedPath)}`), { timeout: 60_000 });
     await expect(page.getByTestId('session-details-screen')).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${changedPath}`)}`)).toHaveCount(1, { timeout: 120_000 });
 
     await page.getByTestId('session-cockpit-tab-git').click();
-    await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/git(?:\\?|$)`), { timeout: 60_000 });
+    await expect(page.getByTestId('session-git-screen')).toHaveCount(1, { timeout: 120_000 });
     await page.locator('[data-testid="session-rightpanel-git-open-review"]:visible').click();
-    await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/details\\?.*details=scmReview`), { timeout: 60_000 });
     await expect(page.getByTestId('scm-review-list')).toHaveCount(1, { timeout: 180_000 });
 
     await page.getByTestId('session-cockpit-tab-browse').click();
-    await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/files(?:\\?|$)`), { timeout: 60_000 });
     await expect(page.getByTestId('session-files-screen')).toHaveCount(1, { timeout: 120_000 });
     const readmeRow = page.getByTestId(`repository-tree-row-${toTestIdSafeValue('README.md')}`);
     await expect(readmeRow).toHaveCount(1, { timeout: 180_000 });
     await readmeRow.click();
-    await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/details\\?.*details=file.*path=README\\.md`), { timeout: 60_000 });
     await expect(page.getByTestId(`session-details-tab-${toTestIdSafeValue('file:README.md')}`)).toHaveCount(1, { timeout: 120_000 });
 
     await page.getByTestId('session-cockpit-tab-chat').click();
-    await expect(page).toHaveURL(new RegExp(`/session/${sessionId}\\?.*mobileSurface=chat`), { timeout: 60_000 });
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
   });
 });

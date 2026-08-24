@@ -78,13 +78,15 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     }, [params.automationParam]);
 
     const hasExplicitAutomationSeedParams = React.useMemo(() => {
-        return typeof params.automationEnabledParam === 'string'
-            || typeof params.automationNameParam === 'string'
-            || typeof params.automationDescriptionParam === 'string'
-            || typeof params.automationScheduleKindParam === 'string'
-            || typeof params.automationEveryMinutesParam === 'string'
-            || typeof params.automationCronExprParam === 'string'
-            || typeof params.automationTimezoneParam === 'string';
+        return [
+            params.automationEnabledParam,
+            params.automationNameParam,
+            params.automationDescriptionParam,
+            params.automationScheduleKindParam,
+            params.automationEveryMinutesParam,
+            params.automationCronExprParam,
+            params.automationTimezoneParam,
+        ].some((value) => typeof value === 'string' && value.trim().length > 0);
     }, [
         params.automationCronExprParam,
         params.automationDescriptionParam,

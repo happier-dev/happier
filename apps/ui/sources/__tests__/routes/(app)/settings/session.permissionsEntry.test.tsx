@@ -91,6 +91,7 @@ describe('Session settings (Permissions entry)', () => {
 
         const expectedPlacements = new Map<string, string>([
             ['settingsSession.sessionCreation.wizardModeTitle', 'settingsSession.rootGroups.launchDefaults.title'],
+            ['settingsSession.sessionCreation.defaultWorktreeTitle', 'settingsSession.rootGroups.launchDefaults.title'],
             ['settingsSession.sessionCreation.rememberLastProjectSelectionsTitle', 'settingsSession.rootGroups.launchDefaults.title'],
             ['settingsSession.sessionCreation.rememberLastEngineSelectionsTitle', 'settingsSession.rootGroups.launchDefaults.title'],
             ['settingsAppearance.sessionListDensity.title', 'settingsSession.rootGroups.listOrganization.title'],
@@ -173,6 +174,16 @@ describe('Session settings (Permissions entry)', () => {
         expect(screen.findRowByTitle('settingsSession.sessionCreation.wizardDispositionTitle')).toBeTruthy();
         screen.pressRowByTitle('settingsSession.sessionCreation.wizardDispositionTitle');
         expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/session/new-session-wizard');
+    });
+
+    it('shows the default worktree setting even when wizard mode is disabled', async () => {
+        const mod = await import('@/app/(app)/settings/session');
+        const SessionSettingsScreen = mod.default;
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
+
+        expect(screen.findRowByTitle('settingsSession.sessionCreation.defaultWorktreeTitle')).toBeTruthy();
+        screen.pressRowByTitle('settingsSession.sessionCreation.defaultWorktreeTitle');
+        expect(sessionSettingsEntryState.settingsState.newSessionDefaultCheckoutModeV1).toBe('git_worktree');
     });
 
     it('renders remembered project session selections in the new-session modal group', async () => {

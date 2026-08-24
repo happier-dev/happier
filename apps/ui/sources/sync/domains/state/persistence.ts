@@ -15,7 +15,7 @@ import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } fr
 import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/registry/registryCore';
 import { SecretStringSchema, type SecretString } from '../../encryption/secretSettings';
 import {
-    readPersistedNewSessionCheckoutDraft,
+    resolveNewSessionCheckoutSelection,
     type NewSessionCheckoutCreationDraft,
 } from './newSessionCheckoutDraft';
 import {
@@ -769,7 +769,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         const selectedMachineId = typeof parsed.selectedMachineId === 'string' ? parsed.selectedMachineId : null;
         const selectedPath = typeof parsed.selectedPath === 'string' ? parsed.selectedPath : null;
         const entryIntent = parseDraftEntryIntent((parsed as any).entryIntent);
-        const checkoutDraft = readPersistedNewSessionCheckoutDraft(parsed);
+        const checkoutSelection = resolveNewSessionCheckoutSelection(parsed);
         const selectedProfileId = typeof parsed.selectedProfileId === 'string' ? parsed.selectedProfileId : null;
         const selectedSecretId = typeof parsed.selectedSecretId === 'string' ? parsed.selectedSecretId : null;
         const selectedSecretIdByProfileIdByEnvVarName = parseDraftNestedRecord(
@@ -835,7 +835,9 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             selectedMachineId,
             selectedPath,
             ...(entryIntent ? { entryIntent } : {}),
-            ...(checkoutDraft.checkoutCreationDraft ? { checkoutCreationDraft: checkoutDraft.checkoutCreationDraft } : {}),
+            ...(checkoutSelection.explicitMode !== null
+                ? { checkoutCreationDraft: checkoutSelection.checkoutCreationDraft }
+                : {}),
             selectedProfileId,
             selectedSecretId,
             selectedSecretIdByProfileIdByEnvVarName,

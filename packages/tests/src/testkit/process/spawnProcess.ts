@@ -170,12 +170,20 @@ export async function runLoggedCommand(params: {
 
   if (drainError) {
     if (!outcome.ok) {
-      throw new Error(`${outcome.error.message}; ${drainError.message}`);
+      throw new Error(
+        `${outcome.error.message}; ${drainError.message} ` +
+        `(stdout=${params.stdoutPath} stderr=${params.stderrPath})`,
+      );
     }
     throw drainError;
   }
 
-  if (!outcome.ok) throw outcome.error;
+  if (!outcome.ok) {
+    throw new Error(
+      `${outcome.error.message} (stdout=${params.stdoutPath} stderr=${params.stderrPath})`,
+      { cause: outcome.error },
+    );
+  }
 }
 
 export function spawnLoggedProcess(params: {
