@@ -241,11 +241,13 @@ describe('plugin UI public surface', () => {
     it('projects UI input and output types through the SDK author contract', () => {
         const uiSource = readFileSync(new URL('./ui.ts', import.meta.url), 'utf8');
         const uiSubpathSource = readFileSync(new URL('./ui/index.ts', import.meta.url), 'utf8');
+        const uiAuthorSource = readFileSync(new URL('./ui/index.public.ts', import.meta.url), 'utf8');
 
         expect(uiSource).toContain("from './ui/publicContract.js';");
         expect(uiSource).toContain('PluginUiViewDestinationBindingInputV2,');
         expect(uiSource).toContain('PluginUiViewV2,');
         expect(uiSource).toContain('PluginUiViewV2Input,');
+        expect(uiSource).toContain('PluginUiSessionPlacementCandidateV1,');
         expect(uiSubpathSource).toContain(
             "export type { PluginUiViewDestinationBindingInputV2 } from '../ui.js';",
         );
@@ -254,6 +256,12 @@ describe('plugin UI public surface', () => {
         );
         expect(uiSubpathSource).toContain(
             "export type { PluginUiViewV2Input } from '../ui.js';",
+        );
+        expect(uiSubpathSource).toContain(
+            "export type { PluginUiSessionPlacementCandidateV1 } from '../ui.js';",
+        );
+        expect(uiAuthorSource).toContain(
+            "export type { PluginUiSessionPlacementCandidateV1 } from '../ui.js';",
         );
     });
 

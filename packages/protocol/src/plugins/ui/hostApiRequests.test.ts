@@ -430,6 +430,109 @@ describe('plugin UI open and Action components', () => {
         }).success).toBe(false);
     });
 
+    it('extends the incumbent Session host arm with a New Session seed without adding another projection', () => {
+        const seed = {
+            prompt: { text: 'Repair the failing check', mode: 'replace' },
+            profileId: 'profile-review',
+            placement: { serverId: 'server-1', machineId: 'machine-1', directory: '/workspace' },
+        } as const;
+
+        expect(PluginUiSelectActionInputRequestV1Schema.parse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed,
+        })).toEqual({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed,
+        });
+
+        // A seed that declares only some members stays valid: an absent member
+        // is "not seeded", never "seeded empty".
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed: { placement: { directory: '/workspace' } },
+        }).success).toBe(true);
+
+        // An ambiguous repository join stays a reader choice. The seed carries
+        // the incumbent server-start candidate grammar verbatim, rather than
+        // collapsing it into an arbitrary directory or inventing a second
+        // candidate shape for the New Session route.
+        const candidateSeed = {
+            candidates: [{
+                projectKey: { id: 'project-api' },
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                rootPath: '/worktrees/api',
+                label: 'API',
+                reachable: true,
+                worktrees: [{
+                    path: '/worktrees/api',
+                    branch: 'main',
+                    isMain: true,
+                    isCurrent: true,
+                }],
+            }],
+        } as const;
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed: candidateSeed,
+        }).success).toBe(true);
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed: { candidates: [] },
+        }).success).toBe(false);
+
+        // Attachments are the author-shaped half of the incumbent
+        // `attachment.add` request. The mounted New Session composer, rather
+        // than this Protocol boundary, resolves their host identity and mints
+        // an instance after navigation.
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed: {
+                attachments: [{
+                    attachmentLocalId: 'entry',
+                    value: {
+                        key: 'triage:42',
+                        value: { v: 1, entryId: '42' },
+                        presentation: { label: 'Issue #42' },
+                    },
+                }],
+            },
+        }).success).toBe(true);
+
+        // The one incumbent host arm accepts exactly one authoring mode, and an
+        // unknown seed member is refused rather than silently dropped.
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            draft: {},
+            seed,
+        }).success).toBe(false);
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'newSessionSeed' },
+            seed,
+        }).success).toBe(false);
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed: { ...seed, arbitrary: true },
+        }).success).toBe(false);
+        // An empty attachment list declares no attach intent and is refused;
+        // valid author-shaped additions above remain mounted-composer work.
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed: { attachments: [] },
+        }).success).toBe(false);
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed: { prompt: { text: '   ', mode: 'replace' } },
+        }).success).toBe(false);
+
+        expect(PluginUiSelectActionInputResultV1Schema.parse({ kind: 'newSessionSeeded' }))
+            .toEqual({ kind: 'newSessionSeeded' });
+        expect(PluginUiSelectActionInputResultV1Schema.safeParse({
+            kind: 'newSessionSeeded',
+            draft: { directory: '/workspace' },
+        }).success).toBe(false);
+    });
+
     it('applies the canonical host-input byte bound to selection drafts and submissions', () => {
     const oversized = { blob: 'a'.repeat(PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1) };
 

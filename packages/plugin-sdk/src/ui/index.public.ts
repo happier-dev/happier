@@ -61,6 +61,7 @@ export type {
     PluginUiSettingsPageV1,
     PluginUiViewTargetV2,
 } from '../ui.js';
+export type { PluginUiSessionPlacementCandidateV1 } from '../ui.js';
 export { PLUGIN_UI_ICON_TOKENS_V1 } from '../ui.js';
 export {
     PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1,

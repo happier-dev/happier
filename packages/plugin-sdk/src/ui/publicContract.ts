@@ -1,5 +1,5 @@
 import type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
-import type { SessionServerStartSpawnDraftV1 } from '../services/sessions.js';
+import type { ProjectKeyV1, SessionServerStartSpawnDraftV1 } from '../services/sessions.js';
 import type { ComposerStagedMediaContentV1 } from '../composer.js';
 import type { JsonValue, PluginJsonValueV2 } from '../identity.js';
 import type { PluginAvailabilityDescriptor } from '../manifest.js';
@@ -397,6 +397,50 @@ export type PluginUiSelectActionInputTargetedRequestV1 = {
 export type PluginUiSelectActionInputHostRequestV1 = {
     hostAction: { action: 'session.spawn_new'; projection: 'serverStartDraft' };
     draft?: PluginUiJsonObjectV1;
+    seed?: PluginUiNewSessionSeedV1;
+};
+
+/**
+ * What the host writes into its own New Session screen before opening it.
+ *
+ * Every member is optional and an ABSENT member means "not seeded", never
+ * "seeded empty" — a caller carrying only a prompt does not clear a directory
+ * the reader already chose.
+ */
+export type PluginUiNewSessionSeedV1 = {
+    prompt?: { text: string; mode: 'replace' | 'append' };
+    profileId?: string;
+    placement?: { serverId?: string; machineId?: string; directory?: string };
+    /**
+     * Exact placement candidates in the same grammar as the existing
+     * `serverStartDraft` projection. This is deliberately not a singular
+     * placement: callers with an ambiguous repository join cannot turn the
+     * first candidate into an unattended launch.
+     */
+    candidates?: PluginUiSessionPlacementCandidateV1[];
+    /**
+     * Composer attachments, as the AUTHOR half only — the same
+     * `{ attachmentLocalId, value }` a live `attachment.add` carries. The host
+     * qualifies the identity, resolves the type label and mints the instance id
+     * when its New Session composer mounts, so a seed never holds an attachment
+     * record and never becomes a second attachment owner.
+     */
+    attachments?: { attachmentLocalId: string; value: ComposerAttachmentAuthorValueV1 }[];
+};
+
+export type PluginUiSessionPlacementCandidateV1 = {
+    projectKey: ProjectKeyV1;
+    serverId: string;
+    machineId: string;
+    rootPath: string;
+    label?: string;
+    reachable: boolean;
+    worktrees: Array<{
+        path: string;
+        branch: string | null;
+        isMain: boolean;
+        isCurrent: boolean;
+    }>;
 };
 
 /** The strict two-arm no-invoke selection request. */
@@ -423,10 +467,11 @@ export type PluginUiSelectActionInputTargetedSubmittedV1 = {
         | { kind: 'selected'; fieldPath: string; ref: QualifiedConnectedAccountRef };
 };
 
-/** Exact result arms: targeted submitted, no-invoke Session draft, or cancellation. */
+/** Exact result arms: targeted submitted, no-invoke Session draft, seeded New Session, or cancellation. */
 export type PluginUiSelectActionInputResultV1 =
     | PluginUiSelectActionInputTargetedSubmittedV1
     | { kind: 'serverStartDraft'; draft: PluginUiSessionServerStartDraftV1 }
+    | { kind: 'newSessionSeeded' }
     | { kind: 'cancelled' };
 
 /** Transient carrier whose currentness remains owned by the host. */

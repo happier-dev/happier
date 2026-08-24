@@ -88,6 +88,7 @@ export type { PluginUiSelectedActionInputCarrierV1 } from './hostApi.js';
 export type { PluginUiSemanticCommandV1 } from './hostApi.js';
 export type { PluginUiSemanticExecuteActionCommandV1 } from './hostApi.js';
 export type { PluginUiSemanticOpenSurfaceCommandV1 } from './hostApi.js';
+export type { PluginUiSessionPlacementCandidateV1 } from '../ui.js';
 export type { PluginUiSettingsPageV1 } from '../ui.js';
 export type { PluginUiTargetedContributionContributorV1 } from './hostApi.js';
 export type { PluginUiTargetedContributionOperationV1 } from './hostApi.js';

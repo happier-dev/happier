@@ -22,6 +22,10 @@ import {
   ComposerTransactionV1Schema,
 } from './composer.js';
 import {
+  ComposerAttachmentAuthorValueV1Schema,
+  MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
+} from '../../runtime/input/composerAttachmentV1.js';
+import {
   ComposerContentHandleV1Schema,
   ComposerContentInspectRequestV1Schema,
   ComposerContentInspectWireResultV1Schema,
@@ -40,10 +44,11 @@ import { PluginUiSurfaceContextV1Schema } from './surfaceContext.js';
 import { PluginUiContextEnrichmentV1Schema } from './currentUiContext.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import {
-    PluginTargetedContributionSelectionV1Schema,
-    PluginUiTargetedContributionOperationV1Schema,
+  PluginTargetedContributionSelectionV1Schema,
+  PluginUiTargetedContributionOperationV1Schema,
 } from './targetedContributions.js';
 import { SessionServerStartSpawnDraftV1Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
+import { ProjectKeyV1Schema } from '../../workspaces/workspaceRefV1.js';
 
 export {
   PLUGIN_UI_INSTANCE_KEY_MAX_UTF8_BYTES_V1,
@@ -407,10 +412,125 @@ export const PluginUiSelectActionInputHostActionV1Schema = z.object({
 export type PluginUiSelectActionInputHostActionV1 =
   z.infer<typeof PluginUiSelectActionInputHostActionV1Schema>;
 
+/**
+ * What a seed may declare.
+ *
+ * Every member is optional and an ABSENT member means "not seeded", never
+ * "seeded empty": a caller that only carries a prompt must not clear a directory
+ * the reader already chose. Prompt text carries no ceiling because the composer
+ * it lands in has none either — a reader may type any length, so refusing a seed
+ * of that same text would be a limit protecting nothing.
+ *
+ * Composer ATTACHMENTS travel as the AUTHOR half only, exactly as they do on a
+ * live composer transaction: `{ attachmentLocalId, value }`, and nothing more.
+ * A seed cannot state the rest of an attachment record — the qualified
+ * contribution identity, the host-resolved type label, the cardinality upsert
+ * and the host-minted instance id — because only a MOUNTED composer target
+ * resolves those (`createAttachmentAuthorityResolver`/`resolveAttachments`), and
+ * minting them here would be a second, unauthoritative attachment owner. So the
+ * seed carries the request and the New Session composer applies it AT ITS OWN
+ * MOUNT, through that same authority, against the caller's own admitted
+ * contributor. Staged media content is deliberately not seedable: its handle is
+ * bound to an execution target the seed has not chosen yet.
+ */
+export const PluginUiNewSessionSeedAttachmentV1Schema = z.object({
+  // The host qualifies this local id from the CALLER, exactly as it does for a
+  // live `attachment.add`. A seed never supplies a plugin or host identity.
+  attachmentLocalId: asProtocolZod(PluginContributionLocalIdSchema),
+  value: ComposerAttachmentAuthorValueV1Schema,
+}).strict();
+export type PluginUiNewSessionSeedAttachmentV1 =
+  z.infer<typeof PluginUiNewSessionSeedAttachmentV1Schema>;
+
+/**
+ * The existing server-start presentation's checkout choice vocabulary.
+ *
+ * New Session seeding deliberately reuses it instead of declaring another
+ * near-identical set of strings: a candidate remains a host-owned placement
+ * hint until the real New Session screen accepts one.
+ */
+export const PluginUiSessionCheckoutIntentV1Schema = z.enum([
+  'none',
+  'preparedReviewWorkspace',
+  'reuseWorkspace',
+  'createWorktree',
+  'ask',
+]);
+export type PluginUiSessionCheckoutIntentV1 =
+  z.infer<typeof PluginUiSessionCheckoutIntentV1Schema>;
+
+/** One worktree fact carried by the incumbent host-owned placement candidate. */
+export const PluginUiSessionPlacementWorktreeV1Schema = z.object({
+  path: z.string().trim().min(1),
+  branch: z.string().nullable(),
+  isMain: z.boolean(),
+  isCurrent: z.boolean(),
+}).strict();
+export type PluginUiSessionPlacementWorktreeV1 =
+  z.infer<typeof PluginUiSessionPlacementWorktreeV1Schema>;
+
+/**
+ * An exact candidate the host may present for a New Session placement.
+ *
+ * This is the one grammar shared by the incumbent `serverStartDraft`
+ * presentation and the seeded-New-Session path. A plugin may suggest exact
+ * candidates; it cannot turn one into an execution target without the reader
+ * and New Session owner selecting it.
+ */
+export const PluginUiSessionPlacementCandidateV1Schema = z.object({
+  projectKey: ProjectKeyV1Schema,
+  serverId: z.string().trim().min(1),
+  machineId: z.string().trim().min(1),
+  rootPath: z.string().trim().min(1),
+  label: z.string().trim().min(1).optional(),
+  reachable: z.boolean(),
+  worktrees: z.array(PluginUiSessionPlacementWorktreeV1Schema),
+}).strict();
+export type PluginUiSessionPlacementCandidateV1 =
+  z.infer<typeof PluginUiSessionPlacementCandidateV1Schema>;
+
+export const PluginUiNewSessionSeedV1Schema = z.object({
+  prompt: z.object({
+    text: z.string().trim().min(1),
+    mode: z.enum(['replace', 'append']),
+  }).strict().optional(),
+  profileId: z.string().trim().min(1).optional(),
+  placement: z.object({
+    serverId: z.string().trim().min(1).optional(),
+    machineId: z.string().trim().min(1).optional(),
+    directory: z.string().trim().min(1).optional(),
+  }).strict().optional(),
+  /**
+   * Exact candidate placements stay candidates. In particular, a caller with
+   * two matching checkouts must not convert the first array item into the
+   * singular `placement` field and launch where the reader never chose.
+   */
+  candidates: z.array(PluginUiSessionPlacementCandidateV1Schema).min(1).optional(),
+  /**
+   * Bounded by the composer's OWN instance ceiling rather than by a number
+   * chosen here: a seed that carried more attachments than one composer can
+   * hold would be refused by the document owner anyway, and a smaller bound
+   * here would refuse a selection the composer could carry.
+   */
+  attachments: z.array(PluginUiNewSessionSeedAttachmentV1Schema)
+    .min(1)
+    .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)
+    .optional(),
+}).strict();
+export type PluginUiNewSessionSeedV1 = z.infer<typeof PluginUiNewSessionSeedV1Schema>;
+
 export const PluginUiSelectActionInputHostRequestV1Schema = z.object({
   hostAction: PluginUiSelectActionInputHostActionV1Schema,
   draft: PluginUiJsonObjectV1Schema.optional(),
-}).strict();
+  seed: PluginUiNewSessionSeedV1Schema.optional(),
+}).strict().superRefine((value, context) => {
+  if (value.draft !== undefined && value.seed !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Session input selection cannot return a draft and seed New Session together.',
+    });
+  }
+});
 export type PluginUiSelectActionInputHostRequestV1 =
   z.infer<typeof PluginUiSelectActionInputHostRequestV1Schema>;
 
@@ -453,10 +573,22 @@ export const PluginUiSelectActionInputServerStartDraftV1Schema = z.object({
 export type PluginUiSelectActionInputServerStartDraftV1 =
   z.infer<typeof PluginUiSelectActionInputServerStartDraftV1Schema>;
 
-/** The only successful settlements: targeted submission, Session draft, or cancellation. */
+/**
+ * The seeded settlement carries no draft on purpose: the New Session screen now
+ * holds the seed, and handing a copy back to the caller would create exactly
+ * the second competing draft this projection exists to avoid.
+ */
+export const PluginUiSelectActionInputNewSessionSeededV1Schema = z.object({
+  kind: z.literal('newSessionSeeded'),
+}).strict();
+export type PluginUiSelectActionInputNewSessionSeededV1 =
+  z.infer<typeof PluginUiSelectActionInputNewSessionSeededV1Schema>;
+
+/** The only successful settlements: targeted submission, Session draft, seeded New Session, or cancellation. */
 export const PluginUiSelectActionInputResultV1Schema = z.discriminatedUnion('kind', [
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
   PluginUiSelectActionInputServerStartDraftV1Schema,
+  PluginUiSelectActionInputNewSessionSeededV1Schema,
   z.object({ kind: z.literal('cancelled') }).strict(),
 ]);
 export type PluginUiSelectActionInputResultV1 =
