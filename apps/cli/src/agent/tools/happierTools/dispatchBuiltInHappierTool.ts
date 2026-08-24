@@ -26,7 +26,11 @@ import {
 } from './manualToolContracts';
 
 type DispatchDeps = Readonly<{
-  changeTitle: (sessionId: string, title: string) => Promise<unknown>;
+  changeTitle: (
+    sessionId: string,
+    title: string,
+    options?: Readonly<{ approvalOrigin?: ApprovalRequestOriginV1 | null }>,
+  ) => Promise<unknown>;
   startExecutionRun: (sessionId: string, request: unknown) => Promise<HappierBuiltInToolDispatchResult>;
   executeActionByToolName: (
     toolName: string,
@@ -185,7 +189,11 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   if (params.toolName === 'change_title') {
     const parsed = changeTitleToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid title payload');
-    return normalizeChangeTitleResult(await params.deps.changeTitle(params.sessionId, parsed.data.title));
+    return normalizeChangeTitleResult(await params.deps.changeTitle(
+      params.sessionId,
+      parsed.data.title,
+      ...(actionExecutionOptions ? [actionExecutionOptions] as const : [] as const),
+    ));
   }
 
   if (params.toolName === 'action_spec_search') {

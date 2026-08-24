@@ -242,12 +242,15 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
       let result: ToolCallResult;
       if (source === 'happier') {
         const context = await resolveToolsBaseContext(args, deps, { requireSessionId: true });
+        const sessionAgentBridge = args.includes('--session-agent-bridge');
+        const toolCallId = sessionAgentBridge ? (getFlagValue(args, '--tool-call-id') ?? '') : '';
         result = await deps.callBuiltInHappierTool({
           credentials: context.credentials,
           sessionId: context.sessionId,
           toolName,
           args: parsedArgs,
-          ...(args.includes('--session-agent-bridge') ? { invocation: 'session_agent_bridge' as const } : {}),
+          ...(sessionAgentBridge ? { invocation: 'session_agent_bridge' as const } : {}),
+          ...(toolCallId ? { toolCallId } : {}),
         });
       } else {
         const context = await resolveCustomToolsRuntimeContext(args, deps, { requireSessionId: true });

@@ -83,7 +83,7 @@ describe('callBuiltInHappierTool', () => {
       rawSession: {
         id: 'sess-1',
         machineId: 'machine-1',
-        metadata: { summary: { text: 'Old title' } },
+        metadata: { summary: { text: 'Old title' }, permissionMode: 'safe-yolo' },
       },
       ctx: { type: 'plain' as const },
       mode: 'plain' as const,
@@ -100,6 +100,7 @@ describe('callBuiltInHappierTool', () => {
         input: { query: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' } },
       },
       invocation: 'session_agent_bridge',
+      toolCallId: 'pi-tool-call-1',
     });
 
     expect(result).toEqual({ ok: true, result: { matches: [] } });
@@ -110,6 +111,14 @@ describe('callBuiltInHappierTool', () => {
         defaultSessionId: 'sess-1',
         defaultSessionMachineId: 'machine-1',
         surface: 'session_agent',
+        callerPermissionMode: 'safe-yolo',
+        actionRequestId: 'pi-tool-call-1',
+        approvalOrigin: {
+          kind: 'transcript_tool_call',
+          sessionId: 'sess-1',
+          toolCallId: 'pi-tool-call-1',
+          toolName: 'action_execute',
+        },
       }),
     );
   });

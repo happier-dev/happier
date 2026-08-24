@@ -154,7 +154,7 @@ function runChild(filePath, argv, options) {
   });
 }
 
-async function callHappierTool(config, toolName, args, signal, cwd) {
+async function callHappierTool(config, toolName, args, toolCallId, signal, cwd) {
   const argv = [
     ...config.launch.argPrefix,
     "tools", "call",
@@ -164,6 +164,7 @@ async function callHappierTool(config, toolName, args, signal, cwd) {
     "--tool", toolName,
     "--args-json", JSON.stringify(args ?? {}),
     "--session-agent-bridge",
+    ...(typeof toolCallId === "string" && toolCallId.trim() ? ["--tool-call-id", toolCallId.trim()] : []),
     "--json",
   ];
   const result = await runChild(config.launch.filePath, argv, {
@@ -226,12 +227,12 @@ export default function HappierPiToolsBridgeExtension(pi) {
         label: tool.title,
         description: tool.description,
         parameters: tool.inputSchema,
-        async execute(_toolCallId, args, signal, _onUpdate, ctx) {
+        async execute(toolCallId, args, signal, _onUpdate, ctx) {
           const cwd = typeof ctx?.cwd === "string" && ctx.cwd.trim() ? ctx.cwd : process.cwd();
           const callArgs = tool.call.actionId === null
             ? args
             : { actionId: tool.call.actionId, input: args };
-          return envelopeToToolResult(await callHappierTool(config, tool.call.toolName, callArgs, signal, cwd));
+          return envelopeToToolResult(await callHappierTool(config, tool.call.toolName, callArgs, toolCallId, signal, cwd));
         },
       });
     }

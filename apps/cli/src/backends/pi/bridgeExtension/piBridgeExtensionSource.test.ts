@@ -151,6 +151,7 @@ if (args.input.value === 'fail') {
         '--source', 'happier',
         '--tool', 'action_execute',
         '--session-agent-bridge',
+        '--tool-call-id', 'call-1',
         '--json',
       ]));
       const argsIndex = invocation.argv.indexOf('--args-json');

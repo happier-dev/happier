@@ -7,6 +7,8 @@ import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResu
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { startExecutionRun } from '@/session/services/executionRuns';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolvePermissionPrivilegeFromSessionMetadata } from '@happier-dev/agents';
 
 export async function callBuiltInHappierTool(params: Readonly<{
   credentials: Credentials;
@@ -14,6 +16,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
   toolName: string;
   args: unknown;
   invocation?: 'cli' | 'session_agent_bridge';
+  toolCallId?: string | null;
 }>): Promise<Awaited<ReturnType<typeof dispatchBuiltInHappierTool>>> {
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
@@ -46,6 +49,23 @@ export async function callBuiltInHappierTool(params: Readonly<{
   }
   const { rawSession, ctx, mode, sessionId } = sessionTarget;
   const surface = params.invocation === 'session_agent_bridge' ? 'session_agent' : 'cli';
+  const sessionMetadata = rawSession.metadata && typeof rawSession.metadata === 'object' && !Array.isArray(rawSession.metadata)
+    ? rawSession.metadata
+    : tryDecryptSessionMetadata({ credentials: params.credentials, rawSession });
+  const callerPermissionMode = surface === 'session_agent'
+    ? resolvePermissionPrivilegeFromSessionMetadata(sessionMetadata).mode
+    : null;
+  const toolCallId = surface === 'session_agent' && typeof params.toolCallId === 'string'
+    ? params.toolCallId.trim()
+    : '';
+  const approvalOrigin = toolCallId
+    ? {
+        kind: 'transcript_tool_call' as const,
+        sessionId,
+        toolCallId,
+        toolName: params.toolName,
+      }
+    : null;
   const defaultSessionMachineId = typeof rawSession.machineId === 'string' && rawSession.machineId.trim()
     ? rawSession.machineId.trim()
     : null;
@@ -63,6 +83,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
     isActionEnabled: (id) => isActionEnabledByEnv(id, { surface }),
     surface,
     actionsSettings,
+    resolveCallerPermissionMode: () => callerPermissionMode,
     defaultSessionMachineId,
   });
 
@@ -72,8 +93,13 @@ export async function callBuiltInHappierTool(params: Readonly<{
     sessionId,
     surface,
     actionsSettings,
+    ...(approvalOrigin ? { approvalOrigin } : {}),
     deps: {
-      changeTitle: createChangeTitleToolHandler({ executor, surface }),
+      changeTitle: createChangeTitleToolHandler({
+        executor,
+        surface,
+        resolveCallerPermissionMode: () => callerPermissionMode,
+      }),
       startExecutionRun: async (sessionId, request) => {
         const result = await startExecutionRun({
           token: params.credentials.token,
