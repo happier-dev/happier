@@ -4,6 +4,15 @@ import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadC
 import { resolveBundledWorkspaceSyncModulePath } from '../scripts/runtime/resolveBundledWorkspaceSyncModulePath.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../scripts/utils/paths/paths.mjs';
 
+export function isBundledWorkspaceMetadataInvocation(argv) {
+  const args = Array.isArray(argv) ? argv.map((arg) => String(arg ?? '')) : [];
+  const separatorIndex = args.indexOf('--');
+  const metadataScope = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+  if (metadataScope.includes('--help') || metadataScope.includes('-h')) return true;
+  if (metadataScope.length === 1 && (metadataScope[0] === '--version' || metadataScope[0] === '-v')) return true;
+  return metadataScope[0] === 'help';
+}
+
 async function bundledWorkspacePackagesAreHealthy({
   repoRoot,
   hostPackageDir,
@@ -27,6 +36,7 @@ async function bundledWorkspacePackagesAreHealthy({
 export async function refreshLocalBundledWorkspacePackages(cliRootDir, opts = {}) {
   const cliRoot = String(cliRootDir ?? '').trim();
   if (!cliRoot) return;
+  if (isBundledWorkspaceMetadataInvocation(opts.argv)) return;
   const disabled = String(process.env.HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES ?? '').trim().toLowerCase();
   if (disabled === '0' || disabled === 'false' || disabled === 'no') return;
 

@@ -12,7 +12,10 @@ import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/pat
 import { resolveExplicitStackEnvFilePath, resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
 import { SANDBOX_PRESERVE_KEYS, scrubHappierStackEnv } from '../scripts/utils/env/scrub_env.mjs';
 import { resolveStackHappierPassthroughEntrypoint } from '../scripts/stack/stack_happier_passthrough_entrypoint.mjs';
-import { refreshLocalBundledWorkspacePackages } from './localBundledWorkspacePreflight.mjs';
+import {
+  isBundledWorkspaceMetadataInvocation,
+  refreshLocalBundledWorkspacePackages,
+} from './localBundledWorkspacePreflight.mjs';
 
 function getCliRootDir() {
   return dirname(dirname(fileURLToPath(import.meta.url)));
@@ -337,10 +340,12 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   const preSeparatorArgs = sepIndex === -1 ? args : args.slice(0, sepIndex);
   const command = preSeparatorArgs.find((arg) => !String(arg).startsWith('-')) ?? '';
 
-  // `hstack happier` is a passthrough into the Happier CLI. Even help output loads
-  // the CLI entrypoint, which imports bundled workspace packages in source/dev
-  // checkouts, so the bundled workspace preflight remains mandatory.
-  if (command === 'happier') return false;
+  // CLI metadata reads the already-admitted dependency tree. It must not turn a
+  // help/version query into a workspace publication or wait behind one.
+  if (command === 'happier') {
+    const commandIndex = preSeparatorArgs.indexOf(command);
+    return isBundledWorkspaceMetadataInvocation(preSeparatorArgs.slice(commandIndex + 1));
+  }
 
   // Help renders the already-installed Stack control plane. It must never turn
   // an informational query into a workspace publisher or wait behind one.
@@ -518,7 +523,7 @@ async function main() {
   const preflightArgv = normalizeStackShorthandForPreflight(argv);
   const skipBundledWorkspacePreflight = shouldSkipBundledWorkspacePreflight(preflightArgv);
   if (!skipBundledWorkspacePreflight) {
-    await refreshLocalBundledWorkspacePackages(cliRootDir);
+    await refreshLocalBundledWorkspacePackages(cliRootDir, { argv: preflightArgv });
     await maybeAutoUpdateNotice(cliRootDir, cmd);
   }
 
