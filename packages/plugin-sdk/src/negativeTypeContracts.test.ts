@@ -116,6 +116,31 @@ describe('SDK negative type contracts', () => {
                 guardedDeclaration: "import type { AgentRuntimeV1 } from './agent-runtime.js';",
             },
             {
+                fileName: 'agentUiGrammar.contract.test-d.ts',
+                reason: "'bool' is not a declarable new-session option kind.",
+                guardedDeclaration: "newSession: { agentOptions: [{ key: 'allowIndexing', kind: 'bool' }] },",
+            },
+            {
+                fileName: 'agentUiGrammar.contract.test-d.ts',
+                reason: '`newSesion` is not part of the Agent UI grammar.',
+                guardedDeclaration: 'behavior: { newSesion: { canSelectWithoutDetectedCli: true } },',
+            },
+            {
+                fileName: 'agentUiGrammar.contract.test-d.ts',
+                reason: 'compiled first-party component ids are not authorable.',
+                guardedDeclaration: "slots: [{ id: 'x', slot: 'session.detailsTabs', componentId: 'firstParty.claude.teammateDetailsTab' }],",
+            },
+            {
+                fileName: 'agentUiGrammar.contract.test-d.ts',
+                reason: 'only the `static` spawn-extras form is authorable.',
+                guardedDeclaration: "payload: { spawnSessionExtras: { kind: 'adapter', adapterId: 'codex.backendMode' } },",
+            },
+            {
+                fileName: 'agentUiGrammar.contract.test-d.ts',
+                reason: 'compiled message-meta descriptor ids are not authorable.',
+                guardedDeclaration: "ui: { message: { metaDescriptorIds: ['claude.thinking'] } },",
+            },
+            {
                 fileName: 'host/registration/scope.test.ts',
                 reason: 'A client registration scope does not expose daemon registrations.',
                 guardedDeclaration: 'void scope.api.hooks;',
@@ -210,7 +235,7 @@ describe('SDK negative type contracts', () => {
                 message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
             }));
 
-        expect(cases).toHaveLength(294);
+        expect(cases).toHaveLength(297);
         expect(syntacticDiagnostics.map((diagnostic) => ({
             fileName: diagnostic.file?.fileName ?? '<global>',
             message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),

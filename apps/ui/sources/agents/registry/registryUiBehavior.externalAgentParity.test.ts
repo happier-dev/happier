@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { PluginAgentUiBehaviorContributionV2Schema } from '@happier-dev/protocol';
+
+import { BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS } from './generatedBundledPluginEntries.uiBehaviorOverrides';
+
 import {
     buildSessionHandoffSourceRecoveryResumePatch,
     buildSpawnSessionExtrasFromUiState,
+    getNewSessionAgentInputExtraActionChips,
     isAttachedSessionTerminalAvailableForSession,
     resolvePendingDeliveryLabelKeyForSession,
     resolvePendingDeliveryTransientActionForSession,
@@ -12,6 +17,7 @@ import {
 import {
     clearProjectedAgentUiBehaviorDescriptors,
     publishProjectedAgentUiBehaviorDescriptors,
+    readProjectedAgentUiBehaviorDiagnostics,
 } from './agentUiBehaviorProjection';
 import { makeSettings } from './registryUiBehavior.testHelpers';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -326,5 +332,139 @@ describe('machine-owned decisions read the owning machine\'s declaration', () =>
             agentId: EXTERNAL_AGENT_ID,
             metadata: { machineId: SECOND_MACHINE_ID, acmeBackendMode: 'server' },
         })).toEqual({ environmentVariables: { HAPPIER_ACME_BACKEND_MODE: 'server' } });
+    });
+});
+
+/**
+ * Conformance between the two halves of one language.
+ *
+ * `contributes.agents[].ui` is the PUBLIC authoring grammar; this module's
+ * descriptor interpreter is its implementation. A grammar that admitted a shape
+ * the interpreter refuses would teach external authors a declaration that
+ * silently does nothing, and a grammar narrower than the interpreter would
+ * remove author capability. This pins both directions on the one declaration
+ * that exercises every declarative block.
+ */
+describe('public Agent UI grammar conformance with the descriptor interpreter', () => {
+    afterEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    it('interprets a grammar-admitted declaration with no refusal', () => {
+        const declaration = PluginAgentUiBehaviorContributionV2Schema.parse({
+            behavior: {
+                descriptorId: 'acme.uiBehavior.v1',
+                mcpServers: { supportsDetectedConfigScan: true },
+                permissions: { footer: { usePermissionUpdates: true, stopHandling: 'denyAndAbortRun' } },
+                pendingDelivery: { interruptAndRun: true },
+                newSession: {
+                    transcriptStorageModes: ['persisted', 'direct'],
+                    agentOptions: [{ key: 'allowIndexing', kind: 'boolean', spawnConfigOption: true }],
+                },
+                payload: { spawnSessionExtras: { kind: 'static', value: { acmeMode: 'fast' } } },
+                externalSessions: {
+                    browse: {
+                        order: 4,
+                        sourceOptions: [{
+                            key: 'acme:archive',
+                            labelKey: 'acme.browse.archive',
+                            source: { kind: 'acmeArchive' },
+                        }],
+                    },
+                },
+            },
+            message: {
+                metaOverrides: [{
+                    id: 'acme.mode',
+                    targetKey: 'acmeMode',
+                    value: { kind: 'sessionConfigOptionOverride', key: 'acmeMode' },
+                }],
+            },
+            components: {
+                slots: [{
+                    id: 'acme-allow-indexing',
+                    slot: 'newSession.agentInputExtraActionChips',
+                    chip: {
+                        kind: 'booleanOption',
+                        optionStateKey: 'allowIndexing',
+                        iconName: 'magnifying-glass',
+                        onLabelKey: 'agentInput.auggieIndexingChip.on',
+                        offLabelKey: 'agentInput.auggieIndexingChip.off',
+                    },
+                }],
+            },
+        });
+
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: MACHINE_ID,
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme',
+                    agentId: EXTERNAL_AGENT_ID,
+                    version: 1,
+                    ...declaration,
+                },
+            },
+        });
+
+        expect(readProjectedAgentUiBehaviorDiagnostics(MACHINE_ID)).toEqual([]);
+        // The declaration is not merely accepted: it reaches real behavior.
+        expect(getNewSessionAgentInputExtraActionChips({
+            agentId: EXTERNAL_AGENT_ID,
+            agentOptionState: { allowIndexing: false },
+            setAgentOptionState: () => {},
+            machineId: MACHINE_ID,
+        })?.map((chip) => chip.key)).toEqual(['acme-allow-indexing']);
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: EXTERNAL_AGENT_ID,
+            settings: makeSettings({}),
+            resumeSessionId: '',
+            machineId: MACHINE_ID,
+            newSessionOptions: { allowIndexing: true },
+            updatedAt: 7,
+        }).sessionConfigOptionOverrides?.overrides).toMatchObject({
+            allowIndexing: { value: true, updatedAt: 7 },
+        });
+    });
+});
+
+/**
+ * The one public grammar has to accept the language the BUNDLED Agents already
+ * write, or an installed Agent cannot reach parity by construction: an author
+ * copying a first-party declaration would be refused at their manifest.
+ *
+ * The single documented exception is `components.slots[].componentId`, which
+ * names a component compiled into the app. That is an approved compile-time
+ * first-party escape hatch, so it is stripped here rather than admitted into
+ * the grammar; every other field a bundled Agent declares must be authorable.
+ */
+describe('the public grammar admits every bundled Agent declaration', () => {
+    function splitBundledDeclaration(descriptor: Readonly<Record<string, unknown>>) {
+        const { components, message, ...behavior } = descriptor;
+        const slots = (components as { slots?: readonly Record<string, unknown>[] } | undefined)?.slots;
+        return {
+            ...(Object.keys(behavior).length > 0 ? { behavior } : {}),
+            ...(message ? { message } : {}),
+            ...(components
+                ? {
+                    components: {
+                        ...(components as Record<string, unknown>),
+                        ...(slots
+                            ? { slots: slots.map(({ componentId: _compiled, ...slot }) => slot) }
+                            : {}),
+                    },
+                }
+                : {}),
+        };
+    }
+
+    it.each(Object.entries(BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS).map(
+        ([agentId, entry]) => [agentId, entry?.descriptor ?? {}] as const,
+    ))('accepts the %s declaration an external author would have to copy', (_agentId, descriptor) => {
+        const parsed = PluginAgentUiBehaviorContributionV2Schema.safeParse(
+            splitBundledDeclaration(descriptor),
+        );
+        expect(parsed.success ? [] : parsed.error.issues).toEqual([]);
     });
 });

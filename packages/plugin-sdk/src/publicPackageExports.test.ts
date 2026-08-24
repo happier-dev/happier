@@ -733,8 +733,18 @@ describe('CORE-A curated package exports', () => {
 
     inventoryIt('keeps manifest signature dependencies in the generated author inventory', async () => {
         await expectCanonicalInventoryBarrelClosure('./manifest', [
+            'AgentUiBehaviorDeclarationV1',
+            'AgentUiConditionV1',
+            'AgentUiComponentsDeclarationV1',
+            'AgentUiExternalSessionsSourceV1',
+            'AgentUiMessageDeclarationV1',
+            'AgentUiRuntimeDescriptorAgentExtraIdentityV1',
+            'AgentUiRuntimeDescriptorAgentExtraV1',
+            'AgentUiRuntimeDescriptorLinkExtrasV1',
+            'AgentUiTranscriptStorageModeV1',
             'PluginCollectionProjectedScalarFieldRefV1',
             'PluginCollectionRowCommandV1',
+            'PluginAgentUiContribution',
             'PluginDeclarativeActionVariantV2',
             'PluginDeclarativeCollectionListNodeV2',
             'PluginDeclarativeMetadataEntryV2',

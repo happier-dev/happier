@@ -537,6 +537,18 @@ export {
   type AgentUiV1,
 } from './plugins/agentDefinitionV1.js';
 export {
+  AgentUiBehaviorDeclarationV1Schema,
+  AgentUiComponentsDeclarationV1Schema,
+  AgentUiConditionV1Schema,
+  AgentUiMessageDeclarationV1Schema,
+  AgentUiProjectedDeclarationV1Schema,
+  type AgentUiBehaviorDeclarationV1,
+  type AgentUiComponentsDeclarationV1,
+  type AgentUiConditionV1,
+  type AgentUiMessageDeclarationV1,
+  type AgentUiProjectedDeclarationV1,
+} from './plugins/contributions/agentUiGrammar.js';
+export {
   PluginActionAvailabilityV2Schema,
   PluginActionConnectedAccountPurposeBindingV2Schema,
   PluginActionConfirmationV2Schema,
@@ -717,6 +729,7 @@ export {
   PluginUiTranslationsContributionV1Schema,
   type PluginAgentContributionV2,
   type PluginAgentCatalogV2,
+  PluginAgentUiBehaviorContributionV2Schema,
   type PluginAgentUiBehaviorContributionV2,
   type PluginAgentVendorResumeSupportV2,
   type PluginAgentCapabilitiesV2,

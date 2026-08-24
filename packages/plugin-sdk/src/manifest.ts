@@ -18,6 +18,241 @@ import type {
   PluginUiAttachmentToneV1,
   PluginUiIconTokenV1,
 } from './ui/publicContract.js';
+/**
+ * Protocol owns the Agent UI grammar and its strict parser. As with the
+ * declarative node grammar further down, the SDK declares a structurally exact
+ * projection of it here instead of aliasing Protocol's type: an alias resolves
+ * to the aliased symbol, so a downstream author's emitted `.d.ts` would name
+ * Protocol's manifest authoring entrypoint, which reaches them only as a
+ * `bundledDependencies` copy nested under this package and is therefore
+ * unreachable from their own package.
+ *
+ * `uiPublicContract.test.ts` pins all three declarations to Protocol's
+ * `AgentUi*DeclarationV1` with `toEqualTypeOf`, so a grammar change fails this
+ * package's typecheck instead of silently diverging. Protocol infers these from
+ * Zod, so the projection is deliberately mutable and spells every leaf inline.
+ */
+export type AgentUiConditionV1 =
+  | { kind: 'experimentsEnabled' }
+  | { kind: 'settingEquals'; settingKey: string; value: string; aliases?: Record<string, string> }
+  | { kind: 'settingTrue'; settingKey: string }
+  | { all: AgentUiConditionV1[] }
+  | { any: AgentUiConditionV1[] };
+
+export type AgentUiTranscriptStorageModeV1 = 'persisted' | 'direct';
+
+/** A provider-owned External Sessions source; only `kind` is grammar-known. */
+export type AgentUiExternalSessionsSourceV1 = { [key: string]: unknown; kind: string };
+
+export type AgentUiRuntimeDescriptorAgentExtraIdentityV1 = {
+  owner: string;
+  schemaId: string;
+  v: number;
+};
+
+export type AgentUiRuntimeDescriptorAgentExtraV1 = {
+  runtimeHandleFields: string[];
+  owner: string;
+  schemaId: string;
+  v: number;
+};
+
+export type AgentUiRuntimeDescriptorLinkExtrasV1 = {
+  providerId: string;
+  backendMode: { values: string[] };
+  sourceFields: string[];
+  runtimeDescriptorOutputKey?: string;
+  legacyModeOutputKey?: string;
+  agentExtra?: AgentUiRuntimeDescriptorAgentExtraV1;
+};
+
+export type AgentUiBehaviorDeclarationV1 = {
+  descriptorId?: string;
+  attachedSessionTerminal?: { supported?: boolean };
+  pendingDelivery?: { custodyLabelKey?: string; interruptAndRun?: boolean };
+  guidance?: { includeInSessionGettingStartedCliExamples?: boolean };
+  mcpServers?: { supportsDetectedConfigScan?: boolean };
+  permissions?: {
+    footer?: {
+      usePermissionUpdates?: boolean;
+      forceReadOnlyAfterStop?: boolean;
+      supportsExecPolicyAmendment?: boolean;
+      stopHandling?: 'denyOnly' | 'denyAndAbortRun';
+    };
+  };
+  workState?: {
+    editableGoals?: {
+      providerId?: string;
+      capabilityDriven?: boolean;
+      modeValues?: string[];
+      activeModeValues?: string[];
+      activeWhenNoPersistedMode?: boolean;
+      persistedGoalSnapshot?: {
+        path?: string[];
+        itemKind?: string;
+        providerFields?: string[];
+      };
+    };
+  };
+  resume?: {
+    experimentSwitches?: {
+      id: string;
+      settingKey?: string;
+      when?: AgentUiConditionV1;
+    }[];
+  };
+  sessionComposer?: {
+    nonSteerableWhileBusy?: {
+      reason?: 'provider_config_change_refused';
+      metaKeys?: string[];
+      sessionConfigOptionIds?: string[];
+      freshModelOverride?: boolean;
+    };
+  };
+  contextWindow?: {
+    defaultTokens?: number;
+    modelRules?: {
+      idSuffix?: string;
+      descriptionIncludesAny?: string[];
+      tokens?: number;
+    }[];
+    observedUsageBumpTokens?: number[];
+    trustObservedUsageBeyondKnown?: boolean;
+  };
+  newSession?: {
+    relevantInstallableDepKeys?: string[];
+    relevantInstallableDeps?: { keys?: string[]; when?: AgentUiConditionV1 }[];
+    transcriptStorageModes?: AgentUiTranscriptStorageModeV1[];
+    transcriptStorageModesByBackendMode?: Record<string, AgentUiTranscriptStorageModeV1[]>;
+    canSelectWithoutDetectedCli?: boolean;
+    agentOptions?: { key: string; kind: 'boolean'; spawnConfigOption?: boolean }[];
+  };
+  payload?: {
+    spawnSessionExtras?: { kind: 'static'; value: Record<string, unknown> };
+    sessionExtras?: { providerId: string; outputKey: string; values: string[] };
+    environmentVariables?: {
+      providerId: string;
+      backendMode: {
+        envKey: string;
+        settingKey: string;
+        legacyMetadataKey: string;
+        runtimeDescriptorField: string;
+        defaultValue: string;
+        values: string[];
+      };
+      serverBaseUrl?: {
+        envKey: string;
+        explicitEnvKey: string;
+        settingKey: string;
+        byServerIdSettingKey: string;
+        legacyMetadataKey: string;
+        legacyExplicitMetadataKey: string;
+        runtimeDescriptorField: string;
+        runtimeDescriptorExplicitField: string;
+        allowedProtocols?: string[];
+        rejectCredentials?: boolean;
+        originOnly?: boolean;
+      };
+      agentExtra?: AgentUiRuntimeDescriptorAgentExtraV1;
+    };
+    backendTransport?: {
+      providerId: string;
+      backendMode: {
+        values: string[];
+        aliases?: Record<string, string>;
+        legacyExperimentalValue?: string;
+      };
+      runtimeHandleFields: string[];
+      runtimeDescriptorOutputKey?: string;
+      legacyModeOutputKey?: string;
+      agentExtra?: AgentUiRuntimeDescriptorAgentExtraIdentityV1;
+    };
+  };
+  externalSessions?: {
+    browse?: {
+      order?: number;
+      sourceOptions?: {
+        key: string;
+        labelKey: string;
+        source: AgentUiExternalSessionsSourceV1;
+        labelParams?: Record<string, string>;
+        detail?: string;
+      }[];
+      connectedServiceProfileSources?: {
+        serviceId: string;
+        keyPrefix: string;
+        labelKey: string;
+        source: AgentUiExternalSessionsSourceV1;
+        serviceIdField: string;
+        profileIdField: string;
+        labelParams?: Record<string, string>;
+        detailSettingsKey?: string;
+      }[];
+      lockedConnectedServiceSource?: {
+        serviceId: string;
+        keyPrefix: string;
+        source: AgentUiExternalSessionsSourceV1;
+        serviceIdField: string;
+        profileIdField: string;
+        groupIdField: string;
+      };
+      compatibleSource?: { sourceKind: string; optionalFields: string[] };
+      linkEnsureRequestExtras?: {
+        sourceFromCandidate?: { sourceKind: string; optionalFields: string[] };
+        runtimeDescriptorFromCandidate?: AgentUiRuntimeDescriptorLinkExtrasV1;
+      };
+    };
+    sessionHandoff?: { clearMetadataKeys?: string[] };
+  };
+};
+
+export type AgentUiMessageDeclarationV1 = {
+  metaOverrides?: {
+    id: string;
+    targetKey: string;
+    value: {
+      kind: 'sessionConfigOptionOverride';
+      key: string;
+      aliases?: string[];
+    };
+    normalize?: 'trimLowercase';
+  }[];
+};
+
+export type AgentUiComponentsDeclarationV1 = {
+  slots?: {
+    id: string;
+    slot: string;
+    chip?: {
+      kind: 'booleanOption';
+      optionStateKey: string;
+      iconName: string;
+      onLabelKey: string;
+      offLabelKey: string;
+    };
+    props?: {
+      teamIds?: { kind: 'subagentGroupKeys'; subagentKinds?: string[] };
+      optionStateKey?: string;
+    };
+    resourceKind?: string;
+    iconName?: string;
+    tab?: { keyPrefix: string; titleKey: string; subtitleKey?: string };
+  }[];
+};
+
+/**
+ * The public Agent UI authoring grammar (`contributes.agents[].ui`).
+ *
+ * One grammar for bundled and installed Agents alike. Rich, arbitrary UI is
+ * authored through the public targeted surfaces; this block is declarative
+ * facts and host-owned controls, so an author never has to name a component
+ * compiled into the app to get parity.
+ */
+export type PluginAgentUiContribution = Readonly<{
+  behavior?: AgentUiBehaviorDeclarationV1;
+  message?: AgentUiMessageDeclarationV1;
+  components?: AgentUiComponentsDeclarationV1;
+}>;
 
 /** A qualified Plugin-local contribution identity. */
 export type PluginContributionIdentity = Readonly<{
@@ -187,7 +422,6 @@ export type PluginManifestAuthorInput = {
   }>[];
   contributes?: Readonly<{
     [TKey in
-      | 'agents'
       | 'commands'
       | 'tools'
       | 'resources'
@@ -218,6 +452,18 @@ export type PluginManifestAuthorInput = {
       readonly [key: string]: unknown;
     }>[];
   } & {
+    /**
+     * Agent contributions. `ui` is typed by the ONE public Agent UI grammar, so
+     * a malformed declaration is refused where it is written rather than
+     * silently no-opping when the client interprets it. Every other Agent field
+     * stays open here; the canonical manifest schema validates them at ingest.
+     */
+    agents?: readonly (Readonly<{
+      id: string;
+      readonly [key: string]: unknown;
+    }> & Readonly<{
+      ui?: PluginAgentUiContribution;
+    }>)[];
     systemTools?: readonly Readonly<{
       id: string;
       title: PluginLocalizedStringV2;

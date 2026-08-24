@@ -7,13 +7,18 @@ import {
 import {
   HookExecutionKindV1Schema,
 } from '../../hooks/hookExecutionSemantics.js';
-import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../_shared.js';
+import { PluginOptionalStringSchema } from '../_shared.js';
 import {
   PluginActionContributionV2Schema,
   PluginActionAvailabilityV2Schema,
   PluginJsonSchemaV2Schema,
   PluginToolContributionV2Schema,
 } from '../actions/v2.js';
+import {
+  AgentUiBehaviorDeclarationV1Schema,
+  AgentUiComponentsDeclarationV1Schema,
+  AgentUiMessageDeclarationV1Schema,
+} from './agentUiGrammar.js';
 import {
   PluginNotificationCategoryContributionV2Schema,
   PluginNotificationChannelContributionV2Schema,
@@ -243,23 +248,27 @@ export const PluginAgentVendorResumeSupportV2Schema = z.enum(['supported', 'unsu
 export type PluginAgentVendorResumeSupportV2 = z.infer<typeof PluginAgentVendorResumeSupportV2Schema>;
 
 /**
- * The client UI-behavior descriptor an Agent contributes: the data-only
- * `plugin.ui.v1` behavior surface (permission-footer handling, transcript
- * storage modes, composer/new-session facts, declarative component slots).
+ * The client UI-behavior declaration an Agent contributes: the data-only
+ * `plugin.ui.v1` surface (permission-footer handling, transcript storage modes,
+ * composer/new-session facts, declarative component slots).
  *
- * It is carried, not re-declared. The client owns the one fail-closed
- * descriptor interpreter, so restating that vocabulary here would create a
- * second owner of the same projection. Without this field an installed Agent
- * has no runtime channel to the client's behavior projection at all and is
- * degraded to the neutral unknown behavior; bundled Agents reach the same
- * interpreter through their build-time projection.
+ * The grammar is owned by `./agentUiGrammar.js` and is the SAME language a
+ * bundled Agent authors, so an installed Agent reaches the client's behavior
+ * projection with the same vocabulary and the same authoring feedback. Without
+ * this field an installed Agent has no runtime channel to that projection at
+ * all and is degraded to the neutral unknown behavior.
+ *
+ * The client still owns the one fail-closed interpreter; this schema refuses a
+ * malformed declaration where it is authored instead of letting it reach that
+ * interpreter and silently no-op.
  */
 export const PluginAgentUiBehaviorContributionV2Schema = z.object({
-  behavior: PluginLooseJsonObjectSchema.optional(),
-  message: PluginLooseJsonObjectSchema.optional(),
-  components: PluginLooseJsonObjectSchema.optional(),
+  behavior: AgentUiBehaviorDeclarationV1Schema.optional(),
+  message: AgentUiMessageDeclarationV1Schema.optional(),
+  components: AgentUiComponentsDeclarationV1Schema.optional(),
 }).strict();
 export type PluginAgentUiBehaviorContributionV2 = z.infer<typeof PluginAgentUiBehaviorContributionV2Schema>;
+export { AgentUiProjectedDeclarationV1Schema, type AgentUiProjectedDeclarationV1 } from './agentUiGrammar.js';
 
 /**
  * Declarative Agent catalog-entry facts.

@@ -26,6 +26,18 @@ export {
 } from '../contributionIdentity.js';
 export { PluginIdJsonSchema, PluginIdSchema, type PluginId } from '../pluginId.js';
 export {
+  AgentUiBehaviorDeclarationV1Schema,
+  AgentUiComponentsDeclarationV1Schema,
+  AgentUiConditionV1Schema,
+  AgentUiMessageDeclarationV1Schema,
+  AgentUiProjectedDeclarationV1Schema,
+  type AgentUiBehaviorDeclarationV1,
+  type AgentUiComponentsDeclarationV1,
+  type AgentUiConditionV1,
+  type AgentUiMessageDeclarationV1,
+  type AgentUiProjectedDeclarationV1,
+} from '../contributions/agentUiGrammar.js';
+export {
   PLUGIN_CONTRIBUTION_CATALOG_V2,
   derivePluginDaemonContributionRegistrationRights,
   readContributedProviderCatalogParserIds,

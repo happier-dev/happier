@@ -5,7 +5,12 @@ import type {
     UiHost,
     UiResource,
 } from './ui.js';
-import type { PluginDeclarativeNodeV2 as CanonicalPluginDeclarativeNodeV2 } from '@happier-dev/protocol/plugins/manifest';
+import type {
+    AgentUiBehaviorDeclarationV1 as CanonicalAgentUiBehaviorDeclarationV1,
+    AgentUiComponentsDeclarationV1 as CanonicalAgentUiComponentsDeclarationV1,
+    AgentUiMessageDeclarationV1 as CanonicalAgentUiMessageDeclarationV1,
+    PluginDeclarativeNodeV2 as CanonicalPluginDeclarativeNodeV2,
+} from '@happier-dev/protocol/plugins/manifest';
 import type {
     ComposerAttachmentAuthorPresentationV1,
     ComposerAttachmentPresentationV1,
@@ -109,6 +114,9 @@ import type {
     PluginHostedWebBridgeEnvelopeV1 as ExperimentalBridgeEnvelope,
 } from './experimental/uiHostedWebBridgeV1.js';
 import type {
+    AgentUiBehaviorDeclarationV1,
+    AgentUiComponentsDeclarationV1,
+    AgentUiMessageDeclarationV1,
     PluginCollectionProjectedScalarFieldRefV1,
     PluginCollectionRowCommandV1,
     PluginContributionReference,
@@ -298,6 +306,23 @@ describe('UI/testing public type contract', () => {
             .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'text'>['text']>();
         expectTypeOf<PluginContributionReference>()
             .toEqualTypeOf<NonNullable<CanonicalDeclarativeNodeOfKind<'item'>['action']>>();
+    });
+
+    it('projects Protocol’s Agent UI authoring grammar without a manifest-local dialect', () => {
+        // `contributes.agents[].ui` is typed by the same rule as the
+        // declarative node grammar above: Protocol owns the strict parser and
+        // `src/manifest.ts` declares a structurally exact projection, because
+        // aliasing Protocol's type would make a downstream author's own emitted
+        // `.d.ts` name a declaration site they cannot resolve. Nothing but
+        // these assertions keeps the projection honest — an author writing a
+        // declaration the real parser refuses (or being refused one it accepts)
+        // is silent at every other boundary.
+        expectTypeOf<AgentUiBehaviorDeclarationV1>()
+            .toEqualTypeOf<CanonicalAgentUiBehaviorDeclarationV1>();
+        expectTypeOf<AgentUiMessageDeclarationV1>()
+            .toEqualTypeOf<CanonicalAgentUiMessageDeclarationV1>();
+        expectTypeOf<AgentUiComponentsDeclarationV1>()
+            .toEqualTypeOf<CanonicalAgentUiComponentsDeclarationV1>();
     });
 
     it('keeps the public view grammar representable exactly where the canonical parser is', () => {

@@ -145,7 +145,17 @@ describe('manifest authoring contract', () => {
         });
 
         expect(exportedNames.sort()).toEqual([
+            'AgentUiBehaviorDeclarationV1',
+            'AgentUiConditionV1',
+            'AgentUiComponentsDeclarationV1',
+            'AgentUiExternalSessionsSourceV1',
+            'AgentUiMessageDeclarationV1',
+            'AgentUiRuntimeDescriptorAgentExtraIdentityV1',
+            'AgentUiRuntimeDescriptorAgentExtraV1',
+            'AgentUiRuntimeDescriptorLinkExtrasV1',
+            'AgentUiTranscriptStorageModeV1',
             'ParsedPluginManifest',
+            'PluginAgentUiContribution',
             'PluginContributes',
             'PluginContributionIdentity',
             'PluginContributionIdentityV1JsonSchema',
