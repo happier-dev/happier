@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   PluginUiActionExecutionOptions,
   PluginUiActionInputFor,
   PluginUiActionReference,
   PluginUiActionResultFor,
-  PluginUiHostApi,
 } from '@happier-dev/plugin-sdk/ui';
 
 import { usePluginHostApi } from './context.js';
@@ -60,6 +59,12 @@ type PluginUiActionExecutionWithOptionalInput = (
   input?: JsonValue,
   options?: PluginUiActionExecutionOptions,
 ) => Promise<JsonValue>;
+
+function actionIdentityKey(action: PluginUiActionReference): string {
+  return typeof action === 'string'
+    ? JSON.stringify(['local', action])
+    : JSON.stringify(['qualified', action.pluginId, action.localId]);
+}
 
 function readErrorCode(error: unknown): string {
   const code = (error as { code?: unknown } | null)?.code;
@@ -138,18 +143,21 @@ export function useExecutePluginAction(
   input?: JsonValue,
 ): PluginActionExecutionController<JsonValue, JsonValue> {
   const hostApi = usePluginHostApi();
-  const [execution, setExecution] = useState<PluginActionExecution<JsonValue>>({ status: 'idle' });
+  const actionKey = actionIdentityKey(action);
+  const bindingToken = useMemo(() => ({}), [actionKey, hostApi]);
+  const [executionRecord, setExecutionRecord] = useState<Readonly<{
+    token: object;
+    execution: PluginActionExecution<JsonValue>;
+  }>>({ token: bindingToken, execution: { status: 'idle' } });
+  const execution = executionRecord.token === bindingToken
+    ? executionRecord.execution
+    : { status: 'idle' } as const;
   // The guard is a ref rather than the rendered state: React has not committed
   // `pending` yet when a second press arrives in the same tick, so a state-only
   // guard dispatches the action twice (the same defect the shared pressable
   // owner fixes for presses).
-  const pendingRef = useRef(false);
+  const pendingRef = useRef<object | null>(null);
   const mountedRef = useRef(true);
-  const latestRef = useRef<{
-    action: PluginUiActionReference;
-    input: JsonValue | undefined;
-  }>({ action, input });
-  latestRef.current = { action, input };
 
   useEffect(() => {
     // StrictMode probes setup → cleanup → setup. Re-arm the settlement guard
@@ -164,11 +172,10 @@ export function useExecutePluginAction(
     overrideInput?: JsonValue,
     options?: PluginUiActionExecutionOptions,
   ): Promise<PluginActionExecution<JsonValue>> => {
-    if (pendingRef.current) return { status: 'pending' };
-    pendingRef.current = true;
-    setExecution({ status: 'pending' });
+    if (pendingRef.current === bindingToken) return { status: 'pending' };
+    pendingRef.current = bindingToken;
+    setExecutionRecord({ token: bindingToken, execution: { status: 'pending' } });
 
-    const current = latestRef.current;
     let settled: PluginActionExecution<JsonValue>;
     try {
       // `null` is an explicit author value (for example, a form clearing an
@@ -177,26 +184,32 @@ export function useExecutePluginAction(
       // supplies its default. The public generic signature keeps typed Action
       // inputs required; this hook also serves dynamic actions whose input is
       // intentionally absent.
-      const actionInput = overrideInput === undefined ? current.input : overrideInput;
+      const actionInput = overrideInput === undefined ? input : overrideInput;
       const executeAction = hostApi.executeAction as PluginUiActionExecutionWithOptionalInput;
       const result = options === undefined
         ? actionInput === undefined
-          ? await executeAction(current.action)
-          : await executeAction(current.action, actionInput)
-        : await executeAction(current.action, actionInput, options);
+          ? await executeAction(action)
+          : await executeAction(action, actionInput)
+        : await executeAction(action, actionInput, options);
       settled = settledFromResult(result);
     } catch (error) {
       settled = settledFromRejection<JsonValue>(error);
     }
 
-    pendingRef.current = false;
-    if (mountedRef.current) setExecution(settled);
+    if (pendingRef.current === bindingToken) pendingRef.current = null;
+    if (mountedRef.current) {
+      setExecutionRecord((current) => current.token === bindingToken
+        ? { token: bindingToken, execution: settled }
+        : current);
+    }
     return settled;
-  }, [hostApi]);
+  }, [action, bindingToken, hostApi, input]);
 
   const reset = useCallback(() => {
-    if (!pendingRef.current) setExecution({ status: 'idle' });
-  }, []);
+    if (pendingRef.current !== bindingToken) {
+      setExecutionRecord({ token: bindingToken, execution: { status: 'idle' } });
+    }
+  }, [bindingToken]);
 
   return { execution, execute, reset };
 }

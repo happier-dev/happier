@@ -223,6 +223,83 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
     mount.unmount();
   });
 
+  it('starts replacement action state fresh and ignores settlement from the replaced action', async () => {
+    let settleRefresh: ((value: JsonValue) => void) | undefined;
+    const executeAction = vi.fn((action: unknown) => action === 'review.refresh'
+      ? new Promise<JsonValue>((resolve) => { settleRefresh = resolve; })
+      : Promise.resolve({ completed: true }));
+
+    function ExecutionHarness({ action }: Readonly<{ action: 'review.refresh' | 'review.complete' }>) {
+      const { execution, execute } = useExecutePluginAction(action);
+      return (
+        <>
+          <button type="button" onClick={() => { void execute(); }}>Run direct hook</button>
+          <output data-testid="action-execution-status">{execution.status}</output>
+        </>
+      );
+    }
+
+    const hostApi = createHostApiStub(
+      createSurfaceContext(),
+      { executeAction } as unknown as Partial<PluginUiHostApi>,
+    );
+    const context = createSurfaceContext();
+    const mount = mountSurface(<ExecutionHarness action="review.refresh" />, hostApi, context);
+    const status = () => mount.container.querySelector('[data-testid="action-execution-status"]')?.textContent;
+
+    await act(async () => { mount.container.querySelector<HTMLButtonElement>('button')?.click(); });
+    expect(status()).toBe('pending');
+
+    await mount.render(
+      <PluginUiProvider hostApi={hostApi} context={context}>
+        <ExecutionHarness action="review.complete" />
+      </PluginUiProvider>,
+    );
+    expect(status()).toBe('idle');
+
+    await act(async () => { settleRefresh?.({ stale: true }); });
+    expect(status()).toBe('idle');
+
+    await act(async () => { mount.container.querySelector<HTMLButtonElement>('button')?.click(); });
+    expect(executeAction.mock.calls.map(([action]) => action)).toEqual(['review.refresh', 'review.complete']);
+    expect(status()).toBe('success');
+    mount.unmount();
+  });
+
+  it('starts replacement host state fresh and does not cancel the prior host effect', async () => {
+    let settleFirst: ((value: JsonValue) => void) | undefined;
+    const firstExecute = vi.fn(() => new Promise<JsonValue>((resolve) => { settleFirst = resolve; }));
+    const secondExecute = vi.fn(async () => ({ host: 'second' }));
+    const context = createSurfaceContext();
+
+    function ExecutionHarness() {
+      const { execution, execute } = useExecutePluginAction('review.refresh');
+      return (
+        <>
+          <button type="button" onClick={() => { void execute(); }}>Run direct hook</button>
+          <output data-testid="action-execution-status">{execution.status}</output>
+        </>
+      );
+    }
+
+    const firstHost = createHostApiStub(context, { executeAction: firstExecute } as unknown as Partial<PluginUiHostApi>);
+    const secondHost = createHostApiStub(context, { executeAction: secondExecute } as unknown as Partial<PluginUiHostApi>);
+    const mount = mountSurface(<ExecutionHarness />, firstHost, context);
+    const status = () => mount.container.querySelector('[data-testid="action-execution-status"]')?.textContent;
+
+    await act(async () => { mount.container.querySelector<HTMLButtonElement>('button')?.click(); });
+    await mount.render(<PluginUiProvider hostApi={secondHost} context={context}><ExecutionHarness /></PluginUiProvider>);
+    expect(status()).toBe('idle');
+    expect(firstExecute).toHaveBeenCalledOnce();
+
+    await act(async () => { settleFirst?.({ host: 'first' }); });
+    expect(status()).toBe('idle');
+    await act(async () => { mount.container.querySelector<HTMLButtonElement>('button')?.click(); });
+    expect(secondExecute).toHaveBeenCalledOnce();
+    expect(status()).toBe('success');
+    mount.unmount();
+  });
+
   it('surfaces a failed execution without retrying it', async () => {
     const executeAction = vi.fn(async () => {
       throw Object.assign(new Error('The review service refused.'), { code: 'denied', retryable: false });
