@@ -28,7 +28,7 @@ export function normalizeAskUserQuestionAnswers(value: unknown): Record<string, 
     return Object.keys(answers).length > 0 ? answers : null;
 }
 
-export function withAskUserQuestionUiFreeformDefault(toolName: string, toolInput: unknown): unknown {
+export function normalizeAskUserQuestionInputForPublication(toolName: string, toolInput: unknown): unknown {
     if (!isAskUserQuestionToolName(toolName)) return toolInput;
     if (!isPlainObject(toolInput)) return toolInput;
 

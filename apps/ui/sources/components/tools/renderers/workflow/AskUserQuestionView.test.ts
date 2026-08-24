@@ -1011,6 +1011,11 @@ describe('AskUserQuestionView', () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
         const screen = await renderView(makeFreeformTool());
+        const input = screen.findByProps({ testID: 'ask-user-question.freeform:0' });
+        const stopPropagation = vi.fn();
+        input.props.onTouchStart?.({ stopPropagation });
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+
         await fillFreeformAndSubmit(screen, 'README.md');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);

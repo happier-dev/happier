@@ -3,6 +3,7 @@ import type { SessionPermissionDecisionResult as SessionPermissionDecisionResult
 import type { PermissionResult } from '../sdk/types.js';
 import {
     isAskUserQuestionToolName,
+    normalizeAskUserQuestionInputForPublication,
     normalizeAskUserQuestionAnswers,
 } from './askUserQuestion.js';
 
@@ -88,13 +89,14 @@ export function createClaudePermissionEngine(ctx: ClaudePermissionContext): Clau
     return Object.freeze({
         async canCallTool(toolName, input, options = {}) {
             const normalizedInput = normalizeToolInput(input);
+            const publishedInput = normalizeAskUserQuestionInputForPublication(toolName, normalizedInput);
             const requestId = resolveRequestId(toolName, options.requestId, options.toolUseId);
             const result = await ctx.sessions.current.permissions.requestDecision({
                 provider: 'claude',
                 requestId,
                 toolCallId: requestId,
                 toolName,
-                input: normalizedInput,
+                input: publishedInput,
             }, { signal: options.signal });
             if (
                 result.decision === 'approved'

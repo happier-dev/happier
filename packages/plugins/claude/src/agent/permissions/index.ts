@@ -1,7 +1,7 @@
 export {
     isAskUserQuestionToolName,
     normalizeAskUserQuestionAnswers,
-    withAskUserQuestionUiFreeformDefault,
+    normalizeAskUserQuestionInputForPublication,
 } from './askUserQuestion.js';
 export {
     createClaudePermissionEngine,

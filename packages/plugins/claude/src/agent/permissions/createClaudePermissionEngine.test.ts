@@ -71,6 +71,12 @@ describe('createClaudePermissionEngine', () => {
             toolUseId: 'toolu_ask_1',
         });
 
+        expect(requestDecision).toHaveBeenCalledWith(expect.objectContaining({
+            input: {
+                questions: [{ question: 'Continue with cleanup?', freeform: {} }],
+            },
+        }), expect.any(Object));
+
         expect(result).toEqual({
             behavior: 'allow',
             updatedInput: {

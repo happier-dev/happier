@@ -879,6 +879,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                                     });
                                                 }
                                             }}
+                                            onTouchStart={(event) => event.stopPropagation()}
                                             placeholder={question.freeform?.placeholder ?? t('tools.askUserQuestion.otherPlaceholder')}
                                             placeholderTextColor={theme.colors.text.secondary}
                                             multiline={question.freeform?.inputMode === 'multiLine'}
