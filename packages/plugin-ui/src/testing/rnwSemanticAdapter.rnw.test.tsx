@@ -307,7 +307,9 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
     });
 
     await expect(fixture.getByText('Retained details')).resolves.toEqual({ content: 'Retained details' });
-    await fixture.updateSurface(createSurfaceContext({ locale: 'de' }));
+    await act(async () => {
+      await fixture.updateSurface(createSurfaceContext({ locale: 'de' }));
+    });
     await expect(fixture.queryByText('Retained details')).resolves.toBeUndefined();
     await fixture.dispose();
   });
