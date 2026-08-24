@@ -42,7 +42,10 @@ import { speechToTextRuntime, textToSpeechRuntime } from './voiceSpeechProvider.
  * remains beside it.
  */
 type PublicAuthoringActions = Readonly<Record<
-    'review-summary' | 'external-session-digest' | 'open-review-status',
+    | 'review-summary'
+    | 'external-session-digest'
+    | 'open-review-status'
+    | 'open-review-status-web-only-fixture',
     PluginActionDeclaration
 >>;
 type PublicAuthoringAgents = Readonly<Record<'review-agent', PluginAgentDefinition>>;
@@ -175,6 +178,23 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
         'open-review-status': {
             title: 'Open review status',
             description: 'Opens the existing review-status destination on this client.',
+            surfaces: ['ui', 'voice'],
+            execution: {
+                target: 'client',
+                client: {
+                    artifactId: 'review-client-actions',
+                    modulePath: './activate',
+                    exportName: 'activate',
+                },
+                platforms: ['web', 'ios', 'android'],
+            },
+            dangerLevel: 'safe',
+        },
+        // This retained source fixture makes unsupported platform admission
+        // explicit without making the review-status Action itself web-only.
+        'open-review-status-web-only-fixture': {
+            title: 'Open review status (web-only fixture)',
+            description: 'Deliberately web-only client Action fixture for typed unavailable admission.',
             surfaces: ['ui', 'voice'],
             execution: {
                 target: 'client',

@@ -307,6 +307,7 @@
     "examples/public-authoring/resources/review-guide.md",
     "examples/public-authoring/test/index.test.mjs",
     "examples/public-authoring/tsconfig.json",
+    "examples/public-authoring/ui/reviewClientActions.ts",
     "examples/public-authoring/ui/reviewOpenableContent.ts",
     "examples/public-authoring/ui/reviewPanel.css",
     "examples/public-authoring/ui/reviewPanel.native.tsx",

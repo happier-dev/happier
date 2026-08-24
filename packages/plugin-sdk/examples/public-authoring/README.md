@@ -35,15 +35,17 @@ explicit read; and `'automatic'` adds metadata-only transitions. A read may
 disclose opaque command descriptors, but command invocation is a separate
 effectful capability:
 the provider must declare stable effect-call custody. The `open-review-status`
-Action has one declaration with `ui` and `voice` invocation surfaces, one web
-client target, and one handler registered once by the existing
-`voiceProvider.activate(api)` entry. It runs only in the invoking client and
-uses `context.ui.openSurface(...)`; it never falls back to the daemon. This
-companion's current `effectCalls: 'none'` Voice leaves can expose the explicit
-read but do not advertise that effectful invocation path. This is
-source-complete Developer Preview documentation only. The generated
-publisher/no-drift and source/package checks are green; exact packed and loaded
-web/iOS/Android parity remains open, so it is not shipped availability.
+Action has one declaration with `ui` and `voice` invocation surfaces and one
+web/iOS/Android client target. Its `reviewClientActions.activate(api)` entry
+registers the handler once, so it runs only in the invoking client through
+`context.ui.openSurface(...)`; it never falls back to the daemon. The separate
+`open-review-status-web-only-fixture` retains the web-only Voice artifact only
+to demonstrate a typed unavailable platform admission. This companion's
+current `effectCalls: 'none'` Voice leaves can expose the explicit read but do
+not advertise that effectful invocation path. This is source-complete Developer
+Preview documentation only. Source-level contract checks cover this shape;
+exact packed and loaded web/iOS/Android parity remains open, so it is not
+shipped availability.
 
 The Composer portion of `definition.ts` uses the one nested `composer` map and
 all four public helper families. `references.review-references` returns one

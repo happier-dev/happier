@@ -17,6 +17,17 @@ export const pluginUiBuildConfig = defineConfig({
             platforms: ['web'],
         },
         {
+            rendererId: 'review-client-actions',
+            entry: 'ui/reviewClientActions.ts',
+            kind: 'reactNative',
+            platforms: ['web', 'ios', 'android'],
+            module: {
+                containerName: 'examples_public_authoring_review_client_actions',
+                modulePath: './activate',
+                exportName: 'activate',
+            },
+        },
+        {
             rendererId: 'review-web',
             entry: 'ui/reviewPanel.web.tsx',
             kind: 'hostedWeb',

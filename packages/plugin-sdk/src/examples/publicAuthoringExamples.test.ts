@@ -1265,51 +1265,95 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         }
     });
 
-    it('demonstrates one client Action through the existing Voice activation and mounted native context publisher', async () => {
+    it('declares and packages the mounted native-context Action through one exact web/iOS/Android client artifact', async () => {
         const manifest = readExampleManifest('public-authoring');
         const clientModule = await import(pathToFileURL(
-            join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
+            join(examplesRoot, 'public-authoring', 'ui', 'reviewClientActions.ts'),
         ).href) as Readonly<{
-            activate(api: Pick<PluginClientApi, 'actions' | 'voiceProviders'>): void;
+            activate(api: Pick<PluginClientApi, 'actions'>): void;
         }>;
         const clientActions = new Map<string, unknown>();
-        const voiceProviders = new Map<string, RegisteredVoiceProviderRuntime>();
-
         clientModule.activate({
             actions: {
                 register(id, handler) {
                     clientActions.set(id, handler);
                 },
             },
-            voiceProviders: {
-                register(id, runtime) {
-                    voiceProviders.set(id, runtime);
-                },
-            },
         });
 
-        expect(manifest.contributes.actions).toContainEqual(expect.objectContaining({
+        const supportedPlatforms = ['web', 'ios', 'android'] as const;
+        const actionExecution = {
+            target: 'client',
+            client: {
+                artifactId: 'review-client-actions',
+                modulePath: './activate',
+                exportName: 'activate',
+            },
+            platforms: supportedPlatforms,
+        } as const;
+        const action = manifest.contributes.actions.find(({ id }) => id === 'open-review-status');
+        if (!action) {
+            throw new TypeError('public_authoring_cross_platform_client_action_missing');
+        }
+        expect(action).toEqual(expect.objectContaining({
             id: 'open-review-status',
             surfaces: ['ui', 'voice'],
-            execution: {
-                target: 'client',
-                client: {
-                    artifactId: 'voice-runtime-web',
-                    modulePath: './voiceProvider',
-                    exportName: 'activate',
-                },
-                platforms: ['web'],
-            },
+            execution: actionExecution,
         }));
+
+        const buildModule = await import(pathToFileURL(
+            join(examplesRoot, 'public-authoring', 'pluginUiBuild.ts'),
+        ).href) as Readonly<{
+            pluginUiBuildConfig?: Readonly<{
+                targets?: readonly Readonly<{
+                    rendererId: string;
+                    entry: string;
+                    kind: 'reactNative' | 'hostedWeb';
+                    platforms?: readonly string[];
+                    module?: Readonly<{
+                        containerName: string;
+                        modulePath: string;
+                        exportName: string;
+                    }>;
+                }>[];
+            }>;
+        }>;
+        const target = buildModule.pluginUiBuildConfig?.targets?.find(
+            ({ rendererId }) => rendererId === actionExecution.client.artifactId,
+        );
+        expect(target).toEqual({
+            rendererId: 'review-client-actions',
+            entry: 'ui/reviewClientActions.ts',
+            kind: 'reactNative',
+            platforms: supportedPlatforms,
+            module: {
+                containerName: 'examples_public_authoring_review_client_actions',
+                modulePath: './activate',
+                exportName: 'activate',
+            },
+        });
+        if (!target) {
+            throw new TypeError('public_authoring_cross_platform_client_target_missing');
+        }
+        expect(sourceExportsName(
+            join(examplesRoot, 'public-authoring', target.entry),
+            actionExecution.client.exportName,
+        )).toBe(true);
+        const sdkPackageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
+            files?: readonly string[];
+        };
+        expect(sdkPackageJson.files).toContain(
+            'examples/public-authoring/ui/reviewClientActions.ts',
+        );
+        const voiceProviders = new Map<string, RegisteredVoiceProviderRuntime>();
         expect([...clientActions.keys()]).toEqual(['open-review-status']);
-        expect([...voiceProviders.keys()]).toEqual(['credentialed-browser', 'raw-browser']);
 
         const handler = clientActions.get('open-review-status');
         const isClientActionHandler = (value: unknown): value is PluginClientActionHandler =>
             typeof value === 'function';
         expect(isClientActionHandler(handler)).toBe(true);
         if (!isClientActionHandler(handler)) {
-            throw new TypeError('public_authoring_client_action_handler_missing');
+            throw new TypeError('public_authoring_cross_platform_client_action_handler_missing');
         }
         const openSurface = vi.fn<PluginClientActionContext['ui']['openSurface']>(
             async () => undefined,
@@ -1325,7 +1369,19 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             ui: { openSurface },
         } satisfies PluginClientActionContext;
         await handler({}, context);
-        expect(openSurface.mock.calls[0]?.[0]).toBe('review-session-status-details');
+        expect(openSurface).toHaveBeenCalledOnce();
+        expect(openSurface).toHaveBeenCalledWith(
+            'review-session-status-details',
+            undefined,
+            { signal: context.signal },
+        );
+
+        for (const platform of supportedPlatforms) {
+            expect(actionExecution.platforms).toContain(platform);
+            expect(target.platforms).toContain(platform);
+            expect(target.module?.modulePath).toBe(actionExecution.client.modulePath);
+            expect(target.module?.exportName).toBe(actionExecution.client.exportName);
+        }
 
         const nativeSurface = readFileSync(
             join(examplesRoot, 'public-authoring', 'ui', 'reviewPanel.native.tsx'),
@@ -1334,6 +1390,60 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(nativeSurface).toContain('publishCurrentUiContext({');
         expect(nativeSurface).toContain("action: 'open-review-status'");
         expect(nativeSurface).toContain('return () => context.hostApi.publishCurrentUiContext(null);');
+
+        const webOnlyAction = manifest.contributes.actions.find(
+            ({ id }) => id === 'open-review-status-web-only-fixture',
+        );
+        const webOnlyActionExecution = {
+            target: 'client',
+            client: {
+                artifactId: 'voice-runtime-web',
+                modulePath: './voiceProvider',
+                exportName: 'activate',
+            },
+            platforms: ['web'],
+        } as const;
+        if (!webOnlyAction) {
+            throw new TypeError('public_authoring_web_only_client_fixture_missing');
+        }
+        expect(webOnlyAction).toEqual(expect.objectContaining({
+            id: 'open-review-status-web-only-fixture',
+            execution: webOnlyActionExecution,
+        }));
+        const voiceTarget = buildModule.pluginUiBuildConfig?.targets?.find(
+            ({ rendererId }) => rendererId === webOnlyActionExecution.client.artifactId,
+        );
+        expect(voiceTarget).toEqual(expect.objectContaining({
+            rendererId: 'voice-runtime-web',
+            entry: 'voiceProvider.ts',
+            kind: 'reactNative',
+            platforms: ['web'],
+        }));
+        for (const platform of ['ios', 'android'] as const) {
+            expect(webOnlyActionExecution.platforms).not.toContain(platform);
+            expect(voiceTarget?.platforms).not.toContain(platform);
+        }
+
+        const voiceClientModule = await import(pathToFileURL(
+            join(examplesRoot, 'public-authoring', 'voiceProvider.ts'),
+        ).href) as Readonly<{
+            activate(api: Pick<PluginClientApi, 'actions' | 'voiceProviders'>): void;
+        }>;
+        const webOnlyClientActions = new Map<string, unknown>();
+        voiceClientModule.activate({
+            actions: {
+                register(id, registeredHandler) {
+                    webOnlyClientActions.set(id, registeredHandler);
+                },
+            },
+            voiceProviders: {
+                register(id, runtime) {
+                    voiceProviders.set(id, runtime);
+                },
+            },
+        });
+        expect([...webOnlyClientActions.keys()]).toEqual(['open-review-status-web-only-fixture']);
+        expect([...voiceProviders.keys()]).toEqual(['credentialed-browser', 'raw-browser']);
     });
 
     it('import only published SDK and plugin-ui entry points', async () => {
@@ -1466,6 +1576,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             'review-summary',
             'external-session-digest',
             'open-review-status',
+            'open-review-status-web-only-fixture',
         ]);
         // The External Sessions consumer path is exercised, not stubbed: the
         // Action asks the host for availability, filters candidates on the
@@ -3204,6 +3315,13 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 expect.objectContaining({
                     id: 'open-review-status',
                     surfaces: ['ui', 'voice'],
+                    execution: expect.objectContaining({
+                        target: 'client',
+                        platforms: ['web', 'ios', 'android'],
+                    }),
+                }),
+                expect.objectContaining({
+                    id: 'open-review-status-web-only-fixture',
                     execution: expect.objectContaining({
                         target: 'client',
                         platforms: ['web'],
