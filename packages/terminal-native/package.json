@@ -39,7 +39,8 @@
     "test:probes": "node --test scripts/probes.test.mjs",
     "test:src": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit",
+    "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "expo-modules-core": "55.0.20",

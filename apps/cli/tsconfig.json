@@ -27,6 +27,8 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsc/cli.typecheck.tsbuildinfo",
     "types": [
       "node"
     ],

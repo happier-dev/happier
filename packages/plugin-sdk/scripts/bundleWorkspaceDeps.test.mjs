@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import {
   mkdir,
@@ -18,8 +19,10 @@ import {
 } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 import {
   bundleWorkspaceDeps,
+  preparePluginSdkWorkspaceDeclarations,
   preparePluginSdkWorkspacePrerequisites,
   resolvePluginSdkWorkspaceBundleLockPath,
+  runPluginSdkPreparedScript,
 } from './bundleWorkspaceDeps.mjs';
 
 test('plugin-sdk workspace bundling uses the canonical repository bundle lock by default', () => {
@@ -56,6 +59,67 @@ test('plugin-sdk declaration preparation delegates to the canonical stale-only w
   assert.deepEqual(result, { ok: true, built: [], skipped: [] });
 });
 
+test('plugin-sdk declaration preparation publishes the exact workspace graph consumed by the SDK', async () => {
+  const calls = [];
+  const repoRoot = '/repo';
+  const pluginSdkDir = '/repo/packages/plugin-sdk';
+  const env = { CI: '1' };
+  const consumePreparedWorkspace = async () => {};
+
+  const result = await preparePluginSdkWorkspaceDeclarations({
+    repoRoot,
+    pluginSdkDir,
+    env,
+    consumePreparedWorkspace,
+    bundleWorkspaceDepsImpl: async (options) => {
+      calls.push(options);
+      return { bundles: [{ packageName: '@happier-dev/protocol' }] };
+    },
+  });
+
+  assert.deepEqual(calls, [{
+    repoRoot,
+    pluginSdkDir,
+    env,
+    publicationMode: 'live',
+    consumePreparedWorkspace,
+  }]);
+  assert.deepEqual(result, {
+    bundles: [{ packageName: '@happier-dev/protocol' }],
+  });
+});
+
+test('plugin-sdk prepared readers preserve the caller environment until their script exits', async () => {
+  const calls = [];
+  const child = new EventEmitter();
+  const run = runPluginSdkPreparedScript('typecheck:tests:prepared', {
+    pluginSdkDir: '/repo/packages/plugin-sdk',
+    env: {
+      npm_execpath: '/tooling/yarn.js',
+      HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: 'held-by-reader',
+    },
+    spawnImpl(command, args, options) {
+      calls.push({ command, args, options });
+      queueMicrotask(() => child.emit('exit', 0, null));
+      return child;
+    },
+  });
+  await run;
+
+  assert.deepEqual(calls, [{
+    command: process.execPath,
+    args: ['/tooling/yarn.js', 'run', '-s', 'typecheck:tests:prepared'],
+    options: {
+      cwd: '/repo/packages/plugin-sdk',
+      env: {
+        npm_execpath: '/tooling/yarn.js',
+        HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: 'held-by-reader',
+      },
+      stdio: 'inherit',
+    },
+  }]);
+});
+
 test('plugin-sdk declaration preparation reuses prerequisites admitted by the canonical package build', async () => {
   const result = await preparePluginSdkWorkspacePrerequisites({
     pluginSdkDir: '/repo/packages/plugin-sdk',
@@ -74,45 +138,44 @@ test('plugin-sdk declaration preparation reuses prerequisites admitted by the ca
   });
 });
 
-test('plugin-sdk keeps nonwriter source checks separate from declaration preparation', async () => {
+test('plugin-sdk keeps publication preparation separate from ordinary source validation', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
-  assert.equal(
-    packageJson.scripts['api-governance'],
-    'yarn -s prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --write',
-  );
-  assert.equal(
-    packageJson.scripts['check:api-governance'],
-    'yarn -s check:prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
-  );
+  const publicationPreparers = [
+    'prepare:api-governance',
+    'api-governance',
+    'check:prepare:api-governance',
+    'check:api-governance',
+    'prepare:declarations',
+    'generate:public-toolchain',
+    'check:public-toolchain',
+    'prepack',
+    'build:finite',
+    'api:finite',
+    'build',
+  ];
+  for (const scriptName of publicationPreparers) {
+    assert.match(
+      packageJson.scripts[scriptName],
+      /^node \.\/scripts\/bundleWorkspaceDeps\.mjs --declarations --run-script=[a-z:-]+$/u,
+      `${scriptName} must prepare its declaration/artifact inputs through the canonical publication owner`,
+    );
+    const preparedScriptName = packageJson.scripts[scriptName].split('--run-script=')[1];
+    assert.equal(typeof packageJson.scripts[preparedScriptName], 'string');
+  }
+
   assert.equal(
     packageJson.scripts['check:api-governance:prepared'],
-    'node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
+    'node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check --source-prepared',
   );
   assert.equal(packageJson.scripts['api-surface'], 'yarn -s api-governance');
   assert.equal(packageJson.scripts['check:api-surface'], 'yarn -s check:api-governance');
-  assert.equal(
-    packageJson.scripts['prepare:api-governance'],
-    'yarn -s prepare:declarations && node ./scripts/apiSurfaceCli.mjs --materialize-source --write && yarn -s build:compiled',
-  );
-  assert.equal(
-    packageJson.scripts['check:prepare:api-governance'],
-    'yarn -s prepare:declarations && node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s build:compiled',
-  );
-  assert.equal(
-    packageJson.scripts['prepare:declarations'],
-    'yarn -s check:action-type-map && node ./scripts/bundleWorkspaceDeps.mjs --declarations',
-  );
-  assert.equal(
-    packageJson.scripts.prebuild,
-    'yarn -s prepare:declarations && yarn -s check:public-toolchain:prepared',
-  );
-  assert.doesNotMatch(packageJson.scripts['test:local'], /prepare:declarations/u);
-  assert.doesNotMatch(packageJson.scripts['typecheck:local'], /prepare:declarations/u);
-  assert.match(packageJson.scripts['typecheck:local'], /^yarn -s check:api-surface && /u);
+  assert.equal(packageJson.scripts.prebuild, undefined);
   assert.equal(packageJson.scripts['pretypecheck:source'], undefined);
   assert.equal(packageJson.scripts['pretypecheck:tests'], undefined);
   assert.equal(packageJson.scripts['test:source'], 'vitest run --config vitest.source.config.ts');
+  assert.equal(packageJson.scripts['test:local'], 'yarn -s test:source && yarn -s test:local:adjacent');
+  assert.doesNotMatch(packageJson.scripts['test:local:adjacent'], /bundleWorkspaceDeps|prepare:declarations/u);
   assert.equal(
     packageJson.scripts['typecheck:source'],
     'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json',
@@ -121,10 +184,10 @@ test('plugin-sdk keeps nonwriter source checks separate from declaration prepara
     packageJson.scripts['typecheck:tests'],
     'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json',
   );
-  assert.equal(
-    packageJson.scripts.prepack,
-    'yarn -s prepare:declarations && yarn -s check:public-toolchain:prepared && node ./scripts/bundleWorkspaceDeps.mjs --artifact && node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s build:compiled && yarn -s check:api-governance:prepared && yarn -s check:public-toolchain:generated',
-  );
+  assert.equal(packageJson.scripts['typecheck:local'], 'yarn -s typecheck:source && yarn -s typecheck:tests');
+  assert.equal(packageJson.scripts['generated:finite'], 'yarn -s check:action-type-map');
+  assert.equal(packageJson.scripts['test:finite'], 'yarn -s test:prepared');
+  assert.equal(packageJson.scripts['typecheck:finite'], 'yarn -s typecheck:tests:prepared');
 });
 
 test('plugin-sdk runtime bundling admits the resolved artifact closure and publishes it once', async () => {
@@ -142,7 +205,7 @@ test('plugin-sdk runtime bundling admits the resolved artifact closure and publi
     ensureWorkspacePackagesBuiltByName: async (root, packageNames, options) => {
       assert.equal(root, repoRoot);
       assert.deepEqual(packageNames, ['@happier-dev/protocol']);
-      assert.equal(options?.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD, 'test-owner');
+      assert.equal(options?.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD, undefined);
       events.push('admit-bundles');
       return { ok: true, built: [], skipped: packageNames };
     },
@@ -165,9 +228,9 @@ test('plugin-sdk runtime bundling admits the resolved artifact closure and publi
   });
 
   assert.deepEqual(events, [
-    'lock',
     'resolve-bundles',
     'admit-bundles',
+    'lock',
     'bundle:artifact',
   ]);
 });

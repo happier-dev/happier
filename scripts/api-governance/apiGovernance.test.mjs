@@ -267,19 +267,36 @@ test('plugin package scripts prepare declarations and invoke the shared governan
 
   assert.equal(
     pluginSdkPackage.scripts['prepare:api-governance'],
-    'yarn -s prepare:declarations && node ./scripts/apiSurfaceCli.mjs --materialize-source --write && yarn -s build:compiled',
+    'node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=prepare:api-governance:prepared',
+  );
+  assert.equal(
+    pluginSdkPackage.scripts['prepare:api-governance:prepared'],
+    'yarn -s prepare:declarations:prepared && node ./scripts/apiSurfaceCli.mjs --materialize-source --write && yarn -s build:compiled',
   );
   assert.equal(
     pluginSdkPackage.scripts['check:api-governance'],
-    'yarn -s check:prepare:api-governance && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
+    'node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=check:api-governance:locked',
+  );
+  assert.equal(
+    pluginSdkPackage.scripts['check:api-governance:locked'],
+    'yarn -s check:prepare:api-governance:prepared && yarn -s check:api-governance:prepared',
   );
   assert.equal(
     pluginSdkPackage.scripts['check:api-governance:prepared'],
-    'node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
+    'node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check --source-prepared',
   );
   assert.equal(
     pluginSdkPackage.scripts['check:prepare:api-governance'],
-    'yarn -s prepare:declarations && node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s build:compiled',
+    'node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=check:prepare:api-governance:prepared',
+  );
+  assert.equal(
+    pluginSdkPackage.scripts['check:prepare:api-governance:prepared'],
+    'yarn -s prepare:declarations:prepared && node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s build:compiled',
+  );
+  assert.match(
+    pluginSdkPackage.scripts['test:prepared'],
+    /\.\.\/\.\.\/scripts\/api-governance\/apiGovernance\.test\.mjs/u,
+    'The finite Plugin SDK test lane must execute the shared governance mutation fixture',
   );
   assert.equal(
     pluginUiPackage.scripts['prepare:declarations'],
@@ -287,7 +304,11 @@ test('plugin package scripts prepare declarations and invoke the shared governan
   );
   assert.equal(
     pluginUiPackage.scripts['prepare:api-governance'],
-    'yarn -s prepare:declarations && yarn -s build',
+    'yarn -s prepare:declarations && yarn --cwd ../plugin-sdk -s check:public-toolchain:prepared && yarn -s build:compiled',
+  );
+  assert.equal(
+    pluginUiPackage.scripts['build:compiled'],
+    'node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json',
   );
   assert.equal(
     pluginUiPackage.scripts['check:api-governance'],
@@ -304,7 +325,7 @@ test('plugin package scripts prepare declarations and invoke the shared governan
   );
   assert.equal(
     sdkPackage.scripts['prepare:api-governance'],
-    'yarn -s prepare:declarations && yarn -s build:compiled',
+    'yarn -s prepare:declarations && node ./scripts/bundleWorkspaceDeps.mjs --artifact && yarn -s build:compiled',
   );
   assert.equal(
     sdkPackage.scripts['check:api-governance'],
@@ -313,6 +334,11 @@ test('plugin package scripts prepare declarations and invoke the shared governan
   assert.equal(
     sdkPackage.scripts['check:api-governance:prepared'],
     'node ../../scripts/api-governance/cli.mjs --profile sdk --check',
+  );
+  assert.equal(
+    sdkPackage.scripts.prepack,
+    'yarn -s prepare:api-governance && yarn -s check:api-governance:prepared',
+    'SDK prepack must materialize the exact bundled declaration graph before governing it',
   );
 
   const countCompilerInvocations = (packageJson, entrypoint) => {
@@ -325,6 +351,9 @@ test('plugin package scripts prepare declarations and invoke the shared governan
       for (const match of command.matchAll(/yarn -s ([\w:-]+)/gu)) {
         if (packageJson.scripts[match[1]] !== undefined) count += visit(match[1]);
       }
+      for (const match of command.matchAll(/--run-script=([\w:-]+)/gu)) {
+        if (packageJson.scripts[match[1]] !== undefined) count += visit(match[1]);
+      }
       active.delete(scriptName);
       return count;
     };
@@ -333,13 +362,56 @@ test('plugin package scripts prepare declarations and invoke the shared governan
 
   for (const packageJson of [pluginSdkPackage, pluginUiPackage, sdkPackage]) {
     const prepack = packageJson.scripts.prepack;
+    const effectivePrepack = packageJson.scripts['prepack:prepared'] ?? prepack;
     assert.equal(
       countCompilerInvocations(packageJson, 'prepack'),
       1,
       `${packageJson.name} prepack must compile its exact candidate once`,
     );
-    assert.match(prepack, /check:api-governance:prepared/u);
+    assert.match(effectivePrepack, /check:api-governance:prepared/u);
   }
+});
+
+test('the finite public SDK task stages materialization before its mutation guard and source typechecks', async () => {
+  const rootPackage = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package.json'), 'utf8'));
+  const turboConfig = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'turbo.json'), 'utf8'));
+  const pluginSdkPackage = JSON.parse(await readFile(
+    join(REPOSITORY_ROOT, 'packages/plugin-sdk/package.json'),
+    'utf8',
+  ));
+  const pluginUiPackage = JSON.parse(await readFile(
+    join(REPOSITORY_ROOT, 'packages/plugin-ui/package.json'),
+    'utf8',
+  ));
+  const sdkPackage = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'packages/sdk/package.json'), 'utf8'));
+
+  assert.equal(
+    pluginSdkPackage.scripts['api:finite'],
+    'node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=api:finite:prepared',
+  );
+  assert.equal(
+    pluginSdkPackage.scripts['api:finite:prepared'],
+    'node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s check:api-governance:prepared',
+  );
+  assert.equal(
+    pluginSdkPackage.scripts['test:finite'],
+    'yarn -s test:prepared',
+  );
+  assert.match(
+    pluginSdkPackage.scripts['test:prepared'],
+    /node --test .*scripts\/\*\.test\.mjs/u,
+  );
+  assert.equal(
+    pluginUiPackage.scripts['api:finite'],
+    'yarn --cwd ../plugin-sdk -s check:public-toolchain:prepared && yarn -s check:api-governance:prepared',
+  );
+  assert.equal(sdkPackage.scripts['api:finite'], 'yarn -s check:api-governance:prepared');
+  assert.equal(
+    rootPackage.scripts['check:public-sdk:finite:local'],
+    'turbo run api:finite test:finite typecheck:finite --filter=@happier-dev/plugin-sdk --filter=@happier-dev/plugin-ui --filter=@happier-dev/sdk',
+  );
+  assert.deepEqual(turboConfig.tasks['test:finite'].dependsOn, ['api:finite']);
+  assert.deepEqual(turboConfig.tasks['typecheck:finite'].dependsOn, ['api:finite']);
 });
 
 test('the plugin-sdk prepared-source profile validates emitted declarations without re-entering source projection', async () => {

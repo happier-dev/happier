@@ -16,6 +16,7 @@
     "build:runtime": "node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./scripts/runtime/buildRuntime.ts --out-dir ./dist/runtime",
     "typecheck": "../stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ./scripts/runTypeScriptCli.mjs --noEmit",
+    "typecheck:source:finite": "node ./scripts/runTypeScriptCli.mjs --noEmit",
     "start": "node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./sources/main.ts",
     "start:light": "node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./sources/main.light.ts",
     "dev": "node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./scripts/dev.full.ts",

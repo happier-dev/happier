@@ -1,5 +1,8 @@
 {
   "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "node_modules/.cache/tsc/server.runtime.typecheck.tsbuildinfo"
+  },
   "include": [
     "scripts/dev.full.ts",
     "scripts/dev.light.ts",

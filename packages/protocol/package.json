@@ -468,6 +468,7 @@
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node scripts/generate-embedded-feature-policies.mjs && node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build:finite": "node scripts/generate-embedded-feature-policies.mjs --check && node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "generate:plugin-action-reference": "node --import tsx scripts/generate-plugin-action-reference.ts --write",
     "check:plugin-action-reference": "node --import tsx scripts/generate-plugin-action-reference.ts --check",
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",

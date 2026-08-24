@@ -1,0 +1,77 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "concurrency": "75%",
+  "tasks": {
+    "prepare:finite": {
+      "dependsOn": ["^build:finite"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/workspaces/**"
+      ],
+      "outputs": [],
+      "cache": false
+    },
+    "generated:finite": {
+      "dependsOn": ["^build:finite"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/workspaces/**"
+      ],
+      "outputs": []
+    },
+    "build:finite": {
+      "dependsOn": ["generated:finite", "prepare:finite", "^build:finite"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/workspaces/**"
+      ],
+      "outputs": [],
+      "cache": false
+    },
+    "api:finite": {
+      "dependsOn": ["build:finite"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/api-governance/**"
+      ],
+      "outputs": []
+    },
+    "test:finite": {
+      "dependsOn": ["api:finite"],
+      "outputs": []
+    },
+    "typecheck:finite": {
+      "dependsOn": ["api:finite"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/workspaces/**"
+      ],
+      "outputs": []
+    },
+    "typecheck:source:finite": {
+      "dependsOn": [],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/scripts/workspaces/**",
+        "$TURBO_ROOT$/packages/{privacy-kit,protocol,peer-mediation,transfers,voice-modelpacks,agents,cli-common,release-runtime,channels-protocol,support,connection-supervisor,triage-protocol,triage-sources,plugin-sdk}/dist/**/*.d.ts",
+        "$TURBO_ROOT$/packages/{privacy-kit,cli-common}/*.{d.ts,d.mts,d.cts}",
+        "$TURBO_ROOT$/packages/{audio-stream-native,sherpa-native,ssh-native,terminal-native}/src/**/*.ts"
+      ],
+      "outputs": []
+    },
+    "project:finite": {
+      "dependsOn": ["build:finite", "^build:finite"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/cli/scripts/build-owned/**"
+      ],
+      "outputs": []
+    },
+    "plugins:aggregate:finite": {
+      "dependsOn": ["^project:finite"],
+      "outputs": [],
+      "cache": false
+    }
+  }
+}

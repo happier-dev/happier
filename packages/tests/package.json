@@ -72,6 +72,7 @@
     "test:mobile:e2e:all": "node scripts/run-maestro-with-heartbeat.mjs --flows suites/mobile-e2e/flows",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
     "providers:run": "node scripts/run-providers.mjs",
     "providers:run:parallel": "node scripts/run-providers-parallel.mjs",
     "providers:opencode:smoke": "yarn -s providers:run opencode smoke",

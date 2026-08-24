@@ -1,4 +1,5 @@
 import { dirname, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { findRepoRoot } from './vendoredWorkspaceDeclarations.mjs';
@@ -53,6 +54,53 @@ export async function bundleWorkspaceDeps(opts = {}) {
   });
 }
 
+/**
+ * Makes the physical workspace package graph resolved by Plugin SDK source
+ * tooling current. Building the canonical workspace outputs alone is not
+ * sufficient: this package intentionally resolves the private physical copies
+ * under its own node_modules while compiling and projecting its public API.
+ */
+export async function preparePluginSdkWorkspaceDeclarations(opts = {}) {
+  const repoRoot = opts.repoRoot ?? pluginSdkRepoRoot();
+  const pluginSdkDir = opts.pluginSdkDir ?? resolve(repoRoot, 'packages', 'plugin-sdk');
+  const bundleWorkspaceDepsImpl = opts.bundleWorkspaceDepsImpl ?? bundleWorkspaceDeps;
+  return await bundleWorkspaceDepsImpl({
+    repoRoot,
+    pluginSdkDir,
+    env: opts.env ?? process.env,
+    publicationMode: 'live',
+    consumePreparedWorkspace: opts.consumePreparedWorkspace,
+  });
+}
+
+export async function runPluginSdkPreparedScript(scriptName, opts = {}) {
+  const env = opts.env ?? process.env;
+  const pluginSdkDir = opts.pluginSdkDir ?? resolve(opts.repoRoot ?? pluginSdkRepoRoot(), 'packages', 'plugin-sdk');
+  const npmExecPath = String(env.npm_execpath ?? '').trim();
+  const command = npmExecPath ? process.execPath : (process.platform === 'win32' ? 'yarn.cmd' : 'yarn');
+  const args = npmExecPath
+    ? [npmExecPath, 'run', '-s', scriptName]
+    : ['run', '-s', scriptName];
+  const spawnImpl = opts.spawnImpl ?? spawn;
+  await new Promise((resolveRun, rejectRun) => {
+    const child = spawnImpl(command, args, {
+      cwd: pluginSdkDir,
+      env,
+      stdio: 'inherit',
+    });
+    child.once('error', rejectRun);
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        resolveRun();
+        return;
+      }
+      rejectRun(new Error(
+        `Plugin SDK prepared script ${scriptName} failed${signal ? ` with signal ${signal}` : ` with exit code ${code}`}.`,
+      ));
+    });
+  });
+}
+
 const invokedAsMain = (() => {
   const argv1 = process.argv[1];
   if (!argv1) return false;
@@ -61,8 +109,19 @@ const invokedAsMain = (() => {
 
 if (invokedAsMain) {
   try {
+    const preparedScript = process.argv.slice(2)
+      .find((arg) => arg.startsWith('--run-script='))
+      ?.slice('--run-script='.length);
     if (process.argv.slice(2).includes('--declarations')) {
-      await preparePluginSdkWorkspacePrerequisites();
+      await preparePluginSdkWorkspaceDeclarations({
+        ...(preparedScript
+          ? {
+              consumePreparedWorkspace: async ({ preparedWorkspaceEnv }) => {
+                await runPluginSdkPreparedScript(preparedScript, { env: preparedWorkspaceEnv });
+              },
+            }
+          : {}),
+      });
     } else {
       await bundleWorkspaceDeps({
         publicationMode: resolveWorkspaceBundlePublicationMode({

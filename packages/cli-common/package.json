@@ -201,6 +201,7 @@
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node scripts/build.mjs",
+    "build:finite": "node scripts/build.mjs",
     "build:clean": "node scripts/build.mjs --clean && yarn -s build",
     "clean": "node scripts/build.mjs --clean",
     "postinstall:real": "yarn -s build",

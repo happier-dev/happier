@@ -23,6 +23,8 @@
   ],
   "scripts": {
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json --happier-staged-output-script build:ui",
+    "build:finite": "yarn -s build",
+    "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs",
     "build:ui": "happier-plugin-build-ui",
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run",

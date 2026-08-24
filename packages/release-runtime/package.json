@@ -51,6 +51,7 @@
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build:esm": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "build": "yarn -s build:esm",
+    "build:finite": "yarn -s build:esm",
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "yarn -s build && HAPPIER_FEATURE_POLICY_ENV= node --test \"tests/*.test.mjs\"",
     "postinstall:real": "yarn -s build",
