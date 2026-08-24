@@ -1,9 +1,13 @@
 import { lstat, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createCodexHomePair, exists, loadSyncCodexConnectedServiceHome, mockAllSymlinksFail, mockSymlinkFailureForTempLink, settings, waitFor } from './syncCodexConnectedServiceHome.testUtils';
+
+function isSessionsTemporaryLink(path: unknown): boolean {
+  return basename(String(path)).startsWith('sessions.happier-link-');
+}
 
 describe('syncCodexConnectedServiceHome', () => {
   afterEach(async () => {
@@ -63,6 +67,36 @@ describe('syncCodexConnectedServiceHome', () => {
       });
 
       expect(result.targetSqliteHome).toBe(sourceSqliteHome);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bootstraps a missing native sessions store before materializing shared Codex state', async () => {
+    const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
+    try {
+      const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
+
+      await syncCodexConnectedServiceHome({
+        destinationCodexHome,
+        accountSettings: settings('isolated', 'shared'),
+        processEnv: { CODEX_HOME: sourceCodexHome },
+      });
+
+      const nativeSessions = join(sourceCodexHome, 'sessions');
+      const materializedSessions = join(destinationCodexHome, 'sessions');
+      expect((await lstat(nativeSessions)).isDirectory()).toBe(true);
+      expect((await lstat(materializedSessions)).isSymbolicLink()).toBe(true);
+
+      await mkdir(join(materializedSessions, '2026', '08', '24'), { recursive: true });
+      await writeFile(
+        join(materializedSessions, '2026', '08', '24', 'rollout-new-session.jsonl'),
+        '{"type":"session"}\n',
+      );
+      await expect(readFile(
+        join(nativeSessions, '2026', '08', '24', 'rollout-new-session.jsonl'),
+        'utf8',
+      )).resolves.toBe('{"type":"session"}\n');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -271,7 +305,7 @@ describe('syncCodexConnectedServiceHome', () => {
           ...actual,
           rename: vi.fn(async (...args: Parameters<typeof actual.rename>) => {
             const [sourcePath] = args;
-            if (String(sourcePath).includes('sessions.happier-link')) {
+            if (isSessionsTemporaryLink(sourcePath)) {
               const error = new Error('replace failed') as NodeJS.ErrnoException;
               error.code = 'EACCES';
               throw error;
@@ -455,7 +489,7 @@ describe('syncCodexConnectedServiceHome', () => {
           ...actual,
           symlink: vi.fn(async (...args: Parameters<typeof actual.symlink>) => {
             const [, destinationPath] = args;
-            if (String(destinationPath).includes('sessions.happier-link')) {
+            if (isSessionsTemporaryLink(destinationPath)) {
               symlinkCalls.push(String(destinationPath));
               if (symlinkCalls.length === 1) {
                 await firstSymlinkCanFinish;

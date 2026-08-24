@@ -1,4 +1,4 @@
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, open, readdir } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
 import {
@@ -24,6 +24,17 @@ import { resolveConfiguredCodexSqliteHome } from './codexStateFileNames';
 const CODEX_IMPORTABLE_SESSION_HOME_ENTRIES = Object.freeze([
   'sessions',
   'archived_sessions',
+] as const);
+
+const CODEX_SHARED_STATE_DIRECTORY_ENTRIES = Object.freeze([
+  'sessions',
+  'archived_sessions',
+  'memories',
+] as const);
+
+const CODEX_SHARED_STATE_FILE_ENTRIES = Object.freeze([
+  'session_index.jsonl',
+  'history.jsonl',
 ] as const);
 
 type CodexStateMode = 'shared' | 'isolated';
@@ -123,8 +134,20 @@ function resolveVendorResumeIdFromImportedRollout(
   return null;
 }
 
+async function ensureNativeCodexSharedStateStore(sourceCodexHome: string): Promise<void> {
+  await mkdir(sourceCodexHome, { recursive: true });
+  await Promise.all(CODEX_SHARED_STATE_DIRECTORY_ENTRIES.map(async (entryName) => {
+    await mkdir(join(sourceCodexHome, entryName), { recursive: true });
+  }));
+  await Promise.all(CODEX_SHARED_STATE_FILE_ENTRIES.map(async (entryName) => {
+    const handle = await open(join(sourceCodexHome, entryName), 'a');
+    await handle.close();
+  }));
+}
+
 export async function syncCodexConnectedServiceHome(params: Readonly<{
   destinationCodexHome: string;
+  previousCodexHome?: string | null;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<SyncCodexConnectedServiceHomeResult> {
@@ -149,6 +172,9 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
     }
 
     await mkdir(params.destinationCodexHome, { recursive: true });
+    if (settings.stateMode === 'shared') {
+      await ensureNativeCodexSharedStateStore(sourceCodexHome);
+    }
     const manifest = await readConnectedServiceStateSharingManifest(params.destinationCodexHome);
     const configEntryNames = await resolveCodexConfigEntryNames(sourceCodexHome);
     const stateEntryNames = codexConnectedServiceStateSharingDescriptor.state.entries.map((entry) => entry.path);
@@ -173,11 +199,14 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
       resolveStateSourceRoot: () => sourceCodexHome,
       mapStateSymlinkUnavailableDiagnostic: (error) => toStateSymlinkUnavailableDiagnostic(error),
       sessionImportRoots: settings.stateMode === 'shared'
-        ? CODEX_IMPORTABLE_SESSION_HOME_ENTRIES.map((entryName) => ({
-          sourceRoot: join(params.destinationCodexHome, entryName),
+        ? dedupeEntries([
+          resolve(params.destinationCodexHome),
+          ...(params.previousCodexHome ? [resolve(params.previousCodexHome)] : []),
+        ]).flatMap((sessionSourceHome) => CODEX_IMPORTABLE_SESSION_HOME_ENTRIES.map((entryName) => ({
+          sourceRoot: join(sessionSourceHome, entryName),
           destinationRoot: join(sourceCodexHome, entryName),
           includeFile: (relativePath: string) => relativePath.toLowerCase().endsWith('.jsonl'),
-        }))
+        })))
         : [],
       resolveVendorResumeIdFromImportedFile: resolveVendorResumeIdFromImportedRollout,
       providerLabel: 'Codex',
