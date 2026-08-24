@@ -6436,6 +6436,12 @@ export const it: TranslationStructure = {
     newTagConfirm: "Aggiungi",
   },
 
+  sessionDrafts: {
+    sectionTitle: 'Bozze', badge: 'Bozza', untitled: 'Bozza senza titolo', continueEditing: 'Continua a modificare', startAnother: 'Iniziane un’altra',
+    status: { offline: 'Offline', syncing: 'Sincronizzazione', conflict: 'Conflitto', machineUnavailable: 'Computer non disponibile', attachmentNeedsAttention: 'Allegato da controllare', startInterrupted: 'Avvio interrotto' },
+    new: { action: 'Nuova bozza' }, delete: { action: 'Elimina bozza', confirmTitle: 'Eliminare la bozza?', confirmDescription: 'Questa bozza verrà rimossa dai tuoi dispositivi.' },
+    conflict: { title: 'Conflitto della bozza', description: 'Questo campo è cambiato su un altro dispositivo.', mine: 'Su questo dispositivo', synced: 'Sincronizzato', useSynced: 'Usa sincronizzato', keepDevice: 'Mantieni dispositivo', copyMine: 'Copia il mio', copied: 'Copiato', copyFailed: 'Impossibile copiare', field: { text: 'Testo', mentions: 'Menzioni', attachments: 'Allegati', recipient: 'Destinatario', agentContinuation: 'Continuazione agente', executionRunDelivery: 'Consegna esecuzione' } },
+  },
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
     storagePersistedTab: "Happier",
@@ -8099,6 +8105,14 @@ export const it: TranslationStructure = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Bozze di nuova sessione',
+        footer: 'Scegli se Nuova sessione continua la bozza di questo dispositivo o ne apre una nuova.',
+        resumeTitle: 'Riprendi la bozza precedente',
+        resumeSubtitle: 'Continua la bozza avviata da Nuova sessione su questo dispositivo.',
+        freshTitle: 'Inizia sempre da zero',
+        freshSubtitle: 'Apri una nuova bozza ogni volta che scegli Nuova sessione.',
+    },
 	      sessionList: {
 	          title: 'Elenco sessioni',
 	          footer: 'Personalizza cosa appare in ogni riga della sessione.',

@@ -51,6 +51,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     selectedMachineHomeDir?: string | null;
     selectedPath?: string | null;
     baseActionChips?: readonly AgentInputExtraActionChip[];
+    resumePersistedLaunchKey?: string | null;
 }>): Readonly<{
     attachmentsUploadsEnabled: boolean;
     filePickerRef: ReturnType<typeof useAttachmentDraftManager>['filePickerRef'];
@@ -354,6 +355,16 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         params.promptStore,
         params.targetServerId,
     ]);
+
+    const resumedPersistedLaunchKeyRef = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        const key = typeof params.resumePersistedLaunchKey === 'string'
+            ? params.resumePersistedLaunchKey.trim()
+            : '';
+        if (key.length === 0 || resumedPersistedLaunchKeyRef.current === key) return;
+        resumedPersistedLaunchKeyRef.current = key;
+        handleSend();
+    }, [handleSend, params.resumePersistedLaunchKey]);
 
     return {
         attachmentsUploadsEnabled,

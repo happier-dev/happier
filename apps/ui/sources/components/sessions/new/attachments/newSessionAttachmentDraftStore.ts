@@ -2,7 +2,9 @@ import type { AttachmentDraft } from '@/components/sessions/attachments/attachme
 import {
     clearAttachmentDraftsFromMemory,
     clearAttachmentDraftsFromMemoryByPrefix,
+    getAttachmentDraftMemoryStoreRevision,
     readAttachmentDraftsFromMemory,
+    subscribeAttachmentDraftMemoryStore,
     writeAttachmentDraftsToMemory,
 } from '@/components/sessions/attachments/attachmentDraftMemoryStore';
 
@@ -30,3 +32,6 @@ export function clearNewSessionAttachmentDrafts(flowId: string | null | undefine
 export function clearAllNewSessionAttachmentDrafts(): void {
     clearAttachmentDraftsFromMemoryByPrefix('new-session:');
 }
+
+export const subscribeNewSessionAttachmentDrafts = subscribeAttachmentDraftMemoryStore;
+export const getNewSessionAttachmentDraftsRevision = getAttachmentDraftMemoryStoreRevision;

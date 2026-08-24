@@ -1,6 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveNewSessionPickerReturnRouteKey, setNewSessionPickerReturnParams } from './setNewSessionPickerReturnParams';
+import {
+    pickNewSessionRouteParams,
+    resolveNewSessionPickerReturnRouteKey,
+    setNewSessionPickerReturnParams,
+} from './setNewSessionPickerReturnParams';
+
+describe('pickNewSessionRouteParams', () => {
+    it('preserves ordinary-entry origin across picker round trips without admitting unrelated params', () => {
+        expect(pickNewSessionRouteParams({
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            draftOrigin: 'ordinary',
+            unrelated: 'drop-me',
+        })).toEqual({
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            draftOrigin: 'ordinary',
+        });
+    });
+});
 
 describe('resolveNewSessionPickerReturnRouteKey', () => {
     it('prefers the nearest prior /new route over an unrelated modal parent', () => {
@@ -206,6 +223,7 @@ describe('setNewSessionPickerReturnParams', () => {
             routeParams: { path: '/repo/selected' },
             replaceParams: {
                 dataId: 'draft-1',
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
                 machineId: 'm1',
                 spawnServerId: 'server-b',
                 path: '/repo/selected',
@@ -218,8 +236,41 @@ describe('setNewSessionPickerReturnParams', () => {
             pathname: '/new',
             params: {
                 dataId: 'draft-1',
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
                 machineId: 'm1',
                 spawnServerId: 'server-b',
+                path: '/repo/selected',
+            },
+        });
+    });
+
+    it('preserves the stable draft identity from the picker route during replace fallback', () => {
+        const replace = vi.fn();
+
+        setNewSessionPickerReturnParams({
+            navigation: {
+                dispatch: vi.fn(),
+                getState: () => ({
+                    index: 1,
+                    routes: [
+                        { key: 'session-route', name: '(app)/session/[id]', path: '/session/s1' },
+                        {
+                            key: 'picker-route',
+                            name: '(app)/new/pick/path',
+                            path: '/new/pick/path',
+                            params: { draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e' },
+                        },
+                    ],
+                }),
+            },
+            router: { replace },
+            routeParams: { path: '/repo/selected' },
+        });
+
+        expect(replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
                 path: '/repo/selected',
             },
         });

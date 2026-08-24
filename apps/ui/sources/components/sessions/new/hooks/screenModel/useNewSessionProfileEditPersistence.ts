@@ -13,8 +13,10 @@ import {
 
 export function useNewSessionProfileEditPersistence(params: Readonly<{
     router: Router;
+    draftId: string;
     selectedMachineId: string | null;
     buildCurrentPersistedDraft: () => NewSessionDraft;
+    stageDraftIfEnabled: (draft: NewSessionDraft) => void;
     persistDraftIfEnabled: (draft: NewSessionDraft) => void;
     draftPersistenceEnabled: boolean;
     draftPersistenceGenerationRef: React.MutableRefObject<number>;
@@ -33,6 +35,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
             pathname: '/new/pick/profile-edit',
             params: {
                 ...next,
+                draftId: params.draftId,
                 ...(params.selectedMachineId ? { machineId: params.selectedMachineId } : {}),
             },
         } as Href);
@@ -47,6 +50,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     }, [
         params.buildCurrentPersistedDraft,
         params.draftPersistenceGenerationRef,
+        params.draftId,
         params.persistDraftIfEnabled,
         params.router,
         params.selectedMachineId,
@@ -63,6 +67,9 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     const persistDraftNow = React.useCallback(() => {
         params.persistDraftIfEnabled(params.buildCurrentPersistedDraft());
     }, [params.buildCurrentPersistedDraft, params.persistDraftIfEnabled]);
+    const stageDraftNow = React.useCallback(() => {
+        params.stageDraftIfEnabled(params.buildCurrentPersistedDraft());
+    }, [params.buildCurrentPersistedDraft, params.stageDraftIfEnabled]);
 
     // Only the focused new-session screen instance may auto-persist the shared scoped
     // draft: an unfocused instance (stacked /new modal, screen behind a picker) holds a
@@ -70,10 +77,12 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     const isFocused = useIsFocused();
 
     useNewSessionDraftAutoPersist({
+        stageDraftNow,
         persistDraftNow,
         persistenceEnabled: params.draftPersistenceEnabled,
         draftText: params.draftText,
         draftChangeKey: params.draftChangeKey,
+        persistOnMount: false,
         focused: isFocused,
     });
 

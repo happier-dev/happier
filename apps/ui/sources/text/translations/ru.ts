@@ -5102,6 +5102,12 @@ export const ru: TranslationStructure = {
     newTagConfirm: "Добавить",
   },
 
+  sessionDrafts: {
+    sectionTitle: 'Черновики', badge: 'Черновик', untitled: 'Черновик без названия', continueEditing: 'Продолжить редактирование', startAnother: 'Начать другой',
+    status: { offline: 'Не в сети', syncing: 'Синхронизация', conflict: 'Конфликт', machineUnavailable: 'Компьютер недоступен', attachmentNeedsAttention: 'Вложение требует внимания', startInterrupted: 'Запуск прерван' },
+    new: { action: 'Новый черновик' }, delete: { action: 'Удалить черновик', confirmTitle: 'Удалить черновик?', confirmDescription: 'Этот черновик будет удалён с ваших устройств.' },
+    conflict: { title: 'Конфликт черновика', description: 'Это поле изменено на другом устройстве.', mine: 'На этом устройстве', synced: 'Синхронизировано', useSynced: 'Использовать синхронизированное', keepDevice: 'Оставить с устройства', copyMine: 'Скопировать моё', copied: 'Скопировано', copyFailed: 'Не удалось скопировать', field: { text: 'Текст', mentions: 'Упоминания', attachments: 'Вложения', recipient: 'Получатель', agentContinuation: 'Продолжение агента', executionRunDelivery: 'Доставка запуска' } },
+  },
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `Сервер: ${server}`,
     storagePersistedTab: "Happier",
@@ -7758,6 +7764,14 @@ export const ru: TranslationStructure = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Черновики новой сессии',
+        footer: 'Выберите, продолжать ли черновик на этом устройстве или открывать новый при выборе «Новая сессия».',
+        resumeTitle: 'Продолжить предыдущий черновик',
+        resumeSubtitle: 'Продолжить черновик, начатый через «Новую сессию» на этом устройстве.',
+        freshTitle: 'Всегда начинать заново',
+        freshSubtitle: 'Открывать новый черновик при каждом выборе «Новая сессия».',
+    },
 	    sessionList: {
 	        title: 'Список сессий',
 	        footer: 'Настройте, что показывается в каждой строке сессии.',

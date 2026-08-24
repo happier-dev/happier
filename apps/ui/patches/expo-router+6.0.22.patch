@@ -1,9 +1,8 @@
 diff --git a/node_modules/expo-router/build/layouts/_web-modal.js b/node_modules/expo-router/build/layouts/_web-modal.js
+index 523d01b..6427be9 100644
 --- a/node_modules/expo-router/build/layouts/_web-modal.js
 +++ b/node_modules/expo-router/build/layouts/_web-modal.js
-@@ -1,8 +1,8 @@
- "use strict";
- var __importDefault = (this && this.__importDefault) || function (mod) {
+@@ -3,6 +3,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
      return (mod && mod.__esModule) ? mod : { "default": mod };
  };
  Object.defineProperty(exports, "__esModule", { value: true });
@@ -12,3 +11,20 @@ diff --git a/node_modules/expo-router/build/layouts/_web-modal.js b/node_modules
 +const ExperimentalModalStack_1 = __importDefault(require("./ExperimentalModalStack"));
 +exports.default = ExperimentalModalStack_1.default;
  //# sourceMappingURL=_web-modal.js.map
+\ No newline at end of file
+diff --git a/node_modules/expo-router/build/modal/web/ModalStack.js b/node_modules/expo-router/build/modal/web/ModalStack.js
+index 72e1c58..8ade9e9 100644
+--- a/node_modules/expo-router/build/modal/web/ModalStack.js
++++ b/node_modules/expo-router/build/modal/web/ModalStack.js
+@@ -42,9 +42,10 @@ const ModalStackRouteDrawer_1 = require("./ModalStackRouteDrawer");
+ const TransparentModalStackRouteDrawer_1 = require("./TransparentModalStackRouteDrawer");
+ const utils_1 = require("./utils");
+ const withLayoutContext_1 = require("../../layouts/withLayoutContext");
+-function ModalStackNavigator({ initialRouteName, children, screenOptions, }) {
++function ModalStackNavigator({ initialRouteName, children, screenOptions, UNSTABLE_router, }) {
+     const { state, navigation, descriptors, NavigationContent, describe } = (0, native_1.useNavigationBuilder)(native_1.StackRouter, {
+         children,
+         screenOptions,
+         initialRouteName,
++        UNSTABLE_router,
+     });

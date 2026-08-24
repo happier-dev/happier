@@ -9,7 +9,7 @@ import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/co
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { PopoverScope } from '@/components/ui/popover';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 type SecretRequirementRoutePayload = Readonly<{
     profileId: string;
@@ -42,12 +42,14 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         profileId?: string;
+        draftId?: string;
         secretEnvVarName?: string;
         secretEnvVarNames?: string;
         machineId?: string;
         revertOnCancel?: string;
         selectedSecretIdByEnvVarName?: string;
     }>();
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
 
     const profileId = typeof params.profileId === 'string' ? params.profileId : '';
     const machineId = typeof params.machineId === 'string' ? params.machineId : null;
@@ -95,11 +97,12 @@ export default React.memo(function SecretRequirementPickerScreen() {
             navigation: navigation as any,
             router,
             routeParams: { secretRequirementResultId: id },
+            currentParams: { draftId: params.draftId },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [navigation, profileId, revertOnCancel, router]);
+    }, [navigation, params.draftId, pickerFallbackHref, profileId, revertOnCancel, router]);
 
     const handleCancel = React.useCallback(() => {
         sendResultToNewSession({ action: 'cancel' });
@@ -120,8 +123,8 @@ export default React.memo(function SecretRequirementPickerScreen() {
             sendResultToNewSession({ action: 'cancel' });
             return;
         }
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [hasUsableRouteState, navigation, profileId, router, sendResultToNewSession]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [hasUsableRouteState, navigation, pickerFallbackHref, profileId, router, sendResultToNewSession]);
 
     if (!profile || !secretEnvVarName) {
         return (

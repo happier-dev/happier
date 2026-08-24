@@ -9,14 +9,15 @@ import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export default React.memo(function PreviewMachinePickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ selectedId?: string }>();
+    const params = useLocalSearchParams<{ selectedId?: string; draftId?: string }>();
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const machines = useAllMachines();
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
 
@@ -26,7 +27,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
 
     const headerLeft = React.useCallback(() => (
         <Pressable
-            onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/new' })}
+            onPress={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
             hitSlop={10}
             style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
             accessibilityRole="button"
@@ -34,7 +35,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
         >
             <Icon name="caret-left" size={20} color={theme.colors.chrome.header.foreground} />
         </Pressable>
-    ), [navigation, router, theme.colors.chrome.header.foreground]);
+    ), [navigation, pickerFallbackHref, router, theme.colors.chrome.header.foreground]);
 
     const screenOptions = React.useCallback(() => {
         return {
@@ -64,8 +65,9 @@ export default React.memo(function PreviewMachinePickerScreen() {
             navigation: navigation as any,
             router,
             routeParams: { previewMachineId },
+            currentParams: { draftId: params.draftId },
         });
-    }, [navigation, router]);
+    }, [navigation, params.draftId, router]);
 
     return (
         <>
@@ -83,7 +85,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
                     onSelect={(machine) => {
                         const returnMode = setPreviewMachineIdOnPreviousRoute(machine.id);
                         if (returnMode === 'dispatch') {
-                            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+                            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
                         }
                     }}
                     onToggleFavorite={(machine) => toggleFavorite(machine.id)}

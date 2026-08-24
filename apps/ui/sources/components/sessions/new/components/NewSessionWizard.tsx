@@ -178,9 +178,13 @@ export interface NewSessionWizardFooterProps {
     inputMaxHeight?: number;
     agentInputExtraActionChips?: React.ComponentProps<typeof AgentInput>['extraActionChips'];
     attachmentFlowId?: string | null;
+    resumePersistedLaunchKey?: string | null;
 }
 
 export interface NewSessionWizardProps {
+    composerTopContent?: React.ReactNode;
+    statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
+    statusTrailingActions?: React.ReactNode;
     popoverBoundaryRef: React.RefObject<RNView>;
     layout: NewSessionWizardLayoutProps;
     sectionPresentation?: Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>>;
@@ -303,6 +307,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         selectedMachineHomeDir: props.machine.selectedMachine?.metadata?.homeDir ?? null,
         selectedPath: props.machine.selectedPath,
         baseActionChips: props.footer.agentInputExtraActionChips,
+        resumePersistedLaunchKey: props.footer.resumePersistedLaunchKey,
     });
     const renderIconNode = React.useCallback(
         (
@@ -562,6 +567,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                             ) : null}
                             <View style={{ paddingHorizontal: newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
                                 <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
+                                    {props.composerTopContent}
                                     <NewSessionWizardComposerInput
                                         composerReservedHeight={12 + newSessionBottomPadding}
                                         value={sessionPrompt}
@@ -605,6 +611,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         acpConfigOptionOverridesOverride={props.agent.acpConfigOptionOverrides ?? null}
                                         onSessionConfigOptionChange={props.agent.setSessionConfigOptionOverride}
                                         connectionStatus={connectionStatus}
+                                        statusBadges={props.statusBadges}
+                                        statusTrailingActions={props.statusTrailingActions}
+                                        showStatusPermissionMode={false}
                                         machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
                                         machinePopover={props.footer.machinePopover}
                                         onMachineClick={props.footer.machinePopover ? undefined : handleAgentInputMachineClick}

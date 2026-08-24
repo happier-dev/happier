@@ -6215,6 +6215,12 @@ export const pt: TranslationStructure = {
     newTagConfirm: "Adicionar",
   },
 
+  sessionDrafts: {
+    sectionTitle: 'Rascunhos', badge: 'Rascunho', untitled: 'Rascunho sem título', continueEditing: 'Continuar a editar', startAnother: 'Começar outro',
+    status: { offline: 'Offline', syncing: 'A sincronizar', conflict: 'Conflito', machineUnavailable: 'Máquina indisponível', attachmentNeedsAttention: 'O anexo requer atenção', startInterrupted: 'Início interrompido' },
+    new: { action: 'Novo rascunho' }, delete: { action: 'Eliminar rascunho', confirmTitle: 'Eliminar rascunho?', confirmDescription: 'Este rascunho será removido dos teus dispositivos.' },
+    conflict: { title: 'Conflito de rascunho', description: 'Este campo mudou noutro dispositivo.', mine: 'Neste dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Manter do dispositivo', copyMine: 'Copiar o meu', copied: 'Copiado', copyFailed: 'Não foi possível copiar', field: { text: 'Texto', mentions: 'Menções', attachments: 'Anexos', recipient: 'Destinatário', agentContinuation: 'Continuação do agente', executionRunDelivery: 'Entrega da execução' } },
+  },
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `Servidor: ${server}`,
     storagePersistedTab: "Happier",
@@ -7893,6 +7899,14 @@ export const pt: TranslationStructure = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Rascunhos de nova sessão',
+        footer: 'Escolha se Nova sessão continua o rascunho deste dispositivo ou abre um novo.',
+        resumeTitle: 'Retomar o rascunho anterior',
+        resumeSubtitle: 'Continue o rascunho iniciado em Nova sessão neste dispositivo.',
+        freshTitle: 'Começar sempre do zero',
+        freshSubtitle: 'Abra um novo rascunho sempre que escolher Nova sessão.',
+    },
 	      sessionList: {
 	          title: 'Lista de sessões',
 	          footer: 'Personalize o que aparece em cada linha de sessão.',

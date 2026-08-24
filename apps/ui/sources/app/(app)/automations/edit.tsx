@@ -35,6 +35,8 @@ import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/aut
 import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
 function isExistingSessionAutomationEditDraftValid(params: Readonly<{
     draft: SessionAuthoringDraft | null;
@@ -111,9 +113,18 @@ export default React.memo(function AutomationEditScreen() {
                     },
                     machineId: typeof enabledAssignment?.machineId === 'string' ? enabledAssignment.machineId : null,
                 }));
+                const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
 
                 navigateWithBlurOnWeb(() => {
-                    router.replace(`/new?automation=1&automationEditId=${automationId}&dataId=${dataId}` as any);
+                    router.replace({
+                        pathname: '/new',
+                        params: {
+                            ...buildNewSessionLaunchRouteParams({ draftId }),
+                            automation: '1',
+                            automationEditId: automationId,
+                            dataId,
+                        },
+                    } as any);
                 });
             } catch (error) {
                 await Modal.alert(

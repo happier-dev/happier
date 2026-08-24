@@ -7,7 +7,11 @@ import {
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { WEB_TEXTAREA_AUTOSIZE_VALUE_LENGTH_LIMIT } from '@/components/ui/forms/largeTextInputPolicy';
-import { saveNewSessionDraft } from '@/sync/domains/state/persistence';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import {
+    flushSessionDraft,
+    writeNewSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
@@ -19,6 +23,7 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { buildNewSessionDraftPatch } from './newSessionDraftRepositoryAdapter';
 
 import type { NewSessionPromptStore } from './newSessionPromptStore';
 
@@ -58,6 +63,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => BuildPersistedInputs['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
     agentNewSessionOptionStateByAgentId: Record<string, Record<string, unknown>>;
     draftScope: ServerAccountScope | null;
+    draftId: string;
     launchUserAttemptId?: string | null;
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
@@ -65,6 +71,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     effectiveAutomationDraft: NewSessionAutomationDraft;
     canCreate: boolean;
     buildCurrentPersistedDraft: () => PersistedDraft;
+    stageDraftIfEnabled: (draft: PersistedDraft) => void;
     persistDraftIfEnabled: (draft: PersistedDraft) => void;
     disableDraftPersistence: () => void;
     draftPersistenceEnabled: boolean;
@@ -188,17 +195,46 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.windowsRemoteSessionLaunchModeOverride,
     ]);
 
-    const persistDraftIfEnabled = React.useCallback((draft: PersistedDraft) => {
+    const stageDraftIfEnabled = React.useCallback((_draft: PersistedDraft) => {
         if (!draftPersistenceEnabledRef.current) {
             return;
         }
 
-        if (params.draftScope) {
-            saveNewSessionDraft(draft, params.draftScope);
-            return;
-        }
-        saveNewSessionDraft(draft);
-    }, [params.draftScope]);
+        if (!params.draftScope) return;
+        const address = { kind: 'newSession', draftId: params.draftId } as const;
+        writeNewSessionDraft({
+            scope: params.draftScope,
+            draftId: params.draftId,
+            patch: buildNewSessionDraftPatch({
+                authoringDraft: buildCurrentAuthoringDraft(effectiveAutomationDraft),
+                machineId: params.selectedMachineId,
+                serverId: params.targetServerId ?? null,
+                text: promptStore.getPrompt(),
+            }),
+            materializationIntent: 'userEdit',
+        });
+    }, [
+        buildCurrentAuthoringDraft,
+        effectiveAutomationDraft,
+        params.draftId,
+        params.draftScope,
+        params.selectedMachineId,
+        params.targetServerId,
+        promptStore,
+    ]);
+
+    const persistDraftIfEnabled = React.useCallback((draft: PersistedDraft) => {
+        stageDraftIfEnabled(draft);
+        if (!draftPersistenceEnabledRef.current || !params.draftScope) return;
+        const address = { kind: 'newSession', draftId: params.draftId } as const;
+        fireAndForget(flushSessionDraft({ scope: params.draftScope, address }), {
+            tag: 'NewSessionAuthoringState.flushSessionDraft',
+        });
+    }, [
+        params.draftId,
+        params.draftScope,
+        stageDraftIfEnabled,
+    ]);
 
     const disableDraftPersistence = React.useCallback(() => {
         draftPersistenceEnabledRef.current = false;
@@ -212,6 +248,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         effectiveAutomationDraft,
         canCreate,
         buildCurrentPersistedDraft,
+        stageDraftIfEnabled,
         persistDraftIfEnabled,
         disableDraftPersistence,
         draftPersistenceEnabled,

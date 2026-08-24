@@ -19,7 +19,6 @@ import { resolveNewSessionServerTarget } from '@/sync/domains/server/selection/s
 import { getMissingRequiredConfigEnvVarNames } from '@/utils/profiles/profileConfigRequirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';
-import { clearNewSessionDraft } from '@/sync/domains/state/persistence';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { isProfileCompatibleWithBackendTarget, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -33,7 +32,7 @@ import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/scre
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { SPAWN_SESSION_ERROR_CODES, type BackendTargetRefV1, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES, type ActionOperationSnapshotV1, type BackendTargetRefV1, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
@@ -54,18 +53,6 @@ import { getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions'
 
 function getActiveNewSessionDraftScope() {
     return storage.getState().profileScope ?? null;
-}
-
-function clearNewSessionDraftForLaunchParams(params: Readonly<{
-    draftScope?: ServerAccountScope | null;
-}>): void {
-    const hasExplicitDraftScope = Object.prototype.hasOwnProperty.call(params, 'draftScope');
-    const scope = hasExplicitDraftScope ? params.draftScope : getActiveNewSessionDraftScope();
-    if (scope) {
-        clearNewSessionDraft(scope);
-        return;
-    }
-    clearNewSessionDraft();
 }
 
 import {
@@ -113,8 +100,22 @@ import {
 } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import {
     actionOperationReentry,
+    resolvePersistedNewSessionOperationIdentity,
+    type PersistedNewSessionOperationIdentity,
     type NewSessionOperationReentryRegistration,
 } from '@/sync/domains/actionOperations/actionOperationReentry';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { acknowledgeActionOperationPresented } from '@/sync/domains/actionOperations/acknowledgeActionOperationPresented';
+import { reconcileSpawnAttemptCustodyFromOperation } from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
+import {
+    captureSessionDraftLaunchCurrentness,
+    captureSessionDraftCurrentness,
+    clearSessionDraftLaunchCurrentness,
+    clearSessionDraftCurrentness,
+    getSessionDraftSnapshot,
+    readSessionDraftLaunchCurrentness,
+    type SessionDraftCurrentness,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 type MutableSettingsDelta = {
     -readonly [TKey in keyof Settings]?: Settings[TKey];
@@ -172,6 +173,36 @@ function buildNewSessionLaunchScopeKey(params: Readonly<{
 
 function isFirstTurnFollowUpTimeout(error: unknown): boolean {
     return isSocketIoAckTimeoutError(error);
+}
+
+function readTrackedSpawnCreatedSessionId(operation: ActionOperationSnapshotV1): string | null {
+    if (operation.state !== 'succeeded' || !operation.result || typeof operation.result !== 'object') return null;
+    const sessionId = (operation.result as Readonly<Record<string, unknown>>).sessionId;
+    return typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
+}
+
+function findPresentedSpawnOperation(params: Readonly<{
+    accountId?: string | null;
+    machineId: string;
+    requestId: string;
+    sessionId: string;
+}>): ActionOperationSnapshotV1 | null {
+    const candidates = Array.from(actionOperationStore.getState().operationsById.values()).filter((operation) => (
+        operation.actionId === 'session.spawn_new'
+        && operation.state === 'succeeded'
+        && operation.scope.machineId === params.machineId
+        && (!params.accountId || operation.scope.accountId === params.accountId)
+        && operation.requestId === params.requestId
+        && readTrackedSpawnCreatedSessionId(operation) === params.sessionId
+    ));
+    return candidates.length === 1 ? candidates[0]! : null;
+}
+
+function isDetachedTrackedSpawnTransportError(error: unknown): boolean {
+    if (isSocketIoAckTimeoutError(error)) return true;
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return message.includes('socket not connected') || message.includes('socket disconnected');
 }
 
 function readNewSessionConnectedServicesOption(
@@ -239,10 +270,13 @@ export function useCreateNewSession(params: Readonly<{
     targetServerId?: string | null;
     allowedTargetServerIds?: ReadonlyArray<string>;
     draftScope?: ServerAccountScope | null;
+    draftId: string;
     disableDraftPersistence?: () => void;
+    persistDraftForLaunch?: () => void | Promise<void>;
     launchIntentSignature: string;
     launchUserAttemptId?: string | null;
     onLaunchUserAttemptIdChange?: (userAttemptId: string | null) => void;
+    persistedOperationReentry?: PersistedNewSessionOperationIdentity | null;
     /**
      * "Create this Session as a continuation of that one." Required semantics,
      * not an ignorable hint: it is carried on the spawn options rather than
@@ -257,6 +291,7 @@ export function useCreateNewSession(params: Readonly<{
     preflightModels?: PreflightModelList | null;
 }>): Readonly<{
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
+    resumePersistedLaunchKey: string | null;
 }> {
     const mountedRef = useMountedRef();
     const applySettings = useApplySettings();
@@ -287,9 +322,15 @@ export function useCreateNewSession(params: Readonly<{
     const launchUserAttemptIdForCurrentIntentRef = React.useRef(launchUserAttemptIdForCurrentIntent);
     launchUserAttemptIdForCurrentIntentRef.current = launchUserAttemptIdForCurrentIntent;
     const createInFlightRef = React.useRef(false);
+    const handledTerminalReentryRevisionRef = React.useRef<string | null>(null);
     // Keep the latest params available synchronously so event handlers can't observe
     // a stale snapshot in the window between rerender and effect flush.
     latestParamsRef.current = params;
+    const operationReentryRevision = React.useSyncExternalStore(
+        actionOperationReentry.subscribe,
+        actionOperationReentry.getRevision,
+        actionOperationReentry.getRevision,
+    );
 
     const handleCreateSession = React.useCallback(async (opts?: HandleCreateSessionOptions) => {
         if (createInFlightRef.current) return;
@@ -305,6 +346,7 @@ export function useCreateNewSession(params: Readonly<{
         let rollbackServerId: string | null = current.targetServerId ?? null;
         let confirmedCreatedSessionId: string | null = null;
         let operationReentryRegistration: NewSessionOperationReentryRegistration | null = null;
+        let launchDraftCurrentness: SessionDraftCurrentness | null = null;
         const isRepoNativeWorktreeLaunch = current.checkoutCreationDraft?.kind === 'git_worktree';
 
         if (!current.selectedMachineId) {
@@ -316,6 +358,18 @@ export function useCreateNewSession(params: Readonly<{
             return;
         }
 
+        const persistedOperationReentry = current.persistedOperationReentry;
+        if (persistedOperationReentry) {
+            operationReentryRegistration = actionOperationReentry.registerNewSession({
+                requestId: persistedOperationReentry.custody.nonce,
+                draftScope: persistedOperationReentry.custody.scope,
+                draftId: current.draftId,
+            });
+            if (!operationReentryRegistration) {
+                current.setIsCreating(false);
+                return;
+            }
+        }
         createInFlightRef.current = true;
         current.setIsCreating(true);
 
@@ -595,6 +649,13 @@ export function useCreateNewSession(params: Readonly<{
             const activeAutomationDraft = authoringDraft.automation ?? null;
 
             if (activeAutomationDraft?.enabled === true) {
+                await current.persistDraftForLaunch?.();
+                if (current.draftScope) {
+                    launchDraftCurrentness = captureSessionDraftCurrentness({
+                        scope: current.draftScope,
+                        address: { kind: 'newSession', draftId: current.draftId },
+                    });
+                }
                 const schedule = buildAutomationScheduleFromDraft(activeAutomationDraft);
                 const template = buildAutomationTemplateFromSessionAuthoringDraft({
                     ...authoringDraft,
@@ -625,7 +686,14 @@ export function useCreateNewSession(params: Readonly<{
                 if (automationEditId.length > 0) {
                     await sync.updateAutomation(automationEditId, normalizedAutomationInput);
                     current.disableDraftPersistence?.();
-                    clearNewSessionDraftForLaunchParams(current);
+                    if (current.draftScope && launchDraftCurrentness) {
+                        await clearSessionDraftCurrentness({
+                            scope: current.draftScope,
+                            address: { kind: 'newSession', draftId: current.draftId },
+                            currentness: launchDraftCurrentness,
+                        });
+                    }
+                    current.onLaunchUserAttemptIdChange?.(null);
                     await sync.refreshAutomations();
                     current.router.replace(`/automations/${automationEditId}` as any);
                     return;
@@ -637,7 +705,14 @@ export function useCreateNewSession(params: Readonly<{
                     assignments: [{ machineId: current.selectedMachineId, enabled: true, priority: 100 }],
                 });
                 current.disableDraftPersistence?.();
-                clearNewSessionDraftForLaunchParams(current);
+                if (current.draftScope && launchDraftCurrentness) {
+                    await clearSessionDraftCurrentness({
+                        scope: current.draftScope,
+                        address: { kind: 'newSession', draftId: current.draftId },
+                        currentness: launchDraftCurrentness,
+                    });
+                }
+                current.onLaunchUserAttemptIdChange?.(null);
                 await sync.refreshAutomations();
                 current.router.replace('/automations' as any);
                 return;
@@ -647,6 +722,33 @@ export function useCreateNewSession(params: Readonly<{
             // signature deliberately excludes the live composer text (it is no longer a render
             // input), so the text comparison that used to happen through the signature happens
             // here, at the only place the previous attempt's identity is actually reused.
+            let restoredOperationCustody = current.persistedOperationReentry?.custody ?? null;
+            const trackedOperation = current.persistedOperationReentry?.operation ?? null;
+            if (trackedOperation?.state === 'succeeded') {
+                const createdSessionId = readTrackedSpawnCreatedSessionId(trackedOperation);
+                if (createdSessionId && restoredOperationCustody) {
+                    const reconciliation = await reconcileSpawnAttemptCustodyFromOperation({
+                        scope: restoredOperationCustody.scope,
+                        machineId: trackedOperation.scope.machineId,
+                        userAttemptId: restoredOperationCustody.userAttemptId,
+                        requestId: trackedOperation.requestId ?? '',
+                        outcome: { kind: 'succeeded', createdSessionId },
+                    });
+                    if (reconciliation.status === 'reconciled') {
+                        restoredOperationCustody = reconciliation.record;
+                    } else {
+                        operationReentryRegistration?.markSetupNeedsAttention(createdSessionId);
+                        current.setIsCreating(false);
+                        return;
+                    }
+                } else {
+                    if (createdSessionId) {
+                        operationReentryRegistration?.markSetupNeedsAttention(createdSessionId);
+                    }
+                    current.setIsCreating(false);
+                    return;
+                }
+            }
             const retryableLaunchAttempt = launchAttemptRef.current?.status === 'failed_retryable'
                 && isNewSessionLaunchAttemptInScope(launchAttemptRef.current, launchScopeKey)
                 && launchAttemptRef.current.prompt.prompt === normalizedSessionPrompt
@@ -658,7 +760,18 @@ export function useCreateNewSession(params: Readonly<{
                 scopeKey: launchScopeKey,
                 meta: null,
                 attemptId: launchUserAttemptIdForCurrentIntentRef.current,
+                spawnNonce: restoredOperationCustody?.nonce,
             });
+            if (restoredOperationCustody) {
+                launchAttempt = adoptNewSessionLaunchAttemptCustody(launchAttempt, {
+                    userAttemptId: restoredOperationCustody.userAttemptId,
+                    spawnNonce: restoredOperationCustody.nonce,
+                    targetFingerprint: restoredOperationCustody.targetFingerprint,
+                    createdSessionId: restoredOperationCustody.createdSessionId,
+                    firstTurnLocalId: restoredOperationCustody.firstTurnLocalId,
+                    attachmentMessageLocalId: restoredOperationCustody.attachmentMessageLocalId,
+                });
+            }
             if (!retryableLaunchAttempt && launchUserAttemptIdForCurrentIntentRef.current !== launchAttempt.attemptId) {
                 current.onLaunchUserAttemptIdChange?.(launchAttempt.attemptId);
             }
@@ -667,10 +780,32 @@ export function useCreateNewSession(params: Readonly<{
                 ? current.draftScope
                 : getActiveNewSessionDraftScope();
             if (launchDraftScope) {
+                launchDraftCurrentness = current.persistedOperationReentry
+                    ? current.persistedOperationReentry.launchCurrentness
+                    : readSessionDraftLaunchCurrentness({
+                        scope: launchDraftScope,
+                        address: { kind: 'newSession', draftId: current.draftId },
+                        userAttemptId: launchAttempt.attemptId,
+                    });
+                if (!current.persistedOperationReentry && !launchDraftCurrentness) {
+                    await current.persistDraftForLaunch?.();
+                    launchDraftCurrentness = captureSessionDraftLaunchCurrentness({
+                        scope: launchDraftScope,
+                        address: { kind: 'newSession', draftId: current.draftId },
+                        userAttemptId: launchAttempt.attemptId,
+                    });
+                }
+            }
+            if (launchDraftScope && !operationReentryRegistration) {
                 operationReentryRegistration = actionOperationReentry.registerNewSession({
                     requestId: launchAttempt.spawnNonce,
                     draftScope: launchDraftScope,
+                    draftId: current.draftId,
                 });
+                if (!operationReentryRegistration) {
+                    current.setIsCreating(false);
+                    return;
+                }
             }
 
             const daemonOwnsFirstTurn = supportsSpawnPendingFirstInput(
@@ -1131,7 +1266,21 @@ export function useCreateNewSession(params: Readonly<{
                     }
                     launchAttemptRef.current = null;
                     current.disableDraftPersistence?.();
-                    clearNewSessionDraftForLaunchParams(current);
+                    if (launchDraftScope && launchDraftCurrentness) {
+                        await clearSessionDraftCurrentness({
+                            scope: launchDraftScope,
+                            address: { kind: 'newSession', draftId: current.draftId },
+                            currentness: launchDraftCurrentness,
+                        });
+                    }
+                    if (launchDraftScope) {
+                        clearSessionDraftLaunchCurrentness({
+                            scope: launchDraftScope,
+                            address: { kind: 'newSession', draftId: current.draftId },
+                            userAttemptId: launchAttempt.attemptId,
+                        });
+                    }
+                    current.onLaunchUserAttemptIdChange?.(null);
                     operationReentryRegistration?.markWorkflowComplete(createdSessionId);
                 }
 
@@ -1146,6 +1295,19 @@ export function useCreateNewSession(params: Readonly<{
                         return 'session';
                     },
                 });
+                const persistedPresentedOperation = current.persistedOperationReentry?.operation;
+                const presentedOperation = persistedPresentedOperation?.state === 'succeeded'
+                    && readTrackedSpawnCreatedSessionId(persistedPresentedOperation) === createdSessionId
+                    ? persistedPresentedOperation
+                    : findPresentedSpawnOperation({
+                        accountId: current.draftScope?.accountId,
+                        machineId: current.selectedMachineId,
+                        requestId: launchAttempt.spawnNonce,
+                        sessionId: createdSessionId,
+                    });
+                if (presentedOperation) {
+                    acknowledgeActionOperationPresented(presentedOperation);
+                }
             } else if (result.type === 'requestToApproveDirectoryCreation') {
                 launchAttemptRef.current = null;
                 const rollbackErrorMessage = await rollbackSpawnArtifacts();
@@ -1257,6 +1419,30 @@ export function useCreateNewSession(params: Readonly<{
                 throw new Error('Session spawning failed - no session ID returned.');
             }
         } catch (error) {
+            const currentDraftScope = Object.prototype.hasOwnProperty.call(current, 'draftScope')
+                ? current.draftScope ?? null
+                : getActiveNewSessionDraftScope();
+            const currentDraftSnapshot = currentDraftScope
+                ? getSessionDraftSnapshot(currentDraftScope, { kind: 'newSession', draftId: current.draftId })
+                : null;
+            const currentTrackedReentry = current.persistedOperationReentry ?? resolvePersistedNewSessionOperationIdentity({
+                draftScope: currentDraftScope,
+                draftId: current.draftId,
+                draft: currentDraftSnapshot?.localSupplement
+                    ?? (current.launchUserAttemptId ? { launchUserAttemptId: current.launchUserAttemptId } : null),
+                operations: actionOperationStore.getState().operationsById.values(),
+            });
+            if (
+                !confirmedCreatedSessionId
+                && currentTrackedReentry
+                && currentTrackedReentry.operation.state !== 'failed'
+                && currentTrackedReentry.operation.state !== 'cancelled'
+                && isDetachedTrackedSpawnTransportError(error)
+            ) {
+                rollbackActualPath = null;
+                latestParamsRef.current.setIsCreating(false);
+                return;
+            }
             if (rollbackActualPath) {
                 try {
                     await rollbackNewSessionArtifacts({
@@ -1316,8 +1502,47 @@ export function useCreateNewSession(params: Readonly<{
             latestParamsRef.current.setIsCreating(false);
         } finally {
             createInFlightRef.current = false;
+            operationReentryRegistration?.release();
         }
     }, [applySettings, mountedRef]);
 
-    return { handleCreateSession };
+    React.useEffect(() => {
+        const reentry = params.persistedOperationReentry;
+        const operation = reentry?.operation;
+        if (!reentry || !operation) return;
+        if (operation.state === 'accepted' || operation.state === 'running') return;
+        if (operation.state === 'succeeded') return;
+        const revisionKey = `${operation.operationId}:${operation.revision}`;
+        if (handledTerminalReentryRevisionRef.current === revisionKey) return;
+        if (createInFlightRef.current) return;
+        if (!actionOperationReentry.canAutomaticallyReenterNewSession(operation)) return;
+        const workflowClaim = actionOperationReentry.registerNewSession({
+            requestId: reentry.custody.nonce,
+            draftScope: reentry.custody.scope,
+            draftId: params.draftId,
+        });
+        if (!workflowClaim) return;
+        handledTerminalReentryRevisionRef.current = revisionKey;
+
+        void reconcileSpawnAttemptCustodyFromOperation({
+            scope: reentry.custody.scope,
+            machineId: reentry.custody.machineId,
+            userAttemptId: reentry.custody.userAttemptId,
+            requestId: operation.requestId ?? '',
+            outcome: { kind: operation.state },
+        }).finally(() => {
+            latestParamsRef.current.setIsCreating(false);
+            workflowClaim.release();
+        });
+    }, [handleCreateSession, operationReentryRevision, params.persistedOperationReentry]);
+
+    const terminalSuccessOperation = params.persistedOperationReentry?.operation.state === 'succeeded'
+        ? params.persistedOperationReentry.operation
+        : null;
+    const resumePersistedLaunchKey = terminalSuccessOperation
+        && actionOperationReentry.canAutomaticallyReenterNewSession(terminalSuccessOperation)
+        ? `${terminalSuccessOperation.operationId}:${terminalSuccessOperation.revision}`
+        : null;
+
+    return { handleCreateSession, resumePersistedLaunchKey };
 }

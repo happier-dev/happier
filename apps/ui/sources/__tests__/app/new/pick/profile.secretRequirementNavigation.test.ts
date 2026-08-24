@@ -54,7 +54,7 @@ async function installProfileSecretRequirementModuleMocks() {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const module = createExpoRouterMock({
             navigation: navigationMock,
-            params: { selectedId: '', machineId: 'm1' },
+            params: { selectedId: '', machineId: 'm1', draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e' },
             router: {
                 push: routerMock.push,
                 back: routerMock.back,
@@ -66,7 +66,7 @@ async function installProfileSecretRequirementModuleMocks() {
         return {
             ...module,
             useNavigation: () => navigationMock,
-            useLocalSearchParams: () => ({ selectedId: '', machineId: 'm1' }),
+            useLocalSearchParams: () => ({ selectedId: '', machineId: 'm1', draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e' }),
         };
     });
 
@@ -168,6 +168,7 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
             pathname: '/new/pick/secret-requirement',
             params: expect.objectContaining({
                 profileId: 'deepseek',
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
                 machineId: 'm1',
                 secretEnvVarName: missingRequiredSecretScenario.secretEnvVarName,
                 secretEnvVarNames: missingRequiredSecretScenario.secretEnvVarNames.join(','),

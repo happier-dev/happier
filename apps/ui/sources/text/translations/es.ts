@@ -6097,6 +6097,12 @@ export const es: TranslationStructure = {
     newTagConfirm: "Añadir",
   },
 
+  sessionDrafts: {
+    sectionTitle: 'Borradores', badge: 'Borrador', untitled: 'Borrador sin título', continueEditing: 'Continuar editando', startAnother: 'Empezar otro',
+    status: { offline: 'Sin conexión', syncing: 'Sincronizando', conflict: 'Conflicto', machineUnavailable: 'Máquina no disponible', attachmentNeedsAttention: 'El archivo adjunto requiere atención', startInterrupted: 'Inicio interrumpido' },
+    new: { action: 'Nuevo borrador' }, delete: { action: 'Eliminar borrador', confirmTitle: '¿Eliminar borrador?', confirmDescription: 'Este borrador se eliminará de tus dispositivos.' },
+    conflict: { title: 'Conflicto de borrador', description: 'Este campo cambió en otro dispositivo.', mine: 'En este dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Conservar dispositivo', copyMine: 'Copiar el mío', copied: 'Copiado', copyFailed: 'No se pudo copiar', field: { text: 'Texto', mentions: 'Menciones', attachments: 'Adjuntos', recipient: 'Destinatario', agentContinuation: 'Continuación del agente', executionRunDelivery: 'Entrega de ejecución' } },
+  },
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `Servidor: ${server}`,
     storagePersistedTab: "Happier",
@@ -7763,6 +7769,14 @@ export const es: TranslationStructure = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'Borradores de sesión nueva',
+        footer: 'Elige si Nueva sesión continúa el borrador de este dispositivo o abre uno nuevo.',
+        resumeTitle: 'Reanudar el borrador anterior',
+        resumeSubtitle: 'Continúa el borrador iniciado desde Nueva sesión en este dispositivo.',
+        freshTitle: 'Empezar siempre desde cero',
+        freshSubtitle: 'Abre un borrador nuevo cada vez que elijas Nueva sesión.',
+    },
 	      sessionList: {
 	          title: 'Lista de sesiones',
 	          footer: 'Personaliza lo que aparece en cada fila de sesión.',

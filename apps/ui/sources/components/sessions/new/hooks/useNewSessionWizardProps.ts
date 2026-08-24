@@ -169,6 +169,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     sessionPromptInputMaxHeight?: number;
     agentInputExtraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
     attachmentFlowId?: string | null;
+    resumePersistedLaunchKey?: string | null;
 }>): Readonly<{
     profiles: NewSessionWizardProfilesProps;
     wizardSections: NewSessionWizardSectionProps | null;
@@ -483,6 +484,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             inputMaxHeight: params.sessionPromptInputMaxHeight,
             agentInputExtraActionChips: params.agentInputExtraActionChips,
             attachmentFlowId: params.attachmentFlowId,
+            resumePersistedLaunchKey: params.resumePersistedLaunchKey,
         };
         // NOTE: Agent selection doesn't affect these props, but keeping dependencies
         // broad mirrors the previous in-screen memoization behavior and avoids subtle
@@ -492,6 +494,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.agentType,
         params.agentInputExtraActionChips,
         params.attachmentFlowId,
+        params.resumePersistedLaunchKey,
         params.canCreate,
         params.connectionStatus,
         params.emptyAutocompleteKinds,

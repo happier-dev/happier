@@ -5735,6 +5735,17 @@ export const en = {
         newTagConfirm: 'Add',
     },
 
+    sessionDrafts: {
+        sectionTitle: 'Drafts', badge: 'Draft', untitled: 'Untitled draft', continueEditing: 'Continue editing', startAnother: 'Start another',
+        status: { offline: 'Offline', syncing: 'Syncing', conflict: 'Conflict', machineUnavailable: 'Machine unavailable', attachmentNeedsAttention: 'Attachment needs attention', startInterrupted: 'Start interrupted' },
+        new: { action: 'New draft' },
+        delete: { action: 'Delete draft', confirmTitle: 'Delete draft?', confirmDescription: 'This draft will be removed from your devices.' },
+        conflict: {
+            title: 'Draft conflict', description: 'This field changed on another device.', mine: 'On this device', synced: 'Synced',
+            useSynced: 'Use synced', keepDevice: 'Keep device', copyMine: 'Copy mine', copied: 'Copied', copyFailed: 'Could not copy',
+            field: { text: 'Text', mentions: 'Mentions', attachments: 'Attachments', recipient: 'Recipient', agentContinuation: 'Agent continuation', executionRunDelivery: 'Run delivery' },
+        },
+    },
     sessionsList: {
         serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
         storagePersistedTab: 'Happier',
@@ -7329,6 +7340,14 @@ export const en = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: 'New session drafts',
+        footer: 'Choose whether New session continues this device’s draft or opens a fresh one.',
+        resumeTitle: 'Resume previous draft',
+        resumeSubtitle: 'Continue the draft started from New session on this device.',
+        freshTitle: 'Always start fresh',
+        freshSubtitle: 'Open a new draft whenever you choose New session.',
+    },
 	          sessionList: {
 	              title: 'Session List',
 	              footer: 'Appearance and behavior of the session sidebar list.',

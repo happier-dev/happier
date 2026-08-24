@@ -10,7 +10,7 @@ import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecent
 import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 import { toggleHomeAwareDirectoryFavorite } from '@/components/sessions/new/hooks/favoriteDirectoriesToggle';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
@@ -24,12 +24,14 @@ export default React.memo(function PathPickerScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         dataId?: string;
+        draftId?: string;
         machineId?: string;
         selectedPath?: string;
         directory?: string;
         path?: string;
         spawnServerId?: string;
     }>();
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const machines = useAllMachines();
     const sessions = useSessions();
     const recentMachinePaths = useSetting('recentMachinePaths');
@@ -89,6 +91,7 @@ export default React.memo(function PathPickerScreen() {
         const rawPath = typeof pathOverride === 'string' ? pathOverride : customPathRef.current;
         const pathToUse = rawPath.trim() || machineHomeDir;
         const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
+        const draftId = typeof params.draftId === 'string' ? params.draftId : undefined;
         const spawnServerId = typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0
             ? params.spawnServerId
             : undefined;
@@ -98,19 +101,20 @@ export default React.memo(function PathPickerScreen() {
             routeParams: { directory: pathToUse },
             replaceParams: {
                 ...(dataId ? { dataId } : {}),
+                ...(draftId ? { draftId } : {}),
                 machineId: params.machineId,
                 directory: pathToUse,
                 ...(spawnServerId ? { spawnServerId } : {}),
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [machineHomeDir, navigation, params.dataId, params.machineId, params.spawnServerId, router]);
+    }, [machineHomeDir, navigation, params.dataId, params.draftId, params.machineId, params.spawnServerId, pickerFallbackHref, router]);
 
     const handleBackPress = React.useCallback(() => {
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [navigation, pickerFallbackHref, router]);
     const headerTitle = t('newSession.selectPathTitle');
     const headerBackTitle = t('common.back');
 

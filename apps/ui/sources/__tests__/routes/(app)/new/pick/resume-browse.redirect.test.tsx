@@ -26,6 +26,7 @@ describe('legacy resume-browse route', () => {
             serverId: ['server-4', 'ignored'],
             resumeSessionId: ['resume-123', 'ignored'],
             dataId: ['draft-7', 'ignored'],
+            draftId: ['8e0a5dd1-b1df-43dd-b51e-b7787b30362e', 'ignored'],
         });
 
         const module = await import('@/app/(app)/new/pick/resume-browse');
@@ -40,6 +41,7 @@ describe('legacy resume-browse route', () => {
                 machineId: 'machine-9',
                 spawnServerId: 'server-4',
                 dataId: 'draft-7',
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
                 currentResumeId: 'resume-123',
             },
         });
