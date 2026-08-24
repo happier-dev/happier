@@ -1,5 +1,9 @@
 import { HAPPIER_BUILT_IN_TOOLS } from './catalog';
-import { filterBuiltInToolsForSurface, listPluginActionBackedTools } from './actionToolCatalog';
+import {
+  filterBuiltInToolsForSurface,
+  listPluginActionBackedTools,
+  resolveActionToolCatalogAvailability,
+} from './actionToolCatalog';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { isActionEnabledByEnv, readActionsSettingsFromEnv } from '@/settings/actionsSettings';
@@ -24,11 +28,32 @@ export function listBuiltInHappierTools(params?: Readonly<{
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
   isActionEnabled?: (id: ActionId) => boolean;
   actionsSettings?: ActionsSettingsV1 | null;
+  requiredDirectActionIds?: readonly ActionId[];
 }>) {
   const surface = params?.surface ?? 'agent';
   const shouldReadEnvSettings = !params?.isActionEnabled && !Object.prototype.hasOwnProperty.call(params ?? {}, 'actionsSettings');
   const actionsSettings = params?.actionsSettings ?? (shouldReadEnvSettings ? readActionsSettingsFromEnv() as ActionsSettingsV1 : null);
   const isActionEnabled = params?.isActionEnabled ?? ((id: ActionId) => isActionEnabledByEnv(id, { surface }));
+  const requiredDirectActionIds = new Set(params?.requiredDirectActionIds ?? []);
+  const explicitlyDiscoverableOnly = (actionId: ActionId): boolean => (
+    actionsSettings?.actions?.[actionId]?.toolExposureModes?.agent === 'discoverable_only'
+  );
+  const requiredTools = surface === 'agent'
+    ? HAPPIER_BUILT_IN_TOOLS.filter((tool) => {
+        const actionId = tool.actionId as ActionId | undefined;
+        if (!actionId || !requiredDirectActionIds.has(actionId) || explicitlyDiscoverableOnly(actionId)) {
+          return false;
+        }
+        return resolveActionToolCatalogAvailability({
+          actionId,
+          surface,
+          isActionEnabled,
+          actionsSettings,
+          registry: params?.registry,
+          pluginToolCatalog: params?.pluginToolCatalog,
+        }).available;
+      })
+    : [];
   return dedupeToolsByName([
     ...filterBuiltInToolsForSurface(
       HAPPIER_BUILT_IN_TOOLS,
@@ -52,5 +77,6 @@ export function listBuiltInHappierTools(params?: Readonly<{
         pluginToolCatalog: params?.pluginToolCatalog,
       }).length === 1,
     ),
+    ...requiredTools,
   ]);
 }

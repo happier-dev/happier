@@ -16,18 +16,31 @@ const EMPTY_ACTIONS_SETTINGS = Object.freeze({
   actions: {},
 }) as ActionsSettingsV1;
 
-export function readActionsSettingsFromEnv(): ActionsSettingsV1 {
+export function readActionsSettingsOverrideFromEnv(): ActionsSettingsV1 | null {
   const raw = typeof process.env[ENV_KEY] === 'string' ? String(process.env[ENV_KEY]).trim() : '';
-  if (!raw) return EMPTY_ACTIONS_SETTINGS;
+  if (!raw) return null;
 
   let parsedJson: unknown = null;
   try {
     parsedJson = JSON.parse(raw);
   } catch {
-    return EMPTY_ACTIONS_SETTINGS;
+    return null;
   }
 
   const parsed = ActionsSettingsV1Schema.safeParse(parsedJson);
+  return parsed.success ? parsed.data : null;
+}
+
+export function readActionsSettingsFromEnv(): ActionsSettingsV1 {
+  return readActionsSettingsOverrideFromEnv() ?? EMPTY_ACTIONS_SETTINGS;
+}
+
+export function resolveActionsSettingsWithEnvironmentOverride(
+  accountSettings: Readonly<Record<string, unknown>>,
+): ActionsSettingsV1 {
+  const environmentOverride = readActionsSettingsOverrideFromEnv();
+  if (environmentOverride) return environmentOverride;
+  const parsed = ActionsSettingsV1Schema.safeParse(accountSettings.actionsSettingsV1);
   return parsed.success ? parsed.data : EMPTY_ACTIONS_SETTINGS;
 }
 

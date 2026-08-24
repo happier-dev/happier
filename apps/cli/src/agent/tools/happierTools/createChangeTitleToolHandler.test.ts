@@ -47,6 +47,33 @@ describe('createChangeTitleToolHandler', () => {
         expect(afterCommit).not.toHaveBeenCalled();
     });
 
+    it('preserves Agent tool-call approval context for title changes', async () => {
+        const execute = vi.fn<Execute>(async () => ({ ok: true as const, result: { ok: true } }));
+        const handler = createChangeTitleToolHandler({
+            surface: 'agent',
+            executor: { execute },
+            resolveCallerPermissionMode: () => 'safe-yolo',
+        });
+        const approvalOrigin = {
+            kind: 'transcript_tool_call' as const,
+            sessionId: 'sess_1',
+            toolCallId: 'pi-call-1',
+            toolName: 'change_title',
+        };
+
+        await handler('sess_1', 'New title', { approvalOrigin });
+
+        expect(execute).toHaveBeenCalledWith(
+            'session.title.set',
+            { sessionId: 'sess_1', title: 'New title' },
+            expect.objectContaining({
+                approvalOrigin,
+                callerPermissionMode: 'safe-yolo',
+                actionRequestId: 'pi-call-1',
+            }),
+        );
+    });
+
     it('calls afterCommit and returns success when the action executes successfully', async () => {
         const afterCommit = vi.fn();
         const execute = vi.fn<Execute>(async () => ({

@@ -150,6 +150,48 @@ describe('callBuiltInHappierTool', () => {
     );
   });
 
+  it('uses the semantic agent surface and session machine for an internal bridge call', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: { id: 'sess-1', machineId: 'machine-1', metadata: { permissionMode: 'safe-yolo' } },
+      ctx: null,
+      mode: 'plain' as const,
+    });
+    execute.mockResolvedValueOnce({ ok: true, result: { items: [] } });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: null },
+      sessionId: 'sess-1',
+      toolName: 'action_execute',
+      args: {
+        actionId: 'memory.search',
+        input: { query: { v: 1, query: 'handoff', scope: { type: 'global' }, mode: 'hints' } },
+      },
+      surface: 'agent',
+      toolCallId: 'pi-tool-call-1',
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      'memory.search',
+      expect.objectContaining({ machineId: 'machine-1' }),
+      expect.objectContaining({
+        defaultSessionId: 'sess-1',
+        defaultSessionMachineId: 'machine-1',
+        surface: 'agent',
+        callerPermissionMode: 'safe-yolo',
+        actionRequestId: 'pi-tool-call-1',
+        approvalOrigin: {
+          kind: 'transcript_tool_call',
+          sessionId: 'sess-1',
+          toolCallId: 'pi-tool-call-1',
+          toolName: 'action_execute',
+        },
+      }),
+    );
+  });
+
   it('fails closed for explicit plugin action ids that are not exposed by the authoritative registry', async () => {
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
     const result = await callBuiltInHappierTool({
@@ -186,7 +228,16 @@ describe('callBuiltInHappierTool', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('rejects action_options_resolve on the CLI surface', async () => {
+  it('keeps ordinary action_options_resolve calls on the CLI surface', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        actionId: null,
+        fieldPath: null,
+        optionsSourceId: 'session.modes.available',
+        options: [],
+      },
+    });
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
     const result = await callBuiltInHappierTool({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
@@ -197,8 +248,20 @@ describe('callBuiltInHappierTool', () => {
       },
     });
 
-    expectActionDisabled(result);
-    expect(execute).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        actionId: null,
+        fieldPath: null,
+        optionsSourceId: 'session.modes.available',
+        options: [],
+      },
+    });
+    expect(execute).toHaveBeenCalledWith(
+      'action.options.resolve',
+      { optionsSourceId: 'session.modes.available' },
+      expect.objectContaining({ surface: 'cli', defaultSessionId: 'sess-1' }),
+    );
     expect(createCliActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
       sessionId: 'sess-1',

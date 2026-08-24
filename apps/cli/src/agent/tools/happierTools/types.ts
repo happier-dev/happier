@@ -5,6 +5,7 @@ export type HappierBuiltInToolDefinition = Readonly<{
   toolId?: string;
   actionId?: string;
   inputSchema: unknown;
+  contextualDefaults?: import('@happier-dev/protocol').ActionContextualDefaults;
   outputSchema?: unknown;
   safety?: 'safe' | 'danger';
   inputHints?: unknown;

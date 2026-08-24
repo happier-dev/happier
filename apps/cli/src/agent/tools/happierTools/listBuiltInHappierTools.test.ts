@@ -198,6 +198,35 @@ describe('listBuiltInHappierTools', () => {
     expect(names).not.toContain('change_title');
   });
 
+  it('promotes required guidance actions unless the user explicitly keeps them discoverable-only', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+
+    expect(listBuiltInHappierTools({
+      surface: 'agent',
+      requiredDirectActionIds: ['memory.search', 'memory.get_window'],
+    }).map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      'memory_search',
+      'memory_get_window',
+    ]));
+
+    const actionsSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'memory.search': {
+          toolExposureModes: { agent: 'discoverable_only' },
+        },
+      },
+    });
+    const names = listBuiltInHappierTools({
+      surface: 'agent',
+      actionsSettings,
+      requiredDirectActionIds: ['memory.search', 'memory.get_window'],
+    }).map((tool) => tool.name);
+
+    expect(names).not.toContain('memory_search');
+    expect(names).toContain('memory_get_window');
+  });
+
   it('normalizes first-party and trusted plugin action availability into one result shape', async () => {
     const { resolveActionToolCatalogAvailability } = await import('./actionToolCatalog');
     const registry = useActiveRegistryWithPluginTool();

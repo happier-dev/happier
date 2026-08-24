@@ -32,6 +32,7 @@ type ActionToolEntry = Readonly<{
   title: string;
   description: string;
   inputSchema: unknown;
+  contextualDefaults?: import('@happier-dev/protocol').ActionContextualDefaults;
   outputSchema?: unknown;
   safety?: 'safe' | 'danger';
   inputHints?: unknown;
@@ -55,6 +56,7 @@ const BUILT_IN_ACTION_TOOL_ENTRIES = Object.freeze(
       title: spec.title,
       description: spec.description ?? spec.title,
       inputSchema: spec.inputSchema,
+      ...(spec.contextualDefaults ? { contextualDefaults: spec.contextualDefaults } : {}),
       provenance: 'first_party' as const,
     }))
     .filter((entry) => entry.toolName.length > 0),
@@ -126,6 +128,7 @@ function toPluginToolEntry(tool: ProjectedPluginToolCatalogEntry): ActionToolEnt
     title: tool.title,
     description: tool.description,
     inputSchema: tool.inputSchema,
+    ...(tool.contextualDefaults ? { contextualDefaults: tool.contextualDefaults } : {}),
     ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
     safety: tool.safety,
     ...(tool.inputHints === undefined ? {} : { inputHints: tool.inputHints }),
@@ -362,6 +365,7 @@ export function listPluginActionBackedTools(params?: Readonly<{
         ...(entry.toolId === undefined ? {} : { toolId: entry.toolId }),
         actionId: entry.id,
         inputSchema: entry.inputSchema,
+        ...(entry.contextualDefaults ? { contextualDefaults: entry.contextualDefaults } : {}),
         ...(entry.outputSchema === undefined ? {} : { outputSchema: entry.outputSchema }),
         ...(entry.safety === undefined ? {} : { safety: entry.safety }),
         ...(entry.inputHints === undefined ? {} : { inputHints: entry.inputHints }),

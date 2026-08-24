@@ -20,7 +20,11 @@ import {
 } from './manualToolContracts';
 
 type DispatchDeps = Readonly<{
-  changeTitle: (sessionId: string, title: string) => Promise<unknown>;
+  changeTitle: (
+    sessionId: string,
+    title: string,
+    options?: Readonly<{ approvalOrigin?: ApprovalRequestOriginV1 | null }>,
+  ) => Promise<unknown>;
   executeActionByToolName: (
     toolName: string,
     args: unknown,
@@ -94,6 +98,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   toolName: string;
   args: unknown;
   sessionId: string;
+  sessionMachineId?: string | null;
   surface?: 'mcp' | 'cli' | 'agent';
   actionsSettings?: ActionsSettingsV1 | null;
   getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
@@ -162,7 +167,11 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   if (params.toolName === 'change_title') {
     const parsed = changeTitleToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid title payload');
-    return normalizeChangeTitleResult(await params.deps.changeTitle(params.sessionId, parsed.data.title));
+    return normalizeChangeTitleResult(await params.deps.changeTitle(
+      params.sessionId,
+      parsed.data.title,
+      ...(params.approvalOrigin ? [{ approvalOrigin: params.approvalOrigin }] as const : [] as const),
+    ));
   }
 
   if (params.toolName === 'action_spec_search') {
@@ -171,7 +180,16 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   }
 
   if (params.toolName === 'action_spec_get') {
-    const result = await getActionSpecForSurface(params.args, surface, (id) => isActionEnabled(id), actionsSettings);
+    const result = await getActionSpecForSurface(
+      params.args,
+      surface,
+      (id) => isActionEnabled(id),
+      actionsSettings,
+      {
+        defaultSessionId: params.sessionId,
+        defaultSessionMachineId: params.sessionMachineId,
+      },
+    );
     return result.ok ? ok(result.result) : err(result.errorCode, result.error, result.details);
   }
 
