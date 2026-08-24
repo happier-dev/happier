@@ -598,8 +598,14 @@ describe('resolveEffectiveCodingPromptText launch-profile coding prompt override
       fetchPromptArtifactRecord: async () => null,
     });
 
-    // The profile's `initial` mode reaches the appendix that owns title guidance...
-    expect(out).toContain('rename the session before replying');
+    // The profile's `initial` mode reaches the appendix that owns title guidance.
+    // Asserted on a MODE-UNIQUE substring: 'rename the session before replying' is
+    // emitted by BOTH the `initial` and `ongoing` appendix branches, so asserting it
+    // would pass whether or not the profile override reached the appendix at all —
+    // it would have proven only that some title guidance exists.
+    expect(out).toContain("Based on the user's first message");
+    // The account default is `ongoing`; its branch must NOT be the one that landed.
+    expect(out).not.toContain('(and again if the task changes significantly)');
     // ...and the base plan still suppresses its own title section under shell bridge.
     expect(out).not.toContain('# Session title');
   });
@@ -619,5 +625,18 @@ describe('resolveEffectiveCodingPromptText launch-profile coding prompt override
     expect(out).toContain('Happier tools are available through the CLI bridge');
     expect(out).not.toContain('change_title');
     expect(out).not.toContain('rename the session');
+  });
+
+  it('keeps canonical title guidance for native-extension delivery', async () => {
+    const out = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: settingsWithProfile({ sessionTitleUpdates: 'initial' }),
+      profileId: 'focused',
+      executionRunsFeatureEnabled: false,
+      toolDelivery: 'native_extension',
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('# Session title');
   });
 });

@@ -73,6 +73,19 @@ describe('buildAppendSystemPromptBaseV1', () => {
     expect(out).toContain('# Attachments');
   });
 
+  it('omits session title instructions when the delivery has no title tool', () => {
+    const out = buildAppendSystemPromptBaseV1({
+      settings: {},
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+      sessionTitleToolAvailable: false,
+    });
+
+    expect(out).not.toContain('# Session title');
+    expect(out).not.toContain('change_title');
+    expect(out).toContain('# Attachments');
+  });
+
   it('uses start-only session title instructions for initial title updates', () => {
     const out = buildAppendSystemPromptBaseV1({
       settings: {

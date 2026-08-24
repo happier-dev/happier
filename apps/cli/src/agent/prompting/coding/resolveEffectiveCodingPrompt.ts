@@ -5,7 +5,8 @@ import {
   buildPromptPlanV1,
   buildQualifiedPluginContributionKey,
   renderPromptPlanV1,
-  resolveCodingPromptBehaviorV1,
+  resolveEffectiveCodingPromptBehaviorV1,
+  type CodingPromptBehaviorV1,
   type PromptBlockV1,
   type PromptPlanV1,
 } from '@happier-dev/protocol';
@@ -53,10 +54,11 @@ type ResolveEffectiveCodingPromptArgs = Readonly<{
   memoryRecallGuidanceEnabled?: boolean;
   agentId?: string | null | undefined;
   disableTodos?: boolean;
-  toolDelivery?: 'native_mcp' | 'shell_bridge' | 'unsupported';
+  toolDelivery?: 'native_mcp' | 'native_extension' | 'shell_bridge' | 'unsupported';
   toolDeliverySessionId?: string | null;
   toolDeliveryDirectory?: string | null;
   memoryMachineId?: string | null;
+  sessionTitleToolAvailable?: boolean;
   toolPromptContributions?: readonly ToolPromptContribution[];
   /**
    * Already-qualified, policy-approved, generation-bound prompt asset blocks.
@@ -68,16 +70,25 @@ type ResolveEffectiveCodingPromptArgs = Readonly<{
   fetchPromptArtifactRecord?: FetchPromptArtifactRecord;
 }>;
 
-function resolveBasePromptSettingsForToolDelivery(params: Readonly<{
-  settings: Record<string, unknown>;
+/**
+ * The hard runtime/capability constraint, applied last and on top of the
+ * already-resolved Account+profile behavior. A profile expresses a preference;
+ * it can never re-enable base-plan title guidance the delivery mode cannot
+ * carry. Under a shell bridge the guidance is not lost — it moves to the tool
+ * appendix, which is composed from the unconstrained resolved behavior.
+ */
+function applyToolDeliveryConstraintToPromptSettings(params: Readonly<{
+  promptSettings: Record<string, unknown>;
+  behavior: CodingPromptBehaviorV1;
   toolDelivery: NonNullable<ResolveEffectiveCodingPromptArgs['toolDelivery']>;
 }>): Record<string, unknown> {
-  if (params.toolDelivery === 'native_mcp') return params.settings;
-  const promptBehavior = resolveCodingPromptBehaviorV1(params.settings);
+  if (params.toolDelivery === 'native_mcp' || params.toolDelivery === 'native_extension') {
+    return params.promptSettings;
+  }
   return {
-    ...params.settings,
+    ...params.promptSettings,
     codingPromptBehaviorV1: {
-      ...promptBehavior,
+      ...params.behavior,
       sessionTitleUpdates: 'disabled',
     },
   };
@@ -252,8 +263,21 @@ export async function resolveEffectiveCodingPromptPlan(
     ? args.settings
     : {};
   const toolDelivery = args.toolDelivery ?? 'native_mcp';
-  const basePromptSettings = resolveBasePromptSettingsForToolDelivery({
+  // Account default, then the selected Launch Profile's sparse override —
+  // resolved exactly once here, for the whole prompt. Both the base plan and
+  // the tool-delivery appendix are composed from this one fact, so a profile
+  // can never be honored on one and silently ignored on the other.
+  const codingPromptBehavior = resolveEffectiveCodingPromptBehaviorV1({
     settings,
+    profileId: args.profileId,
+  });
+  const promptSettings: Record<string, unknown> = {
+    ...settings,
+    codingPromptBehaviorV1: codingPromptBehavior,
+  };
+  const basePromptSettings = applyToolDeliveryConstraintToPromptSettings({
+    promptSettings,
+    behavior: codingPromptBehavior,
     toolDelivery,
   });
   const cache = args.cache ?? new Map<string, string | null>();
@@ -267,6 +291,7 @@ export async function resolveEffectiveCodingPromptPlan(
     base: args.baseOverride === null ? '' : args.baseOverride,
     executionRunsFeatureEnabled: args.executionRunsFeatureEnabled === true,
     memoryRecallGuidanceEnabled,
+    sessionTitleToolAvailable: args.sessionTitleToolAvailable,
   });
   const stackBlocks = await resolveCliPromptStackSystemAppendBlocks({
     surface: 'coding',
@@ -295,7 +320,7 @@ export async function resolveEffectiveCodingPromptPlan(
       delivery: toolDelivery,
       sessionId,
       directory,
-      settings,
+      settings: promptSettings,
       memoryRecallGuidance: {
         enabled: memoryRecallGuidanceEnabled,
         machineId: args.memoryMachineId ?? null,

@@ -72,10 +72,6 @@ export function resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike: unkno
   return resolveCodingPromptBehaviorV1(settingsLike).sessionTitleUpdates;
 }
 
-export function isCodingPromptSessionTitleUpdatesEnabled(settingsLike: unknown): boolean {
-  return resolveCodingPromptSessionTitleUpdatesModeV1(settingsLike) !== 'disabled';
-}
-
 export function isCodingPromptResponseOptionsEnabled(settingsLike: unknown): boolean {
   return resolveCodingPromptBehaviorV1(settingsLike).responseOptions === 'agent';
 }

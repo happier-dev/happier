@@ -11,7 +11,7 @@ function buildMemorySettings(overrides: Readonly<Partial<MemorySettingsV1>>): Me
 }
 
 describe('resolveCliMemoryRecallGuidanceEnabled', () => {
-  it('returns false when the active local memory index is not ready yet', async () => {
+  it('returns true without probing the mutable index when the configured capability is enabled', async () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
       surfaces: ['mcp'],
       deps: {
@@ -20,19 +20,10 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
           enabled: true,
           indexMode: 'deep',
         }),
-        resolveMemoryIndexPaths: () => ({
-          tier1DbPath: '/tmp/light.sqlite',
-          deepDbPath: '/tmp/deep.sqlite',
-          memoryDir: '/tmp',
-          modelsDir: '/tmp/models',
-        }),
-        stat: async (_path: string) => {
-          throw new Error('missing');
-        },
       },
     });
 
-    expect(enabled).toBe(false);
+    expect(enabled).toBe(true);
   });
 
   it('returns true when memory search is enabled for the requested surface and the active index exists', async () => {
@@ -45,21 +36,13 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
           enabled: true,
           indexMode: 'hints',
         }),
-        resolveMemoryIndexPaths: () => ({
-          tier1DbPath: '/tmp/light.sqlite',
-          deepDbPath: '/tmp/deep.sqlite',
-          memoryDir: '/tmp',
-          modelsDir: '/tmp/models',
-        }),
-        stat: async (_path: string) => ({ size: 128 }),
-        hasSearchableContent: () => true,
       },
     });
 
     expect(enabled).toBe(true);
   });
 
-  it('returns false when the active local memory index exists but has no searchable content', async () => {
+  it('does not make guidance depend on whether the index currently has searchable content', async () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
       surfaces: ['voice'],
       deps: {
@@ -69,17 +52,10 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
           enabled: true,
           indexMode: 'hints',
         }),
-        resolveMemoryIndexPaths: () => ({
-          tier1DbPath: '/tmp/light.sqlite',
-          deepDbPath: '/tmp/deep.sqlite',
-          memoryDir: '/tmp',
-          modelsDir: '/tmp/models',
-        }),
-        stat: async (_path: string) => ({ size: 4096 }),
       },
     });
 
-    expect(enabled).toBe(false);
+    expect(enabled).toBe(true);
   });
 
   it('returns false when a required memory action is disabled for the requested surface', async () => {
@@ -94,13 +70,6 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
           enabled: true,
           indexMode: 'hints',
         }),
-        resolveMemoryIndexPaths: () => ({
-          tier1DbPath: '/tmp/light.sqlite',
-          deepDbPath: '/tmp/deep.sqlite',
-          memoryDir: '/tmp',
-          modelsDir: '/tmp/models',
-        }),
-        stat: async (_path: string) => ({ size: 128 }),
       },
     });
 

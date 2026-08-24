@@ -3,7 +3,7 @@ import { resolveCodingPromptSessionTitleUpdatesModeV1, type PromptBlockV1 } from
 import { buildHappierToolsPromptAppendix } from '@/agent/tools/happierTools/runtime/buildHappierToolsPromptAppendix';
 
 export function resolveCodingToolDeliveryBlocks(args: Readonly<{
-  delivery: 'native_mcp' | 'shell_bridge' | 'unsupported';
+  delivery: 'native_mcp' | 'native_extension' | 'shell_bridge' | 'unsupported';
   sessionId: string;
   directory: string;
   memoryRecallGuidance?: Readonly<{
