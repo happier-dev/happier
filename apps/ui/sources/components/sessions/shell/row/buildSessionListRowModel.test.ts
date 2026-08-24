@@ -167,6 +167,27 @@ function createSettings(
 }
 
 describe('buildSessionListRowModel', () => {
+    it('carries the canonical safe existing-session draft projection without changing row placement', () => {
+        const model = buildSessionListRowModel({
+            item: createSessionItem(createRenderable('drafted-session')),
+            state: {
+                draft: {
+                    preview: 'Fix the flaky release test',
+                },
+            },
+            dataIndex: 4,
+            isFirst: false,
+            isLast: true,
+            isSingle: false,
+            settings: createSettings(),
+        });
+
+        expect(model.draft).toEqual({ preview: 'Fix the flaky release test' });
+        expect(model.dataIndex).toBe(4);
+        expect(model.groupKey).toBe('group-a');
+        expect(model.adjacency).toEqual({ isFirst: false, isLast: true, isSingle: false });
+    });
+
     it('uses server-scoped row identity without collapsing same session ids from different servers', () => {
         const session = createRenderable('shared-id');
         const modelA = buildSessionListRowModel({

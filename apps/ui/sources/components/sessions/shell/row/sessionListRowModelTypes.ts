@@ -16,6 +16,8 @@ export type SessionListRowStateSnapshot = Readonly<{
     renderable: SessionListRenderableSession | undefined;
     messages: SessionMessages | undefined;
     pending: SessionPending | undefined;
+    /** Safe, one-line read projection from the canonical draft repository. */
+    draft?: Readonly<{ preview: string }> | null;
 }>;
 
 export type SessionListRowStoreState = Readonly<{
@@ -125,6 +127,8 @@ export type SessionListRowModel = Readonly<{
     hasUnreadMessages: boolean;
     pendingCount: number;
     pendingBlockedCount: number;
+    /** Stable, safe one-line projection from the canonical session-draft owner. */
+    draft: Readonly<{ preview: string }> | null;
     /**
      * What agent work is live in this session, in the same words the composer chip uses.
      *

@@ -282,6 +282,7 @@ function createSessionRowModel(overrides: Partial<SessionListRowModel> = {}): Se
         isActive: true,
         hasUnreadMessages: false,
         pendingCount: 0,
+        draft: null,
         agentActivityLabel: null,
         pendingBlockedCount: 0,
         tags: ['model-tag'],

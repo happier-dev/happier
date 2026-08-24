@@ -434,6 +434,7 @@ export function buildSessionListRowModel(input: BuildSessionListRowModelInput): 
         hasUnreadMessages,
         pendingCount,
         pendingBlockedCount,
+        draft: input.state?.draft ?? null,
         agentActivityLabel,
         tags: settings.sessionTagsByKey[rowKey] ?? [],
         allKnownTags: settings.allKnownTags,
