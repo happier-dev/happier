@@ -291,6 +291,7 @@ export type {
     SessionMediaService,
     SessionMediaSourceRoot,
     SessionMessagePart,
+    SessionSendAttachment,
     SessionSendRequest,
     SessionSendResult,
     SessionHandle,

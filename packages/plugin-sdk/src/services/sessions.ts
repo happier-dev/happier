@@ -29,6 +29,7 @@ import {
     isSlashCommandSupported as protocolIsSlashCommandSupported,
     normalizeSlashCommandName as protocolNormalizeSlashCommandName,
     readLeadingSlashCommandName as protocolReadLeadingSlashCommandName,
+    hasSessionInputContentV1 as protocolHasSessionInputContentV1,
     readPendingLocalId as protocolReadPendingLocalId,
     readSlashCommandNames as protocolReadSlashCommandNames,
     resolveTranscriptBodySessionMessageRole as protocolResolveTranscriptBodySessionMessageRole,
@@ -56,6 +57,7 @@ import {
     CHANGE_TITLE_TOOL_NAME_ALIASES as protocolChangeTitleToolNameAliases,
     isChangeTitleToolNameAlias as protocolIsChangeTitleToolNameAlias,
 } from '@happier-dev/protocol/tools/v2';
+import { ProjectKeyV1Schema as protocolProjectKeyV1Schema } from '@happier-dev/protocol/workspaces';
 
 /**
  * Portable structural view of a Protocol-owned validator. The runtime value
@@ -68,6 +70,11 @@ export interface SessionSchema<T> {
         | Readonly<{ success: true; data: T }>
         | Readonly<{ success: false; error: unknown }>;
 }
+
+export type ProjectKeyV1 =
+    | Readonly<{ id: string }>
+    | Readonly<{ serverId: string; machineId: string; rootPath: string }>;
+export const ProjectKeyV1Schema: SessionSchema<ProjectKeyV1> = protocolProjectKeyV1Schema;
 
 export type SessionSpawnNewInputV2 = PluginActionInputById['session.spawn_new'];
 /** Browser-safe Session-create input projected at the SDK author boundary. */
@@ -223,6 +230,19 @@ export const readLeadingSlashCommandName: (value: unknown) => string | null = pr
 export const readSlashCommandNames: (value: unknown) => readonly string[] = protocolReadSlashCommandNames;
 /** @realm any */
 export const readPendingLocalId: (value: unknown) => string | null = protocolReadPendingLocalId;
+/**
+ * Whether a Session input carries something to deliver.
+ *
+ * It is the exact rule `SessionHandle.send` and its Action surface binding
+ * admit by, published so a producer plans against the admission it will meet
+ * instead of re-deriving it: blank text is a real input when at least one
+ * attachment rides with it, and neither is refused.
+ *
+ * @realm any
+ */
+export const hasSessionInputContentV1: (
+    input: Readonly<{ text: string; attachmentCount: number }>,
+) => boolean = protocolHasSessionInputContentV1;
 /** @realm any */
 export const resolveTranscriptBodySessionMessageRole: (
     input: Readonly<{
@@ -328,10 +348,28 @@ export type SessionSummary = Readonly<{
     encryptionMode: 'e2ee' | 'plain';
     updatedAtMs: number;
 }>;
+/**
+ * One declared Composer attachment carried by a Session input.
+ *
+ * It is the same author half `attachment.add` carries in a composer: the
+ * plugin names its own declared attachment and supplies key, value and
+ * presentation. The host qualifies the plugin id from the calling plugin and
+ * stamps the instance identity and declared type label, then runs the ordinary
+ * attachment admission, `prepareForSend` and `resolveForDispatch` lifecycle.
+ */
+export type SessionSendAttachment = NonNullable<
+    PluginActionInputById['session.message.send']['attachments']
+>[number];
 export type SessionSendRequest = Readonly<{
     kind: 'userText';
     text: string;
     idempotencyKey: string;
+    /**
+     * Declared attachment drafts delivered with this input. Resending under the
+     * same `idempotencyKey` rejoins the existing durable input rather than
+     * queueing a second Message, so an unknown outcome is safe to retry.
+     */
+    attachments?: readonly SessionSendAttachment[];
     source?: Readonly<{
         sourceRef: string;
         sourceRevisionOrEpoch: string;
