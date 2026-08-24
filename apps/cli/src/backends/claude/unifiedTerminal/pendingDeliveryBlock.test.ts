@@ -93,6 +93,7 @@ describe('resolveClaudeUnifiedPendingDeliveryBlock', () => {
     expect(resolveClaudeUnifiedPendingDeliveryBlock(error)).toEqual({
       localIds: ['pending-local-steer'],
       reason: 'steering_unavailable',
+      providerEffect: 'none',
     });
   });
 

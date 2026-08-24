@@ -2,7 +2,11 @@
 import { basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
+import { runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
+import {
+  classifyVitestShardTermination,
+  summarizeVitestShardOutcomes,
+} from '../../../scripts/testing/vitestShardOutcomes.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
 
 function parsePositiveInt(raw) {
@@ -14,6 +18,17 @@ export function resolveVitestShardCount(env, configPath = null) {
   const override = parsePositiveInt(env?.HAPPIER_CLI_VITEST_SHARDS);
   if (override !== null) return override;
   return typeof configPath === 'string' && basename(configPath) === 'vitest.config.ts' ? 64 : 8;
+}
+
+export function resolveVitestShardRange(env, shardCount) {
+  const part = parsePositiveInt(env?.HAPPIER_CLI_VITEST_PART);
+  const parts = parsePositiveInt(env?.HAPPIER_CLI_VITEST_PARTS);
+  if (part === null || parts === null || part > parts || parts > shardCount) {
+    return { start: 1, end: shardCount, part: 1, parts: 1 };
+  }
+  const start = Math.floor(((part - 1) * shardCount) / parts) + 1;
+  const end = Math.floor((part * shardCount) / parts);
+  return { start, end, part, parts };
 }
 
 export function resolveVitestIsolationPlan(configPath) {
@@ -57,6 +72,26 @@ function spawnVitest({ args, nodeOptions }) {
   });
 }
 
+export async function runCliVitestShardRuns({ shardCount, startShard = 1, endShard = shardCount, runShard }) {
+  const outcomes = [];
+  let aborted = false;
+
+  for (let shard = startShard; shard <= endShard; shard += 1) {
+    if (aborted) {
+      outcomes.push({ outcome: 'unexecuted', shard, fileCount: 1, exitCode: null, signal: null });
+      continue;
+    }
+
+    const result = await runShard({ shard });
+    if (!result.ok) throw result.error;
+    const termination = classifyVitestShardTermination(result);
+    outcomes.push({ ...termination, shard, fileCount: 1 });
+    aborted = termination.outcome === 'aborted';
+  }
+
+  return outcomes;
+}
+
 async function main(argv) {
   const configPath = resolveVitestConfigPath(argv);
   if (!configPath) {
@@ -66,62 +101,74 @@ async function main(argv) {
   }
 
   const shardCount = resolveVitestShardCount(process.env, configPath);
-  const isolationPlan = resolveVitestIsolationPlan(configPath);
+  const shardRange = resolveVitestShardRange(process.env, shardCount);
+  const isolationPlan = shardRange.part === 1
+    ? resolveVitestIsolationPlan(configPath)
+    : { shardExcludes: resolveVitestIsolationPlan(configPath).shardExcludes, runs: [] };
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
 
-  for (let index = 1; index <= shardCount; index += 1) {
+  const shardOutcomes = await runCliVitestShardRuns({
+    shardCount,
+    startShard: shardRange.start,
+    endShard: shardRange.end,
+    runShard: ({ shard }) => {
+      // eslint-disable-next-line no-console
+      console.log(`[vitest] shard ${shard}/${shardCount}`);
+      return spawnVitest({
+        args: [
+          'run',
+          '--config',
+          configPath,
+          '--shard',
+          `${shard}/${shardCount}`,
+          ...isolationPlan.shardExcludes.flatMap((exclude) => ['--exclude', exclude]),
+        ],
+        nodeOptions,
+      });
+    },
+  });
+  const shardSummary = summarizeVitestShardOutcomes({ shardCount, outcomes: shardOutcomes });
+  for (const line of shardSummary.lines) {
     // eslint-disable-next-line no-console
-    console.log(`[vitest] shard ${index}/${shardCount}`);
-    const shardSpec = `${index}/${shardCount}`;
-    const result = await spawnVitest({
-      args: [
-        'run',
-        '--config',
-        configPath,
-        '--shard',
-        shardSpec,
-        ...isolationPlan.shardExcludes.flatMap((exclude) => ['--exclude', exclude]),
-      ],
-      nodeOptions,
-    });
-    if (!result.ok) {
-      throw result.error;
-    }
-    if (result.signal) {
-      process.exit(resolveSignalExitCode(result.signal));
-      return;
-    }
-    if (result.code && result.code !== 0) {
-      process.exit(result.code);
-    }
+    console.log(line);
+  }
+  if (shardSummary.abortedShard) {
+    process.exit(shardSummary.exitCode);
+    return;
   }
 
-  for (const isolatedRun of isolationPlan.runs) {
+  const isolatedOutcomes = await runCliVitestShardRuns({
+    shardCount: isolationPlan.runs.length,
+    runShard: ({ shard }) => {
+      const isolatedRun = isolationPlan.runs[shard - 1];
+      // eslint-disable-next-line no-console
+      console.log(`[vitest] isolated ${isolatedRun.file} (${isolatedRun.testNamePattern})`);
+      return spawnVitest({
+        args: [
+          'run',
+          '--config',
+          configPath,
+          isolatedRun.file,
+          '--testNamePattern',
+          isolatedRun.testNamePattern,
+        ],
+        nodeOptions,
+      });
+    },
+  });
+  const isolatedSummary = summarizeVitestShardOutcomes({
+    shardCount: isolationPlan.runs.length,
+    outcomes: isolatedOutcomes,
+    unitLabel: 'isolated run',
+  });
+  for (const line of isolatedSummary.lines) {
     // eslint-disable-next-line no-console
-    console.log(`[vitest] isolated ${isolatedRun.file} (${isolatedRun.testNamePattern})`);
-    const result = await spawnVitest({
-      args: [
-        'run',
-        '--config',
-        configPath,
-        isolatedRun.file,
-        '--testNamePattern',
-        isolatedRun.testNamePattern,
-      ],
-      nodeOptions,
-    });
-    if (!result.ok) {
-      throw result.error;
-    }
-    if (result.signal) {
-      process.exit(resolveSignalExitCode(result.signal));
-      return;
-    }
-    if (result.code && result.code !== 0) {
-      process.exit(result.code);
-    }
+    console.log(line);
   }
+
+  const exitCode = shardSummary.exitCode || isolatedSummary.exitCode;
+  if (exitCode !== 0) process.exit(exitCode);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

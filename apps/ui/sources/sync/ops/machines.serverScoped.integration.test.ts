@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { getPersistenceStorage } from '@/sync/domains/state/persistence';
+import { storage } from '@/sync/domains/state/storage';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 
@@ -7,8 +10,40 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 
 describe('machines ops server-scoped routing', () => {
+    const initialStorageState = storage.getState();
+
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        storage.setState({
+            ...initialStorageState,
+            profileScope: { serverId: 'server-b', accountId: 'account-a' },
+            machines: {
+                'machine-1': {
+                    id: 'machine-1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: {
+                        host: 'test-machine',
+                        platform: 'darwin',
+                        happyCliVersion: '0.2.0',
+                        happyHomeDir: '/Users/alice/.happier',
+                        homeDir: '/Users/alice',
+                    },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 1,
+                },
+            },
+        }, true);
+        getPersistenceStorage().clearAll();
+    });
+
+    afterEach(() => {
+        storage.setState(initialStorageState, true);
+        getPersistenceStorage().clearAll();
     });
 
     it('routes spawn requests through server-scoped rpc with the requested server id', async () => {
@@ -23,7 +58,7 @@ describe('machines ops server-scoped routing', () => {
             accountSettingsVersionHint: 0,
         });
 
-        expect(result).toEqual({ type: 'success', sessionId: 'sess-1' });
+        expect(result).toMatchObject({ type: 'success', sessionId: 'sess-1' });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-b',

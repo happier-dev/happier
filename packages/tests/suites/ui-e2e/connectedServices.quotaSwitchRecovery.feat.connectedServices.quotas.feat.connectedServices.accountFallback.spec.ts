@@ -368,6 +368,19 @@ async function createConnectedServiceProfile(params: Readonly<{
     );
     expect(response.status).toBe(200);
     expect(response.data?.success).toBe(true);
+
+    await patchConnectedServiceCredentialHealth({
+        baseUrl: params.baseUrl,
+        token: params.token,
+        serviceId: params.serviceId,
+        profileId: params.profileId,
+        health: {
+            v: 1,
+            status: 'connected',
+            reconnectRequired: false,
+            lastRefreshSuccessAt: now,
+        },
+    });
 }
 
 async function patchConnectedServiceCredentialHealth(params: Readonly<{
@@ -627,6 +640,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             dbProvider: 'sqlite',
             extraEnv: {
                 HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
+                HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
                 ...CONNECTED_SERVICE_FEATURE_ENV,
             },
         });

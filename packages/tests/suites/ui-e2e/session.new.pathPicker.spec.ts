@@ -64,11 +64,9 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { startCliAuthLoginForTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { gotoDomContentLoadedWithRetries } from '../../src/testkit/uiE2e/pageNavigation';
-import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
-import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhancedSessionWizard';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -111,34 +109,18 @@ test.describe('ui e2e: /new path picker (Phase 11 SelectionList migration)', () 
         }
         test.setTimeout(540_000);
 
-        await gotoDomContentLoadedWithRetries(page, uiBaseUrl, 420_000);
-        await waitForInitialAppUi({ page, timeoutMs: 420_000 });
-        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-
-        const cliLogin = await startCliAuthLoginForTerminalConnect({
+        daemon = await authenticateAndStartDaemon({
+            page,
             testDir: suiteDir,
             cliHomeDir,
             serverUrl: server.baseUrl,
-            webappUrl: uiBaseUrl,
-            env: {
+            uiBaseUrl,
+            initialUiGotoTimeoutMs: 420_000,
+            initialUiReadyTimeoutMs: 420_000,
+            terminalConnectUrlTimeoutMs: 90_000,
+            daemonStartupTimeoutMs: 180_000,
+            extraEnv: {
                 ...process.env,
-                CI: '1',
-                HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-                HAPPIER_DISABLE_CAFFEINATE: '1',
-                HAPPIER_VARIANT: 'dev',
-            },
-        });
-        await gotoDomContentLoadedWithRetries(page, cliLogin.connectUrl, 90_000);
-        await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-        await page.getByTestId('terminal-connect-approve').click();
-        await cliLogin.waitForSuccess();
-
-        daemon = await startTestDaemon({
-            testDir: suiteDir,
-            happyHomeDir: cliHomeDir,
-            env: {
-                ...process.env,
-                HAPPIER_SERVER_URL: server.baseUrl,
             },
         });
 

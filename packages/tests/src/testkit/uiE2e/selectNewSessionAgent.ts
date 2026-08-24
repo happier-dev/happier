@@ -59,6 +59,15 @@ async function maybeApplyAndClosePicker(page: Page): Promise<void> {
 }
 
 async function openAgentSelectionSurface(page: Page): Promise<void> {
+  for (const pathInputTestId of ['path-selection-list:header:input', 'path-selector-input']) {
+    const pathInput = page.getByTestId(pathInputTestId).first();
+    if ((await pathInput.getAttribute('aria-expanded').catch(() => null)) === 'true') {
+      // A retained path suggestion list sits above the all-fields wizard and intercepts
+      // the backend trigger. Close that sibling surface before opening agent selection.
+      await pathInput.press('Escape');
+    }
+  }
+
   const wizardDropdownTrigger = await findActionableLocator(
     page.getByTestId(WIZARD_AGENT_DROPDOWN_TRIGGER_TEST_ID),
     15_000,

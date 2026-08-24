@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,6 +30,42 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
+vi.mock('@/agents/registry/sessionSubagentUiBehavior', () => ({
+    renderProviderSessionDetailsTab: () => null,
+    resolveProviderSessionDetailsTabIconName: () => null,
+}));
+
+vi.mock('@/components/sessions/runs/launcher/SessionExecutionRunLauncherView', () => ({
+    SessionExecutionRunLauncherView: 'SessionExecutionRunLauncherView',
+}));
+
+vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivityIndicator' }));
+vi.mock('@/components/ui/scroll/useWebScrollLockBypass', () => ({ useWebScrollLockBypass: () => {} }));
+vi.mock('@/components/ui/scroll/resolveWebScrollableElement', () => ({ resolveWebScrollableElementWithin: () => null }));
+vi.mock('@/utils/platform/deferOnWeb', () => ({ deferOnWeb: (fn: () => void) => fn() }));
+vi.mock('@/components/ui/buttons/IconAction', () => ({
+    IconAction: (props: any) => React.createElement('IconAction', props, props.children),
+}));
+vi.mock('@/components/navigation/shell/SidebarIcons', () => ({
+    SidebarCollapseIcon: 'SidebarCollapseIcon',
+    SidebarExpandIcon: 'SidebarExpandIcon',
+}));
+vi.mock('../shell/sessionScreenTestIds', () => ({
+    resolveOptionalSessionScreenTestId: () => undefined,
+    useSessionScreenTestIdsEnabled: () => false,
+}));
+vi.mock('@/components/appShell/panes/focusMode/usePaneFocusMode', () => ({
+    usePaneFocusMode: () => ({ active: false, toggle: vi.fn() }),
+}));
+vi.mock('@/components/ui/icons/Icon', () => ({ Icon: 'Icon' }));
+vi.mock('@/components/sessions/shell/sessionPinIcons', () => ({
+    PinIcon: 'PinIcon',
+    PinSlashIcon: 'PinSlashIcon',
+}));
+vi.mock('./details/sessionTranscriptDetailsResource', () => ({
+    isSessionTranscriptDetailsResource: () => false,
+}));
+
 const terminalViewSpy = vi.fn();
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
     SessionEmbeddedTerminalPane: (props: any) => {
@@ -38,16 +74,13 @@ vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
     },
 }));
 
-vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
-    SessionCommitDetailsView: () => React.createElement('SessionCommitDetailsView'),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
-    SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
-    SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
+vi.mock('./SessionDetailsPanelDetailViews', () => ({
+    SessionCommitDetailsViewForPanel: () => React.createElement('SessionCommitDetailsView'),
+    SessionFileDetailsViewForPanel: () => React.createElement('SessionFileDetailsView'),
+    SessionScmReviewDetailsViewForPanel: () => React.createElement('SessionScmReviewDetailsView'),
+    SessionScmStashDetailsViewForPanel: () => React.createElement('SessionScmStashDetailsView'),
+    SessionSubagentDetailsViewForPanel: () => React.createElement('SessionSubagentDetailsView'),
+    SessionTranscriptDetailsViewForPanel: () => React.createElement('SessionTranscriptDetailsView'),
 }));
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -75,9 +108,14 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
+const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+
+afterEach(async () => {
+    await standardCleanup();
+});
+
 describe('SessionDetailsPanel (terminal resource)', () => {
     it('renders SessionEmbeddedTerminalPane for terminal tabs', async () => {
-        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         terminalViewSpy.mockClear();
 
         const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);

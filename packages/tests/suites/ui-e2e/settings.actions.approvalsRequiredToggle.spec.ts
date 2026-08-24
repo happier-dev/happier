@@ -43,12 +43,9 @@ async function dismissBlockingStoryDeckIfPresent(page: Page): Promise<void> {
 }
 
 async function createAccountIfNeeded(baseUrl: string, page: Page): Promise<void> {
-    const createAccount = page.getByTestId('welcome-create-account');
-    if (await createAccount.count()) {
-        await dismissBlockingStoryDeckIfPresent(page);
-        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-        await gotoDomContentLoadedWithRetries(page, `${baseUrl}/settings/actions?happier_hmr=0`, 180_000);
-    }
+    await dismissBlockingStoryDeckIfPresent(page);
+    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
+    await gotoDomContentLoadedWithRetries(page, `${baseUrl}/settings/actions?happier_hmr=0`, 180_000);
 }
 
 async function readWebSwitchChecked(locator: Locator): Promise<boolean | null> {

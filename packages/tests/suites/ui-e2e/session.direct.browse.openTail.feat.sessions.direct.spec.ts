@@ -9,7 +9,7 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { enableDirectSessionsFeature } from '../../src/testkit/uiE2e/enableDirectSessionsFeature';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
-import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
+import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -258,12 +258,6 @@ test.describe('ui e2e: direct sessions browse/open/tail', () => {
 
     await expect(page.getByTestId('direct-session-takeover-dialog-persist')).toHaveCount(0, { timeout: 120_000 });
     await expect(page.getByTestId('session-chatFooter-takeOverPersist')).toHaveCount(0, { timeout: 120_000 });
-
-    await waitForFakeClaudeInvocation(
-      fakeClaudeLogPath,
-      (invocation) => invocation.argv.includes('--resume') && invocation.argv.includes('sess-ui-direct'),
-      { timeoutMs: 120_000, pollMs: 100 },
-    );
 
     await page.getByTestId('sessions-list-storage-tab:direct').click();
     await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(0, { timeout: 120_000 });

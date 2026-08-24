@@ -5,14 +5,11 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
-import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
-import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
-import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -103,7 +100,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
             testDir: suiteDir,
             dbProvider: 'sqlite',
             extraEnv: {
-                HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
+                HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys,providers.claude.unifiedTerminal',
                 HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
                 HAPPIER_FEATURE_TERMINAL_EMBEDDED_PTY__ENABLED: '1',
                 HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '60000',
@@ -141,55 +138,20 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
 
         try {
             await page.setViewportSize({ width: 1440, height: 900 });
-            await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-
-            await waitForInitialAppUi({ page, browserDiagnostics, timeoutMs: 120_000 });
-
-            // If we landed on the welcome screen, click through to getting started
-            const welcomeButton = page.getByTestId('welcome-create-account');
-            if ((await welcomeButton.count()) > 0) {
-                await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-            }
-
             await mkdir(testDir, { recursive: true });
             await writeFile(resolve(join(testDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
-
-            const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
+            const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
+            const fakeClaudePath = fakeClaudeFixturePath();
+            daemon = await authenticateAndStartDaemon({
+                page,
                 testDir,
                 cliHomeDir,
                 serverUrl: server.baseUrl,
-                webappUrl: uiBaseUrl,
-                env: {
+                uiBaseUrl,
+                daemonStartupTimeoutMs: 180_000,
+                extraEnv: {
                     ...process.env,
                     HOME: cliHomeDir,
-                    CI: '1',
-                    HAPPIER_DISABLE_CAFFEINATE: '1',
-                    HAPPIER_VARIANT: 'dev',
-                },
-            });
-
-            await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-            await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-            await page.getByTestId('terminal-connect-approve').click();
-            await cliLogin.waitForSuccess();
-            await acknowledgeTerminalConnectSuccessIfPresent(page);
-
-            const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
-            const fakeClaudePath = fakeClaudeFixturePath();
-
-            daemon = await startTestDaemon({
-                testDir,
-                happyHomeDir: cliHomeDir,
-                env: {
-                    ...process.env,
-                    HOME: cliHomeDir,
-                    CI: '1',
-                    HAPPIER_HOME_DIR: cliHomeDir,
-                    HAPPIER_SERVER_URL: server.baseUrl,
-                    HAPPIER_WEBAPP_URL: uiBaseUrl,
-                    HAPPIER_DISABLE_CAFFEINATE: '1',
-                    HAPPIER_VARIANT: 'dev',
-                    // Machine-scoped RPC must be allowed to operate inside the e2e fixture directory.
                     HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
                     HAPPIER_CLAUDE_PATH: fakeClaudePath,
                     HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,

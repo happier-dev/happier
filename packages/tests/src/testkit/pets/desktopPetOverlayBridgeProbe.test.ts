@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   createDesktopPetOverlayBridgeProbeInitScript,
+  createDesktopPetOverlayWindowState,
   desktopPetOverlayBridgeInvocationKey,
   type DesktopPetOverlayProbeWindow,
 } from './desktopPetOverlayBridgeProbe';
@@ -57,5 +58,28 @@ describe('desktop pet overlay bridge probe', () => {
     createDesktopPetOverlayBridgeProbeInitScript()();
 
     await expect(fakeWindow.__TAURI_INTERNALS__?.invoke?.('desktop_pet_overlay_read_window_state')).resolves.toBeNull();
+  });
+
+  it('provides the configured native window state to the overlay route', async () => {
+    const fakeWindow = {} as unknown as DesktopPetOverlayProbeWindow;
+    Reflect.set(globalThis, 'window', fakeWindow);
+    const windowState = createDesktopPetOverlayWindowState();
+
+    createDesktopPetOverlayBridgeProbeInitScript({ windowState })();
+
+    await expect(fakeWindow.__TAURI_INTERNALS__?.invoke?.('desktop_pet_overlay_read_window_state')).resolves.toEqual(
+      windowState,
+    );
+  });
+
+  it('builds a native tray activity payload for a session', () => {
+    expect(createDesktopPetOverlayWindowState({ sessionId: 'session-1', title: 'Session one' })).toMatchObject({
+      activity: {
+        state: 'running',
+        reason: 'running',
+        sessionId: 'session-1',
+        trayItems: [{ sessionId: 'session-1', title: 'Session one', status: 'running' }],
+      },
+    });
   });
 });

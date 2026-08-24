@@ -38,14 +38,14 @@ async function waitForCount(
 }
 
 function machineOptionLocator(page: Page) {
-  return page.locator('[data-testid^="new-session-machine:"], [data-testid^="new-session-machine-option:"]');
+  return page.locator('[data-testid^="new-session-machine:"]:visible, [data-testid^="new-session-machine-option:"]:visible');
 }
 
 type MachineClickResult = 'clicked' | 'absent' | 'present_not_actionable';
 
 async function clickFirstMachineMatch(page: Page, machineId: string): Promise<MachineClickResult> {
   const exact = page.locator(
-    `[data-testid="new-session-machine:${machineId}"], [data-testid="new-session-machine-option:${machineId}"]`,
+    `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`,
   );
   if ((await exact.count()) === 0) {
     return 'absent';

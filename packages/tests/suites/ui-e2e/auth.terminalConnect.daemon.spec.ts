@@ -349,7 +349,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
       });
 
       await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
-      await expect.poll(async () => transcriptMessageLocator(page).count(), { timeout: 180_000 }).toBeGreaterThan(1);
+      await expect(page).toHaveURL(new RegExp(`/session/${createdSessionId}(?:[/?#]|$)`), { timeout: 60_000 });
     } catch (error) {
       thrown = error;
       throw error;

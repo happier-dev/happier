@@ -7,7 +7,10 @@ export const DEFAULT_SERVER_LIGHT_SQLITE_CONNECTION_LIMIT = 1;
 const PRISMA_SQLITE_BUSY_TIMEOUT_MS_MAX = 600_000;
 const PRISMA_SQLITE_CONNECTION_LIMIT_MAX = 64;
 
-const SELF_HOST_SERVER_ENV_MANAGED_KEYS = new Set<string>([
+// Entries here are regenerated (or intentionally removed) on every managed
+// relay update. Operator-owned configuration must remain outside this set so a
+// bare `relay host install` is an idempotent update.
+const SELF_HOST_SERVER_ENV_REGENERATED_KEYS = new Set<string>([
     'DATABASE_URL',
     'HAPPIER_DB_PROVIDER',
     'HAPPIER_FILES_BACKEND',
@@ -18,8 +21,6 @@ const SELF_HOST_SERVER_ENV_MANAGED_KEYS = new Set<string>([
     'HAPPIER_SERVER_LIGHT_DATA_DIR',
     'HAPPIER_SERVER_LIGHT_FILES_DIR',
     'HAPPIER_SERVER_LIGHT_DB_DIR',
-    'HAPPIER_WEBAPP_URL',
-    'HAPPY_WEBAPP_URL',
     'METRICS_ENABLED',
     'NODE_PATH',
     'PRISMA_CLIENT_ENGINE_TYPE',
@@ -389,7 +390,7 @@ export function mergeSelfHostServerEnvText(params: Readonly<{
     let merged = String(params.baseEnvText ?? '');
     const existing = parseEnvText(String(params.existingEnvText ?? ''));
     const preservedExistingEntries = Object.fromEntries(
-        Object.entries(existing).filter(([key]) => !SELF_HOST_SERVER_ENV_MANAGED_KEYS.has(key)),
+        Object.entries(existing).filter(([key]) => !SELF_HOST_SERVER_ENV_REGENERATED_KEYS.has(key)),
     );
     if (Object.keys(preservedExistingEntries).length > 0) {
         merged = applyEnvOverridesToEnvText(merged, preservedExistingEntries);

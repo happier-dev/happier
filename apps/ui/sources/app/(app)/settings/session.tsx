@@ -38,6 +38,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [rememberLastProjectSessionSelections, setRememberLastProjectSessionSelections] = useSettingMutable('rememberLastProjectSessionSelections');
     const [rememberLastEngineSelections, setRememberLastEngineSelections] = useSettingMutable('rememberLastEngineSelectionsV1');
     const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
+    const [defaultCheckoutMode, setDefaultCheckoutMode] = useSettingMutable('newSessionDefaultCheckoutModeV1');
 
     const [sessionTagsEnabled, setSessionTagsEnabled] = useSettingMutable('sessionTagsEnabled');
     const [sessionListWorkingStatusAnimatedTextEnabled, setSessionListWorkingStatusAnimatedTextEnabled] = useSettingMutable('sessionListWorkingStatusAnimatedTextEnabled');
@@ -470,6 +471,24 @@ export default React.memo(function SessionSettingsScreen() {
                         onPress={() => router.push('/settings/session/new-session-wizard')}
                     />
                 ) : null}
+                <Item
+                    testID="settings-new-session-default-worktree"
+                    title={t('settingsSession.sessionCreation.defaultWorktreeTitle')}
+                    subtitle={t(
+                        defaultCheckoutMode === 'git_worktree'
+                            ? 'settingsSession.sessionCreation.defaultWorktreeEnabledSubtitle'
+                            : 'settingsSession.sessionCreation.defaultWorktreeDisabledSubtitle',
+                    )}
+                    icon={<Icon name="stack-simple" size={29} color={theme.colors.text.secondary} />}
+                    rightElement={(
+                        <Switch
+                            value={defaultCheckoutMode === 'git_worktree'}
+                            onValueChange={(enabled) => setDefaultCheckoutMode(enabled ? 'git_worktree' : 'current_path')}
+                        />
+                    )}
+                    showChevron={false}
+                    onPress={() => setDefaultCheckoutMode(defaultCheckoutMode === 'git_worktree' ? 'current_path' : 'git_worktree')}
+                />
                 <Item
                     title={t('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle')}
                     subtitle={t(

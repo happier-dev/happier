@@ -37,7 +37,7 @@ describe('createAcpRuntime Standard ACP provider-input acceptance contract', () 
     const meta = { happierStructuredInputV1: { v: 1, imageInputs: [{ path: 'image.png' }] } };
     await runtime.sendPromptWithMeta({ text: 'follow up', meta });
 
-    expect(backend.loadSession).toHaveBeenCalledWith('vendor-resume-1');
+    expect(backend.loadSession).toHaveBeenCalledWith('vendor-resume-1', undefined);
     expect(sendPromptPayloadWithEvidence).toHaveBeenCalledWith('vendor-resume-1', {
       text: 'follow up',
       meta,

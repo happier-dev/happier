@@ -888,7 +888,7 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
-  it('does not stall when the metro entry-page probe hangs for a single candidate', async () => {
+  it('fails within the configured base-url budget when the metro entry-page probe hangs', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -924,23 +924,18 @@ describe('startUiWeb baseUrl resolution', () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     try {
-      const started = await Promise.race([
+      await expect(
         startUiWeb({
           testDir,
           env: {
             HAPPIER_E2E_UI_WEB_MODE: 'metro',
             HAPPIER_E2E_UI_WEB_ENTRY_PROBE_TIMEOUT_MS: '50',
+            HAPPIER_E2E_UI_WEB_BASE_URL_TIMEOUT_MS: '200',
           },
         }),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(new Error(`startUiWeb stalled on a hanging entry probe; bundleFetchCount=${bundleFetchCount}`));
-          }, 500);
-        }),
-      ]);
+      ).rejects.toThrow('Expo web entry page');
 
       expect(bundleFetchCount).toBe(0);
-      await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
         (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
@@ -1018,7 +1013,7 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
-  it('returns once the entry page is available even if the primary script stays cold', async () => {
+  it('does not report Metro ready while the primary app script stays cold', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -1056,7 +1051,7 @@ describe('startUiWeb baseUrl resolution', () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     try {
-      const started = await Promise.race([
+      await expect(
         startUiWeb({
           testDir,
           env: {
@@ -1066,16 +1061,10 @@ describe('startUiWeb baseUrl resolution', () => {
             HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT: '1',
           },
         }),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(new Error(`startUiWeb did not return after script timeout; html=${htmlFetchCount} bundle=${bundleFetchCount}`));
-          }, 1_500);
-        }),
-      ]);
+      ).rejects.toThrow('expo web primary script ready');
 
       expect(htmlFetchCount).toBeGreaterThan(0);
       expect(bundleFetchCount).toBeGreaterThan(0);
-      await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
         (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
@@ -1085,7 +1074,7 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
-  it('returns once the entry html is available even before Expo injects script tags', async () => {
+  it('does not report Metro ready before Expo injects the primary script tag', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -1114,15 +1103,15 @@ describe('startUiWeb baseUrl resolution', () => {
     (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     try {
-      const started = await Promise.race([
-        startUiWeb({ testDir, env: { HAPPIER_E2E_UI_WEB_MODE: 'metro' } }),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('startUiWeb did not finish quickly')), 5_000);
-        }),
-      ]);
+      await expect(startUiWeb({
+        testDir,
+        env: {
+          HAPPIER_E2E_UI_WEB_MODE: 'metro',
+          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
+        },
+      })).rejects.toThrow('expo web primary script ready');
 
       expect(htmlFetchCount).toBeGreaterThan(0);
-      await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
         (globalThis as { fetch: typeof fetch }).fetch = originalFetch;

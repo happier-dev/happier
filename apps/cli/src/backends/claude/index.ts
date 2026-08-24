@@ -124,6 +124,14 @@ export const agent = {
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
   buildRuntimeLocalHandoffMetadata: buildClaudeRuntimeLocalHandoffMetadata,
   needsAccountSettingsForProbes: true,
+  resolveModelsProbeVariant: ({ connectedServices }) => {
+    const binding = connectedServices?.bindingsByServiceId?.['claude-subscription'];
+    if (!binding || binding.source !== 'connected') return 'claude:native';
+    const selectionId = binding.selection === 'group'
+      ? `group:${binding.groupId ?? 'unknown'}:profile:${binding.profileId ?? 'unknown'}`
+      : `profile:${binding.profileId ?? 'unknown'}`;
+    return `claude:connected:${selectionId}`;
+  },
   getPreflightSessionControlsProbeAdapter: async () => (await import('@/backends/claude/preflight/claudePreflightModelsProbeAdapter')).claudePreflightModelsProbeAdapter,
   getHeadlessTmuxArgvTransform: async () => (await import('@/backends/claude/startup/headlessTmuxArgs')).ensureClaudeHeadlessTmuxStartingModeArgs,
 } satisfies AgentCatalogEntry;

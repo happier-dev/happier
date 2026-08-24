@@ -189,7 +189,7 @@ describe('continueSessionWithReplay — canonical creation delegation', () => {
     expect(archiveSessionByIdBestEffort).not.toHaveBeenCalled();
   });
 
-  it('returns the launch envelope unchanged after the single orphan settlement', async () => {
+  it('returns the launch envelope unchanged without archiving an ambiguously admitted child', async () => {
     const spawnFailure = {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -207,8 +207,7 @@ describe('continueSessionWithReplay — canonical creation delegation', () => {
     );
 
     expect(result).toEqual(spawnFailure);
-    expect(archiveSessionByIdBestEffort).toHaveBeenCalledTimes(1);
-    expect(archiveSessionByIdBestEffort).toHaveBeenCalledWith({ token: 'token-1', sessionId: 'sess_child' });
+    expect(archiveSessionByIdBestEffort).not.toHaveBeenCalled();
   });
 
   it('creates no child when the source transcript carries no dialog', async () => {

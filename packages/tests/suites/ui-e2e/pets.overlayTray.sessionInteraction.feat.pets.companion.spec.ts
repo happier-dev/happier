@@ -8,6 +8,7 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import {
   installDesktopPetOverlayBridgeProbe,
   readDesktopPetOverlayBridgeInvocations,
+  createDesktopPetOverlayWindowState,
   type DesktopPetOverlayBridgeInvocation,
 } from '../../src/testkit/pets/desktopPetOverlayBridgeProbe';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -115,7 +116,7 @@ test.describe('ui e2e: pets desktop overlay tray session interaction', () => {
       testDir: suiteDir,
       dbProvider: 'sqlite',
       extraEnv: {
-        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
+        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys,providers.claude.unifiedTerminal',
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
       },
     });
@@ -189,7 +190,9 @@ test.describe('ui e2e: pets desktop overlay tray session interaction', () => {
       prompt: 'pets overlay tray e2e',
     });
 
-    await installDesktopPetOverlayBridgeProbe(page);
+    await installDesktopPetOverlayBridgeProbe(page, {
+      windowState: createDesktopPetOverlayWindowState({ sessionId, title: 'pets overlay tray e2e' }),
+    });
     await gotoDomContentLoadedWithRetries(
       page,
       `${uiBaseUrl}/desktop/pet-overlay?happier_hmr=0&desktopPetOverlayWindow=1`,

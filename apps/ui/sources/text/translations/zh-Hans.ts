@@ -8097,6 +8097,9 @@ settingsSession: {
       wizardColumnsTitle: "双列布局",
       wizardColumnsEnabledSubtitle: "在宽屏上并排显示相关选择器。",
       wizardColumnsDisabledSubtitle: "将所有向导选择器堆叠在一列中。",
+      defaultWorktreeTitle: "为新会话创建 worktree",
+      defaultWorktreeEnabledSubtitle: "在新的 worktree 中启动每个新的 Git 会话。",
+      defaultWorktreeDisabledSubtitle: "在所选文件夹中启动新的 Git 会话。",
       wizardPresentationTitle: "向导选择器布局",
       wizardPresentationFooter:
         "Auto 会将短区段保留为列表，并将长区段切换为可搜索下拉菜单。",

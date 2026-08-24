@@ -1,3 +1,6 @@
+export const NEW_SESSION_CHECKOUT_MODES = ['current_path', 'git_worktree'] as const;
+export type NewSessionCheckoutMode = typeof NEW_SESSION_CHECKOUT_MODES[number];
+
 export interface NewSessionCheckoutCreationDraft {
     kind: 'git_worktree';
     displayName: string;
@@ -7,6 +10,10 @@ export interface NewSessionCheckoutCreationDraft {
 
 export interface NewSessionCheckoutDraft {
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
+}
+
+export interface NewSessionCheckoutSelection extends NewSessionCheckoutDraft {
+    explicitMode: NewSessionCheckoutMode | null;
 }
 
 function normalizeNullableString(value: unknown): string | null {
@@ -43,6 +50,31 @@ export function parseNewSessionCheckoutDraft(value: unknown): NewSessionCheckout
 
     return {
         checkoutCreationDraft: parseCheckoutCreationDraft(record.checkoutCreationDraft),
+    };
+}
+
+export function hasExplicitNewSessionCheckoutSelection(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(record, 'checkoutCreationDraft')) return false;
+    return record.checkoutCreationDraft === null || parseCheckoutCreationDraft(record.checkoutCreationDraft) !== null;
+}
+
+export function resolveNewSessionCheckoutSelection(
+    ...sources: readonly unknown[]
+): NewSessionCheckoutSelection {
+    for (const source of sources) {
+        if (!hasExplicitNewSessionCheckoutSelection(source)) continue;
+        const checkoutCreationDraft = parseNewSessionCheckoutDraft(source).checkoutCreationDraft;
+        return {
+            checkoutCreationDraft,
+            explicitMode: checkoutCreationDraft ? 'git_worktree' : 'current_path',
+        };
+    }
+
+    return {
+        checkoutCreationDraft: null,
+        explicitMode: null,
     };
 }
 

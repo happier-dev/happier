@@ -1,7 +1,15 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermissionStatus } from 'expo-modules-core';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+
+const SECURE_STORE_DEV_FALLBACK_ENV = 'EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK';
+let originalSecureStoreDevFallback: string | undefined;
+const runtimeFetchWithServerReachabilityMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
+    runtimeFetchWithServerReachability: runtimeFetchWithServerReachabilityMock,
+}));
 
 vi.mock('expo-notifications', () => ({
     getPermissionsAsync: vi.fn(),
@@ -37,14 +45,30 @@ vi.mock('expo-secure-store', () => {
     };
 });
 
+const Notifications = await import('expo-notifications');
+const serverProfiles = await import('@/sync/domains/server/serverProfiles');
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { registerPushTokenIfAvailable } = await import('./syncAccount');
+
+beforeEach(() => {
+    originalSecureStoreDevFallback = process.env[SECURE_STORE_DEV_FALLBACK_ENV];
+    process.env[SECURE_STORE_DEV_FALLBACK_ENV] = '0';
+    runtimeFetchWithServerReachabilityMock.mockReset();
+    runtimeFetchWithServerReachabilityMock.mockResolvedValue(Response.json({ success: true }));
+});
+
 afterEach(() => {
+    if (originalSecureStoreDevFallback === undefined) {
+        delete process.env[SECURE_STORE_DEV_FALLBACK_ENV];
+    } else {
+        process.env[SECURE_STORE_DEV_FALLBACK_ENV] = originalSecureStoreDevFallback;
+    }
     vi.unstubAllGlobals();
     vi.clearAllMocks();
 });
 
 describe('registerPushTokenIfAvailable (multi-server)', () => {
     it('registers for all saved servers with credentials', async () => {
-        const Notifications = await import('expo-notifications');
         vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
             status: PermissionStatus.GRANTED,
             expires: 'never',
@@ -62,17 +86,9 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             data: 'ExponentPushToken[secret-token]',
         } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
 
-        const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
-            ok: true,
-            json: async () => ({ success: true }),
-        }));
-        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
-
-        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const { upsertServerProfile, setActiveServerId } = serverProfiles;
         const defaultServer = upsertServerProfile({ serverUrl: 'https://remote-a.example.test', name: 'Primary' });
         const company = upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
-
-        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 
         setActiveServerId(defaultServer.id, { scope: 'device' });
         await TokenStorage.setCredentials({ token: 't_primary', secret: 's' });
@@ -85,21 +101,20 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         const messages: string[] = [];
         const log = { log: (message: string) => messages.push(message) };
 
-        const { registerPushTokenIfAvailable } = await import('./syncAccount');
         await registerPushTokenIfAvailable({
             credentials: { token: 't_primary', secret: 's' } satisfies AuthCredentials,
             log,
         });
 
-        const urls = fetchSpy.mock.calls.map((call) => String(call[0]));
+        const urls = runtimeFetchWithServerReachabilityMock.mock.calls.map(([request]) => String(request.url));
         expect(urls).toContain('https://remote-a.example.test/v1/push-tokens');
         expect(urls).toContain('https://company.example.test/v1/push-tokens');
         expect(messages.join('\n')).not.toContain('ExponentPushToken[secret-token]');
 
         const bodiesByUrl = new Map<string, any>();
-        for (const call of fetchSpy.mock.calls) {
-            const url = String(call[0]);
-            const init = (call[1] ?? {}) as any;
+        for (const [request] of runtimeFetchWithServerReachabilityMock.mock.calls) {
+            const url = String(request.url);
+            const init = (request.init ?? {}) as any;
             const body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
             bodiesByUrl.set(url, body);
         }
@@ -132,12 +147,6 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             type: 'expo',
             data: 'ExponentPushToken[secret-token]',
         } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
-
-        const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
-            ok: true,
-            json: async () => ({ success: true }),
-        }));
-        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
         const state = {
             activeServerId: 'server-a',
@@ -180,11 +189,11 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             log,
         });
 
-        const registerCalls = fetchSpy.mock.calls.filter(([, init]) => ((init as RequestInit | undefined)?.method ?? 'GET') === 'POST');
+        const registerCalls = runtimeFetchWithServerReachabilityMock.mock.calls.filter(([request]) => request.init?.method === 'POST');
         expect(registerCalls).toHaveLength(1);
-        const [url, init] = registerCalls[0]!;
-        expect(String(url)).toBe('https://shared.example.test/v1/push-tokens');
-        expect((init as RequestInit | undefined)?.headers).toMatchObject({
+        const [request] = registerCalls[0]!;
+        expect(String(request.url)).toBe('https://shared.example.test/v1/push-tokens');
+        expect(request.init?.headers).toMatchObject({
             Authorization: 'Bearer t_primary',
         });
         expect(messages.join('\n')).not.toContain('ExponentPushToken[secret-token]');

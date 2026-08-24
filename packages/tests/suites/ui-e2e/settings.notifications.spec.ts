@@ -10,13 +10,6 @@ import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAcco
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
-async function createAccountIfNeeded(page: Page): Promise<void> {
-    const createAccount = page.getByTestId('welcome-create-account');
-    if (await createAccount.count()) {
-        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-    }
-}
-
 async function confirmPrompt(page: Page, value: string): Promise<void> {
     const dialog = page.getByRole('dialog');
     await expect(dialog).toHaveCount(1, { timeout: 60_000 });
@@ -71,7 +64,7 @@ test.describe('ui e2e: settings notifications', () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
         await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-        await createAccountIfNeeded(page);
+        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/notifications?happier_hmr=0`, 180_000);
 

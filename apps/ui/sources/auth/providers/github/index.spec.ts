@@ -7,6 +7,7 @@ vi.mock('@/sync/domains/server/serverConfig', () => ({
 
 vi.mock('@/utils/timing/time', () => ({
     backoff: async <T>(fn: () => Promise<T>) => await fn(),
+    delay: async () => {},
 }));
 
 vi.mock('@/text', async () => {

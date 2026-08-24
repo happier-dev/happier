@@ -7,25 +7,26 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const probeResultState = {
-  value: { availableModels: [{ id: 'm1', name: 'Model 1' }], supportsFreeform: false } as {
-    availableModels: Array<{ id: string; name: string }>;
-    supportsFreeform: boolean;
-  },
-};
-
-const agentModelCapabilitiesState = {
-  supportsSelection: true,
-  supportsFreeform: false,
-};
-
-const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: any, _request: any, _options: any) => ({
-  supported: true as const,
-  response: {
-    ok: true as const,
-    result: probeResultState.value,
-  },
-}));
+const { probeResultState, agentModelCapabilitiesState, machineCapabilitiesInvokeMock } = vi.hoisted(() => {
+  const probeResultState = {
+    value: { availableModels: [{ id: 'm1', name: 'Model 1' }], supportsFreeform: false } as {
+      availableModels: Array<{ id: string; name: string }>;
+      supportsFreeform: boolean;
+    },
+  };
+  const agentModelCapabilitiesState = {
+    supportsSelection: true,
+    supportsFreeform: false,
+  };
+  const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: unknown, _request: unknown, _options: unknown) => ({
+    supported: true as const,
+    response: {
+      ok: true as const,
+      result: probeResultState.value,
+    },
+  }));
+  return { probeResultState, agentModelCapabilitiesState, machineCapabilitiesInvokeMock };
+});
 
 type ProbeResponse = Awaited<ReturnType<typeof machineCapabilitiesInvokeMock>>;
 

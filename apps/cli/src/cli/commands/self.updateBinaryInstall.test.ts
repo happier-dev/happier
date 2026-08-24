@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { STANDARD_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS } from '@happier-dev/cli-common/firstPartyRuntime';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { captureStdout } from '@/testkit/logger/captureOutput';
 
 const {
   fetchGitHubReleaseByTagMock,
@@ -268,7 +269,7 @@ describe('happier self update for binary installs', () => {
   it('prints self update progress steps while resolving and installing a binary payload', async () => {
     const originalArgv = [...process.argv];
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const stdoutWriteSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stdout = captureStdout();
 
     try {
       process.argv[1] = '/opt/happier/bin/happier';
@@ -279,13 +280,13 @@ describe('happier self update for binary installs', () => {
         terminalRuntime: null,
       });
 
-      const output = stdoutWriteSpy.mock.calls.map(([chunk]) => String(chunk)).join('');
+      const output = stdout.text();
       expect(output).toContain('Resolving release metadata');
       expect(output).toContain('Downloading and installing payload');
       expect(output).toContain('Refreshing update cache');
     } finally {
       process.argv = originalArgv;
-      stdoutWriteSpy.mockRestore();
+      stdout.restore();
       logSpy.mockRestore();
     }
   });

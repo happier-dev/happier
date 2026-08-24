@@ -576,6 +576,12 @@ test.describe('ui e2e: session list attention', () => {
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
+    await chooseSessionListPlacementMode({
+      page,
+      baseUrl: uiBaseUrl,
+      triggerTestId: sessionListTestIds.workingPlacementModeTrigger,
+      placement: 'withinGroups',
+    });
     await disableWorkingStatusAnimatedText({ page, baseUrl: uiBaseUrl });
     await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
