@@ -60,6 +60,8 @@ describe('mergeSelfHostServerEnvText', () => {
       existingEnvText: [
         'PORT=4010',
         'HAPPIER_PUBLIC_SERVER_URL=https://relay.example.test',
+        'HAPPIER_WEBAPP_URL=https://web.example.test',
+        'HAPPY_WEBAPP_URL=https://legacy-web.example.test',
         'NODE_PATH=/old/node_modules',
         'HAPPIER_SQLITE_MIGRATIONS_DIR=/old/migrations',
         'HAPPIER_SERVER_UI_DIR=/old/ui',
@@ -70,6 +72,8 @@ describe('mergeSelfHostServerEnvText', () => {
 
     expect(merged).toContain('PORT=4010');
     expect(merged).toContain('HAPPIER_PUBLIC_SERVER_URL=https://relay.example.test');
+    expect(merged).toContain('HAPPIER_WEBAPP_URL=https://web.example.test');
+    expect(merged).toContain('HAPPY_WEBAPP_URL=https://legacy-web.example.test');
     expect(merged).toContain('CUSTOM_RUNTIME_FLAG=enabled');
     expect(merged).toContain('NODE_PATH=/new/node_modules');
     expect(merged).toContain('HAPPIER_SQLITE_MIGRATIONS_DIR=/new/migrations');
@@ -77,6 +81,19 @@ describe('mergeSelfHostServerEnvText', () => {
     expect(merged).not.toContain('NODE_PATH=/old/node_modules');
     expect(merged).not.toContain('HAPPIER_SQLITE_MIGRATIONS_DIR=/old/migrations');
     expect(merged).not.toContain('HAPPIER_SERVER_UI_DIR=/old/ui');
+  });
+
+  it('lets an explicit web app URL override replace the preserved value', () => {
+    const merged = mergeSelfHostServerEnvText({
+      baseEnvText: 'PORT=3005\nHAPPIER_SERVER_HOST=127.0.0.1\n',
+      existingEnvText: 'HAPPIER_WEBAPP_URL=https://old-web.example.test\n',
+      overrides: {
+        HAPPIER_WEBAPP_URL: 'https://new-web.example.test',
+      },
+    });
+
+    expect(merged).toContain('HAPPIER_WEBAPP_URL=https://new-web.example.test');
+    expect(merged).not.toContain('HAPPIER_WEBAPP_URL=https://old-web.example.test');
   });
 
   it('rejects explicit UI-dir overrides owned by the relay runtime installer', () => {
