@@ -9,6 +9,7 @@ import { buildPiHappierToolsExtensionSource } from './extensionSource.js';
 export type PreparedPiHappierToolsExtension = Readonly<{
   extensionPath: string;
   configPath: string;
+  toolNames: readonly string[];
   dispose(): Promise<void>;
 }>;
 
@@ -35,6 +36,7 @@ export async function preparePiHappierToolsExtension(params: Readonly<{
   return Object.freeze({
     extensionPath,
     configPath,
+    toolNames: Object.freeze(params.config.tools.map((tool) => tool.name)),
     async dispose() {
       await rm(dirname(configPath), { recursive: true, force: true });
     },

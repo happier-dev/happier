@@ -141,6 +141,7 @@ describe('buildPiRpcArgs', () => {
       happierToolsExtension: {
         extensionPath: '/tmp/happier-pi-tools-bridge.js',
         configPath: '/tmp/happier-pi-tools-config.json',
+        toolNames: ['change_title'],
       },
     })).toEqual([
       '--extension', resolvePiRequestAuthExtensionPath(agentDir),
@@ -149,4 +150,21 @@ describe('buildPiRpcArgs', () => {
       '--mode', 'rpc',
     ]);
   });
+
+  it.each(['plan', 'read-only', 'safe-yolo'] as const)(
+    'keeps native extension tools available when %s restricts Pi built-in tools',
+    (permissionMode) => {
+      const args = buildPiRpcArgs({
+        permissionMode,
+        happierToolsExtension: {
+          extensionPath: '/tmp/happier-pi-tools-bridge.js',
+          configPath: '/tmp/happier-pi-tools-config.json',
+          toolNames: ['change_title'],
+        },
+      });
+      const toolsFlagIndex = args.indexOf('--tools');
+      expect(toolsFlagIndex).toBeGreaterThanOrEqual(0);
+      expect(args[toolsFlagIndex + 1]?.split(',')).toContain('change_title');
+    },
+  );
 });
