@@ -20,7 +20,7 @@ export type AskUserQuestionPayloadQuestion = Readonly<{
     responseKey?: string;
     options?: ReadonlyArray<AskUserQuestionPayloadOption>;
     multiSelect: boolean;
-    freeform?: Readonly<{ placeholder?: string; description?: string }>;
+    freeform?: Readonly<{ placeholder?: string; description?: string; initialValue?: string }>;
 }>;
 
 export type NormalizeAskUserQuestionRenderQuestionsResult =

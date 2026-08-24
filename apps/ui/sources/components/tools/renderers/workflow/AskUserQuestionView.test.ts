@@ -669,6 +669,34 @@ describe('AskUserQuestionView', () => {
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
 
+    it('uses a provider-supplied freeform initial value as the editable answer', async () => {
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        const tool = makeFreeformTool();
+        tool.input = {
+            questions: [{
+                question: 'Which file should I inspect?',
+                header: 'File',
+                multiSelect: false,
+                options: [],
+                freeform: { initialValue: 'src/index.ts' },
+            }],
+        };
+
+        const screen = await renderView(tool);
+        const input = screen.findByProps({ testID: 'ask-user-question.freeform:0' });
+        expect(input.props.value).toBe('src/index.ts');
+
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
+        expect(submit).toBeTruthy();
+        expect(submit!.props.disabled).toBe(false);
+        await pressTestInstanceAsync(submit!, 'tools.askUserQuestion.submit');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'legacy-permission',
+            answers: { 'Which file should I inspect?': 'src/index.ts' },
+        });
+    });
+
     it('supports suggestion questions that allow a typed freeform answer (options + freeform)', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 

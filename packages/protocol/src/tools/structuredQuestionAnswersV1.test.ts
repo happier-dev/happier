@@ -70,7 +70,12 @@ describe('StructuredQuestionAnswersV1', () => {
           { value: 'wire-a', label: 'Human A', description: 'First' },
           { choice: 'wire-b', label: 'Human B' },
         ],
-        freeform: { placeholder: 'Other', description: 'Type another value', providerExtra: true },
+        freeform: {
+          placeholder: 'Other',
+          description: 'Type another value',
+          initialValue: 'Start here',
+          providerExtra: true,
+        },
         providerCorrelation: { opaque: true },
       },
     ])).toEqual({
@@ -86,7 +91,7 @@ describe('StructuredQuestionAnswersV1', () => {
           { value: 'wire-a', label: 'Human A', description: 'First', answerValue: 'wire-a' },
           { choice: 'wire-b', label: 'Human B', answerValue: 'wire-b' },
         ],
-        freeform: { placeholder: 'Other', description: 'Type another value' },
+        freeform: { placeholder: 'Other', description: 'Type another value', initialValue: 'Start here' },
         allowsFreeform: true,
       }],
     });
