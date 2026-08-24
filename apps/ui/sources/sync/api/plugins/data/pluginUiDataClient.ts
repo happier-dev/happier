@@ -219,6 +219,14 @@ export function createPluginUiDataClient(input: Readonly<{
             throw dataError(COLLECTION_UNDECLARED_CODE, 'The requested Account Collection is not declared');
         }
         return Object.freeze({
+            async identityTag(request, options) {
+                const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
+                const outcome = await active.client.identityTag(request, options);
+                assertCurrent(input.accountLifetime, options?.signal);
+                if (outcome.status === 'ready') return outcome.tag;
+                if (outcome.status === 'rejected') throw rejectedError(outcome);
+                throw unavailableError(outcome.reason);
+            },
             async get(rowId, options) {
                 const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
                 const outcome = await active.client.get(rowId, options);

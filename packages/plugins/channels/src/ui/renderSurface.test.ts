@@ -34,6 +34,8 @@ import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/
 import type { PluginUiPresentationHost } from '../../../../plugin-ui/src/presentationHost/context.js';
 import { mountThroughReactNativeWebAsync } from '../../../../plugin-ui/src/rnwMount.testSupport.js';
 import { createHostApiStub } from '../../../../plugin-ui/src/surfaceFixture.testSupport.js';
+import { createUnavailablePluginUiAccountKv } from '../../../../plugin-ui/src/data/accountKv.js';
+import { createUnavailablePluginUiAccountSettings } from '../../../../plugin-ui/src/data/accountSettings.js';
 import { CHANNEL_STATE_COLLECTION } from '../collections.js';
 import {
   createCurrentConversationConnectionFixture,
@@ -506,6 +508,10 @@ const emptyDataClient: PluginUiDataClient = {
   openCollectionQuery: async () => {
     throw new Error('This mounted provider-setup test does not open generic Account queries.');
   },
+  // This surface never reaches Account KV or Settings; the truthful
+  // unavailable scope fails loudly if that ever changes.
+  accountKv: createUnavailablePluginUiAccountKv(),
+  accountSettings: createUnavailablePluginUiAccountSettings(),
 };
 
 /** Mirrors the host's post-render private Data binding without widening author context. */
@@ -1688,6 +1694,10 @@ describe('Channels mounted ingress attention recovery', () => {
       openCollectionQuery: async () => {
         throw new Error('This mounted ingress-conflict test does not open generic Account queries.');
       },
+      // This surface never reaches Account KV or Settings; the truthful
+      // unavailable scope fails loudly if that ever changes.
+      accountKv: createUnavailablePluginUiAccountKv(),
+      accountSettings: createUnavailablePluginUiAccountSettings(),
     };
     const executeAction = vi.fn(async () => {
       throw new Error('An occurrence conflict must not expose a recovery Action.');
@@ -1801,6 +1811,10 @@ describe('Channels mounted ingress attention recovery', () => {
       openCollectionQuery: async () => {
         throw new Error('This mounted ingress-attention test does not open generic Account queries.');
       },
+      // This surface never reaches Account KV or Settings; the truthful
+      // unavailable scope fails loudly if that ever changes.
+      accountKv: createUnavailablePluginUiAccountKv(),
+      accountSettings: createUnavailablePluginUiAccountSettings(),
     };
     const executeAction = vi.fn(async ({ action }: Readonly<{ action: PluginReference }>) => {
       if (action !== CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry) {

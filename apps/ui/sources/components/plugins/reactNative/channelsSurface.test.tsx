@@ -30,6 +30,7 @@ import type {
   PluginUiAccountCollectionForDefinition,
   PluginUiDataClient,
 } from '@happier-dev/plugin-ui/data';
+import { completePresentationPluginUiDataClient } from '@/dev/testkit/pluginUiDataClient';
 
 import {
   CHANNEL_DELIVERIES_COLLECTION,
@@ -676,6 +677,9 @@ function createOfflineChannelsDataClient(input: Readonly<{
     return { rowId, revision: current.revision + 1, deleted: true as const };
   });
   const collection = {
+    identityTag: async () => {
+      throw new Error('Channels state fixture receives already-derived row identities.');
+    },
     get,
     put,
     delete: remove,
@@ -689,7 +693,7 @@ function createOfflineChannelsDataClient(input: Readonly<{
     },
   } satisfies ChannelStateCollection;
   const deliveriesCollection = { query: deliveryQuery };
-  const client: PluginUiDataClient = {
+  const client: PluginUiDataClient = completePresentationPluginUiDataClient({
     collection<TDefinition extends PluginAccountCollectionDefinition>(definition: TDefinition) {
       if (definition.id === CHANNEL_STATE_COLLECTION.id) {
         // The fixture exposes exactly one admitted state Collection; this generic
@@ -706,7 +710,7 @@ function createOfflineChannelsDataClient(input: Readonly<{
     async openCollectionQuery() {
       throw new Error('Channels offline policy uses direct Account Collection queries, not a server-readable UI query.');
     },
-  };
+  });
   return { client, get, query, deliveryQuery, batch, rows };
 }
 
@@ -786,6 +790,9 @@ function createDeliveryResolutionDataClient(input: Readonly<{
     };
   });
   const collection = {
+    identityTag: async () => {
+      throw new Error('Delivery fixture receives already-derived row identities.');
+    },
     get: async (rowId: string) => rows.get(rowId) ?? null,
     put: async () => {
       throw new Error('Delivery-resolution UI reads direct Account rows; the Action owns the CAS write.');
@@ -805,6 +812,9 @@ function createDeliveryResolutionDataClient(input: Readonly<{
     },
   } satisfies ChannelDeliveriesCollection;
   const stateCollection = {
+    identityTag: async () => {
+      throw new Error('State fixture receives already-derived row identities.');
+    },
     get: async () => null,
     put: async () => {
       throw new Error('Delivery-resolution UI does not mutate ingress custody directly.');
@@ -823,7 +833,7 @@ function createDeliveryResolutionDataClient(input: Readonly<{
       throw new Error('Delivery-resolution UI does not size ingress-custody writes.');
     },
   } satisfies ChannelStateCollection;
-  const client: PluginUiDataClient = {
+  const client: PluginUiDataClient = completePresentationPluginUiDataClient({
     collection<TDefinition extends PluginAccountCollectionDefinition>(definition: TDefinition) {
       if (definition.id === CHANNEL_STATE_COLLECTION.id) {
         return stateCollection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
@@ -837,7 +847,7 @@ function createDeliveryResolutionDataClient(input: Readonly<{
     async openCollectionQuery() {
       throw new Error('Delivery resolution uses the canonical direct Account Collection page reader.');
     },
-  };
+  });
   return {
     client,
     query,

@@ -904,8 +904,12 @@ export function createActivePluginCollectionClient<
                 components: request.components,
             });
             if (resolved.status === 'failed') {
+                // The daemon host reports an undeclared identity field as an
+                // invalid value, and the same plugin code runs in both realms —
+                // Triage and channels already branch on this exact code — so a
+                // surface must not hand it a second code for one mistake.
                 return resolved.reason === 'field-not-declared'
-                    ? rejected('collection_identity_field_undeclared')
+                    ? rejected('plugin_collection_invalid_value')
                     : unavailable('account-encryption-material-unavailable');
             }
             return { status: 'ready', tag: resolved.tag };

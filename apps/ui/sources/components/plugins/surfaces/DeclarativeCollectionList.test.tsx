@@ -37,6 +37,7 @@ import {
 import { DeclarativePluginSurface } from './DeclarativePluginSurface';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderScreen } from '@/dev/testkit';
+import { completePresentationPluginUiDataClient } from '@/dev/testkit/pluginUiDataClient';
 
 const presentationTheme = Object.freeze({
     version: 1 as const,
@@ -139,7 +140,7 @@ function CollectionListWithData(
 function createTestDataClient(
     openCollectionQuery: PluginUiDataClient['openCollectionQuery'],
 ): PluginUiDataClient {
-    return Object.freeze({
+    return completePresentationPluginUiDataClient({
         collection: () => {
             throw new Error('Collection mutation is outside declarative list presentation');
         },

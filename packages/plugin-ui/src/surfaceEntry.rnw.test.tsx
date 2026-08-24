@@ -9,6 +9,7 @@ import { Menu } from './components/Overlay.js';
 import { usePluginTheme, useSurfaceContext } from './components/PluginUiProvider.js';
 import { usePluginUiDataClient, type PluginUiDataClient } from './data/index.js';
 import { createUnavailablePluginUiAccountKv } from './data/accountKv.js';
+import { createUnavailablePluginUiAccountSettings } from './data/accountSettings.js';
 import { useComposer, usePluginResource } from './hostApi/index.js';
 import type { PluginUiPresentationHost } from './presentationHost/context.js';
 import { mountThroughReactNativeWebAsync } from './rnwMount.testSupport.js';
@@ -356,6 +357,7 @@ describe('defineUiSurface', () => {
         throw new Error('The test author surface does not open a query.');
       },
       accountKv: createUnavailablePluginUiAccountKv(),
+      accountSettings: createUnavailablePluginUiAccountSettings(),
     });
     expectedDataClient = client;
     const renderSurface = defineUiSurface(DataAuthorSurface);
@@ -457,6 +459,8 @@ describe('defineUiSurface', () => {
       uiQueryId: 'open',
       parameters: { status: 'open' },
     })).rejects.toMatchObject({ code: 'plugin_collection_ui_query_unavailable' });
+    await expect(unavailableDataClient.accountSettings.snapshot())
+      .rejects.toMatchObject({ code: 'plugin_settings_persistence_unavailable' });
     mount.unmount();
   });
 

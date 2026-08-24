@@ -13,6 +13,8 @@ import type {
 } from '@happier-dev/plugin-ui/data';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createUnavailablePluginUiAccountKv } from '../../../../../plugin-ui/src/data/accountKv.js';
+import { createUnavailablePluginUiAccountSettings } from '../../../../../plugin-ui/src/data/accountSettings.js';
 import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../../corpus/collections/rows.js';
@@ -141,6 +143,8 @@ function createDataHarness(input: Readonly<{
             opened.push(request);
             return control.pager;
         },
+        accountKv: createUnavailablePluginUiAccountKv(),
+        accountSettings: createUnavailablePluginUiAccountSettings(),
     };
 
     return { client, opened, gets, control };

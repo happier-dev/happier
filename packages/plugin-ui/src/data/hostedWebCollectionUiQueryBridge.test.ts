@@ -167,6 +167,9 @@ describe('hosted-web Collection UI-query guest pager', () => {
     await expect(client.collection({ id: 'tasks' }).get('task-1')).rejects.toMatchObject({
       code: 'plugin_collection_ui_query_unavailable',
     });
+    await expect(client.accountSettings.snapshot()).rejects.toMatchObject({
+      code: 'plugin_settings_persistence_unavailable',
+    });
     expect(harness.request).toHaveBeenCalledTimes(1);
   });
 

@@ -3,6 +3,7 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createUnavailablePluginUiAccountKv } from '../data/accountKv.js';
+import { createUnavailablePluginUiAccountSettings } from '../data/accountSettings.js';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 
@@ -160,6 +161,7 @@ describe('Projects and Tasks Account KV continuity', () => {
     });
     const dataClient = Object.freeze({
       collection: () => Object.freeze({
+        identityTag: unusedCollection,
         get: unusedCollection,
         put: unusedCollection,
         delete: unusedCollection,
@@ -170,6 +172,7 @@ describe('Projects and Tasks Account KV continuity', () => {
       }),
       openCollectionQuery,
       accountKv,
+      accountSettings: createUnavailablePluginUiAccountSettings(),
     }) as unknown as PluginUiDataClient;
     const renderFixture = createProjectsTasksRenderContext();
     const mount = await mountThroughReactNativeWebAsync(
@@ -253,6 +256,9 @@ describe('Projects and Tasks Account Collection surface', () => {
       value,
     }));
     const collection = Object.freeze({
+      identityTag: vi.fn(async () => {
+        throw new Error('Projects and Tasks does not derive a Collection identity in this journey.');
+      }),
       get,
       put,
       delete: vi.fn(async () => {
@@ -277,6 +283,7 @@ describe('Projects and Tasks Account Collection surface', () => {
       },
       openCollectionQuery,
       accountKv: createUnavailablePluginUiAccountKv(),
+      accountSettings: createUnavailablePluginUiAccountSettings(),
     }) satisfies PluginUiDataClient;
     const renderFixture = createProjectsTasksRenderContext();
     const { context: renderContext } = renderFixture;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+    derivePluginCollectionIdentityTagV1,
     FeaturesResponseSchema,
     measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
@@ -35,7 +36,7 @@ const collectionDefinition = defineAccountCollection({
         ]),
     }, { policy: 'closed' }),
     rowIdField: 'id',
-    identityFields: [],
+    identityFields: ['id'],
     serverReadable: ['title', 'status'],
     indexes: [{
         id: 'by-status',
@@ -378,6 +379,33 @@ describe('Plugin UI Data client', () => {
                 contractDigest: contract.contractDigest,
             },
         });
+    });
+
+    it('derives a mode-aware identity tag from a surface through the one host derivation owner', async () => {
+        const { client } = await loadClient();
+        const collection = client.collection(collectionDefinition);
+
+        await expect(collection.identityTag({
+            field: 'id',
+            components: ['github', 'pull-request', '42'],
+        })).resolves.toBe(derivePluginCollectionIdentityTagV1({
+            accountEncryptionMode: 'plain',
+            material: null,
+            pluginId: contract.pluginId,
+            collectionId: contract.collectionId,
+            field: 'id',
+            components: ['github', 'pull-request', '42'],
+        }));
+    });
+
+    it('refuses an identity field the admitted contract does not declare with the code a daemon plugin already handles', async () => {
+        const { client } = await loadClient();
+        const collection = client.collection(collectionDefinition);
+
+        await expect(collection.identityTag({
+            field: 'title',
+            components: ['github'],
+        })).rejects.toMatchObject({ code: 'plugin_collection_invalid_value' });
     });
 
     it('rejects a retained collection facade once its captured Account lifetime retires', async () => {

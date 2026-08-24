@@ -37,3 +37,16 @@ export function usePluginUiDataClient(): PluginUiDataClient {
   }
   return client;
 }
+
+/**
+ * The same client, as a fact rather than a throw.
+ *
+ * A surface whose durable state lives in the reader's Account has to be able to
+ * ask whether that Account is reachable at all: with no client it must keep the
+ * rows it already showed, disable the controls that write, and say so. Throwing
+ * is the right answer for a surface that cannot function without Data; a
+ * surface that degrades honestly needs the answer, not the exception.
+ */
+export function usePluginUiDataClientOrNull(): PluginUiDataClient | null {
+  return useContext(PluginUiDataContext);
+}

@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/ui';
 
 import { createUnavailablePluginUiAccountKv } from './accountKv.js';
+import { createUnavailablePluginUiAccountSettings } from './accountSettings.js';
 import type {
   PluginUiAccountCollectionForDefinition,
   PluginUiCollectionQueryInput,
@@ -82,6 +83,7 @@ export function createUnavailableHostedWebPluginUiDataClient(): PluginUiDataClie
   const collection = <TDefinition extends PluginAccountCollectionDefinition>(
     _definition: TDefinition,
   ): PluginUiAccountCollectionForDefinition<TDefinition> => Object.freeze({
+    identityTag: unavailable,
     get: unavailable,
     put: unavailable,
     delete: unavailable,
@@ -93,12 +95,14 @@ export function createUnavailableHostedWebPluginUiDataClient(): PluginUiDataClie
 
   // Hosted web is a separate isolated renderer: it reaches Account Data only
   // through the host-owned bridge, which carries Collection UI queries and no
-  // Account KV operation. Reporting that plainly is the truthful state; it is
-  // not a second KV implementation and not a silent no-op.
+  // Account KV or Account Settings operation. Reporting that plainly is the
+  // truthful state; it is not a second KV or Settings implementation and not a
+  // silent no-op.
   return Object.freeze({
     collection,
     openCollectionQuery: unavailable,
     accountKv: createUnavailablePluginUiAccountKv(),
+    accountSettings: createUnavailablePluginUiAccountSettings(),
   });
 }
 
@@ -122,7 +126,7 @@ function parseSnapshotResponse(value: unknown): Extract<
 export function createHostedWebPluginUiDataClient(input: Readonly<{
   acquireTransport: HostedWebCollectionUiQueryTransportFactory;
 }>): PluginUiDataClient {
-  const { collection, accountKv } = createUnavailableHostedWebPluginUiDataClient();
+  const { collection, accountKv, accountSettings } = createUnavailableHostedWebPluginUiDataClient();
 
   const openCollectionQuery = async (
     query: PluginUiCollectionQueryInput,
@@ -256,5 +260,5 @@ export function createHostedWebPluginUiDataClient(input: Readonly<{
     });
   };
 
-  return Object.freeze({ collection, openCollectionQuery, accountKv });
+  return Object.freeze({ collection, openCollectionQuery, accountKv, accountSettings });
 }

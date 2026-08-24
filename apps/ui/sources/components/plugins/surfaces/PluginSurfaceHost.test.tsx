@@ -39,6 +39,7 @@ import { derivePluginUiTargetedSurfaceMountInstanceKeyV1 } from '@happier-dev/pr
 
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
+import { completePresentationPluginUiDataClient } from '@/dev/testkit/pluginUiDataClient';
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import {
     HappierUiEnvironmentProvider,
@@ -2408,12 +2409,12 @@ describe('PluginSurfacePlacementHost', () => {
             loadMore: vi.fn(async () => {}),
             dispose: vi.fn(),
         };
-        const dataClient = Object.freeze({
+        const dataClient = completePresentationPluginUiDataClient({
             collection: () => {
                 throw new Error('Collection mutation is outside row-command presentation');
             },
             openCollectionQuery: vi.fn(async () => pager),
-        }) satisfies PluginUiDataClient;
+        });
         const dispatchAction = vi.fn(async () => null);
         const openSurface = vi.fn(async () => null);
         const destinationPlacement = surfacePlacementFixture({

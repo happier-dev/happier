@@ -10,17 +10,19 @@ import type {
   PluginCollectionUiQueryRequestV1,
 } from '@happier-dev/plugin-sdk/collections';
 
-import { usePluginUiDataClient } from './context.js';
+import { usePluginUiDataClient, usePluginUiDataClientOrNull } from './context.js';
 import type {
   PluginUiAccountKv,
+  PluginUiAccountSettings,
   PluginUiCollectionQueryPager,
   PluginUiCollectionQuerySnapshot,
 } from './types.js';
 
-export { usePluginUiDataClient } from './context.js';
+export { usePluginUiDataClient, usePluginUiDataClientOrNull } from './context.js';
 export type {
   PluginUiAccountCollectionForDefinition,
   PluginUiAccountKv,
+  PluginUiAccountSettings,
   PluginUiCollectionQueryInput,
   PluginUiCollectionQueryPager,
   PluginUiCollectionQuerySnapshot,
@@ -37,6 +39,21 @@ export type {
  */
 export function usePluginAccountKv(): PluginUiAccountKv {
   return usePluginUiDataClient().accountKv;
+}
+
+/**
+ * The mounted surface's own Account Settings scope.
+ *
+ * Reading or writing it needs no daemon: this is the one Account Settings
+ * record the plugin's daemon side reads and writes, reached through the same
+ * declared fields, the same schema admission and the same revision CAS.
+ *
+ * `null` is the truthful answer when this mount has no Account Data client at
+ * all — the Account is not reachable from here, so durable controls must be
+ * disabled rather than silently doing nothing.
+ */
+export function usePluginAccountSettings(): PluginUiAccountSettings | null {
+  return usePluginUiDataClientOrNull()?.accountSettings ?? null;
 }
 
 export type PluginUiCollectionQueryFailure =
