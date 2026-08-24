@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, open, readFile, readdir, rename, rmdir, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
+import { isPidPresent } from '@happier-dev/cli-common/process';
+
 type JsonOwnerFileLockOptions = Readonly<{
   lockPath: string;
   timeoutMs: number;
@@ -126,15 +128,6 @@ function parsePredecessorDirectoryOwner(raw: string): PredecessorDirectoryOwnerR
   }
 }
 
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException | null)?.code === 'EPERM';
-  }
-}
-
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -187,14 +180,14 @@ async function inspectAndScavengeLockArtifacts(lockPath: string, staleAfterMs: n
     const owner = await readArtifactOwner(artifact);
     const oldEnough = Number.isFinite(artifact.createdAtMs)
       && Date.now() - artifact.createdAtMs >= staleAfterMs;
-    const actorIsDead = !isPidAlive(artifact.actorPid);
-    const exactDeadOwner = owner !== null && !isPidAlive(owner.pid);
+    const actorIsDead = !isPidPresent(artifact.actorPid);
+    const exactDeadOwner = owner !== null && !isPidPresent(owner.pid);
     if (artifact.kind === 'private' && oldEnough && actorIsDead) {
       const directoryInfo = await stat(artifact.path).catch(() => null);
       if (directoryInfo?.isDirectory()) {
         const ownerSnapshot = await readSnapshot(join(artifact.path, 'owner.json'));
         const predecessorOwner = ownerSnapshot ? parsePredecessorDirectoryOwner(ownerSnapshot.raw) : null;
-        if (ownerSnapshot && predecessorOwner?.pid === artifact.actorPid && !isPidAlive(predecessorOwner.pid)) {
+        if (ownerSnapshot && predecessorOwner?.pid === artifact.actorPid && !isPidPresent(predecessorOwner.pid)) {
           if (await removeExactPredecessorDirectory(
             artifact.path,
             lockPath,
@@ -216,7 +209,7 @@ async function inspectAndScavengeLockArtifacts(lockPath: string, staleAfterMs: n
       const sidecar = artifacts.find((candidate) => candidate.label === 'cleanup'
         && candidate.identitySuffix === artifact.identitySuffix);
       const sidecarOwner = sidecar ? await readArtifactOwner(sidecar) : null;
-      if (sidecar && sidecarOwner && !isPidAlive(sidecarOwner.pid)) {
+      if (sidecar && sidecarOwner && !isPidPresent(sidecarOwner.pid)) {
         const before = await stat(artifact.path).catch(() => null);
         const empty = before?.isDirectory() && await readdir(artifact.path).then((names) => names.length === 0, () => false);
         const after = empty ? await stat(artifact.path).catch(() => null) : null;
@@ -416,7 +409,7 @@ async function shouldReclaimCurrent(
 ): Promise<boolean> {
   const owner = parseCurrentOwner(snapshot.raw);
   if (owner) {
-    if (!isPidAlive(owner.pid)) return true;
+    if (!isPidPresent(owner.pid)) return true;
     if (owner.pid === process.pid) {
       return Math.abs(owner.processStartedAtMs - currentProcessStartedAtMs) > 1_000;
     }
@@ -557,7 +550,7 @@ async function recoverLegacyDirectory(path: string, staleAfterMs: number): Promi
   const ownerSnapshot = await readSnapshot(ownerPath);
   if (!ownerSnapshot) return;
   const owner = parsePredecessorDirectoryOwner(ownerSnapshot.raw);
-  if (!owner || isPidAlive(owner.pid) || Date.now() - owner.acquiredAtMs < staleAfterMs) return;
+  if (!owner || isPidPresent(owner.pid) || Date.now() - owner.acquiredAtMs < staleAfterMs) return;
 
   await quarantineExactPredecessorDirectory(
     path,
