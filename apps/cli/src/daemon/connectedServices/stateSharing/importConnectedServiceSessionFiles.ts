@@ -12,6 +12,10 @@ export type ConnectedServiceSessionFileImportDetail = Readonly<{
 export type ConnectedServiceSessionFileImportRoot = Readonly<{
   sourceRoot: string;
   destinationRoot: string;
+  /**
+   * Receives normalized relative directory paths; false prunes that directory and every descendant.
+   * Root-level files remain eligible for includeFile.
+   */
   includeDirectory?: (relativePath: string) => boolean;
   includeFile?: (relativePath: string) => boolean;
 }>;

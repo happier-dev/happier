@@ -56,6 +56,8 @@ export type ApplyConnectedServiceStateSharingDescriptorInput = Readonly<{
   mapStateSymlinkUnavailableDiagnostic?: (error: ConnectedServiceSharedStateLinkUnavailableError) => ConnectedServicesMaterializationDiagnostic;
   copyTransformByEntry?: Readonly<Record<string, (content: string) => string>>;
   forceCopiedEntries?: readonly string[];
+  /** Runs after shared-state link preflight succeeds and before state is imported or linked. */
+  prepareSharedStateSource?: () => Promise<void>;
   sessionImportRoots?: readonly ConnectedServiceSessionFileImportRoot[];
   resolveVendorResumeIdFromImportedFile?: (detail: ConnectedServiceSessionFileImportDetail) => string | null;
   providerLabel?: string;
@@ -525,6 +527,7 @@ export async function applyConnectedServiceStateSharingDescriptor(
   }
 
   if (input.requestedStateMode === 'shared' && effectiveStateMode === 'shared') {
+    await input.prepareSharedStateSource?.();
     if (input.sessionImportRoots && input.sessionImportRoots.length > 0) {
       const importResult = await importConnectedServiceSessionFiles({ roots: input.sessionImportRoots });
       importedSessionFileMappings = buildSessionFileMappings({

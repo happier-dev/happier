@@ -1,4 +1,4 @@
-import { mkdir, open, readdir } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rm } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
 import {
@@ -41,6 +41,11 @@ const CODEX_SHARED_STATE_FILE_ENTRIES = Object.freeze([
 ] as const);
 
 type CodexStateMode = 'shared' | 'isolated';
+type CodexSharedStateFileEntry = (typeof CODEX_SHARED_STATE_FILE_ENTRIES)[number];
+
+type NativeCodexSharedStateBootstrap = Readonly<{
+  createdFileEntries: readonly CodexSharedStateFileEntry[];
+}>;
 
 export type CodexConnectedServiceStateSharingDiagnostic = Readonly<{
   code: 'state_symlink_unavailable';
@@ -137,33 +142,65 @@ function resolveVendorResumeIdFromImportedRollout(
   return null;
 }
 
-async function ensureNativeCodexSharedStateStore(sourceCodexHome: string): Promise<void> {
+async function ensureNativeCodexSharedStateStore(sourceCodexHome: string): Promise<NativeCodexSharedStateBootstrap> {
   await mkdir(sourceCodexHome, { recursive: true });
   await Promise.all(CODEX_SHARED_STATE_DIRECTORY_ENTRIES.map(async (entryName) => {
     await mkdir(join(sourceCodexHome, entryName), { recursive: true });
   }));
-  await Promise.all(CODEX_SHARED_STATE_FILE_ENTRIES.map(async (entryName) => {
-    const handle = await open(join(sourceCodexHome, entryName), 'a');
-    await handle.close();
-  }));
+  const createdFileEntries: CodexSharedStateFileEntry[] = [];
+  for (const entryName of CODEX_SHARED_STATE_FILE_ENTRIES) {
+    let handle;
+    try {
+      handle = await open(join(sourceCodexHome, entryName), 'wx');
+      createdFileEntries.push(entryName);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err?.code === 'EEXIST') continue;
+      throw error;
+    } finally {
+      await handle?.close();
+    }
+  }
+  return { createdFileEntries };
 }
 
 async function backfillPreviousCodexNonSessionState(params: Readonly<{
+  bootstrap: NativeCodexSharedStateBootstrap;
   previousCodexHome?: string | null;
   sourceCodexHome: string;
 }>): Promise<void> {
   if (!params.previousCodexHome) return;
-  await importConnectedServiceSessionFiles({
-    roots: [{
-      sourceRoot: params.previousCodexHome,
-      destinationRoot: params.sourceCodexHome,
-      includeDirectory: (relativePath) =>
-        relativePath === 'memories' || relativePath.startsWith('memories/'),
-      includeFile: (relativePath) =>
-        relativePath.startsWith('memories/')
-        || (CODEX_SHARED_STATE_FILE_ENTRIES as readonly string[]).includes(relativePath),
-    }],
-  });
+  // Link preflight needs these files to exist. Release only empty placeholders created by this
+  // sync so recovered files land at their canonical paths instead of becoming conflict copies.
+  await Promise.all(params.bootstrap.createdFileEntries.map(async (entryName) => {
+    const path = join(params.sourceCodexHome, entryName);
+    let stat;
+    try {
+      stat = await lstat(path);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err?.code === 'ENOENT') return;
+      throw error;
+    }
+    if (stat.isFile() && stat.size === 0) {
+      await rm(path, { force: true });
+    }
+  }));
+  try {
+    await importConnectedServiceSessionFiles({
+      roots: [{
+        sourceRoot: params.previousCodexHome,
+        destinationRoot: params.sourceCodexHome,
+        includeDirectory: (relativePath) =>
+          relativePath === 'memories' || relativePath.startsWith('memories/'),
+        includeFile: (relativePath) =>
+          relativePath.startsWith('memories/')
+          || CODEX_SHARED_STATE_FILE_ENTRIES.some((entryName) => entryName === relativePath),
+      }],
+    });
+  } finally {
+    await ensureNativeCodexSharedStateStore(params.sourceCodexHome);
+  }
 }
 
 export async function syncCodexConnectedServiceHome(params: Readonly<{
@@ -193,13 +230,9 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
     }
 
     await mkdir(params.destinationCodexHome, { recursive: true });
-    if (settings.stateMode === 'shared') {
-      await backfillPreviousCodexNonSessionState({
-        previousCodexHome: params.previousCodexHome ?? null,
-        sourceCodexHome,
-      });
-      await ensureNativeCodexSharedStateStore(sourceCodexHome);
-    }
+    const sharedStateBootstrap = settings.stateMode === 'shared'
+      ? await ensureNativeCodexSharedStateStore(sourceCodexHome)
+      : null;
     const manifest = await readConnectedServiceStateSharingManifest(params.destinationCodexHome);
     const configEntryNames = await resolveCodexConfigEntryNames(sourceCodexHome);
     const stateEntryNames = codexConnectedServiceStateSharingDescriptor.state.entries.map((entry) => entry.path);
@@ -221,6 +254,13 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
       existingManifest: manifest,
       configEntryNames,
       stateEntryNames,
+      prepareSharedStateSource: sharedStateBootstrap ? async () => {
+        await backfillPreviousCodexNonSessionState({
+          bootstrap: sharedStateBootstrap,
+          previousCodexHome: params.previousCodexHome ?? null,
+          sourceCodexHome,
+        });
+      } : undefined,
       resolveStateSourceRoot: () => sourceCodexHome,
       mapStateSymlinkUnavailableDiagnostic: (error) => toStateSymlinkUnavailableDiagnostic(error),
       sessionImportRoots: settings.stateMode === 'shared'

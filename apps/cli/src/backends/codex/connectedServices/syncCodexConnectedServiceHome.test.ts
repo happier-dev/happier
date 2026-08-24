@@ -165,16 +165,21 @@ describe('syncCodexConnectedServiceHome', () => {
   it('degrades shared state to isolated when required symlinks are unavailable', async () => {
     const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
     try {
+      const previousCodexHome = join(root, 'previous-codex-home');
       await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
       await writeFile(join(sourceCodexHome, 'sessions', 'source-rollout.jsonl'), '{"id":"source"}\n');
       await mkdir(join(destinationCodexHome, 'sessions'), { recursive: true });
       await writeFile(join(destinationCodexHome, 'sessions', 'local-rollout.jsonl'), '{"id":"local"}\n');
+      await mkdir(join(previousCodexHome, 'memories'), { recursive: true });
+      await writeFile(join(previousCodexHome, 'history.jsonl'), '{"text":"previous prompt"}\n');
+      await writeFile(join(previousCodexHome, 'memories', 'raw_memories.md'), '# Previous memory\n');
 
       mockAllSymlinksFail();
       const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
 
       const result = await syncCodexConnectedServiceHome({
         destinationCodexHome,
+        previousCodexHome,
         accountSettings: settings('linked', 'shared'),
         processEnv: { CODEX_HOME: sourceCodexHome },
       });
@@ -196,6 +201,8 @@ describe('syncCodexConnectedServiceHome', () => {
         targetSqliteHome: destinationCodexHome,
       });
       await expect(readFile(join(destinationCodexHome, 'sessions', 'local-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"local"}\n');
+      await expect(readFile(join(sourceCodexHome, 'history.jsonl'), 'utf8')).resolves.toBe('');
+      await expect(exists(join(sourceCodexHome, 'memories', 'raw_memories.md'))).resolves.toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
