@@ -91,9 +91,7 @@ export function buildPiExtensionUiQuestionRequest(request: PiBlockingExtensionUi
       }],
     };
   }
-  const description = request.method === 'input'
-    ? request.placeholder
-    : request.prefill;
+  const description = request.method === 'input' ? request.placeholder : null;
   return {
     kind: 'questions' as const,
     title: 'Pi question',
@@ -103,6 +101,7 @@ export function buildPiExtensionUiQuestionRequest(request: PiBlockingExtensionUi
       ...(description ? { description } : {}),
       type: 'text' as const,
       required: true,
+      ...(request.method === 'editor' && request.prefill ? { initialValue: request.prefill } : {}),
     }],
   };
 }

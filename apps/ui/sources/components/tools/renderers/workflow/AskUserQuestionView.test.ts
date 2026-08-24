@@ -436,6 +436,35 @@ describe('AskUserQuestionView', () => {
         });
     });
 
+    it('uses canonical text initial content as the editable answer', async () => {
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+
+        const screen = await renderView(makeTool({
+            input: {
+                questions: [{
+                    id: 'notes',
+                    question: 'Edit release notes',
+                    required: true,
+                    selection: 'text',
+                    presentation: {
+                        inputMode: 'multiLine',
+                        initialValue: 'Existing notes',
+                        whitespace: 'preserve',
+                        allowEmpty: false,
+                    },
+                }],
+            },
+        }));
+
+        const input = screen.findByProps({ testID: 'ask-user-question.freeform:0' });
+        expect(input.props.value).toBe('Existing notes');
+        await pressPressableByLabel(screen, 'tools.askUserQuestion.submit');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            notes: ['Existing notes'],
+        });
+    });
+
     it('submits canonical custom single-choice answers unchanged under the question id', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 

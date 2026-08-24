@@ -335,6 +335,50 @@ describe('createPiRuntimeOperations', () => {
     await runtime.dispose();
   });
 
+  it('preserves editor prefill as editable initial content', async () => {
+    const capture: Capture = {
+      specs: [],
+      written: [],
+      questionRequests: [],
+      questionResult: {
+        requestId: 'host-question-editor',
+        kind: 'questions',
+        status: 'answered',
+        answers: {
+          'pi-dialog-editor': { kind: 'text', value: 'Updated notes' },
+        },
+      },
+    };
+    const runtime = await createRuntime(capture);
+
+    await emit(capture, {
+      type: 'extension_ui_request',
+      id: 'pi-dialog-editor',
+      method: 'editor',
+      title: 'Edit release notes',
+      prefill: 'Existing notes',
+    });
+
+    await vi.waitFor(() => expect(capture.questionRequests).toContainEqual({
+      kind: 'questions',
+      title: 'Pi question',
+      questions: [{
+        id: 'pi-dialog-editor',
+        prompt: 'Edit release notes',
+        type: 'text',
+        required: true,
+        initialValue: 'Existing notes',
+      }],
+    }));
+    await vi.waitFor(() => expect(capture.written).toContainEqual({
+      type: 'extension_ui_response',
+      id: 'pi-dialog-editor',
+      value: 'Updated notes',
+    }));
+
+    await runtime.dispose();
+  });
+
   it('cancels a blocking Pi extension dialog before aborting its turn', async () => {
     const capture: Capture = {
       specs: [],

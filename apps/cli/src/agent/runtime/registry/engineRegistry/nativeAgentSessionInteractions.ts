@@ -129,7 +129,12 @@ function toPermissionInput(request: InteractionTransientRequestV1): unknown {
                 question: question.prompt,
                 ...(question.required ? { required: true } : {}),
                 ...(question.type === 'text'
-                    ? { selection: 'text' as const }
+                    ? {
+                        selection: 'text' as const,
+                        ...(question.initialValue === undefined
+                            ? {}
+                            : { presentation: { initialValue: question.initialValue } }),
+                    }
                     : {
                         selection: question.type === 'singleChoice' ? 'single' as const : 'multiple' as const,
                         options: question.choices.map((choice) => Object.freeze({

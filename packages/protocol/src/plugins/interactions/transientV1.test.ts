@@ -133,6 +133,28 @@ describe('transient interaction contract', () => {
     }).success).toBe(true);
   });
 
+  it('preserves editable initial content for text questions', () => {
+    expect(normalizeInteractionTransientRequestV1({
+      kind: 'questions',
+      questions: [{
+        id: 'notes',
+        prompt: 'Edit the notes',
+        type: 'text',
+        required: true,
+        initialValue: 'Existing notes',
+      }],
+    }, stamp)).toMatchObject({
+      ok: true,
+      value: {
+        questions: [{
+          id: 'notes',
+          type: 'text',
+          initialValue: 'Existing notes',
+        }],
+      },
+    });
+  });
+
   it('rejects unknown keys, duplicate question ids, and mismatched terminal kinds', () => {
     const request = InteractionTransientRequestV1Schema.parse({
       ...stamp,

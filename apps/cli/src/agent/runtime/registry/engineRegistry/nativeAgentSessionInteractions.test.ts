@@ -53,7 +53,7 @@ const questionsRequest: HostSessionQuestionsRequest = {
     kind: 'questions',
     title: 'Configure release',
     questions: [
-        { id: 'notes', prompt: 'Notes', type: 'text', required: true },
+        { id: 'notes', prompt: 'Notes', type: 'text', required: true, initialValue: 'Existing notes' },
         {
             id: 'components',
             prompt: 'Components',
@@ -218,7 +218,13 @@ describe('native Agent current-session interactions', () => {
             {
                 title: 'Configure release',
                 questions: [
-                    { id: 'notes', question: 'Notes', required: true, selection: 'text' },
+                    {
+                        id: 'notes',
+                        question: 'Notes',
+                        required: true,
+                        selection: 'text',
+                        presentation: { initialValue: 'Existing notes' },
+                    },
                     {
                         id: 'components',
                         question: 'Components',

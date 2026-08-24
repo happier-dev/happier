@@ -223,6 +223,7 @@ const TextQuestionV1Schema = z.object({
   id: boundedIdentifier('Interaction question ids'),
   prompt: boundedPrompt('Interaction question prompts'),
   description: boundedPrompt('Interaction question descriptions').optional(),
+  initialValue: boundedPrompt('Interaction question initial values').optional(),
   type: z.literal('text'),
   required: z.boolean(),
 }).strict();
@@ -248,6 +249,7 @@ const AuthorTextQuestionV1Schema = z.object({
   id: boundedIdentifier('Interaction question ids'),
   prompt: boundedPrompt('Interaction question prompts'),
   description: boundedPrompt('Interaction question descriptions').optional(),
+  initialValue: boundedPrompt('Interaction question initial values').optional(),
   type: z.literal('text'),
   required: z.boolean().optional(),
 }).strict();
@@ -389,6 +391,7 @@ export function normalizeInteractionTransientRequestV1(
                 id: question.id,
                 prompt: question.prompt,
                 ...(question.description === undefined ? {} : { description: question.description }),
+                ...(question.initialValue === undefined ? {} : { initialValue: question.initialValue }),
                 type: 'text',
                 required: question.required ?? false,
               }
