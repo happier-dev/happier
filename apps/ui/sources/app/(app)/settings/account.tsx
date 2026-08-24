@@ -45,6 +45,12 @@ import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristi
 import { AccountEncryptionMigrateInvalidParamsReasonSchema } from '@happier-dev/protocol';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { Icon } from '@/components/ui/icons/Icon';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    acknowledgeNewSessionDraftEncryptionMigration,
+    listNewSessionDraftEncryptionMigrationCandidates,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { runAccountEncryptionModeMigration } from '@/sync/ops/account/runAccountEncryptionModeMigration';
 
 
 export default React.memo(() => {
@@ -62,6 +68,7 @@ export default React.memo(() => {
     const friendsEnabled = useFriendsEnabled();
     const applyProfile = storage((state) => state.applyProfile);
     const encryptionAccountOptOutEnabled = useFeatureEnabled('encryption.accountOptOut');
+    const sessionDraftSyncEnabled = useFeatureEnabled('sessions.drafts');
 
     const [accountEncryptionMode, setAccountEncryptionMode] = useState<'e2ee' | 'plain' | null>(null);
     const [accountEncryptionModeLoading, setAccountEncryptionModeLoading] = useState(false);
@@ -401,6 +408,12 @@ export default React.memo(() => {
                                                 id: a.id,
                                                 templateCiphertext: a.templateCiphertext,
                                             }));
+                                            const sessionDraftScope = sessionDraftSyncEnabled
+                                                ? getActiveServerAccountScope()
+                                                : null;
+                                            const sessionDrafts = sessionDraftScope
+                                                ? listNewSessionDraftEncryptionMigrationCandidates(sessionDraftScope)
+                                                : [];
 
                                             let generatedSecret: string | null = null;
                                             const legacyCredentialsForE2ee = nextMode === 'e2ee'
@@ -418,6 +431,7 @@ export default React.memo(() => {
                                                     settings: storage.getState().settings,
                                                     connectedServiceProfiles,
                                                     automations,
+                                                    sessionDrafts,
                                                     fetchConnectedServiceCredentialSealed: async ({ serviceId, profileId }) =>
                                                         await getConnectedServiceCredentialSealed(credentials, { serviceId, profileId }),
                                                     decryptAutomationTemplateRaw: async (payloadCiphertext: string) =>
@@ -429,6 +443,7 @@ export default React.memo(() => {
                                                     settings: storage.getState().settings,
                                                     connectedServiceProfiles,
                                                     automations,
+                                                    sessionDrafts,
                                                     fetchConnectedServiceCredentialPlain: async ({ serviceId, profileId }) =>
                                                         await getConnectedServiceCredentialPlain(credentials, { serviceId, profileId }),
                                                 });
@@ -460,11 +475,28 @@ export default React.memo(() => {
                                                 ? await buildContentKeyBinding(keyProof!.seed).catch(() => null)
                                                 : null;
 
-                                            const result = await migrateAccountEncryptionMode(auth.credentials, {
+                                            const migrationRequest = {
                                                 ...request,
                                                 ...(nextMode === 'e2ee'
                                                     ? { keyProof: { publicKey: keyProof!.publicKey, challenge: keyProof!.challenge, signature: keyProof!.signature, ...(contentBinding ? contentBinding : {}) } }
                                                     : {}),
+                                            };
+                                            const targetCredentials = nextMode === 'e2ee'
+                                                ? legacyCredentialsForE2ee!
+                                                : credentials;
+                                            const result = await runAccountEncryptionModeMigration({
+                                                request: migrationRequest,
+                                                migrate: async (nextRequest) =>
+                                                    await migrateAccountEncryptionMode(credentials, nextRequest),
+                                                activateTargetMode: () => {
+                                                    sync.reconfigureSessionDraftRepositoryForAccountMode(targetCredentials, nextMode);
+                                                },
+                                                acknowledgeSessionDrafts: async (records) => {
+                                                    if (!sessionDraftScope) {
+                                                        throw new Error('Session draft repository scope is unavailable');
+                                                    }
+                                                    await acknowledgeNewSessionDraftEncryptionMigration(sessionDraftScope, records);
+                                                },
                                             });
                                             setAccountEncryptionMode(result.mode);
 
