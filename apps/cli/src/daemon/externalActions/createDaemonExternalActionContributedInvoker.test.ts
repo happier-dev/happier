@@ -16,6 +16,7 @@ vi.mock('@/api/machine/fetchAccountMachineReplacements', () => ({
 import {
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
+  StrictJsonValueSchema,
 } from '@happier-dev/protocol';
 import {
   createActionExecutor,
@@ -54,6 +55,7 @@ import {
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import {
+  createDaemonExternalActionContributedDefinitionLister,
   createDaemonExternalActionContributedInvoker,
 } from './createDaemonExternalActionContributedInvoker';
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
@@ -63,8 +65,8 @@ const EXTERNAL_ACTION_ENCRYPTION_KEY = new Uint8Array(32).fill(7);
 
 function createExternalActionRuntime(
   scope: 'global' | 'session' = 'session',
+  pluginId = 'acme.external',
 ): ResolvedExecutablePluginRuntimeRegistry {
-  const pluginId = 'acme.external';
   const plugin = {
     pluginId,
     pluginRootPath: `/plugins/${pluginId}`,
@@ -205,9 +207,11 @@ function createExternalActionRuntime(
 
 function createExternalActionExecutor(
   invokeContributedAction: NonNullable<ActionExecutorDeps['invokeContributedAction']>,
+  listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'],
 ) {
   return createActionExecutor({
     invokeContributedAction,
+    ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
     isActionApprovalRequired: () => false,
   } as unknown as ActionExecutorDeps);
 }
@@ -269,6 +273,134 @@ function createExternalActionIngressExecutor(scope: 'global' | 'session' = 'sess
 }
 
 describe('createDaemonExternalActionContributedInvoker', () => {
+  it('feeds current committed plugin definitions to API Action discovery without retaining the runtime lease', async () => {
+    const runtime = createExternalActionRuntime('global');
+    const release = vi.fn(async () => {});
+    const lease: PluginRuntimeRegistryLease = {
+      registry: runtime,
+      source: 'active',
+      release,
+    };
+    const listContributedActionDefinitions = createDaemonExternalActionContributedDefinitionLister({
+      tryAcquireRuntimeRegistryLease: () => lease,
+    });
+    const definitions = listContributedActionDefinitions();
+    expect(definitions).toEqual([
+      expect.objectContaining({ id: 'acme.external/actions/inspect' }),
+    ]);
+    const [definition] = definitions;
+    expect(definition).toBeDefined();
+    expect(definition).not.toHaveProperty('scopes');
+    expect(definition).not.toHaveProperty('contributionSurfaces');
+    expect(definition).not.toHaveProperty('placementBindings');
+    expect(definition).not.toHaveProperty('availability');
+    expect(definition).not.toHaveProperty('hostAccess');
+    expect(definition).not.toHaveProperty('priority');
+    expect(definition).not.toHaveProperty('dangerLevel');
+    expect(StrictJsonValueSchema.safeParse(definition).success).toBe(true);
+    const executor = createExternalActionExecutor(
+      createDaemonExternalActionContributedInvoker({
+        acquireRuntimeRegistryLease: async () => lease,
+      }),
+      listContributedActionDefinitions,
+    );
+
+    const search = await executor.execute(
+      'action.spec.search',
+      { query: 'inspect', limit: 5 },
+      { surface: 'api' },
+    );
+    expect(search).toMatchObject({
+      ok: true,
+      result: {
+        actionSpecs: expect.arrayContaining([
+          expect.objectContaining({ id: 'acme.external/actions/inspect' }),
+        ]),
+      },
+    });
+    if (!search.ok) throw new Error('Expected contributed Action search to succeed');
+    expect(StrictJsonValueSchema.safeParse(search.result).success).toBe(true);
+
+    const get = await executor.execute(
+      'action.spec.get',
+      { id: 'acme.external/actions/inspect' },
+      { surface: 'api' },
+    );
+    expect(get).toMatchObject({
+      ok: true,
+      result: {
+        actionSpec: expect.objectContaining({ id: 'acme.external/actions/inspect' }),
+      },
+    });
+    if (!get.ok) throw new Error('Expected contributed Action lookup to succeed');
+    expect(StrictJsonValueSchema.safeParse(get.result).success).toBe(true);
+    expect(release).toHaveBeenCalled();
+  });
+
+  it('keeps equal local ids from separate plugins distinct in external Action discovery', async () => {
+    const alphaRuntime = createExternalActionRuntime('global', 'acme.alpha');
+    const betaRuntime = createExternalActionRuntime('global', 'acme.beta');
+    const runtime: ResolvedExecutablePluginRuntimeRegistry = {
+      ...alphaRuntime,
+      contributes: {
+        ...alphaRuntime.contributes,
+        actions: [...alphaRuntime.contributes.actions, ...betaRuntime.contributes.actions],
+      },
+    };
+    const lease: PluginRuntimeRegistryLease = {
+      registry: runtime,
+      source: 'active',
+      release: async () => {},
+    };
+    const listContributedActionDefinitions = createDaemonExternalActionContributedDefinitionLister({
+      tryAcquireRuntimeRegistryLease: () => lease,
+    });
+    expect(listContributedActionDefinitions()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'acme.alpha/actions/inspect' }),
+      expect.objectContaining({ id: 'acme.beta/actions/inspect' }),
+    ]));
+    const executor = createExternalActionExecutor(
+      createDaemonExternalActionContributedInvoker({
+        acquireRuntimeRegistryLease: async () => lease,
+      }),
+      listContributedActionDefinitions,
+    );
+
+    await expect(executor.execute(
+      'action.spec.search',
+      { query: 'inspect', limit: 5 },
+      { surface: 'api' },
+    )).resolves.toMatchObject({
+      ok: true,
+      result: {
+        actionSpecs: expect.arrayContaining([
+          expect.objectContaining({ id: 'acme.alpha/actions/inspect' }),
+          expect.objectContaining({ id: 'acme.beta/actions/inspect' }),
+        ]),
+      },
+    });
+    await expect(executor.execute(
+      'action.spec.get',
+      { id: 'acme.alpha/actions/inspect' },
+      { surface: 'api' },
+    )).resolves.toMatchObject({
+      ok: true,
+      result: {
+        actionSpec: expect.objectContaining({ id: 'acme.alpha/actions/inspect' }),
+      },
+    });
+    await expect(executor.execute(
+      'action.spec.get',
+      { id: 'acme.beta/actions/inspect' },
+      { surface: 'api' },
+    )).resolves.toMatchObject({
+      ok: true,
+      result: {
+        actionSpec: expect.objectContaining({ id: 'acme.beta/actions/inspect' }),
+      },
+    });
+  });
+
   it('uses the verified envelope Session target to invoke a real session-scoped external Action', async () => {
     const executor = createExternalActionIngressExecutor('session');
 

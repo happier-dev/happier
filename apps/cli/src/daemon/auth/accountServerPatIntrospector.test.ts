@@ -11,6 +11,7 @@ vi.mock("@/api/client/serverHttpBaseUrl", () => ({
 import { createAccountServerPatIntrospector } from "./accountServerPatIntrospector";
 
 const PAT = "hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_daemon_pat_only_in_request_body";
+const CREDENTIAL_ID = "2c67deea-5ae7-4706-9ad6-b5b992df1cba";
 
 describe("createAccountServerPatIntrospector", () => {
     beforeEach(() => {
@@ -23,7 +24,7 @@ describe("createAccountServerPatIntrospector", () => {
             data: {
                 accountId: "account-a",
                 principalId: "account-a",
-                credentialId: "credential-a",
+                credentialId: CREDENTIAL_ID,
                 expiresAt: "2030-08-22T12:01:00.000Z",
                 authority: "account_automation",
             },
@@ -34,7 +35,7 @@ describe("createAccountServerPatIntrospector", () => {
             ok: true,
             accountId: "account-a",
             principalId: "account-a",
-            credentialId: "credential-a",
+            credentialId: CREDENTIAL_ID,
             expiresAt: new Date("2030-08-22T12:01:00.000Z"),
             authority: "account_automation",
         });
@@ -54,19 +55,46 @@ describe("createAccountServerPatIntrospector", () => {
         expect(String(post.mock.calls[0]?.[0])).not.toContain(PAT);
     });
 
-    it("keeps the PAT failure opaque while treating unavailable or malformed server responses as auth_unavailable", async () => {
+    it("accepts invalid_token only from the strict authenticated-subject failure envelope", async () => {
         const introspect = createAccountServerPatIntrospector({ daemonConnectionToken: "daemon-connection-token" });
         post.mockResolvedValueOnce({ status: 401, data: { error: "invalid_token" } });
-        post.mockResolvedValueOnce({ status: 503, data: { error: "upstream_error" } });
-        post.mockResolvedValueOnce({ status: 200, data: { accountId: "missing-required-fields" } });
+        post.mockResolvedValueOnce({ status: 401, data: { error: "authentication_failed" } });
+        post.mockResolvedValueOnce({ status: 401, data: { error: "invalid_token", detail: "connection rejected" } });
 
         await expect(introspect(PAT)).resolves.toEqual({ ok: false, code: "invalid_token" });
         await expect(introspect(PAT)).resolves.toEqual({ ok: false, code: "auth_unavailable" });
         await expect(introspect(PAT)).resolves.toEqual({ ok: false, code: "auth_unavailable" });
     });
 
+    it("treats unavailable or malformed server responses as auth_unavailable", async () => {
+        const introspect = createAccountServerPatIntrospector({ daemonConnectionToken: "daemon-connection-token" });
+        post.mockResolvedValueOnce({ status: 503, data: { error: "upstream_error" } });
+        post.mockResolvedValueOnce({ status: 200, data: { accountId: "missing-required-fields" } });
+        post.mockResolvedValueOnce({
+            status: 200,
+            data: {
+                accountId: "account-a",
+                principalId: "different-account",
+                credentialId: CREDENTIAL_ID,
+                expiresAt: null,
+                authority: "account_automation",
+            },
+        });
+
+        await expect(introspect(PAT)).resolves.toEqual({ ok: false, code: "auth_unavailable" });
+        await expect(introspect(PAT)).resolves.toEqual({ ok: false, code: "auth_unavailable" });
+        await expect(introspect(PAT)).resolves.toEqual({ ok: false, code: "auth_unavailable" });
+    });
+
     it("degrades safely when a supported older Account server does not yet expose introspection", async () => {
         post.mockResolvedValue({ status: 404, data: { error: "not_found" } });
+        const introspect = createAccountServerPatIntrospector({ daemonConnectionToken: "daemon-connection-token" });
+
+        await expect(introspect(PAT)).resolves.toEqual({ ok: false, code: "auth_unavailable" });
+    });
+
+    it("maps a connection timeout to auth_unavailable", async () => {
+        post.mockRejectedValue(new Error("timeout"));
         const introspect = createAccountServerPatIntrospector({ daemonConnectionToken: "daemon-connection-token" });
 
         await expect(introspect(PAT)).resolves.toEqual({ ok: false, code: "auth_unavailable" });

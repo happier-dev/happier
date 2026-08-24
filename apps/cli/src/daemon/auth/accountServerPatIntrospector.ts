@@ -1,19 +1,14 @@
 import axios from "axios";
-import { z } from "zod";
+import {
+    ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+    AccountApiTokenIntrospectionSubjectFailureV1Schema,
+    AccountApiTokenIntrospectionSuccessV1Schema,
+    type AccountApiTokenIntrospectionRequestV1,
+} from "@happier-dev/protocol";
 
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
 
 import { type DaemonPatIntrospector } from "./daemonPatVerifier";
-
-const API_TOKEN_INTROSPECTION_PATH = "/v1/auth/api-tokens/introspect";
-
-const apiTokenIntrospectionResponseSchema = z.object({
-    accountId: z.string().min(1),
-    principalId: z.string().min(1),
-    credentialId: z.string().min(1),
-    expiresAt: z.string().datetime({ offset: true }).nullable(),
-    authority: z.literal("account_automation"),
-}).strict();
 
 type AccountServerPatIntrospectorOptions = Readonly<{
     /** Existing signed credential for the daemon's Account-server connection. */
@@ -34,14 +29,15 @@ export function createAccountServerPatIntrospector(
     }
 
     const serverBaseUrl = normalizeServerHttpBaseUrl(options.serverBaseUrl ?? resolveServerHttpBaseUrl());
-    const url = `${serverBaseUrl}${API_TOKEN_INTROSPECTION_PATH}`;
+    const url = `${serverBaseUrl}${ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1}`;
 
     return async (token, signal) => {
         try {
             signal?.throwIfAborted();
+            const requestBody = { token } satisfies AccountApiTokenIntrospectionRequestV1;
             const response = await axios.post<unknown>(
                 url,
-                { token },
+                requestBody,
                 {
                     headers: {
                         Authorization: `Bearer ${options.daemonConnectionToken}`,
@@ -55,13 +51,15 @@ export function createAccountServerPatIntrospector(
             signal?.throwIfAborted();
 
             if (response.status === 401) {
-                return { ok: false, code: "invalid_token" };
+                return AccountApiTokenIntrospectionSubjectFailureV1Schema.safeParse(response.data).success
+                    ? { ok: false, code: "invalid_token" }
+                    : { ok: false, code: "auth_unavailable" };
             }
             if (response.status < 200 || response.status >= 300) {
                 return { ok: false, code: "auth_unavailable" };
             }
 
-            const parsed = apiTokenIntrospectionResponseSchema.safeParse(response.data);
+            const parsed = AccountApiTokenIntrospectionSuccessV1Schema.safeParse(response.data);
             if (!parsed.success) {
                 return { ok: false, code: "auth_unavailable" };
             }

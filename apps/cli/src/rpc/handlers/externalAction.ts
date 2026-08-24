@@ -3,6 +3,7 @@ import {
   EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
   type ActionExecuteResult,
   type ExternalActionDaemonDispatchRequestV1,
+  type ExternalActionDaemonDispatchResultV1,
 } from '@happier-dev/protocol';
 import {
   isSocketRpcActionApiServerOriginAuthorizationContext,
@@ -38,22 +39,23 @@ function forbidden() {
   };
 }
 
-type ExternalActionDaemonRelayResponse = Readonly<{
-  v: 1;
-  actionId: string;
-  requestId?: string;
-  execution: ActionExecuteResult;
-}>;
+type ExternalActionDaemonRelayResponse = Extract<
+  ExternalActionDaemonDispatchResultV1,
+  Readonly<{ kind: 'response' }>
+>;
 
 function response(
   request: ExternalActionDaemonDispatchRequestV1,
   execution: ActionExecuteResult,
 ): ExternalActionDaemonRelayResponse {
   return {
-    v: 1,
-    actionId: request.actionId,
-    ...(request.envelope.requestId === undefined ? {} : { requestId: request.envelope.requestId }),
-    execution,
+    kind: 'response',
+    response: {
+      v: 1,
+      actionId: request.actionId,
+      ...(request.envelope.requestId === undefined ? {} : { requestId: request.envelope.requestId }),
+      execution,
+    },
   };
 }
 
@@ -107,12 +109,6 @@ export function registerExternalActionRpcHandler(
       executor: options.executor,
       ...(signal ? { signal } : {}),
     });
-    return result.kind === 'response'
-      ? result.response
-      : response(request, {
-        ok: false,
-        errorCode: result.errorCode,
-        error: result.errorCode,
-      });
+    return result;
   });
 }

@@ -73,10 +73,13 @@ describe('registerExternalActionRpcHandler', () => {
       authorization: ACTION_API_SERVER_ORIGIN,
       signal,
     })).resolves.toEqual({
-      v: 1,
-      actionId: 'session.spawn_new',
-      requestId: 'request-1',
-      execution: { ok: true, result: { sessionId: 'session-1' } },
+      kind: 'response',
+      response: {
+        v: 1,
+        actionId: 'session.spawn_new',
+        requestId: 'request-1',
+        execution: { ok: true, result: { sessionId: 'session-1' } },
+      },
     });
     expect(resolveTarget).toHaveBeenCalledWith(expect.objectContaining({
       actionId: 'session.spawn_new',
@@ -131,9 +134,12 @@ describe('registerExternalActionRpcHandler', () => {
       authorization: ACTION_API_SERVER_ORIGIN,
       signal,
     })).resolves.toEqual({
-      v: 1,
-      actionId: 'action.invoke',
-      execution: { ok: true, result: { invoked: true } },
+      kind: 'response',
+      response: {
+        v: 1,
+        actionId: 'action.invoke',
+        execution: { ok: true, result: { invoked: true } },
+      },
     });
 
     expect(resolveTarget).toHaveBeenCalledWith({
@@ -227,13 +233,8 @@ describe('registerExternalActionRpcHandler', () => {
       authorization: ACTION_API_SERVER_ORIGIN,
       signal: new AbortController().signal,
     })).resolves.toEqual({
-      v: 1,
-      actionId: 'not-a-public-action',
-      execution: {
-        ok: false,
-        errorCode: 'invalid_action',
-        error: 'invalid_action',
-      },
+      kind: 'invalid_request',
+      errorCode: 'invalid_action',
     });
     expect(execute).not.toHaveBeenCalled();
   });

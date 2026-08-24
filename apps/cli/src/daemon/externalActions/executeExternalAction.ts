@@ -1,9 +1,11 @@
 import {
+  enforceExternalActionResponseEnvelopeLimitV1,
+  type ExternalActionDaemonDispatchResultV1,
   ExternalActionRequestEnvelopeV1Schema,
   PublicActionIdSchema,
+  projectExternalActionExecutionResultV1,
   type ActionExecuteResult,
   type ActionExecutorContext,
-  type ExternalActionResponseEnvelopeV1,
   type ExternalActionTargetV1,
   type PublicActionId,
 } from '@happier-dev/protocol/actions';
@@ -36,9 +38,7 @@ export type ResolveExternalActionTarget = (input: Readonly<{
   signal?: AbortSignal;
 }>) => Promise<ExternalActionTargetV1 | null>;
 
-export type ExecuteExternalActionResult =
-  | Readonly<{ kind: 'invalid_request'; errorCode: 'invalid_action' | 'invalid_envelope' }>
-  | Readonly<{ kind: 'response'; response: ExternalActionResponseEnvelopeV1 }>;
+export type ExecuteExternalActionResult = ExternalActionDaemonDispatchResultV1;
 
 /**
  * Transport-neutral external Action admission. Authentication and target
@@ -123,16 +123,21 @@ export async function executeExternalAction(input: Readonly<{
     ...(envelope.data.requestId ? { actionRequestId: envelope.data.requestId } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
   };
-  const execution = await input.executor.execute(actionId.data, envelope.data.input, context);
+  const internalExecution = await input.executor.execute(actionId.data, envelope.data.input, context);
+  const execution = projectExternalActionExecutionResultV1(internalExecution) ?? {
+    ok: false as const,
+    errorCode: 'invalid_action_output',
+    error: 'invalid_action_output',
+  };
 
   return {
     kind: 'response',
-    response: {
+    response: enforceExternalActionResponseEnvelopeLimitV1({
       v: 1,
       actionId: actionId.data,
       ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
       execution,
-    },
+    }),
   };
 }
 

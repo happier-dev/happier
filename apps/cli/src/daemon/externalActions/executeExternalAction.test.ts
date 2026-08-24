@@ -1,16 +1,131 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  createActionExecutor,
-  type ActionExecutorDeps,
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  measureExternalActionResponseEnvelopeUtf8BytesV1,
 } from '@happier-dev/protocol/actions';
 
 import {
   executeExternalAction,
+  type ExternalActionExecutor,
   type ResolveExternalActionTarget,
 } from './executeExternalAction';
 
+const principal = {
+  accountId: 'account-1',
+  principalId: 'principal-1',
+  credentialId: 'credential-1',
+  authority: 'account_automation',
+} as const;
+
+function createExactLimitMultibyteResult(): string {
+  const emptyResponse = {
+    v: 1,
+    actionId: 'session.spawn_new',
+    requestId: 'request-limit',
+    execution: { ok: true, result: '' },
+  } as const;
+  const fixedBytes = measureExternalActionResponseEnvelopeUtf8BytesV1(emptyResponse);
+  const multibyteMarker = 'é';
+  const markerBytes = new TextEncoder().encode(multibyteMarker).byteLength;
+  return 'a'.repeat(
+    EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - fixedBytes - markerBytes,
+  ) + multibyteMarker;
+}
+
 describe('executeExternalAction', () => {
+  it.each([
+    ['BigInt', () => ({ value: BigInt(1) })],
+    ['cyclic data', () => {
+      const value: Record<string, unknown> = {};
+      value.self = value;
+      return value;
+    }],
+  ])('projects reachable non-JSON failure details from %s to invalid_action_output', async (_case, details) => {
+    const execute = vi.fn<ExternalActionExecutor['execute']>(async () => ({
+      ok: false,
+      errorCode: 'action_failed',
+      error: 'action_failed',
+      details: details(),
+    }));
+
+    await expect(executeExternalAction({
+      actionId: 'session.spawn_new',
+      envelope: { v: 1, input: {} },
+      principal,
+      currentMachineId: 'machine-1',
+      resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-1' }),
+      executor: { execute },
+    })).resolves.toEqual({
+      kind: 'response',
+      response: {
+        v: 1,
+        actionId: 'session.spawn_new',
+        execution: {
+          ok: false,
+          errorCode: 'invalid_action_output',
+          error: 'invalid_action_output',
+        },
+      },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts an exact-limit multibyte response, replaces one-byte-over after execution, and remains usable', async () => {
+    const exactLimitResult = createExactLimitMultibyteResult();
+    const execute = vi.fn<ExternalActionExecutor['execute']>()
+      .mockResolvedValueOnce({ ok: true, result: exactLimitResult })
+      .mockResolvedValueOnce({ ok: true, result: `${exactLimitResult}a` })
+      .mockResolvedValueOnce({ ok: true, result: { carrier: 'usable' } });
+    const request = {
+      actionId: 'session.spawn_new',
+      envelope: { v: 1, requestId: 'request-limit', input: {} },
+      principal,
+      currentMachineId: 'machine-1',
+      resolveTarget: vi.fn<ResolveExternalActionTarget>(async () => ({
+        kind: 'machine',
+        machineId: 'machine-1',
+      })),
+      executor: { execute },
+    } as const;
+
+    const exact = await executeExternalAction(request);
+    expect(exact.kind).toBe('response');
+    if (exact.kind !== 'response') throw new Error('expected admitted response');
+    expect(measureExternalActionResponseEnvelopeUtf8BytesV1(exact.response))
+      .toBe(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    expect(exact.response.execution).toEqual({ ok: true, result: exactLimitResult });
+
+    await expect(executeExternalAction(request)).resolves.toEqual({
+      kind: 'response',
+      response: {
+        v: 1,
+        actionId: 'session.spawn_new',
+        requestId: 'request-limit',
+        execution: {
+          ok: false,
+          errorCode: 'result_too_large',
+          error: 'Action execution completed, but its response exceeded the external Action response limit and could not be represented.',
+          details: {
+            executionCompleted: true,
+            maxSerializedBytes: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+          },
+        },
+      },
+    });
+
+    await expect(executeExternalAction(request)).resolves.toEqual({
+      kind: 'response',
+      response: {
+        v: 1,
+        actionId: 'session.spawn_new',
+        requestId: 'request-limit',
+        execution: { ok: true, result: { carrier: 'usable' } },
+      },
+    });
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
   it('stamps verified PAT provenance and the local machine target before one executor call', async () => {
     const signal = new AbortController().signal;
     const execute = vi.fn(async () => ({
@@ -73,8 +188,8 @@ describe('executeExternalAction', () => {
   });
 
   it('relays the canonical public failure projection for a contributed Action', async () => {
-    const executor = createActionExecutor({
-      invokeContributedAction: async () => ({
+    const executor = {
+      execute: async () => ({
         ok: false as const,
         errorCode: 'target_declined',
         error: 'Target rejected this request',
@@ -83,8 +198,7 @@ describe('executeExternalAction', () => {
         data: { internalTargetState: 'declined' },
         actionHandlerInvocation: 'notStarted' as const,
       }),
-      isActionApprovalRequired: () => false,
-    } as unknown as ActionExecutorDeps);
+    } as unknown as ExternalActionExecutor;
     const resolveTarget = vi.fn<ResolveExternalActionTarget>(async ({ target }) => target ?? null);
 
     const response = await executeExternalAction({

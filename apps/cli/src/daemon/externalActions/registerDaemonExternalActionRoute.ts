@@ -5,10 +5,11 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
   projectExternalActionHttpErrorV1,
+  serializeExternalActionResponseEnvelopeV1,
   type ExternalActionHttpErrorCodeV1,
 } from '@happier-dev/protocol/actions';
 
-import type { DaemonPatVerifier } from '../auth/daemonPatVerifier';
+import type { DaemonPatVerifier, VerifiedDaemonPat } from '../auth/daemonPatVerifier';
 import {
   executeExternalAction,
   type ExternalActionExecutor,
@@ -28,12 +29,26 @@ function readBearerAuthorization(value: string | string[] | undefined): string |
 function sendExternalActionJson(reply: FastifyReply, statusCode: number, payload: unknown): FastifyReply {
   const body = JSON.stringify(payload);
   const bytes = Buffer.byteLength(body, 'utf8');
+  return sendExternalActionSerializedJson(reply, statusCode, body, bytes);
+}
+
+function sendExternalActionSerializedJson(
+  reply: FastifyReply,
+  statusCode: number,
+  body: string,
+  bytes: number,
+): FastifyReply {
   return reply
     .code(statusCode)
     .header('cache-control', 'no-store')
     .header('content-type', 'application/json; charset=utf-8')
     .header('content-length', String(bytes))
     .send(body);
+}
+
+function sendExternalActionResponse(reply: FastifyReply, payload: unknown): FastifyReply {
+  const serialized = serializeExternalActionResponseEnvelopeV1(payload);
+  return sendExternalActionSerializedJson(reply, 200, serialized.body, serialized.byteLength);
 }
 
 function sendExternalActionHttpError(
@@ -49,6 +64,17 @@ function isFastifyBodyLimitError(error: unknown): boolean {
     && error !== null
     && 'code' in error
     && error.code === 'FST_ERR_CTP_BODY_TOO_LARGE';
+}
+
+function isFastifyExternalActionBodyParseError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && (
+      error.code === 'FST_ERR_CTP_INVALID_JSON_BODY'
+      || error.code === 'FST_ERR_CTP_EMPTY_JSON_BODY'
+      || error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE'
+    );
 }
 
 function createRequestLifetime(
@@ -76,6 +102,31 @@ function createRequestLifetime(
   };
 }
 
+const externalActionRequestAdmission = Symbol('externalActionRequestAdmission');
+
+type ExternalActionRequestAdmission = Readonly<{
+  principal: VerifiedDaemonPat;
+  lifetime: ReturnType<typeof createRequestLifetime>;
+}>;
+
+type ExternalActionAdmittedRequest = FastifyRequest & {
+  [externalActionRequestAdmission]?: ExternalActionRequestAdmission;
+};
+
+function readExternalActionRequestAdmission(
+  request: FastifyRequest,
+): ExternalActionRequestAdmission | undefined {
+  return (request as ExternalActionAdmittedRequest)[externalActionRequestAdmission];
+}
+
+function disposeExternalActionRequestAdmission(request: FastifyRequest): void {
+  const admitted = request as ExternalActionAdmittedRequest;
+  const admission = admitted[externalActionRequestAdmission];
+  if (!admission) return;
+  delete admitted[externalActionRequestAdmission];
+  admission.lifetime.dispose();
+}
+
 /**
  * Registers the daemon's public Action ingress. It is deliberately disjoint
  * from private control-token routes: only a verified Account PAT can enter.
@@ -100,53 +151,74 @@ export function registerDaemonExternalActionRoute(
   // The daemon control listener does not register a global CORS hook. This
   // explicit shadow keeps public Action preflight fail-closed without adding a
   // route-local config field that this Fastify context does not support.
-  app.options('/v1/actions/:actionId', async (_request, reply) => reply.code(404).send());
+  app.options('/v1/actions/:actionId', async (_request, reply) => reply.header('cache-control', 'no-store').code(404).send());
 
   app.post<{
     Params: ExternalActionRouteParams;
     Body: unknown;
   }>('/v1/actions/:actionId', {
     bodyLimit: EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
-    errorHandler: (error, _request, reply) => {
+    errorHandler: (error, request, reply) => {
+      disposeExternalActionRequestAdmission(request);
       if (isFastifyBodyLimitError(error)) {
         sendExternalActionHttpError(reply, 'request_too_large');
         return;
       }
+      if (isFastifyExternalActionBodyParseError(error)) {
+        sendExternalActionHttpError(reply, 'invalid_envelope');
+        return;
+      }
       throw error;
     },
-  }, async (request, reply) => {
-    const lifetime = createRequestLifetime(request, reply);
-    try {
+    onRequest: async (request, reply) => {
+      const lifetime = createRequestLifetime(request, reply);
       const token = readBearerAuthorization(request.headers.authorization);
       if (!token) {
+        lifetime.dispose();
         return sendExternalActionJson(reply, 401, { error: 'invalid_token' });
       }
 
-      const principal = await input.verifyPat(token, lifetime.signal);
-      if (!principal.ok) {
-        return sendExternalActionJson(
-          reply,
-          principal.code === 'invalid_token' ? 401 : 503,
-          { error: principal.code },
-        );
+      try {
+        const principal = await input.verifyPat(token, lifetime.signal);
+        if (!principal.ok) {
+          lifetime.dispose();
+          return sendExternalActionJson(
+            reply,
+            principal.code === 'invalid_token' ? 401 : 503,
+            { error: principal.code },
+          );
+        }
+        (request as ExternalActionAdmittedRequest)[externalActionRequestAdmission] = {
+          principal,
+          lifetime,
+        };
+      } catch (error) {
+        lifetime.dispose();
+        throw error;
       }
-
+    },
+  }, async (request, reply) => {
+    const admission = readExternalActionRequestAdmission(request);
+    if (!admission) {
+      return sendExternalActionJson(reply, 401, { error: 'invalid_token' });
+    }
+    try {
       const result = await executeExternalAction({
         actionId: request.params.actionId,
         envelope: request.body,
-        principal,
+        principal: admission.principal,
         currentMachineId: input.currentMachineId,
         currentServerId: input.currentServerId,
         resolveTarget: input.resolveTarget,
         executor: input.executor,
-        signal: lifetime.signal,
+        signal: admission.lifetime.signal,
       });
       if (result.kind === 'invalid_request') {
         return sendExternalActionHttpError(reply, result.errorCode);
       }
-      return sendExternalActionJson(reply, 200, result.response);
+      return sendExternalActionResponse(reply, result.response);
     } finally {
-      lifetime.dispose();
+      disposeExternalActionRequestAdmission(request);
     }
   });
 }
