@@ -15,7 +15,8 @@ export type AccountScopedBlobKind =
   | 'session_organization_display'
   | 'session_first_intent'
   | 'session_respawn_environment'
-  | 'action_operation_snapshot';
+  | 'action_operation_snapshot'
+  | 'account_session_draft_private_payload';
 
 export type AccountScopedCryptoMaterial =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>
@@ -29,6 +30,14 @@ export type AccountScopedOpenResult =
 
 const ACCOUNT_SCOPED_MAGIC_V1 = 0xa1;
 
+export function accountScopedCiphertextBase64LengthForPlaintextBytes(plaintextBytes: number): number {
+  if (!Number.isSafeInteger(plaintextBytes) || plaintextBytes < 0) {
+    throw new Error(`Invalid account-scoped plaintext byte length: ${plaintextBytes}`);
+  }
+  const ciphertextBytes = 2 + tweetnacl.secretbox.nonceLength + tweetnacl.secretbox.overheadLength + plaintextBytes;
+  return 4 * Math.ceil(ciphertextBytes / 3);
+}
+
 const ACCOUNT_SCOPED_KIND_BYTE: Record<AccountScopedBlobKind, number> = {
   account_settings: 1,
   automation_template_payload: 2,
@@ -39,6 +48,7 @@ const ACCOUNT_SCOPED_KIND_BYTE: Record<AccountScopedBlobKind, number> = {
   session_organization_display: 7,
   session_first_intent: 8,
   action_operation_snapshot: 9,
+  account_session_draft_private_payload: 10,
 };
 
 const LEGACY_READ_ONLY_ACCOUNT_SCOPED_BLOB_KINDS = new Set<AccountScopedBlobKind>([

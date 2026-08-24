@@ -6,6 +6,7 @@ import { stringifySerializedJsonValue } from './serializedJsonValue.js';
 import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '../testing/accountScopedCipherFixtures.js';
 
 import {
+  accountScopedCiphertextBase64LengthForPlaintextBytes,
   openAccountScopedBlobCiphertext,
   sealAccountScopedBlobCiphertext,
   type AccountScopedBlobKind,
@@ -26,6 +27,19 @@ function deterministicRandomBytesFactory(): (length: number) => Uint8Array {
 }
 
 describe('accountScopedCipher', () => {
+  it('owns the exact padded-base64 boundary for account-scoped ciphertext', () => {
+    const material: AccountScopedCryptoMaterial = { type: 'dataKey', machineKey: new Uint8Array(32).fill(3) };
+    const payload = 'x'.repeat(137);
+    const serializedBytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'account_session_draft_private_payload',
+      material,
+      payload,
+      randomBytes: deterministicRandomBytesFactory(),
+    });
+    expect(ciphertext.length).toBe(accountScopedCiphertextBase64LengthForPlaintextBytes(serializedBytes));
+  });
+
   it('seals/opens without Buffer or atob/btoa globals', () => {
     const prevBuffer = (globalThis as any).Buffer;
     const prevAtob = (globalThis as any).atob;
@@ -297,5 +311,28 @@ describe('accountScopedCipher', () => {
     });
 
     expect(openAccountScopedBlobCiphertext({ kind: 'automation_template_payload', material, ciphertext })).toBeNull();
+  });
+
+  it('keeps the new-session draft payload in an immutable account-scoped cipher domain', () => {
+    const material: AccountScopedCryptoMaterial = { type: 'dataKey', machineKey: new Uint8Array(32).fill(11) };
+    const payload = { v: 1, address: { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000001' } };
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'account_session_draft_private_payload',
+      material,
+      payload,
+      randomBytes: deterministicRandomBytesFactory(),
+    });
+
+    expect(decodeBase64(ciphertext, 'base64')[1]).toBe(10);
+    expect(openAccountScopedBlobCiphertext({
+      kind: 'account_session_draft_private_payload',
+      material,
+      ciphertext,
+    })?.value).toEqual(payload);
+    expect(openAccountScopedBlobCiphertext({
+      kind: 'account_settings',
+      material,
+      ciphertext,
+    })).toBeNull();
   });
 });

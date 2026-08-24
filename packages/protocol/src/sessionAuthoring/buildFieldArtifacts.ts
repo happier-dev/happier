@@ -10,11 +10,24 @@ type SessionAuthoringFieldDefaults<TDefinitions extends SessionAuthoringFieldDef
   [TKey in keyof TDefinitions]: ZodOutput<TDefinitions[TKey]['schema']>;
 }>;
 
+type SyncedSessionAuthoringFieldKey<TDefinitions extends SessionAuthoringFieldDefinitionMap> = {
+  [TKey in keyof TDefinitions]: TDefinitions[TKey]['draftStorage'] extends 'sync' ? TKey : never;
+}[keyof TDefinitions];
+
+type SyncedSessionAuthoringFieldShape<TDefinitions extends SessionAuthoringFieldDefinitionMap> = {
+  [TKey in SyncedSessionAuthoringFieldKey<TDefinitions>]: TDefinitions[TKey] extends { draftSchema: infer TDraftSchema extends ZodTypeAny }
+    ? TDraftSchema
+    : TDefinitions[TKey]['schema'];
+};
+
 export type SessionAuthoringFieldArtifacts<TDefinitions extends SessionAuthoringFieldDefinitionMap> = Readonly<{
   definitions: TDefinitions;
   shape: SessionAuthoringFieldShape<TDefinitions>;
   valueSchema: z.ZodObject<SessionAuthoringFieldShape<TDefinitions>>;
   defaults: SessionAuthoringFieldDefaults<TDefinitions>;
+  syncedFieldIds: ReadonlyArray<SyncedSessionAuthoringFieldKey<TDefinitions>>;
+  syncedShape: SyncedSessionAuthoringFieldShape<TDefinitions>;
+  syncedValueSchema: z.ZodObject<SyncedSessionAuthoringFieldShape<TDefinitions>>;
 }>;
 
 function parseFieldDefault<TDefinition extends SessionAuthoringFieldDefinitionMap[string]>(
@@ -37,10 +50,17 @@ export function buildSessionAuthoringFieldArtifacts<TDefinitions extends Session
 ): SessionAuthoringFieldArtifacts<TDefinitions> {
   const shape = {} as SessionAuthoringFieldShape<TDefinitions>;
   const defaults = {} as SessionAuthoringFieldDefaults<TDefinitions>;
+  const syncedFieldIds: Array<SyncedSessionAuthoringFieldKey<TDefinitions>> = [];
+  const syncedShape = {} as SyncedSessionAuthoringFieldShape<TDefinitions>;
 
   for (const key of Object.keys(definitions) as Array<keyof TDefinitions>) {
     const definition = definitions[key];
     shape[key] = definition.schema;
+    if (definition.draftStorage === 'sync') {
+      const syncedKey = key as SyncedSessionAuthoringFieldKey<TDefinitions>;
+      syncedFieldIds.push(syncedKey);
+      syncedShape[syncedKey] = (definition.draftSchema ?? definition.schema) as SyncedSessionAuthoringFieldShape<TDefinitions>[typeof syncedKey];
+    }
     const parsedDefault = parseFieldDefault(String(key), definition);
     if (parsedDefault !== undefined) {
       defaults[key] = parsedDefault;
@@ -52,5 +72,8 @@ export function buildSessionAuthoringFieldArtifacts<TDefinitions extends Session
     shape,
     valueSchema: z.object(shape).strict() as z.ZodObject<SessionAuthoringFieldShape<TDefinitions>>,
     defaults,
+    syncedFieldIds,
+    syncedShape,
+    syncedValueSchema: z.object(syncedShape).strict() as z.ZodObject<SyncedSessionAuthoringFieldShape<TDefinitions>>,
   };
 }

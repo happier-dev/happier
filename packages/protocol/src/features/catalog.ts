@@ -165,6 +165,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['sessions'],
     representation: 'server',
   },
+  'sessions.drafts': {
+    description: 'Cross-device composer and new-session draft synchronization.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['sessions'],
+    representation: 'server',
+  },
   machines: {
     description: 'Machine control-plane transport capabilities.',
     defaultFailMode: 'fail_closed',

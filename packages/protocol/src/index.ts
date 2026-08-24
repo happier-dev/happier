@@ -368,23 +368,29 @@ export type {
   SessionAuthoringFieldArtifacts,
   SessionAuthoringFieldDefinition,
   SessionAuthoringFieldDefinitionMap,
+  SessionAuthoringDraftStorage,
   SessionAuthoringFieldEditability,
   SessionAuthoringFieldId,
   SessionAuthoringFieldStorageClass,
   SessionAuthoringFieldSurface,
   SessionAuthoringTerminalV1,
   SessionAuthoringValueV1,
+  SyncedSessionAuthoringFieldIdV1,
+  SyncedSessionAuthoringValueV1,
 } from './sessionAuthoring/index.js';
 export {
   SESSION_AUTHORING_CONTEXT_KINDS,
   SESSION_AUTHORING_FIELD_CATALOG,
   SESSION_AUTHORING_FIELD_DESCRIPTORS,
   SESSION_AUTHORING_FIELD_IDS,
+  SYNCED_SESSION_AUTHORING_FIELD_IDS_V1,
   SessionAuthoringAutomationV1Schema,
   SessionAuthoringCheckoutCreationDraftV1Schema,
   SessionAuthoringCodexBackendModeSchema,
   SessionAuthoringTerminalV1Schema,
   SessionAuthoringValueV1Schema,
+  SyncedSessionAuthoringFieldIdV1Schema,
+  SyncedSessionAuthoringValueV1Schema,
   buildSessionAuthoringFieldArtifacts,
   defineSessionAuthoringFields,
 } from './sessionAuthoring/index.js';
@@ -1029,6 +1035,7 @@ export {
   StoredJsonContentEnvelopeSchema,
   type StoredJsonContentEnvelope,
 } from './storage/storedJsonContentEnvelope.js';
+export * from './drafts/index.js';
 
 export {
   SESSION_ORGANIZATION_FOLDER_DELETE_ASSIGNMENT_BEHAVIORS,
@@ -3245,6 +3252,8 @@ export {
   AccountEncryptionMigrateKeyProofSchema,
   AccountEncryptionMigrateConnectedServicesDirectiveSchema,
   AccountEncryptionMigrateAutomationsDirectiveSchema,
+  AccountEncryptionMigrateSessionDraftItemSchema,
+  AccountEncryptionMigrateSessionDraftsDirectiveSchema,
   AccountEncryptionMigrateRequestSchema,
   AccountEncryptionMigrateSuccessResponseSchema,
   AccountEncryptionMigrateInvalidParamsReasonSchema,
@@ -3258,6 +3267,8 @@ export {
   type AccountEncryptionMigrateKeyProof,
   type AccountEncryptionMigrateConnectedServicesDirective,
   type AccountEncryptionMigrateAutomationsDirective,
+  type AccountEncryptionMigrateSessionDraftItem,
+  type AccountEncryptionMigrateSessionDraftsDirective,
   type AccountEncryptionMigrateRequest,
   type AccountEncryptionMigrateSuccessResponse,
   type AccountEncryptionMigrateInvalidParamsReason,

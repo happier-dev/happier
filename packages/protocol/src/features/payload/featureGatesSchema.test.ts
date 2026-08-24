@@ -97,6 +97,16 @@ describe('FeatureGatesSchema', () => {
     expect(readServerEnabledBit(parsed, 'sessions.usageLimitRecovery')).toBe(false);
     expect(readServerEnabledBit(parsed, 'connectedServices.accountGroups')).toBe(false);
     expect(readServerEnabledBit(parsed, 'connectedServices.accountFallback')).toBe(false);
+    expect(readServerEnabledBit(parsed, 'sessions.drafts')).toBe(false);
+  });
+
+  it('preserves synchronized draft support under sessions', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: { sessions: { enabled: true, drafts: { enabled: true } } },
+      capabilities: {},
+    });
+
+    expect(readServerEnabledBit(parsed, 'sessions.drafts')).toBe(true);
   });
 
   it('preserves pending delivery-state support separately from the basic pending queue gate', () => {
