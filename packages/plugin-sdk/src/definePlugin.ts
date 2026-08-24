@@ -47,7 +47,10 @@ import type {
     McpServerContribution,
 } from './mcp/projections.js';
 import type { PromptAssetAdapter, PromptAssetContribution } from './resources.js';
-import type { ConnectedAccountRuntime } from './connectedAccounts.js';
+import type {
+    ConnectedAccountRuntime,
+    PluginConnectedAccountDescriptorContributionV2,
+} from './connectedAccounts.js';
 import type {
     PluginAccountCollectionDeclaration,
     PluginAccountCollectionDefinition,
@@ -438,7 +441,9 @@ export type PluginScmBackendDefinition = RuntimeContributionDefinition<
 >;
 export type PluginConnectedAccountDefinition = RuntimeContributionDefinition<
     'connectedAccountDescriptors',
-    ConnectedAccountRuntime
+    ConnectedAccountRuntime,
+    'runtime',
+    DistributiveOmit<PluginConnectedAccountDescriptorContributionV2, 'id'>
 >;
 export type PluginRequestInterceptorDefinition = RuntimeContributionDefinition<
     'requestInterceptors',
@@ -997,10 +1002,7 @@ export type DefinePluginInput<
             runtime: BackendRuntime;
         }>>>;
         connectedAccountDescriptors?: Readonly<Record<PluginContributionLocalId, Readonly<{
-            declaration: Omit<
-                NonNullable<NonNullable<PluginManifest['contributes']>['connectedAccountDescriptors']>[number],
-                'id'
-            >;
+            declaration: Omit<PluginConnectedAccountDescriptorContributionV2, 'id'>;
             runtime: ConnectedAccountRuntime;
         }>>>;
         composer?: PluginComposerDefinition;

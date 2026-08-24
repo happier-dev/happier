@@ -10,6 +10,13 @@ import type {
 import type {
     QualifiedConnectedAccountRef as ProtocolQualifiedConnectedAccountRef,
 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type {
+    PluginConnectedAccountAuthenticationModeV2 as ProtocolPluginConnectedAccountAuthenticationModeV2,
+    PluginConnectedAccountAuthenticationV2 as ProtocolPluginConnectedAccountAuthenticationV2,
+    PluginConnectedAccountConfigurationFieldV2 as ProtocolPluginConnectedAccountConfigurationFieldV2,
+    PluginConnectedAccountConfigurationV2 as ProtocolPluginConnectedAccountConfigurationV2,
+    PluginConnectedAccountDescriptorContributionV2 as ProtocolPluginConnectedAccountDescriptorContributionV2,
+} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import * as canonicalConnectedServiceBindings from '@happier-dev/protocol/connect/connected-service-bindings';
 import * as canonicalConnectedServiceSchemas from '@happier-dev/protocol/connect/connected-service-schemas';
 import * as canonicalWorkState from '@happier-dev/protocol/sessions/work-state';
@@ -68,6 +75,11 @@ import type {
     ConnectedServiceQuotaRecoveryCreditsV1 as SdkConnectedServiceQuotaRecoveryCreditsV1,
     ConnectedServiceQuotaSnapshotV1 as SdkConnectedServiceQuotaSnapshotV1,
     ConnectedServiceUsageSourceV1 as SdkConnectedServiceUsageSourceV1,
+    PluginConnectedAccountAuthenticationModeV2 as SdkPluginConnectedAccountAuthenticationModeV2,
+    PluginConnectedAccountAuthenticationV2 as SdkPluginConnectedAccountAuthenticationV2,
+    PluginConnectedAccountConfigurationFieldV2 as SdkPluginConnectedAccountConfigurationFieldV2,
+    PluginConnectedAccountConfigurationV2 as SdkPluginConnectedAccountConfigurationV2,
+    PluginConnectedAccountDescriptorContributionV2 as SdkPluginConnectedAccountDescriptorContributionV2,
 } from './connectedAccounts.js';
 
 function namedTypeImportBindings(
@@ -423,7 +435,7 @@ describe('Connected Accounts final package-local projection', () => {
             .toBe(connectedAccounts.OPENAI_CODEX_OAUTH_PROFILE);
     });
 
-    it('directly projects canonical materialization, qualified-account, and quota identities', () => {
+    it('directly projects canonical materialization, qualified-account, quota, and descriptor identities', () => {
         const sourcePath = fileURLToPath(new URL('./connectedAccounts.ts', import.meta.url));
         const sourceText = readFileSync(sourcePath, 'utf8');
         const source = ts.createSourceFile(
@@ -462,6 +474,17 @@ describe('Connected Accounts final package-local projection', () => {
             './protocol/protocolFacade.js',
         )).toEqual([]);
         expect(namedTypeImportBindings(source, '@happier-dev/protocol')).toEqual([]);
+        expect(namedExportBindings(
+            source,
+            '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2',
+            true,
+        )).toEqual([
+            'PluginConnectedAccountAuthenticationModeV2',
+            'PluginConnectedAccountAuthenticationV2',
+            'PluginConnectedAccountConfigurationFieldV2',
+            'PluginConnectedAccountConfigurationV2',
+            'PluginConnectedAccountDescriptorContributionV2',
+        ]);
         expect(namedExportBindings(
             source,
             '@happier-dev/protocol/connect/connected-account-purposes',
@@ -545,6 +568,11 @@ describe('Connected Accounts final package-local projection', () => {
             'ConnectedServiceUsageSourceV1',
             'ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1',
             'ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1',
+            'PluginConnectedAccountAuthenticationModeV2',
+            'PluginConnectedAccountAuthenticationV2',
+            'PluginConnectedAccountConfigurationFieldV2',
+            'PluginConnectedAccountConfigurationV2',
+            'PluginConnectedAccountDescriptorContributionV2',
         ]));
         expect(exportedValueDeclarations(source)).not.toEqual(expect.arrayContaining([
             'ConnectedServiceQuotaRecoveryCreditKindV1Schema',
@@ -566,6 +594,9 @@ describe('Connected Accounts final package-local projection', () => {
             /export\s+type\s*\{[\s\S]*?QualifiedConnectedAccountRef[\s\S]*?\}\s*from\s*['"]@happier-dev\/protocol\/connect\/qualified-connected-account-persistence['"];/u,
         );
         expect(emitted.outputText).toMatch(
+            /export\s+type\s*\{[\s\S]*?PluginConnectedAccountAuthenticationModeV2[\s\S]*?PluginConnectedAccountAuthenticationV2[\s\S]*?PluginConnectedAccountConfigurationFieldV2[\s\S]*?PluginConnectedAccountConfigurationV2[\s\S]*?PluginConnectedAccountDescriptorContributionV2[\s\S]*?\}\s*from\s*['"]@happier-dev\/protocol\/connect\/plugin-connected-account-authentication-v2['"];/u,
+        );
+        expect(emitted.outputText).toMatch(
             /export\s+type\s*\{[\s\S]*?ConnectedServiceQuotaRecoveryCreditKindV1[\s\S]*?ConnectedServiceQuotaMeterV1[\s\S]*?ConnectedServiceUsageSourceV1[\s\S]*?\}\s*from\s*['"]@happier-dev\/protocol\/connect\/connected-service-schemas['"];/u,
         );
         expect(emitted.outputText).toMatch(
@@ -577,6 +608,48 @@ describe('Connected Accounts final package-local projection', () => {
         expect(emitted.outputText).not.toMatch(
             /(?:type|interface)\s+(?:ConnectedAccountHttpHeadersRequest|ConnectedAccountMaterializationRequest|QualifiedConnectedAccountRef|ConnectedServiceQuota(?:RecoveryCredit(?:Kind|Status)?|RecoveryCredits|Meter|Snapshot)|ConnectedServiceUsageSourceV1)\b/u,
         );
+    });
+
+    it('keeps descriptor declarations as exact Protocol types and reexports their schema family narrowly', () => {
+        expectTypeOf<SdkPluginConnectedAccountAuthenticationModeV2>()
+            .toEqualTypeOf<ProtocolPluginConnectedAccountAuthenticationModeV2>();
+        expectTypeOf<SdkPluginConnectedAccountAuthenticationV2>()
+            .toEqualTypeOf<ProtocolPluginConnectedAccountAuthenticationV2>();
+        expectTypeOf<SdkPluginConnectedAccountConfigurationFieldV2>()
+            .toEqualTypeOf<ProtocolPluginConnectedAccountConfigurationFieldV2>();
+        expectTypeOf<SdkPluginConnectedAccountConfigurationV2>()
+            .toEqualTypeOf<ProtocolPluginConnectedAccountConfigurationV2>();
+        expectTypeOf<SdkPluginConnectedAccountDescriptorContributionV2>()
+            .toEqualTypeOf<ProtocolPluginConnectedAccountDescriptorContributionV2>();
+
+        const manifestSourcePath = fileURLToPath(
+            new URL('./manifest/connectedAccountDescriptors.ts', import.meta.url),
+        );
+        const manifestSource = ts.createSourceFile(
+            manifestSourcePath,
+            readFileSync(manifestSourcePath, 'utf8'),
+            ts.ScriptTarget.Latest,
+            true,
+            ts.ScriptKind.TS,
+        );
+        const descriptorModule = '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+
+        expect(namedExportBindings(manifestSource, descriptorModule, false)).toEqual([
+            'PluginConnectedAccountAuthenticationModeV2Schema',
+            'PluginConnectedAccountAuthenticationV2Schema',
+            'PluginConnectedAccountConfigurationFieldV2Schema',
+            'PluginConnectedAccountConfigurationV2Schema',
+            'PluginConnectedAccountDescriptorContributionV2Schema',
+        ]);
+        expect(namedExportBindings(manifestSource, descriptorModule, true)).toEqual([
+            'PluginConnectedAccountAuthenticationModeV2',
+            'PluginConnectedAccountAuthenticationV2',
+            'PluginConnectedAccountConfigurationFieldV2',
+            'PluginConnectedAccountConfigurationV2',
+            'PluginConnectedAccountDescriptorContributionV2',
+        ]);
+        expect(namedExportBindings(manifestSource, '@happier-dev/protocol', false)).toEqual([]);
+        expect(namedExportBindings(manifestSource, '@happier-dev/protocol', true)).toEqual([]);
     });
 
     it('directly projects connected-service binding identities without SDK parser wrappers', () => {

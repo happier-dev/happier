@@ -4,7 +4,7 @@ export {
   PluginConnectedAccountConfigurationFieldV2Schema,
   PluginConnectedAccountConfigurationV2Schema,
   PluginConnectedAccountDescriptorContributionV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 export type {
   PluginConnectedAccountAuthenticationModeV2,
@@ -12,4 +12,4 @@ export type {
   PluginConnectedAccountConfigurationFieldV2,
   PluginConnectedAccountConfigurationV2,
   PluginConnectedAccountDescriptorContributionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';

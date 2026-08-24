@@ -128,6 +128,8 @@ void undefined; /* @sdk-negative-type-case-end */
 void undefined; /* @sdk-negative-type-case-end */
 /* @sdk-negative-type-case:src-definePlugin-test-ts-action-availability:QWN0aW9uIGF2YWlsYWJpbGl0eSByZXRhaW5zIHRoZSBQcm90b2NvbCBBY3Rpb24gZGVjbGFyYXRpb24gc2hhcGUu:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmFjdGlvbi1pbnZhbGlkLWF2YWlsYWJpbGl0eScsIHZlcnNpb246ICcwLjEuMCcsIGFjdGlvbnM6IHsgaW52YWxpZDogeyB0aXRsZTogJ0ludmFsaWQnLCBleGVjdXRpb246IHsgdGFyZ2V0OiAnZGFlbW9uJyB9LCBzdXJmYWNlczogWydwbHVnaW4nXSwgYXZhaWxhYmlsaXR5OiB7IGV4cGVyaW1lbnRhbDogdHJ1ZSB9LCBhc3luYyBydW4oKSB7IHJldHVybiB7fTsgfSB9IH0gfSk7 */
 void undefined; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-definePlugin-test-ts-connected-account-canonical-declaration:Q29ubmVjdGVkIEFjY291bnQgZGVmaW5lUGx1Z2luIGRlY2xhcmF0aW9ucyBtdXN0IHNhdGlzZnkgdGhlIGNhbm9uaWNhbCBkZWNsYXJhdGlvbiB1bmlvbi4=:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmludmFsaWQtY29ubmVjdGVkLWFjY291bnQtc2hhcGUnLCB2ZXJzaW9uOiAnMC4xLjAnLCBjb25uZWN0ZWRBY2NvdW50RGVzY3JpcHRvcnM6IHsgbWFsZm9ybWVkOiB7IGRlY2xhcmF0aW9uOiB7IHRpdGxlOiAnTWFsZm9ybWVkJywgYXV0aGVudGljYXRpb246IHsgZGVmYXVsdE1vZGVJZDogJ21hbnVhbCcsIG1vZGVzOiBbeyBpZDogJ21hbnVhbCcsIGtpbmQ6ICdtYW51YWwnLCBvdXRjb21lUmVjb25jaWxpYXRpb246ICdub25lJywgZmllbGRzOiBbeyBpZDogJ29yaWdpbicsIHRpdGxlOiAnT3JpZ2luJywgc2VjcmV0OiB0cnVlLCBzZW1hbnRpYzogJ2Nvbm5lY3RlZEFjY291bnRPcmlnaW4nLCByZXF1aXJlZDogdHJ1ZSwgc2NoZW1hOiB7IHR5cGU6ICdzdHJpbmcnLCBtaW5MZW5ndGg6IDEgfSB9XSB9XSB9IH0sIHJ1bnRpbWU6IHt9IGFzIFBsdWdpbkNvbm5lY3RlZEFjY291bnRSdW50aW1lIH0gfSB9KTs= */
+void undefined; /* @sdk-negative-type-case-end */
 
 describe('definePlugin', () => {
     it('makes tracked operation authoring impossible for client-targeted Actions', () => {
@@ -164,6 +166,54 @@ describe('definePlugin', () => {
                 operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
             }),
         ]);
+    });
+
+    it('projects canonical Connected Account declarations at the author call', () => {
+        const plugin = definePlugin({
+            id: 'example.canonical-connected-account-declaration',
+            version: '0.1.0',
+            connectedAccountDescriptors: {
+                account: {
+                    declaration: {
+                        title: 'Example Account',
+                        authentication: {
+                            defaultModeId: 'manual',
+                            modes: [{
+                                id: 'manual',
+                                kind: 'manual',
+                                outcomeReconciliation: 'none',
+                                fields: [{
+                                    id: 'token',
+                                    title: 'Token',
+                                    schema: { type: 'string' },
+                                    secret: true,
+                                }],
+                            }],
+                        },
+                        metadata: { documentation: 'https://example.com/account' },
+                    },
+                    runtime: {} as PluginConnectedAccountRuntime,
+                },
+            },
+        });
+
+        expect(plugin.manifest.contributes.connectedAccountDescriptors?.[0]?.metadata)
+            .toEqual({ documentation: 'https://example.com/account' });
+    });
+
+    it('uses the canonical Connected Account declaration projection at the definePlugin boundary', () => {
+        const sourceText = readFileSync(new URL('./definePlugin.ts', import.meta.url), 'utf8');
+
+        expect(sourceText).toContain('PluginConnectedAccountDescriptorContributionV2,');
+        expect(sourceText).toContain(
+            "DistributiveOmit<PluginConnectedAccountDescriptorContributionV2, 'id'>",
+        );
+        expect(sourceText).toContain(
+            "declaration: Omit<PluginConnectedAccountDescriptorContributionV2, 'id'>;",
+        );
+        expect(sourceText).not.toContain(
+            "NonNullable<NonNullable<PluginManifest['contributes']>['connectedAccountDescriptors']>[number]",
+        );
     });
 
     it('omits undeclared cold defaults while retaining explicit empty declarations', () => {

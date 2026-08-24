@@ -1,8 +1,10 @@
 /**
  * Connected Account authoring, binding, materialization, usage, and runtime
  * contracts. This module is a projection only: canonical Protocol-owned
- * request/runtime values keep their identity, while SDK-only author-visible
- * declarations stay at this single package-local boundary.
+ * request/runtime values keep their identity — including the V2 descriptor
+ * family, which is declared once in Protocol and reached here through its one
+ * narrow subpath — while SDK-only author-visible declarations stay at this
+ * single package-local boundary.
  */
 
 import {
@@ -43,6 +45,13 @@ import type {
 import type {
     ConnectedServiceCredentialRecordV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
+export type {
+    PluginConnectedAccountAuthenticationModeV2,
+    PluginConnectedAccountAuthenticationV2,
+    PluginConnectedAccountConfigurationFieldV2,
+    PluginConnectedAccountConfigurationV2,
+    PluginConnectedAccountDescriptorContributionV2,
+} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 import {
     ConnectedServiceQuotaFetchError as QuotaFetchError,
@@ -66,7 +75,6 @@ import type {
 } from './services/connectedAccounts.js';
 import type { JsonValue, PluginContributionRef } from './identity.js';
 import type { Disposable } from './lifecycle.js';
-import type { PluginLocalizedStringV2 } from './manifest.js';
 
 /**
  * Public, nonsecret OAuth metadata used by the first-party Claude Subscription
@@ -494,75 +502,6 @@ export const classifyProviderLimitEvidence: (
         provider: string;
     }>,
 ) => ProviderLimitEvidenceClassification = canonicalClassifyProviderLimitEvidence;
-
-export type PluginConnectedAccountConfigurationFieldV2 = Readonly<{
-    id: string;
-    title: PluginLocalizedStringV2;
-    description?: PluginLocalizedStringV2;
-    secret: boolean;
-    schema: Readonly<Record<string, JsonValue>>;
-    required?: boolean;
-    default?: JsonValue;
-    /**
-     * `connectedAccountOrigin` persists the origin the user typed.
-     * `connectedAccountFixedOrigin` persists a closed named choice whose route
-     * the descriptor declares in `originByValue`, so a service with a fixed set
-     * of deployments asks for the deployment rather than for a URL.
-     * `connectedAccountBase` persists a service base that may live beneath a
-     * path segment — an organization, a collection, a path-prefixed self-hosted
-     * install — and projects both facts: the base a source routes by and the
-     * origin HostAccess governs.
-     */
-    semantic?:
-        | 'connectedAccountOrigin'
-        | 'connectedAccountFixedOrigin'
-        | 'connectedAccountBase';
-    /** Required by, and only meaningful for, `connectedAccountFixedOrigin`. */
-    originByValue?: Readonly<Record<string, string>>;
-}>;
-export type PluginConnectedAccountConfigurationV2 = Readonly<{
-    scope: 'service' | 'account';
-    changeBehavior: 'refresh' | 'reconnect';
-    fields: readonly PluginConnectedAccountConfigurationFieldV2[];
-}>;
-export type PluginConnectedAccountAuthenticationModeV2 =
-    | Readonly<{
-        id: string;
-        kind: 'manual';
-        title?: PluginLocalizedStringV2;
-        outcomeReconciliation: 'none';
-        fields: readonly PluginConnectedAccountConfigurationFieldV2[];
-        configuration?: PluginConnectedAccountConfigurationV2;
-    }>
-    | Readonly<{
-        id: string;
-        kind: 'oauthAuthorizationCode';
-        title?: PluginLocalizedStringV2;
-        callbackUrl?: string;
-        scopes?: readonly string[];
-        pkce: 'required';
-        outcomeReconciliation: 'providerCheck' | 'lateEvidence' | 'none';
-        configuration?: PluginConnectedAccountConfigurationV2;
-    }>
-    | Readonly<{
-        id: string;
-        kind: 'oauthDeviceCode';
-        title?: PluginLocalizedStringV2;
-        scopes?: readonly string[];
-        outcomeReconciliation: 'providerCheck' | 'lateEvidence' | 'none';
-        configuration?: PluginConnectedAccountConfigurationV2;
-    }>;
-export type PluginConnectedAccountAuthenticationV2 = Readonly<{
-    defaultModeId: string;
-    modes: readonly PluginConnectedAccountAuthenticationModeV2[];
-}>;
-export type PluginConnectedAccountDescriptorContributionV2 = Readonly<{
-    id: string;
-    title: PluginLocalizedStringV2;
-    description?: PluginLocalizedStringV2;
-    authentication: PluginConnectedAccountAuthenticationV2;
-    capabilities?: readonly string[];
-}>;
 
 /** Runtime contract for one admitted connected-account implementation. */
 export interface ConnectedAccountRuntime {
