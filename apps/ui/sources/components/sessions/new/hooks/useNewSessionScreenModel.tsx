@@ -141,6 +141,8 @@ import { useProviderModelProjection } from '@/providers/hooks/useProviderModelPr
 import { useConfirmExperimentalProviderModel } from '@/providers/hooks/useConfirmExperimentalProviderModel';
 import { hiddenModelVisibilityKeys } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { notifyComposerPresentationTargetChanged } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
+import { createNewSessionSeededPlacementActionChip } from '@/components/sessions/new/newSessionSeededPlacementActionChip';
 
 
 // Configuration constants
@@ -266,6 +268,40 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         return null;
     }, [dataId]);
+    const seededPlacementHandoffKey = typeof dataId === 'string' && dataId.trim().length > 0
+        ? dataId.trim()
+        : null;
+    const initialSeededPlacementCandidates = tempSessionData?.pluginNewSessionSeed?.placementCandidates ?? [];
+    const [seededPlacementCandidates, setSeededPlacementCandidates] = React.useState<
+        readonly PluginUiSessionPlacementCandidateV1[]
+    >(() => initialSeededPlacementCandidates);
+    const seededPlacementHandoffKeyRef = React.useRef<string | null>(seededPlacementHandoffKey);
+    React.useEffect(() => {
+        if (seededPlacementHandoffKeyRef.current === seededPlacementHandoffKey) return;
+        seededPlacementHandoffKeyRef.current = seededPlacementHandoffKey;
+        setSeededPlacementCandidates(initialSeededPlacementCandidates);
+    }, [initialSeededPlacementCandidates, seededPlacementHandoffKey]);
+    const selectSeededPlacement = React.useCallback((candidate: PluginUiSessionPlacementCandidateV1) => {
+        try {
+            // Reuse the one New Session route selection owner. The candidate is
+            // not persisted or treated as selected until this exact reader
+            // action updates the normal server/machine/path route inputs.
+            router.setParams({
+                spawnServerId: candidate.serverId,
+                machineId: candidate.machineId,
+                directory: candidate.rootPath,
+            });
+        } catch {
+            return;
+        }
+        setSeededPlacementCandidates([]);
+    }, [router]);
+    const seededPlacementActionChip = React.useMemo(() => (
+        createNewSessionSeededPlacementActionChip({
+            candidates: seededPlacementCandidates,
+            onSelect: selectSeededPlacement,
+        })
+    ), [seededPlacementCandidates, selectSeededPlacement]);
     // Direct Event details are intentionally transient. The generic composer
     // may retain editable Automation metadata, but its session fields must
     // never replace the strict server-start seed owned by the Event definition.
@@ -1086,6 +1122,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const newSessionComposerDocument = useNewSessionComposerDocument({
         promptStore,
         persistedAttachments: scopedPersistedDraft?.composerAttachments ?? [],
+        seededAttachmentRequests: tempSessionData?.pluginNewSessionSeed?.attachments ?? [],
         composerAttachmentEntriesById,
         composerPluginProjection: {
             machineId: selectedMachineId,
@@ -1770,6 +1807,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentOptionState,
         setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip,
+        seededPlacementActionChip,
         showAutomationActionChipsFromAuthoringContext: newSessionAuthoringContext.showAutomationActionChips,
         showServerPickerChip,
         targetServerId,

@@ -1,8 +1,16 @@
 import { randomUUID } from '@/platform/randomUUID';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, SessionMcpSelectionV1, SessionModelSelectionV1, SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
+import type {
+    AcpConfigOptionOverridesV1,
+    BackendTargetRefV2,
+    ComposerAttachmentAuthorValueV1,
+    SessionMcpSelectionV1,
+    SessionModelSelectionV1,
+    SessionSpawnSourceContextV1,
+} from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/protocol';
+import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
@@ -12,6 +20,23 @@ export interface TempDataEntry {
     data: any;
     timestamp: number;
 }
+
+/**
+ * Author-shaped input that exists only between a trusted host selection and
+ * the mounted New Session composer.  It is deliberately not a draft format:
+ * the mounted composer resolves contribution authority and mints the finished
+ * attachment records before the New Session draft persists them.
+ */
+export type NewSessionPluginAttachmentSeedV1 = Readonly<{
+    pluginId: string;
+    attachmentLocalId: string;
+    value: ComposerAttachmentAuthorValueV1;
+}>;
+
+export type NewSessionPluginSeedHandoffV1 = Readonly<{
+    attachments?: readonly NewSessionPluginAttachmentSeedV1[];
+    placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
+}>;
 
 export interface NewSessionData {
     prompt?: string;
@@ -62,6 +87,11 @@ export interface NewSessionData {
      * match, and authoring must say so rather than silently dropping the recipe.
      */
     sourceContextServerId?: string | null;
+    /**
+     * One-shot host → mounted-composer input. It is consumed with this
+     * `NewSessionData` entry and is never a second persisted New Session draft.
+     */
+    pluginNewSessionSeed?: NewSessionPluginSeedHandoffV1;
 }
 
 // In-memory store for temporary data

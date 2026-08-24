@@ -25,6 +25,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionState: (key: string, next: unknown) => void;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
+    seededPlacementActionChip?: AgentInputExtraActionChip | null;
     showAutomationActionChips: boolean;
     automationDraft: NewSessionAutomationDraft;
     automationLabel: string;
@@ -105,6 +106,9 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         if (params.checkoutActionChip) {
             chips.push(params.checkoutActionChip);
         }
+        if (params.seededPlacementActionChip) {
+            chips.push(params.seededPlacementActionChip);
+        }
         if (serverPickerActionChip) {
             chips.push(serverPickerActionChip);
         }
@@ -133,6 +137,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         params.checkoutActionChip,
         params.connectedServicesAuthChip,
         params.mcpChip,
+        params.seededPlacementActionChip,
         params.onActionShortcutPress,
         params.selectedMachineIsWindows,
         params.setAgentOptionState,

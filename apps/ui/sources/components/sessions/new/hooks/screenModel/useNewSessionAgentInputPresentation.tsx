@@ -103,6 +103,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionStateForCurrentAgent: (key: string, next: unknown) => void;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
+    /** One-shot unresolved placement offered by a host-seeded New Session draft. */
+    seededPlacementActionChip?: AgentInputExtraActionChip | null;
     showAutomationActionChips: boolean;
     showServerPickerChip: boolean;
     targetServerId: string | null;
@@ -234,6 +236,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         agentOptionState: params.agentOptionState,
         setAgentOptionState: params.setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip: params.connectedServicesAuthChip,
+        seededPlacementActionChip: params.seededPlacementActionChip,
         showAutomationActionChips: params.showAutomationActionChips,
         automationDraft: params.effectiveAutomationDraft,
         automationLabel: getAutomationChipLabel(params.automationDraft),

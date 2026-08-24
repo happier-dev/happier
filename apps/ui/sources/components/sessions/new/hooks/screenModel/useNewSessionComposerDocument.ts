@@ -13,6 +13,7 @@ import type {
     AgentInputComposerInputLock,
     AgentInputExtraActionChip,
 } from '@/components/sessions/agentInput/agentInputContracts';
+import { useNewSessionSeededComposerAttachments } from '@/components/sessions/new/attachments/useNewSessionSeededComposerAttachments';
 import { projectComposerAttachmentRowItems } from '@/components/sessions/composer/composerAttachmentProjection';
 import {
     composerAttachmentDraftToView,
@@ -42,6 +43,7 @@ import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDae
 import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import type { NewSessionPluginAttachmentSeedV1 } from '@/utils/sessions/tempDataStore';
 
 import type { NewSessionPromptStore } from './newSessionPromptStore';
 
@@ -113,6 +115,8 @@ function attachmentSignature(attachments: readonly ComposerAttachmentDraftV1[]):
 export function useNewSessionComposerDocument(params: Readonly<{
     promptStore: NewSessionPromptStore;
     persistedAttachments: readonly ComposerAttachmentDraftV1[];
+    /** One-shot host input, accepted only by this mounted composer transaction. */
+    seededAttachmentRequests?: readonly NewSessionPluginAttachmentSeedV1[];
     /** Exact current daemon projection for this new-session machine/account scope. */
     composerAttachmentEntriesById: ComposerAttachmentAvailabilityCatalog['entriesById'];
     /** Raw daemon projection remains the one controls/regions/catalog owner. */
@@ -379,6 +383,17 @@ export function useNewSessionComposerDocument(params: Readonly<{
     } satisfies ComposerPresentationTarget);
 
     React.useEffect(() => registerComposerPresentationTarget(ref, target), [ref, target]);
+
+    // The seed could state an attachment request and nothing more. This mounted
+    // composer is the first place contribution authority and a host-minted
+    // instance id coexist, so acceptance uses the same applier as a live plugin
+    // composer control.
+    useNewSessionSeededComposerAttachments({
+        seeds: params.seededAttachmentRequests ?? [],
+        ref,
+        entriesById: params.composerAttachmentEntriesById,
+        isCurrent: isNewSessionComposerCurrent,
+    });
 
     React.useEffect(() => {
         notifyComposerPresentationTargetChanged(ref);

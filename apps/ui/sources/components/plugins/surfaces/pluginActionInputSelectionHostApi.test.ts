@@ -12,7 +12,10 @@ import type {
     PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { createPluginActionInputSelectionHostApiHandler } from './pluginActionInputSelectionHostApi';
+import {
+    createPluginActionInputSelectionHostApiHandler,
+    type PluginNewSessionSeeder,
+} from './pluginActionInputSelectionHostApi';
 
 const accountLifetime = Object.freeze({
     scope: Object.freeze({ serverId: 'server-a', accountId: 'account-a' }),
@@ -396,6 +399,67 @@ describe('plugin Action input selection Host API producer', () => {
             },
         })).resolves.toEqual({ kind: 'serverStartDraft', draft: serverStartDraft });
         expect(composeSessionServerStartDraft).toHaveBeenCalledOnce();
+    });
+
+    it('routes the New Session seed projection to the seeder and settles without a second draft', async () => {
+        const seedNewSession = vi.fn<PluginNewSessionSeeder>(async () => ({
+            kind: 'seeded' as const,
+            dataId: '00000000-0000-4000-8000-000000000001',
+        }));
+        const composeSessionServerStartDraft = vi.fn(async () => ({
+            kind: 'submitted' as const,
+            draft: serverStartDraft,
+        }));
+        const handler = createPluginActionInputSelectionHostApiHandler({
+            host: {
+                machineId: 'machine-a',
+                serverId: 'server-a',
+                expectedGeneration: 7,
+                targetPluginId: 'acme.caller',
+                accountLifetime,
+            },
+            isCurrent: () => true,
+            seedNewSession,
+            composeSessionServerStartDraft,
+        });
+
+        await expect(handler({
+            ...request(),
+            payload: {
+                hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+                seed: { prompt: { text: 'Repair the failing check', mode: 'replace' } },
+            },
+        })).resolves.toEqual({ kind: 'newSessionSeeded' });
+        // The two projections are separate destinations: seeding must not reach
+        // the draft composer, which settles a draft back to the caller.
+        expect(composeSessionServerStartDraft).not.toHaveBeenCalled();
+        expect(seedNewSession).toHaveBeenCalledOnce();
+        expect(seedNewSession.mock.calls[0]![0]).toMatchObject({
+            seed: { prompt: { text: 'Repair the failing check', mode: 'replace' } },
+            scope: { serverId: 'server-a', accountId: 'account-a' },
+        });
+    });
+
+    it('reports a seed failure as its own host error rather than a settlement', async () => {
+        const handler = createPluginActionInputSelectionHostApiHandler({
+            host: {
+                machineId: 'machine-a',
+                serverId: 'server-a',
+                expectedGeneration: 7,
+                targetPluginId: 'acme.caller',
+                accountLifetime,
+            },
+            isCurrent: () => true,
+            seedNewSession: async () => ({ kind: 'stale' as const, reason: 'host_retired' as const }),
+        });
+
+        await expect(handler({
+            ...request(),
+            payload: {
+                hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+                seed: { placement: { directory: '/workspace' } },
+            },
+        })).resolves.toEqual({ code: 'stale_surface', diagnostics: ['host_retired'] });
     });
 
     it('refuses a literal Session draft whose server disagrees with the captured Account scope', async () => {
