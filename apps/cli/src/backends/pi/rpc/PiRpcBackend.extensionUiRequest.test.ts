@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { PiRpcBackend } from './PiRpcBackend';
-import { buildPiExtensionAskUserQuestionInput } from './piExtensionUiRequest';
+import { buildPiExtensionAskUserQuestionInput, buildPiExtensionUiResponse, parsePiBlockingExtensionUiRequest } from './piExtensionUiRequest';
 
 function writeFakePiExtensionUiScript(dir: string): string {
   const scriptPath = join(dir, 'fake-pi-extension-ui.js');
@@ -105,6 +105,24 @@ describe('PiRpcBackend extension UI requests', () => {
     });
   });
 
+  it('preserves finite provider-owned dialog timeouts', () => {
+    expect(parsePiBlockingExtensionUiRequest({
+      type: 'extension_ui_request',
+      id: 'timed-1',
+      method: 'confirm',
+      title: 'Continue?',
+      message: 'This expires',
+      timeout: 250,
+    })).toMatchObject({ timeout: 250 });
+    expect(parsePiBlockingExtensionUiRequest({
+      type: 'extension_ui_request',
+      id: 'untimed-editor',
+      method: 'editor',
+      title: 'Edit',
+      timeout: 250,
+    })).not.toHaveProperty('timeout');
+  });
+
   it('routes blocking Pi dialogs through the canonical permission coordinator and preserves the provider request id', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-extension-ui-'));
     tempDirs.push(dir);
@@ -194,10 +212,21 @@ describe('PiRpcBackend extension UI requests', () => {
           header: 'Pi',
           multiSelect: false,
           options: [],
-          freeform: { initialValue: 'Existing notes' },
+          freeform: { initialValue: 'Existing notes', multiline: true, allowEmpty: true },
         }],
       },
     );
+  });
+
+  it.each(['input', 'editor'] as const)('preserves an empty %s response as a value rather than cancellation', (method) => {
+    expect(buildPiExtensionUiResponse(
+      { id: 'pi-empty', method, title: 'Value' },
+      { decision: 'approved', answers: { Value: [''] } },
+    )).toEqual({
+      type: 'extension_ui_response',
+      id: 'pi-empty',
+      value: '',
+    });
   });
 
   it('cancels the visible Pi dialog before aborting and waits for Pi to end the turn', async () => {
@@ -235,5 +264,46 @@ describe('PiRpcBackend extension UI requests', () => {
       id: 'pi-dialog-1',
       cancelled: true,
     });
+  });
+
+  it('expires only the mirrored Happier prompt when Pi auto-resolves a timed dialog', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-pi-extension-ui-timeout-'));
+    tempDirs.push(dir);
+    let resolvePermission: ((value: { decision: 'approved' }) => void) | null = null;
+    const cancelPendingRequest = vi.fn(() => {
+      resolvePermission?.({ decision: 'approved' });
+      return true;
+    });
+    const permissionHandler: AcpPermissionHandler = {
+      handleToolCall: async () => new Promise((resolve) => {
+        resolvePermission = resolve;
+      }),
+      cancelPendingRequest,
+    };
+    const scriptPath = writeFakePiExtensionUiScript(dir);
+    writeFileSync(scriptPath, readFileSync(scriptPath, 'utf8').replace(
+      "options: ['Repository', 'Workspace']\n      });",
+      "options: ['Repository', 'Workspace'],\n        timeout: 10\n      });\n      setTimeout(() => { streaming = false; out({ type: 'agent_end' }); }, 15);",
+    ), 'utf8');
+    const backend = new PiRpcBackend({
+      cwd: dir,
+      command: process.execPath,
+      args: [scriptPath],
+      permissionHandler,
+      env: {
+        HAPPIER_PI_RPC_AGENT_END_SETTLE_MS: '1',
+        PI_EXTENSION_RESPONSE_FILE: join(dir, 'extension-response.json'),
+      },
+    });
+    backends.push(backend);
+
+    const session = await backend.startSession();
+    const prompt = backend.sendPrompt(session.sessionId, 'ask me');
+    await vi.waitFor(() => expect(cancelPendingRequest).toHaveBeenCalledWith(
+      'pi-dialog-1',
+      'Pi extension dialog timed out',
+    ));
+    await expect(prompt).resolves.toBeUndefined();
+    expect(() => readFileSync(join(dir, 'extension-response.json'), 'utf8')).toThrow();
   });
 });

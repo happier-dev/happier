@@ -52,6 +52,8 @@ interface Question {
         placeholder?: string;
         description?: string;
         initialValue?: string;
+        multiline?: boolean;
+        allowEmpty?: boolean;
     };
 }
 
@@ -374,8 +376,9 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         const hasFreeform = Boolean(q?.freeform);
         const typed = effectiveFreeformAnswers.get(qIndex);
         const hasTyped = typeof typed === 'string' && typed.trim().length > 0;
+        const acceptsEmpty = q?.freeform?.allowEmpty === true;
         if (options.length === 0) {
-            return hasTyped;
+            return hasTyped || acceptsEmpty;
         }
         const selected = selections.get(qIndex);
         const hasSelection = Boolean(selected && selected.size > 0);
@@ -650,6 +653,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                             placeholder={question.freeform?.placeholder ?? t('tools.askUserQuestion.otherPlaceholder')}
                                             placeholderTextColor={theme.colors.input.placeholder}
                                             editable={canInteract}
+                                            multiline={question.freeform?.multiline === true}
+                                            textAlignVertical={question.freeform?.multiline === true ? 'top' : 'center'}
                                             autoCapitalize="none"
                                             autoCorrect={false}
                                         />
