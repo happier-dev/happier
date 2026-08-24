@@ -10,6 +10,7 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let isFocused = true;
+let onHarnessLayoutEffect: (() => void) | null = null;
 let sessionsById: Record<string, { draft: string | null; metadata?: any }>;
 const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
@@ -287,6 +288,9 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
     const [value, setValue] = React.useState('');
     const [, setTick] = React.useState(0);
     const draftApi = useDraft(sessionId, value, setValue, { autoSaveInterval: 60_000 });
+    React.useLayoutEffect(() => {
+      onHarnessLayoutEffect?.();
+    });
     current = {
       sessionId,
       setSessionId,
@@ -336,6 +340,7 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
 describe('useDraft', () => {
   beforeEach(() => {
     isFocused = true;
+    onHarnessLayoutEffect = null;
     platformState.os = 'web';
     sessionsById = {
       s1: { draft: 'draft-1', metadata: {} },
@@ -401,6 +406,19 @@ describe('useDraft', () => {
       vi.useRealTimers();
       platformState.os = 'web';
     }
+  });
+
+  it('publishes composer edits to the local canonical replica in the input event', async () => {
+    const harness = await renderHarness({ initialSessionId: 's2' });
+    updateSessionDraftSpy.mockClear();
+
+    act(() => {
+      harness.getCurrent().setDraftValue?.('hello world hello world');
+      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s2', 'hello world hello world');
+    });
+
+    expect(harness.getCurrent().value).toBe('hello world hello world');
+    harness.unmount();
   });
 
   it('clears the composer value when switching to a session with no stored draft', async () => {
@@ -707,6 +725,36 @@ describe('useDraft', () => {
     await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('rollback target prompt');
+    harness.unmount();
+  });
+
+  it('does not adopt a repository snapshot superseded before its passive hydration effect runs', async () => {
+    sessionsById = {
+      s2: { draft: 'hello world', metadata: {} },
+    };
+    draftRepositoryHarness.nextMutationId('s2');
+    const harness = await renderHarness({ initialSessionId: 's2' });
+    expect(harness.getCurrent().value).toBe('hello world');
+
+    sessionsById = {
+      s2: { draft: 'hello wo', metadata: {} },
+    };
+    draftRepositoryHarness.nextMutationId('s2');
+    onHarnessLayoutEffect = () => {
+      onHarnessLayoutEffect = null;
+      sessionsById = {
+        s2: { draft: 'hello world', metadata: {} },
+      };
+      draftRepositoryHarness.nextMutationId('s2');
+    };
+
+    await act(async () => {
+      harness.getCurrent().rerender();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(harness.getCurrent().value).toBe('hello world');
+    expect(sessionsById.s2?.draft).toBe('hello world');
     harness.unmount();
   });
 

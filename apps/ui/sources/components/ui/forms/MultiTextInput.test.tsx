@@ -1083,8 +1083,17 @@ describe('MultiTextInput', () => {
             expect(mockTextarea.selectionStart).toBe(secondEdit.length);
             expect(mockTextarea.selectionEnd).toBe(secondEdit.length);
 
-            // A genuinely external value (never emitted by this input) must
-            // still be adopted.
+            // After the parent confirms the latest emission, a genuinely
+            // external value must still be adopted.
+            await act(async () => {
+                tree!.update(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={secondEdit}
+                        onChangeText={onChangeText}
+                    />,
+                );
+            });
             await act(async () => {
                 tree!.update(
                     <MultiTextInput
@@ -1105,8 +1114,13 @@ describe('MultiTextInput', () => {
         try {
             const { MultiTextInput } = await import('./MultiTextInput.web');
             const onChangeText = vi.fn();
-            const firstEdit = 'hello world hello wo';
-            const secondEdit = 'hello world hello world hello world';
+            const completeEdit = 'hello world hello world hello world';
+            const emittedValues = Array.from(
+                { length: completeEdit.length },
+                (_, index) => completeEdit.slice(0, index + 1),
+            );
+            const firstEdit = emittedValues[0]!;
+            const latestEdit = emittedValues[emittedValues.length - 1]!;
             const externalText = 'continued on another device';
             const mockTextarea = {
                 value: '',
@@ -1137,19 +1151,14 @@ describe('MultiTextInput', () => {
             });
             const input = tree!.root.findByType('textarea' as any);
 
-            mockTextarea.value = firstEdit;
-            mockTextarea.selectionStart = firstEdit.length;
-            mockTextarea.selectionEnd = firstEdit.length;
-            await act(async () => {
-                input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
-            });
-
-            mockTextarea.value = secondEdit;
-            mockTextarea.selectionStart = secondEdit.length;
-            mockTextarea.selectionEnd = secondEdit.length;
-            await act(async () => {
-                input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
-            });
+            for (const edit of emittedValues) {
+                mockTextarea.value = edit;
+                mockTextarea.selectionStart = edit.length;
+                mockTextarea.selectionEnd = edit.length;
+                await act(async () => {
+                    input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
+                });
+            }
 
             await act(async () => {
                 tree!.update(
@@ -1160,7 +1169,17 @@ describe('MultiTextInput', () => {
                     />,
                 );
             });
-            expect(mockTextarea.value).toBe(secondEdit);
+            expect(mockTextarea.value).toBe(latestEdit);
+
+            await act(async () => {
+                tree!.update(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={latestEdit}
+                        onChangeText={onChangeText}
+                    />,
+                );
+            });
 
             await act(async () => {
                 tree!.update(

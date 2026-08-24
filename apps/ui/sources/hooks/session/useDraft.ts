@@ -114,24 +114,54 @@ export function useDraft(
     const flushLatestDraftIfChanged = useCallback(() => {
         if (!sessionId) return;
         const currentValue = latestValue.current;
-        if (currentValue === lastSavedValue.current) return;
+        const hasScheduledFlush = saveTimeoutRef.current !== null;
+        const hasUnpublishedValue = currentValue !== lastSavedValue.current;
+        if (!hasScheduledFlush && !hasUnpublishedValue) return;
 
         if (saveTimeoutRef.current) {
             clearTimeout(saveTimeoutRef.current);
             saveTimeoutRef.current = null;
         }
 
-        saveDraft(currentValue);
+        if (hasUnpublishedValue) saveDraft(currentValue);
         flushDraftForSession(scope, sessionId);
     }, [flushDraftForSession, saveDraft, scope, sessionId]);
+
+    const scheduleDraftFlush = useCallback((previousDraft: string, draft: string) => {
+        if (!scope || !sessionId) return;
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+
+        const wasEmpty = !containsLikelyNonWhitespace(previousDraft);
+        const isEmpty = !containsLikelyNonWhitespace(draft);
+        const shouldDebounceForLargeDraft = isLargeTextInputValueLength(draft.length);
+        if ((wasEmpty !== isEmpty && !shouldDebounceForLargeDraft) || isEmpty) {
+            flushDraftForSession(scope, sessionId);
+            return;
+        }
+        saveTimeoutRef.current = setTimeout(() => {
+            saveTimeoutRef.current = null;
+            flushDraftForSession(scope, sessionId);
+        }, autoSaveInterval);
+    }, [autoSaveInterval, flushDraftForSession, scope, sessionId]);
 
     const setDraftValue = useCallback((nextValueOrUpdater: string | ((currentValue: string) => string)) => {
         const nextValue = typeof nextValueOrUpdater === 'function'
             ? nextValueOrUpdater(latestValue.current)
             : nextValueOrUpdater;
+        const previousSavedValue = lastSavedValue.current;
         latestValue.current = nextValue;
         onChange(nextValue);
-    }, [onChange]);
+        if (nextValue === previousSavedValue) return;
+
+        // Publish into the local canonical replica in the input event. Waiting for a passive
+        // autosave effect leaves a window where an acknowledgement of an earlier prefix can
+        // render before React commits the latest keystrokes and replace the live textarea.
+        saveDraft(nextValue);
+        scheduleDraftFlush(previousSavedValue, nextValue);
+    }, [onChange, saveDraft, scheduleDraftFlush]);
 
     const clearForkInitialPrompt = useCallback((tag: string) => {
         if (!sessionId || !forkInitialPromptText) return;
@@ -161,8 +191,19 @@ export function useDraft(
         return `${trimmedBase}\n\n${prompt.text}`;
     }, []);
 
-    const adoptDraftText = useCallback((draft: string) => {
-        onChange(draft);
+    const adoptPersistedDraftText = useCallback((draft: string) => {
+        if (latestValue.current !== draft) {
+            latestValue.current = draft;
+            onChange(draft);
+        }
+        lastSavedValue.current = draft;
+    }, [onChange]);
+
+    const persistSeededDraftText = useCallback((draft: string) => {
+        if (latestValue.current !== draft) {
+            latestValue.current = draft;
+            onChange(draft);
+        }
         saveDraft(draft);
         lastSavedValue.current = draft;
     }, [onChange, saveDraft]);
@@ -171,6 +212,12 @@ export function useDraft(
     // to the target session (draft or empty) to avoid leaking the previous session's text.
     useEffect(() => {
         if (!sessionId) return;
+
+        // Passive effects can be delayed across several fast input commits. Always reconcile
+        // against the repository's current snapshot instead of the snapshot captured by the
+        // render that scheduled this effect; adopting that older snapshot rolls the composer
+        // back to a prefix the user has already advanced beyond.
+        const currentStoredDraft = readDraftSnapshot()?.document.composer.text.value ?? null;
 
         const previousSessionId = lastSessionId.current;
         const previousScope = lastSessionScope.current;
@@ -186,14 +233,18 @@ export function useDraft(
                 flushDraftForSession(previousScope, previousSessionId);
             }
             autosaveSkip.current = { sessionId, value: currentValue };
-            const baseStoredDraft = storedDraft && storedDraft.trim() ? storedDraft : null;
+            const baseStoredDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
             const baseText = baseStoredDraft ?? forkInitialPromptText ?? null;
             const nextDraft = baseText !== null && activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(baseText, activeSessionInitialPrompt)
                 : baseText ?? (activeSessionInitialPrompt ? composeSessionInitialPromptText('', activeSessionInitialPrompt) : null);
 
             if (nextDraft !== null) {
-                adoptDraftText(nextDraft);
+                if (activeSessionInitialPrompt || baseStoredDraft === null) {
+                    persistSeededDraftText(nextDraft);
+                } else {
+                    adoptPersistedDraftText(nextDraft);
+                }
                 if (baseStoredDraft !== null) {
                     clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.sessionChange.storedDraft');
                 } else if (forkInitialPromptText) {
@@ -211,7 +262,7 @@ export function useDraft(
 
         if (!isFocused) return;
 
-        const externalDraft = storedDraft && storedDraft.trim() ? storedDraft : null;
+        const externalDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
         if (externalDraft != null && externalDraft === currentValue && lastSavedValue.current !== externalDraft && !activeSessionInitialPrompt) {
             lastSavedValue.current = externalDraft;
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.syncedDraft');
@@ -226,34 +277,33 @@ export function useDraft(
             const nextDraft = activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(externalDraft, activeSessionInitialPrompt)
                 : externalDraft;
-            adoptDraftText(nextDraft);
+            if (activeSessionInitialPrompt) {
+                persistSeededDraftText(nextDraft);
+            } else {
+                adoptPersistedDraftText(nextDraft);
+            }
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.storedDraft');
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.storedDraft');
         } else if (forkInitialPromptText && !currentValue.trim()) {
             const nextDraft = activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(forkInitialPromptText, activeSessionInitialPrompt)
                 : forkInitialPromptText;
-            adoptDraftText(nextDraft);
+            persistSeededDraftText(nextDraft);
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus');
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.forkPrompt');
         } else if (activeSessionInitialPrompt && canAdoptWithoutExternalDraft) {
             const nextDraft = composeSessionInitialPromptText(currentValue, activeSessionInitialPrompt);
-            adoptDraftText(nextDraft);
+            persistSeededDraftText(nextDraft);
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus');
-        } else if (!storedDraft) {
+        } else if (!currentStoredDraft) {
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }
-    }, [activeSessionInitialPrompt, adoptDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, flushDraftForSession, forkInitialPromptText, isFocused, onChange, saveDraftForSession, scope, sessionId, storedDraft]);
+    }, [activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, flushDraftForSession, forkInitialPromptText, isFocused, onChange, persistSeededDraftText, readDraftSnapshot, saveDraftForSession, scope, sessionId, storedDraft]);
 
     // Auto-save with smart debouncing
     useEffect(() => {
         if (!scope || !sessionId) return;
-
-        // Clear any existing timeout
-        if (saveTimeoutRef.current) {
-            clearTimeout(saveTimeoutRef.current);
-        }
 
         // Only save if value has changed
         const skip = autosaveSkip.current;
@@ -263,26 +313,20 @@ export function useDraft(
         }
 
         if (value !== lastSavedValue.current) {
-            const wasEmpty = !containsLikelyNonWhitespace(lastSavedValue.current);
-            const isEmpty = !containsLikelyNonWhitespace(value);
-            const shouldDebounceForLargeDraft = isLargeTextInputValueLength(value.length);
+            const previousSavedValue = lastSavedValue.current;
             saveDraft(value);
-            if ((wasEmpty !== isEmpty && !shouldDebounceForLargeDraft) || isEmpty) {
-                flushDraftForSession(scope, sessionId);
-            } else {
-                saveTimeoutRef.current = setTimeout(() => {
-                    saveTimeoutRef.current = null;
-                    flushDraftForSession(scope, sessionId);
-                }, autoSaveInterval);
-            }
+            scheduleDraftFlush(previousSavedValue, value);
         }
+    }, [value, sessionId, scope, saveDraft, scheduleDraftFlush]);
 
-        return () => {
-            if (saveTimeoutRef.current) {
-                clearTimeout(saveTimeoutRef.current);
-            }
-        };
-    }, [value, sessionId, scope, autoSaveInterval, flushDraftForSession, saveDraft]);
+    // The debounce belongs to the mounted session, not to an individual render. Clearing it on
+    // every value-effect cleanup can cancel the timer scheduled synchronously by setDraftValue.
+    useEffect(() => () => {
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+    }, [scope, sessionId]);
 
     // Save on app state change (background/inactive)
     useEffect(() => {

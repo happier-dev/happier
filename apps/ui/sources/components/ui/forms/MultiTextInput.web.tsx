@@ -91,12 +91,6 @@ interface MultiTextInputProps {
 
 const DEFAULT_TEXT_STYLE: TextStyle = { fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE };
 
-// Parent state and persistence notifications can replay more than one of our
-// own emissions through React. Remembering only the latest lets a superseded
-// emission be mistaken for external content. The cap only needs to cover
-// values still in flight — a handful, not a history.
-const RECENT_EMITTED_VALUES_LIMIT = 8;
-
 type WebTextStyleOverride = Readonly<{
     color?: string;
     fontFamily?: string;
@@ -167,10 +161,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const isComposingRef = React.useRef(false);
     const liveValueRef = React.useRef(value);
     const lastEmittedValueRef = React.useRef(value);
-    // Superseded-replay watermark for controlled-value round trips. Input
-    // callbacks may be synchronous, but the parent renders they trigger can
-    // still interleave with persistence and subscription notifications.
-    const recentEmittedValuesRef = React.useRef<string[]>([]);
+    const hasUnconfirmedEmissionRef = React.useRef(false);
     const pendingChangeTextRef = React.useRef<string | null>(null);
     const pendingChangeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastScrollRestoreKeyRef = React.useRef<string | null>(null);
@@ -220,13 +211,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         clearPendingChangeTimer();
         pendingChangeTextRef.current = null;
         lastEmittedValueRef.current = text;
-        const recentEmittedValues = recentEmittedValuesRef.current;
-        if (recentEmittedValues[recentEmittedValues.length - 1] !== text) {
-            recentEmittedValues.push(text);
-            if (recentEmittedValues.length > RECENT_EMITTED_VALUES_LIMIT) {
-                recentEmittedValues.shift();
-            }
-        }
+        hasUnconfirmedEmissionRef.current = true;
         onChangeText(text);
     }, [clearPendingChangeTimer, onChangeText]);
 
@@ -326,6 +311,9 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         const node = textareaRef.current;
         if (!node) return;
         if (value === liveValueRef.current || value === lastEmittedValueRef.current) {
+            if (value === lastEmittedValueRef.current) {
+                hasUnconfirmedEmissionRef.current = false;
+            }
             applyTextareaHeight(node);
             return;
         }
@@ -351,11 +339,12 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             return;
         }
 
-        // Reconcile adopts EXTERNAL values only. A value this input itself
-        // emitted is a superseded round-trip replay (parent state or repository
-        // notifications can render an older emission after a newer one);
-        // adopting it would roll the live text back and jump the caret.
-        if (recentEmittedValuesRef.current.includes(value)) {
+        // Until the parent confirms our latest emission, every differing controlled value is
+        // older than the live input from this component's perspective. Persistence and external
+        // subscriptions can interleave those renders with typing; adopting one here rolls the
+        // DOM back even though a later input event has already fired. Once the latest emission is
+        // confirmed above, a subsequent differing value is external and remains adoptable.
+        if (hasUnconfirmedEmissionRef.current) {
             recordLargeTextInputDiagnostic({
                 phase: 'web-stale-props-skip',
                 platform: 'web',
@@ -384,7 +373,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         pendingChangeTextRef.current = null;
         liveValueRef.current = value;
         lastEmittedValueRef.current = value;
-        recentEmittedValuesRef.current = [];
+        hasUnconfirmedEmissionRef.current = false;
         // The node.value write below resets the browser's scroll position, so
         // any already-consumed scroll restore must become applicable again
         // against the adopted content (session open applies the restore before
