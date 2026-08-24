@@ -16,7 +16,9 @@ import type {
 import {
   AcpPromptSubmissionPhaseError,
   type AcpPromptSubmissionEvidence,
+  type AcpPermissionHandler,
 } from '@/agent/acp/AcpBackend';
+import { abortPendingAcpPermissionRequests } from '@/agent/acp/backend/permissions/acpPermissionFinalization';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import {
   materializeProtectedTempTextArtifact,
@@ -67,6 +69,12 @@ import type {
   PiRpcSessionStatsData,
   PiRpcStateData,
 } from './types';
+import {
+  buildPiExtensionAskUserQuestionInput,
+  buildPiExtensionUiResponse,
+  parsePiBlockingExtensionUiRequest,
+  type PiExtensionUiResponse,
+} from './piExtensionUiRequest';
 import {
   createPiModelCatalogEntry,
   normalizePiThinkingEffort,
@@ -579,6 +587,7 @@ export type PiRpcSpawnOptions = {
   env?: Record<string, string>;
   happierSessionId?: string | null;
   appendSystemPromptText?: string | null;
+  permissionHandler?: AcpPermissionHandler;
 };
 
 export class PiRpcBackend implements AgentBackend {
@@ -599,6 +608,8 @@ export class PiRpcBackend implements AgentBackend {
   private readonly messageHandlers = new Set<AgentMessageHandler>();
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
   private readonly openPromptRequestIds = new Set<string>();
+  private readonly activeExtensionUiRequestIds = new Set<string>();
+  private readonly permissionHandler: AcpPermissionHandler | null;
   private pendingTurn: PendingTurn | null = null;
   private pendingTurnBarrier: Deferred<void> | null = null;
   private sessionId: string | null = null;
@@ -627,6 +638,7 @@ export class PiRpcBackend implements AgentBackend {
   private readonly recentStderrLines: string[] = [];
 
   constructor(options: PiRpcSpawnOptions) {
+    this.permissionHandler = options.permissionHandler ?? null;
     this.options = {
       cwd: options.cwd,
       command: options.command,
@@ -1132,10 +1144,9 @@ export class PiRpcBackend implements AgentBackend {
 
   async cancel(sessionId: SessionId): Promise<void> {
     this.assertSession(sessionId);
+    await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi turn cancelled');
     await this.sendCommand({ type: 'abort' });
-    if (!this.resolvePendingTurn()) {
-      this.emitMessage({ type: 'status', status: 'idle' });
-    }
+    if (this.pendingTurn) await this.pendingTurn.promise;
   }
 
   async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
@@ -1174,6 +1185,8 @@ export class PiRpcBackend implements AgentBackend {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+
+    await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi backend disposed');
 
     this.rejectAllPending(new Error('Pi backend disposed'));
     this.rejectPendingTurn(new Error('Pi backend disposed'));
@@ -1561,6 +1574,7 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private async stopRpcProcessForRestart(): Promise<void> {
+    await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi backend restarting');
     this.rejectAllPending(new Error('Pi restarting'));
     this.rejectPendingTurn(new Error('Pi restarting'));
 
@@ -1837,6 +1851,12 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private handleEvent(event: Record<string, unknown>): void {
+    const extensionRequest = parsePiBlockingExtensionUiRequest(event);
+    if (extensionRequest) {
+      this.notePendingTurnActivity(event);
+      void this.handleBlockingExtensionUiRequest(extensionRequest, this.process);
+      return;
+    }
     const normalizedEvent = this.normalizeCompactionLifecycleEvent(event);
     this.notePendingTurnActivity(normalizedEvent);
 
@@ -1899,6 +1919,47 @@ export class PiRpcBackend implements AgentBackend {
         this.emitMessage({ type: 'event', name: 'thinking_update', payload: { thinking: false } });
       }
     }
+  }
+
+  private async handleBlockingExtensionUiRequest(
+    request: NonNullable<ReturnType<typeof parsePiBlockingExtensionUiRequest>>,
+    child: ChildProcessWithoutNullStreams | null,
+  ): Promise<void> {
+    if (!child || this.activeExtensionUiRequestIds.has(request.id)) return;
+    this.activeExtensionUiRequestIds.add(request.id);
+    try {
+      const result = this.permissionHandler
+        ? await this.permissionHandler.handleToolCall(
+          request.id,
+          'AskUserQuestion',
+          buildPiExtensionAskUserQuestionInput(request),
+        )
+        : { decision: 'denied' as const };
+      await this.writeExtensionUiResponse(child, buildPiExtensionUiResponse(request, result));
+    } catch {
+      await this.writeExtensionUiResponse(child, {
+        type: 'extension_ui_response',
+        id: request.id,
+        cancelled: true,
+      }).catch(() => undefined);
+    } finally {
+      this.activeExtensionUiRequestIds.delete(request.id);
+    }
+  }
+
+  private async writeExtensionUiResponse(
+    child: ChildProcessWithoutNullStreams,
+    response: PiExtensionUiResponse,
+  ): Promise<void> {
+    if (this.process !== child || !child.stdin) {
+      throw new Error('Pi process changed before extension UI response');
+    }
+    await new Promise<void>((resolve, reject) => {
+      child.stdin.write(`${JSON.stringify(response)}\n`, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   }
 
   private async publishUsageStatsBestEffort(): Promise<void> {
