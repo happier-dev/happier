@@ -6,7 +6,6 @@ export { PiBridgeSessionConfigSchema, type PiBridgeSessionConfig } from './piBri
 export {
   PI_BRIDGE_EXTENSION_VERSION,
   buildPiBridgeExtensionSource,
-  type PiBridgeExtensionSourceParams,
 } from './piBridgeExtensionSource';
 export {
   resolvePiBridgeExtensionDir,

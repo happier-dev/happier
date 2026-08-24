@@ -1,14 +1,9 @@
 import {
   ActionsSettingsV1Schema,
-  HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
-  HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
-  HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
-  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
-  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1,
   MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS,
-  buildMemoryRecallGuidanceBlockV1,
-  isCodingPromptResponseOptionsEnabled,
+  buildCodingSessionPromptPlanBaseV1,
   isActionEnabledByActionsSettings,
+  renderPromptPlanV1,
   resolveCodingPromptSessionTitleUpdatesModeV1,
   type ActionId,
   type ActionsSettingsV1,
@@ -39,30 +34,6 @@ function resolveActionsSettings(settings: Record<string, unknown> | null | undef
   return parsed.success ? parsed.data : readActionsSettingsFromEnv();
 }
 
-function buildPromptAddition(params: Readonly<{
-  sessionRenameMode: ReturnType<typeof resolveCodingPromptSessionTitleUpdatesModeV1>;
-  promptOptionsEnabled: boolean;
-  directToolNames: ReadonlySet<string>;
-  memoryGuidanceRequested: boolean;
-}>): string {
-  const blocks: string[] = [];
-  if (params.directToolNames.has('change_title')) {
-    if (params.sessionRenameMode === 'initial') blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1);
-    if (params.sessionRenameMode === 'ongoing') blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1);
-  }
-  if (params.promptOptionsEnabled) blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1);
-  blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1);
-  blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1);
-  if (
-    params.memoryGuidanceRequested
-    && params.directToolNames.has('memory_search')
-    && params.directToolNames.has('memory_get_window')
-  ) {
-    blocks.push(buildMemoryRecallGuidanceBlockV1('generic'));
-  }
-  return blocks.map((block) => block.trim()).filter(Boolean).join('\n\n');
-}
-
 /**
  * Resolve the tools-bridge backend options for a Pi session, materializing the
  * extension asset when Happier controls the Pi agent dir.
@@ -83,7 +54,6 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   if (!params.agentDir) return null;
 
   const sessionRenameMode = resolveCodingPromptSessionTitleUpdatesModeV1(params.settings ?? null);
-  const promptOptionsEnabled = isCodingPromptResponseOptionsEnabled(params.settings ?? null);
   const defaultSessionMachineId = params.memoryRecallGuidanceEnabled === true
     && typeof params.memoryMachineId === 'string'
     && params.memoryMachineId.trim()
@@ -107,28 +77,29 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     ? resolvedTools.filter((tool) => tool.name !== 'change_title')
     : resolvedTools;
   const directToolNames = new Set(directTools.map((tool) => tool.name));
+  const memoryGuidanceEnabled = params.memoryRecallGuidanceEnabled === true
+    && directToolNames.has('memory_search')
+    && directToolNames.has('memory_get_window');
+  const launchSpec = buildHappyCliSubprocessLaunchSpec(['tools']);
+  const argv = [...launchSpec.args];
+  const launchArgPrefix = argv.length > 0 && argv[argv.length - 1] === 'tools' ? argv.slice(0, -1) : argv;
   const sessionConfig: PiBridgeSessionConfig = PiBridgeSessionConfigSchema.parse({
     v: 1,
     sessionId: params.sessionId,
     directTools: [...directTools],
-    promptAddition: buildPromptAddition({
-      sessionRenameMode,
-      promptOptionsEnabled,
-      directToolNames,
-      memoryGuidanceRequested: params.memoryRecallGuidanceEnabled === true,
-    }),
+    promptAddition: renderPromptPlanV1(buildCodingSessionPromptPlanBaseV1({
+      settings: params.settings ?? null,
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: memoryGuidanceEnabled,
+      sessionTitleToolAvailable: directToolNames.has('change_title'),
+    })),
+    launch: {
+      filePath: launchSpec.filePath,
+      argPrefix: launchArgPrefix,
+      env: launchSpec.env ?? {},
+    },
   });
-
-  const launchSpec = buildHappyCliSubprocessLaunchSpec(['tools']);
-  const argv = [...launchSpec.args];
-  // The extension appends `tools call ...` per invocation; keep the static prefix.
-  const launchArgPrefix = argv.length > 0 && argv[argv.length - 1] === 'tools' ? argv.slice(0, -1) : argv;
-
-  const extensionPath = await ensurePiBridgeExtensionAsset(params.agentDir, {
-    launchFilePath: launchSpec.filePath,
-    launchArgPrefix,
-    launchEnv: launchSpec.env ?? {},
-  });
+  const extensionPath = await ensurePiBridgeExtensionAsset(params.agentDir);
 
   return { extensionPath, sessionConfig };
 }

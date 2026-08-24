@@ -10,7 +10,7 @@ import {
   resolvePiBridgeExtensionDir,
   resolvePiBridgeExtensionPath,
 } from './piBridgeExtensionAssets';
-import { buildPiBridgeExtensionSource, type PiBridgeExtensionSourceParams } from './piBridgeExtensionSource';
+import { buildPiBridgeExtensionSource } from './piBridgeExtensionSource';
 
 const TEMP_DIRS = new Set<string>();
 
@@ -24,15 +24,6 @@ afterEach(() => {
   for (const dir of TEMP_DIRS) removeTempDirSync(dir);
   TEMP_DIRS.clear();
 });
-
-function baseParams(overrides?: Partial<PiBridgeExtensionSourceParams>): PiBridgeExtensionSourceParams {
-  return {
-    launchFilePath: '/usr/bin/node',
-    launchArgPrefix: ['--no-warnings', 'dist/index.mjs'],
-    launchEnv: {},
-    ...overrides,
-  };
-}
 
 describe('pi bridge extension assets', () => {
   it('resolves a deterministic, non-auto-discoverable path', () => {
@@ -48,25 +39,23 @@ describe('pi bridge extension assets', () => {
 
   it('writes the generated extension and is idempotent on repeat ensures', async () => {
     const agentDir = tempAgentDir();
-    const params = baseParams();
-
-    const path = await ensurePiBridgeExtensionAsset(agentDir, params);
+    const path = await ensurePiBridgeExtensionAsset(agentDir);
     expect(path).toBe(resolvePiBridgeExtensionPath(agentDir));
     expect(existsSync(path)).toBe(true);
-    expect(readFileSync(path, 'utf8')).toBe(buildPiBridgeExtensionSource(params));
+    expect(readFileSync(path, 'utf8')).toBe(buildPiBridgeExtensionSource());
 
     // Rewrite with the same content must not touch the file.
     const firstContent = readFileSync(path, 'utf8');
-    await ensurePiBridgeExtensionAsset(agentDir, params);
+    await ensurePiBridgeExtensionAsset(agentDir);
     expect(readFileSync(path, 'utf8')).toBe(firstContent);
   });
 
-  it('refreshes the asset when the source changes', async () => {
+  it('contains no process-specific launch configuration', async () => {
     const agentDir = tempAgentDir();
-    await ensurePiBridgeExtensionAsset(agentDir, baseParams());
-    await ensurePiBridgeExtensionAsset(agentDir, baseParams({ launchFilePath: '/opt/other/node' }));
+    await ensurePiBridgeExtensionAsset(agentDir);
     const content = readFileSync(resolvePiBridgeExtensionPath(agentDir), 'utf8');
-    expect(content).toContain('"/opt/other/node"');
+    expect(content).not.toContain('/usr/bin/node');
+    expect(content).not.toContain('HAPPIER_CLI_FILE_PATH');
   });
 
   it('retires the legacy flat asset (which Pi would auto-discover) when ensuring', async () => {
@@ -77,7 +66,7 @@ describe('pi bridge extension assets', () => {
     writeFileSync(legacyFlat, '// legacy flat', { mode: 0o600 });
     expect(existsSync(legacyFlat)).toBe(true);
 
-    await ensurePiBridgeExtensionAsset(agentDir, baseParams());
+    await ensurePiBridgeExtensionAsset(agentDir);
     expect(existsSync(legacyFlat)).toBe(false);
     expect(existsSync(resolvePiBridgeExtensionPath(agentDir))).toBe(true);
   });
@@ -92,7 +81,7 @@ describe('pi bridge extension assets', () => {
     writeFileSync(staleRoot, '// stale', { mode: 0o600 });
     writeFileSync(staleDir, '// stale', { mode: 0o600 });
 
-    await ensurePiBridgeExtensionAsset(agentDir, baseParams());
+    await ensurePiBridgeExtensionAsset(agentDir);
     expect(existsSync(staleRoot)).toBe(false);
     expect(existsSync(staleDir)).toBe(false);
     expect(existsSync(resolvePiBridgeExtensionPath(agentDir))).toBe(true);

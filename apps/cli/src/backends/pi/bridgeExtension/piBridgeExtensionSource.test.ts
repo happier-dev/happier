@@ -9,18 +9,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPiBridgeExtensionSource,
   PI_BRIDGE_EXTENSION_VERSION,
-  type PiBridgeExtensionSourceParams,
 } from './piBridgeExtensionSource';
 import { PI_BRIDGE_CONFIG_PATH_FLAG, PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE } from './piBridgeExtensionEnv';
-
-function baseParams(overrides?: Partial<PiBridgeExtensionSourceParams>): PiBridgeExtensionSourceParams {
-  return {
-    launchFilePath: '/usr/bin/node',
-    launchArgPrefix: ['--no-warnings', 'dist/index.mjs'],
-    launchEnv: {},
-    ...overrides,
-  };
-}
 
 type ToolDef = {
   name: string;
@@ -50,10 +40,10 @@ function createFakePi(flags: Readonly<Record<string, unknown>>) {
   };
 }
 
-async function loadExtensionFactory(params = baseParams()): Promise<(pi: ReturnType<typeof createFakePi>['pi']) => void> {
+async function loadExtensionFactory(): Promise<(pi: ReturnType<typeof createFakePi>['pi']) => void> {
   const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-ext-'));
   const file = join(dir, 'extension.mjs');
-  writeFileSync(file, buildPiBridgeExtensionSource(params), 'utf8');
+  writeFileSync(file, buildPiBridgeExtensionSource(), 'utf8');
   try {
     const mod = await import(`${pathToFileURL(file).href}?nonce=${Math.random()}`);
     return mod.default as (pi: ReturnType<typeof createFakePi>['pi']) => void;
@@ -64,7 +54,7 @@ async function loadExtensionFactory(params = baseParams()): Promise<(pi: ReturnT
 
 describe('buildPiBridgeExtensionSource', () => {
   it('emits a generic self-contained adapter with no provider-owned tool inventory', () => {
-    const source = buildPiBridgeExtensionSource(baseParams());
+    const source = buildPiBridgeExtensionSource();
     expect(source).toContain(`Version: ${PI_BRIDGE_EXTENSION_VERSION}`);
     expect(source).toContain(`"${PI_BRIDGE_CONFIG_PATH_FLAG}"`);
     expect(source).toContain('for (const tool of config.directTools)');
@@ -75,7 +65,7 @@ describe('buildPiBridgeExtensionSource', () => {
   });
 
   it('bridges every manifest tool through the semantic session-Agent call form', () => {
-    const source = buildPiBridgeExtensionSource(baseParams());
+    const source = buildPiBridgeExtensionSource();
     expect(source).toContain('"--session-agent-bridge"');
     expect(source).toContain('"--source", "happier"');
     expect(source).toContain('"--tool", toolName');
@@ -83,7 +73,7 @@ describe('buildPiBridgeExtensionSource', () => {
   });
 
   it('keeps context telemetry in the session-bound extension lifecycle', () => {
-    const source = buildPiBridgeExtensionSource(baseParams());
+    const source = buildPiBridgeExtensionSource();
     expect(source).toContain(`"${PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE}"`);
     expect(source).toContain('pi.on("message_end"');
     expect(source).toContain('getContextUsage');
@@ -93,7 +83,7 @@ describe('buildPiBridgeExtensionSource', () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-syntax-'));
     try {
       const file = join(dir, 'extension.mjs');
-      writeFileSync(file, buildPiBridgeExtensionSource(baseParams()), 'utf8');
+      writeFileSync(file, buildPiBridgeExtensionSource(), 'utf8');
       expect(() => execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' })).not.toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -132,12 +122,13 @@ if (args.input.value === 'fail') {
           call: { toolName: 'action_execute', actionId: 'memory.search' },
         }],
         promptAddition: '',
+        launch: {
+          filePath: process.execPath,
+          argPrefix: [executableScript],
+          env: { HAPPIER_TEST_BRIDGE: '1' },
+        },
       }));
-      const factory = await loadExtensionFactory(baseParams({
-        launchFilePath: process.execPath,
-        launchArgPrefix: [executableScript],
-        launchEnv: { HAPPIER_TEST_BRIDGE: '1' },
-      }));
+      const factory = await loadExtensionFactory();
       const harness = createFakePi({ [PI_BRIDGE_CONFIG_PATH_FLAG]: configPath });
       factory(harness.pi);
       await harness.emit('session_start', {});
@@ -209,6 +200,7 @@ if (args.input.value === 'fail') {
           call: { toolName: 'action_execute', actionId: 'session.status.get' },
         }],
         promptAddition: 'HOST_RESOLVED_GUIDANCE',
+        launch: { filePath: process.execPath, argPrefix: [], env: {} },
       }));
       const factory = await loadExtensionFactory();
       const harness = createFakePi({ [PI_BRIDGE_CONFIG_PATH_FLAG]: configPath });

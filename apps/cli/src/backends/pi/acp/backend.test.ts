@@ -207,6 +207,7 @@ describe('happy tools bridge extension args', () => {
         call: { toolName: 'change_title', actionId: null },
       }],
       promptAddition: 'TITLE_GUIDANCE',
+      launch: { filePath: process.execPath, argPrefix: [], env: {} },
     },
   };
 

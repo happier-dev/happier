@@ -2,7 +2,7 @@ import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { writeGeneratedTextAtomicallyIfChanged } from '@/utils/fs/writeGeneratedTextAtomicallyIfChanged';
-import { buildPiBridgeExtensionSource, type PiBridgeExtensionSourceParams } from './piBridgeExtensionSource';
+import { buildPiBridgeExtensionSource } from './piBridgeExtensionSource';
 
 /**
  * On-disk layout for the Pi tools-bridge extension.
@@ -76,7 +76,6 @@ async function retireStalePiBridgeExtensionAssets(extensionRoot: string, extensi
  */
 export async function ensurePiBridgeExtensionAsset(
   agentDir: string,
-  params: PiBridgeExtensionSourceParams,
 ): Promise<string> {
   const extensionRoot = join(agentDir, 'extensions');
   const extensionDir = resolvePiBridgeExtensionDir(agentDir);
@@ -85,7 +84,7 @@ export async function ensurePiBridgeExtensionAsset(
   const path = resolvePiBridgeExtensionPath(agentDir);
   await writeGeneratedTextAtomicallyIfChanged({
     path,
-    contents: buildPiBridgeExtensionSource(params),
+    contents: buildPiBridgeExtensionSource(),
     mode: 0o600,
   });
   return path;

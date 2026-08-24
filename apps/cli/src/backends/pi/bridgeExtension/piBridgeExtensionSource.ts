@@ -2,17 +2,11 @@ import { PI_BRIDGE_CONFIG_PATH_FLAG, PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE } from '.
 
 export const PI_BRIDGE_EXTENSION_VERSION = '4';
 
-export type PiBridgeExtensionSourceParams = Readonly<{
-  launchFilePath: string;
-  launchArgPrefix: readonly string[];
-  launchEnv: Readonly<Record<string, string>>;
-}>;
-
 function jsString(value: string): string {
   return JSON.stringify(value);
 }
 
-export function buildPiBridgeExtensionSource(params: PiBridgeExtensionSourceParams): string {
+export function buildPiBridgeExtensionSource(): string {
   return `// Happier Pi tools-bridge extension (generated). Version: ${PI_BRIDGE_EXTENSION_VERSION}.
 // Generic adapter: the host-owned protected session manifest owns tool policy and prompt guidance.
 import { spawn } from "node:child_process";
@@ -24,9 +18,6 @@ const TOOL_CALL_TIMEOUT_MS = 120000;
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 2000;
 const TOOL_OUTPUT_NOTICE_RESERVE_BYTES = 256;
-const HAPPIER_CLI_FILE_PATH = ${jsString(params.launchFilePath)};
-const HAPPIER_CLI_ARG_PREFIX = ${JSON.stringify(params.launchArgPrefix)};
-const HAPPIER_CLI_ENV = ${JSON.stringify(params.launchEnv)};
 
 function readFlagString(pi, name) {
   try {
@@ -44,6 +35,11 @@ function readSessionConfig(pi) {
     const parsed = JSON.parse(readFileSync(path, "utf8"));
     if (!parsed || parsed.v !== 1 || typeof parsed.sessionId !== "string" || !parsed.sessionId.trim()) return null;
     if (!Array.isArray(parsed.directTools) || typeof parsed.promptAddition !== "string") return null;
+    if (!parsed.launch || typeof parsed.launch !== "object") return null;
+    if (typeof parsed.launch.filePath !== "string" || !parsed.launch.filePath.trim()) return null;
+    if (!Array.isArray(parsed.launch.argPrefix) || !parsed.launch.argPrefix.every((value) => typeof value === "string")) return null;
+    if (!parsed.launch.env || typeof parsed.launch.env !== "object" || Array.isArray(parsed.launch.env)) return null;
+    if (!Object.values(parsed.launch.env).every((value) => typeof value === "string")) return null;
     const directTools = [];
     for (const tool of parsed.directTools) {
       if (!tool || typeof tool !== "object") return null;
@@ -160,7 +156,7 @@ function runChild(filePath, argv, options) {
 
 async function callHappierTool(config, toolName, args, signal, cwd) {
   const argv = [
-    ...HAPPIER_CLI_ARG_PREFIX,
+    ...config.launch.argPrefix,
     "tools", "call",
     "--session-id", config.sessionId,
     "--directory", cwd,
@@ -170,9 +166,9 @@ async function callHappierTool(config, toolName, args, signal, cwd) {
     "--session-agent-bridge",
     "--json",
   ];
-  const result = await runChild(HAPPIER_CLI_FILE_PATH, argv, {
+  const result = await runChild(config.launch.filePath, argv, {
     cwd,
-    env: { ...process.env, ...HAPPIER_CLI_ENV },
+    env: { ...process.env, ...config.launch.env },
     timeoutMs: TOOL_CALL_TIMEOUT_MS,
     signal,
   });

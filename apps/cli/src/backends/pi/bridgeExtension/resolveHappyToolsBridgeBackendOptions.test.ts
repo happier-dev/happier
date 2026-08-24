@@ -120,7 +120,7 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
     expect(explicitlyDiscoverable?.sessionConfig.promptAddition).not.toContain('memory_search');
   });
 
-  it('bakes only the Happier CLI launch spec into the shared asset', async () => {
+  it('keeps the Happier CLI launch spec in the protected session config', async () => {
     const agentDir = tempAgentDir();
     const resolved = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
@@ -129,10 +129,9 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
       memoryRecallGuidanceEnabled: false,
     });
     const content = readFileSync(resolved!.extensionPath, 'utf8');
-    expect(content).toMatch(/const HAPPIER_CLI_FILE_PATH = ".*";/);
-    const prefixMatch = content.match(/const HAPPIER_CLI_ARG_PREFIX = (\[.*?\]);/s);
-    expect(prefixMatch).not.toBeNull();
-    const prefix = JSON.parse(prefixMatch![1]) as string[];
+    expect(content).not.toContain('HAPPIER_CLI_FILE_PATH');
+    expect(resolved?.sessionConfig.launch.filePath).toBeTruthy();
+    const prefix = resolved?.sessionConfig.launch.argPrefix ?? [];
     expect(prefix[prefix.length - 1]).not.toBe('tools');
     expect(prefix.length).toBeGreaterThan(0);
   });

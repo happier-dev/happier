@@ -632,6 +632,7 @@ export class PiRpcBackend implements AgentBackend {
   private lastPublishedUsageKey: string | null = null;
   /** Latest live context telemetry parsed from the bridge extension's stderr markers, if any. */
   private latestContextTelemetry: PiContextTelemetry | null = null;
+  private assistantBoundaryContextTelemetry: PiContextTelemetry | null = null;
   private assistantMessageEndAwaitingContextTelemetry = false;
   /** Serializes usage-stats publishes so overlapping triggers cannot double-emit. */
   private usageStatsPublishChain: Promise<void> = Promise.resolve();
@@ -1056,8 +1057,8 @@ export class PiRpcBackend implements AgentBackend {
 
       await this.ensureConnectedBrokerReadyForProviderCommand();
       const providerExtensionCommand = this.isProviderExtensionCommand(message);
-      const turn = this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
-      const pendingTurn = this.pendingTurn;
+      const pendingTurn = this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
+      const turn = pendingTurn.promise;
       providerSendAttempted = true;
       try {
         await this.sendCommand({ type: 'prompt', message }, 30_000, { processAlreadyEnsured: true });
@@ -1074,7 +1075,7 @@ export class PiRpcBackend implements AgentBackend {
       if (
         providerExtensionCommand
         && pendingTurn
-        && this.pendingTurn === pendingTurn
+        && this.isCurrentPendingTurn(pendingTurn)
         && !pendingTurn.agentStartObserved
       ) {
         // Pi acknowledges an extension command after its handler returns, but a handler may
@@ -1083,7 +1084,7 @@ export class PiRpcBackend implements AgentBackend {
         await delay(this.getAgentEndSettleMs());
         const state = await this.getState().catch(() => null);
         if (
-          this.pendingTurn === pendingTurn
+          this.isCurrentPendingTurn(pendingTurn)
           && !pendingTurn.agentStartObserved
           && state?.isStreaming !== true
           && state?.isCompacting !== true
@@ -1886,6 +1887,7 @@ export class PiRpcBackend implements AgentBackend {
     const normalizedEvent = this.normalizeCompactionLifecycleEvent(event);
     if (normalizedEvent.type === 'compaction_start' || normalizedEvent.type === 'compaction_end') {
       this.latestContextTelemetry = null;
+      this.assistantBoundaryContextTelemetry = null;
       this.assistantMessageEndAwaitingContextTelemetry = false;
     }
     this.notePendingTurnActivity(normalizedEvent);
@@ -1911,9 +1913,11 @@ export class PiRpcBackend implements AgentBackend {
     if (normalizedEvent.type === 'message_end') {
       const message = asRecord(normalizedEvent.message);
       if (message?.role === 'assistant') {
+        this.assistantBoundaryContextTelemetry = null;
         if (this.latestContextTelemetry) {
           const contextTelemetry = this.latestContextTelemetry;
           this.latestContextTelemetry = null;
+          this.assistantBoundaryContextTelemetry = contextTelemetry;
           this.assistantMessageEndAwaitingContextTelemetry = false;
           this.scheduleUsageStatsPublish(contextTelemetry);
         } else {
@@ -1972,9 +1976,12 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   /** Schedule a serialized usage-stats publish; safe to call from any event path. */
-  private scheduleUsageStatsPublish(contextTelemetryOverride: PiContextTelemetry | null = null): Promise<void> {
+  private scheduleUsageStatsPublish(contextTelemetryOverride?: PiContextTelemetry | null): Promise<void> {
+    const contextTelemetry = contextTelemetryOverride === undefined
+      ? this.assistantBoundaryContextTelemetry
+      : contextTelemetryOverride;
     this.usageStatsPublishChain = this.usageStatsPublishChain
-      .then(() => this.publishUsageStatsBestEffort(contextTelemetryOverride))
+      .then(() => this.publishUsageStatsBestEffort(contextTelemetry))
       .catch(() => {
         // best-effort; publish errors are already swallowed inside
       });
@@ -2047,6 +2054,7 @@ export class PiRpcBackend implements AgentBackend {
       this.latestContextTelemetry = contextTelemetry;
       if (this.assistantMessageEndAwaitingContextTelemetry) {
         this.latestContextTelemetry = null;
+        this.assistantBoundaryContextTelemetry = contextTelemetry;
         this.assistantMessageEndAwaitingContextTelemetry = false;
         this.scheduleUsageStatsPublish(contextTelemetry);
       }
@@ -2164,9 +2172,9 @@ export class PiRpcBackend implements AgentBackend {
     return true;
   }
 
-  private createPendingTurn(timeoutMs: number): Promise<void> {
+  private createPendingTurn(timeoutMs: number): PendingTurn {
     if (this.pendingTurn) {
-      return Promise.reject(new Error('Pi pending turn already exists'));
+      throw new Error('Pi pending turn already exists');
     }
     let resolveTurn: (() => void) | null = null;
     let rejectTurn: ((error: Error) => void) | null = null;
@@ -2206,7 +2214,11 @@ export class PiRpcBackend implements AgentBackend {
     };
     this.pendingTurn = pending;
     this.armPendingTurnInactivityTimer(pending);
-    return promise;
+    return pending;
+  }
+
+  private isCurrentPendingTurn(pending: PendingTurn): boolean {
+    return this.pendingTurn === pending;
   }
 
   private resolvePendingTurn(): boolean {

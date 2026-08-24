@@ -16,6 +16,11 @@ export const PiBridgeSessionConfigSchema = z.object({
   sessionId: z.string().min(1),
   directTools: z.array(PiBridgeToolDescriptorSchema),
   promptAddition: z.string(),
+  launch: z.object({
+    filePath: z.string().min(1),
+    argPrefix: z.array(z.string()),
+    env: z.record(z.string(), z.string()),
+  }).strict(),
 }).strict();
 
 export type PiBridgeSessionConfig = z.infer<typeof PiBridgeSessionConfigSchema>;
