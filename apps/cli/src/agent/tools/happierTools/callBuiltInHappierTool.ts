@@ -51,6 +51,13 @@ export async function callBuiltInHappierTool(params: Readonly<{
   const sessionMetadata = rawSession.metadata && typeof rawSession.metadata === 'object' && !Array.isArray(rawSession.metadata)
     ? rawSession.metadata
     : tryDecryptSessionMetadata({ credentials: params.credentials, rawSession });
+  if (surface === 'agent' && sessionMetadata === null) {
+    return {
+      ok: false,
+      errorCode: 'session_metadata_unavailable',
+      error: 'Session metadata is unavailable for Agent tool authorization',
+    };
+  }
   const callerPermissionMode = surface === 'agent'
     ? resolvePermissionIntentFromSessionMetadata(sessionMetadata)?.intent ?? 'default'
     : null;

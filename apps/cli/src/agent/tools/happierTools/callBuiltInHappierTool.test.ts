@@ -192,6 +192,41 @@ describe('callBuiltInHappierTool', () => {
     );
   });
 
+  it('rejects agent bridge calls when session permission metadata cannot be decrypted', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        id: 'sess-1',
+        machineId: 'machine-1',
+        metadata: 'not-valid-encrypted-metadata',
+      },
+      ctx: { type: 'plain' as const },
+      mode: 'e2ee' as const,
+    });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'action_execute',
+      args: {
+        actionId: 'session.message.send',
+        input: { sessionId: 'sess-1', message: 'should not be sent' },
+      },
+      surface: 'agent',
+      toolCallId: 'pi-tool-call-1',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'session_metadata_unavailable',
+      error: 'Session metadata is unavailable for Agent tool authorization',
+    });
+    expect(createCliActionExecutor).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('fails closed for explicit plugin action ids that are not exposed by the authoritative registry', async () => {
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
     const result = await callBuiltInHappierTool({
