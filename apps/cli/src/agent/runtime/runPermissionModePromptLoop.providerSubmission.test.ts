@@ -21,11 +21,11 @@ function createModeQueue() {
 }
 
 describe('runPermissionModePromptLoop provider submission phase ownership', () => {
-  it('delivers advertised provider commands unchanged and defers fresh-session prompt composition', async () => {
+  it('delivers advertised provider commands unchanged and applies deferred fresh-session prompt composition to the next prompt', async () => {
     const queue = createModeQueue();
     queue.push(
       { text: '/goal fix authentication', localId: 'local-command' },
-      { permissionMode: 'default' },
+      { permissionMode: 'default', appendSystemPrompt: 'APPEND' },
       { userMessageLocalId: 'local-command' },
     );
 
@@ -34,10 +34,20 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
       permissionModeUpdatedAt: 0,
     };
     let shouldExit = false;
-    const resolveFreshSessionSystemPrompt = vi.fn(async () => 'HAPPIER SYSTEM PROMPT');
+    const resolveFreshSessionSystemPrompt = vi.fn(async ({ baseOverride }: { baseOverride?: string | null }) => (
+      baseOverride === undefined ? 'HAPPIER SYSTEM PROMPT' : baseOverride ?? ''
+    ));
     const sendPromptWithMeta = vi.fn(async (prompt: { onProviderPromptAccepted?: () => void }) => {
       prompt.onProviderPromptAccepted?.();
-      shouldExit = true;
+      if (sendPromptWithMeta.mock.calls.length === 1) {
+        queue.push(
+          { text: 'continue normally', localId: 'local-message' },
+          { permissionMode: 'default', appendSystemPrompt: 'APPEND' },
+          { userMessageLocalId: 'local-message' },
+        );
+      } else {
+        shouldExit = true;
+      }
     });
 
     await runPermissionModePromptLoop({
@@ -89,7 +99,10 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
     expect(sendPromptWithMeta).toHaveBeenCalledWith(expect.objectContaining({
       text: '/goal fix authentication',
     }));
-    expect(resolveFreshSessionSystemPrompt).not.toHaveBeenCalled();
+    expect(sendPromptWithMeta).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      text: 'APPEND\n\ncontinue normally',
+    }));
+    expect(resolveFreshSessionSystemPrompt).toHaveBeenCalledTimes(1);
   });
 
   it('attributes acceptance to the model captured before provider dispatch', async () => {
