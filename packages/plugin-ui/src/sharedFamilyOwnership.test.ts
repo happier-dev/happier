@@ -47,6 +47,8 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Action.Execute', 'Action.Copy', 'Action.OpenExternal', 'Action.OpenSurface', 'Action.Refresh',
   'ActionPanel', 'ActionPanel.Section',
   'List', 'List.Section', 'List.Item', 'Item', 'ItemGroup',
+  'List.SelectionActionBar', 'ListSelectionActionBar',
+  'ListMultiSelectionProvider', 'createListMultiSelectionStore',
   'Form', 'Field', 'TextField', 'Toggle', 'Select', 'ValidationMessage',
   'Form.Field', 'Form.TextField', 'Form.Toggle', 'Form.Select', 'Form.ValidationMessage', 'Form.Actions',
   'Popover', 'Dropdown', 'Menu', 'ContextMenu',
@@ -642,6 +644,90 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     },
     devMountSymbols: ['ItemGroup as PluginItemGroup'],
     declarative: { kind: 'not-applicable', reason: 'Declarative list/section own grouping without a standalone ItemGroup node.' },
+  },
+  /*
+   * The List multi-selection capability (§6 List family, r0.31 `U-LIST-MULTISELECT`).
+   *
+   * Four public members, one shared owner: the keyed selection state machine in
+   * `presentation/collection/multiSelection.ts`. The sessions list is the real
+   * core adapter — it was EXTRACTED onto this owner, not copied beside it, and
+   * `deletedCoreDuplicates` below is what keeps its local reducer, range,
+   * pointer and snapshot implementations from coming back.
+   *
+   * The committed Triage bulk surface directly renders the compound action
+   * bar below, proving that source-adoption half without falsely crediting its
+   * sibling aliases. This family remains `in-progress` until the separate
+   * packed-platform evidence exists.
+   */
+  {
+    publicName: 'createListMultiSelectionStore',
+    propTypeName: 'ListMultiSelectionStore',
+    family: 'List multi-selection',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/multiSelection.ts',
+    sharedSymbol: 'createHappierListMultiSelectionStore',
+    pluginOwner: { module: 'components/ListMultiSelection.tsx', symbol: 'createListMultiSelectionStore' },
+    coreConsumers: ['components/sessions/shell/selection/SessionListSelectionContext.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no bulk-selection node; a declarative list exposes no author-owned selection store.' },
+    deletedCoreDuplicates: [
+      { path: 'components/sessions/shell/selection/sessionListSelectionReducer.ts', symbol: 'pruneState' },
+      { path: 'components/sessions/shell/selection/sessionListSelectionRange.ts', symbol: 'isEligible' },
+      { path: 'components/sessions/shell/selection/sessionListSelectionPointer.ts', symbol: 'isApplePlatform' },
+      { path: 'components/sessions/shell/selection/SessionListSelectionContext.tsx', symbol: 'createSnapshot' },
+    ],
+  },
+  {
+    publicName: 'ListMultiSelectionProvider',
+    propTypeName: 'ListMultiSelectionProviderProps',
+    family: 'List multi-selection',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/multiSelection.ts',
+    sharedSymbol: 'createHappierListMultiSelectionStore',
+    pluginOwner: { module: 'components/ListMultiSelection.tsx', symbol: 'ListMultiSelectionProvider' },
+    coreConsumers: ['components/sessions/shell/selection/SessionListSelectionContext.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no bulk-selection node; the mounted List publishes the store itself.' },
+  },
+  {
+    publicName: 'ListSelectionActionBar',
+    propTypeName: 'ListSelectionActionBarProps',
+    family: 'List multi-selection',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/multiSelection.ts',
+    sharedSymbol: 'createHappierListMultiSelectionStore',
+    pluginOwner: { module: 'components/ListMultiSelection.tsx', symbol: 'ListSelectionActionBar' },
+    coreConsumers: ['components/sessions/shell/selection/SessionListSelectionContext.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no bulk-action node; a declarative surface reaches bulk work through Actions.' },
+  },
+  {
+    publicName: 'List.SelectionActionBar',
+    propTypeName: 'ListSelectionActionBarProps',
+    family: 'List multi-selection',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/multiSelection.ts',
+    sharedSymbol: 'createHappierListMultiSelectionStore',
+    pluginOwner: { module: 'components/ListMultiSelection.tsx', symbol: 'ListSelectionActionBar' },
+    coreConsumers: ['components/sessions/shell/selection/SessionListSelectionContext.tsx'],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/triage/src/ui/list/BulkActionBar.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no bulk-action node; a declarative surface reaches bulk work through Actions.' },
   },
   {
     publicName: 'Heading',
@@ -1389,6 +1475,12 @@ function publicComponentPaths(): readonly string[] {
 const graduatedEntries = GRADUATED_FAMILIES.filter((entry) => entry.phase === 'graduated');
 
 describe('graduated shared presentation families (§8.2)', () => {
+  it('keeps List multi-selection React Context module-local', async () => {
+    const source = await read(join(repoRoot, 'packages/plugin-ui/src/components/ListMultiSelection.tsx'));
+    expect(source).not.toContain('globalThis');
+    expect(source).not.toContain('LIST_MULTI_SELECTION_CONTEXT_GLOBAL_KEY');
+  });
+
   it('resolves the Happier core source tree it audits', () => {
     // Not a skip: an audit that silently passes when it cannot see core would
     // be worse than no audit (§7 forbids silently skipping on a missing input).
@@ -1582,7 +1674,16 @@ describe('graduated shared presentation families (§8.2)', () => {
       .filter((entry) => entry.disposition === 'required' && entry.publiclyExported && entry.phase !== 'graduated')
       .map((entry) => entry.publicName);
 
-    expect(unfinished).toEqual(['Progress', 'Image', 'BrandMark', 'TargetedSurface']);
+    expect(unfinished).toEqual([
+      'createListMultiSelectionStore',
+      'ListMultiSelectionProvider',
+      'ListSelectionActionBar',
+      'List.SelectionActionBar',
+      'Progress',
+      'Image',
+      'BrandMark',
+      'TargetedSurface',
+    ]);
   });
 
   it('records the current app surface adoption that graduates Screen', () => {
@@ -1624,6 +1725,24 @@ describe('graduated shared presentation families (§8.2)', () => {
       phase: 'in-progress',
     });
     expect(targetedSurface?.positiveConsumer).toBeUndefined();
+  });
+
+  it('records Triage bulk source adoption for List.SelectionActionBar', () => {
+    const actionBar = GRADUATED_FAMILIES.find((entry) => entry.publicName === 'List.SelectionActionBar');
+
+    expect(actionBar).toMatchObject({
+      disposition: 'required',
+      publiclyExported: true,
+      phase: 'in-progress',
+      positiveConsumer: {
+        kind: 'plugin-surface',
+        pathFromRepoRoot: 'packages/plugins/triage/src/ui/list/BulkActionBar.tsx',
+      },
+    });
+    expect(sourceRendersPublicPluginUiComponent(
+      read(join(repoRoot, 'packages/plugins/triage/src/ui/list/BulkActionBar.tsx')),
+      'List.SelectionActionBar',
+    )).toBe(true);
   });
 
   it('proves the public Action Form lifecycle through an external author consumer', () => {
