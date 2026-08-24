@@ -21,6 +21,9 @@ import { readFileSync } from "node:fs";
 const CONFIG_PATH_FLAG = ${jsString(PI_BRIDGE_CONFIG_PATH_FLAG)};
 const TOKEN_COUNT_MARKER_TYPE = ${jsString(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)};
 const TOOL_CALL_TIMEOUT_MS = 120000;
+const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
+const TOOL_OUTPUT_MAX_LINES = 2000;
+const TOOL_OUTPUT_NOTICE_RESERVE_BYTES = 256;
 const HAPPIER_CLI_FILE_PATH = ${jsString(params.launchFilePath)};
 const HAPPIER_CLI_ARG_PREFIX = ${JSON.stringify(params.launchArgPrefix)};
 const HAPPIER_CLI_ENV = ${JSON.stringify(params.launchEnv)};
@@ -73,20 +76,39 @@ function parseEnvelope(stdout) {
   return { ok: false, error: { code: "bridge_invalid_output", message: trimmed.slice(0, 500) } };
 }
 
+function truncateToolOutput(value) {
+  const text = typeof value === "string" ? value : String(value ?? "");
+  const totalBytes = Buffer.byteLength(text, "utf8");
+  const lines = text.split("\\n");
+  const totalLines = lines.length;
+  let content = lines.slice(0, TOOL_OUTPUT_MAX_LINES).join("\\n");
+  const contentByteLimit = TOOL_OUTPUT_MAX_BYTES - TOOL_OUTPUT_NOTICE_RESERVE_BYTES;
+  if (Buffer.byteLength(content, "utf8") > contentByteLimit) {
+    content = Buffer.from(content, "utf8").subarray(0, contentByteLimit).toString("utf8");
+  }
+  const truncated = totalLines > TOOL_OUTPUT_MAX_LINES || totalBytes > Buffer.byteLength(content, "utf8");
+  if (!truncated) return { content, truncated: false };
+  const notice = "\\n\\n[Output truncated: showing the first " + Buffer.byteLength(content, "utf8")
+    + " of " + totalBytes + " bytes and at most " + TOOL_OUTPUT_MAX_LINES + " lines]";
+  return { content: content + notice, truncated: true, totalBytes, totalLines };
+}
+
 function envelopeToToolResult(envelope) {
   if (envelope.ok) {
     const output = envelope.data && typeof envelope.data === "object" && "output" in envelope.data
       ? envelope.data.output
       : (envelope.data ?? null);
-    return { content: [{ type: "text", text: JSON.stringify(output) }], details: { envelope } };
+    const projected = truncateToolOutput(JSON.stringify(output) ?? "null");
+    return { content: [{ type: "text", text: projected.content }], details: { truncation: projected } };
   }
   const error = envelope.error && typeof envelope.error === "object" ? envelope.error : {};
   const parts = ["code=" + (typeof error.code === "string" && error.code ? error.code : "unknown")];
   if (typeof error.message === "string" && error.message) parts.push(error.message);
   if (Array.isArray(error.candidates) && error.candidates.length > 0) parts.push("candidates: " + error.candidates.join(", "));
+  const projected = truncateToolOutput(parts.join(" — "));
   return {
-    content: [{ type: "text", text: parts.join(" — ") }],
-    details: { envelope },
+    content: [{ type: "text", text: projected.content }],
+    details: { truncation: projected },
     isError: true,
   };
 }

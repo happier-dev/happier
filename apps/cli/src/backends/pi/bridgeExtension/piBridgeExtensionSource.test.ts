@@ -102,7 +102,7 @@ describe('buildPiBridgeExtensionSource', () => {
 });
 
 describe('pi bridge extension behavior', () => {
-  it('executes host-resolved tools through the Agent bridge and preserves typed envelopes', async () => {
+  it('executes host-resolved tools through the Agent bridge with bounded typed results', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-execute-'));
     try {
       const argvPath = join(dir, 'argv.json');
@@ -114,6 +114,8 @@ const argsIndex = process.argv.indexOf('--args-json');
 const args = JSON.parse(process.argv[argsIndex + 1]);
 if (args.input.value === 'fail') {
   process.stdout.write(JSON.stringify({ ok: false, error: { code: 'action_failed', message: 'expected failure' } }) + '\\n');
+} else if (args.input.value === 'large') {
+  process.stdout.write(JSON.stringify({ ok: true, data: { output: 'x'.repeat(100000) } }) + '\\n');
 } else {
   process.stdout.write(JSON.stringify({ ok: true, data: { output: { echoed: args } } }) + '\\n');
 }
@@ -176,6 +178,17 @@ if (args.input.value === 'fail') {
         isError: true,
         content: [{ type: 'text', text: expect.stringContaining('action_failed') }],
       });
+
+      const largeResult = await harness.tools[0]!.execute(
+        'call-3',
+        { value: 'large' },
+        new AbortController().signal,
+        undefined,
+        { cwd: dir },
+      ) as { content: Array<{ text: string }>; details?: Record<string, unknown> };
+      expect(Buffer.byteLength(largeResult.content[0]!.text, 'utf8')).toBeLessThanOrEqual(50 * 1024);
+      expect(largeResult.content[0]!.text).toContain('[Output truncated');
+      expect(largeResult.details).not.toHaveProperty('envelope');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
