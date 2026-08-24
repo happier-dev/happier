@@ -303,7 +303,61 @@ describe('CommandPaletteProvider', () => {
         });
 
         expect(testState.routerPush).toHaveBeenCalledWith('/settings');
-        expect(testState.routerPush).toHaveBeenCalledWith('/new');
+        expect(testState.routerPush).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+                draftOrigin: 'ordinary',
+            },
+        });
+    });
+
+    it('shares the ordinary-entry callback between the palette item and keyboard shortcut', async () => {
+        testState.settings = {
+            commandPaletteEnabled: true,
+            keyboardShortcutsV2Enabled: true,
+            keyboardSingleKeyShortcutsEnabled: false,
+            keyboardShortcutOverridesV1: {
+                'session.new': [{ binding: 'Alt+N' }],
+            },
+            keyboardShortcutDisabledCommandIdsV1: [],
+        };
+        const { renderScreen } = await import('@/dev/testkit');
+        const { Modal } = await import('@/modal');
+        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+
+        await renderScreen(
+            <CommandPaletteProvider>
+                <Child />
+            </CommandPaletteProvider>,
+        );
+
+        await act(async () => {
+            window.dispatchEvent(createKeyboardEvent({ key: 'k', code: 'KeyK', altKey: true }));
+        });
+        const showProps = vi.mocked(Modal.show).mock.calls[0]?.[0]?.props as {
+            commands?: Array<{ id: string; action: () => void | Promise<void> }>;
+        } | undefined;
+        await act(async () => {
+            await showProps?.commands?.find((command) => command.id === 'new-session')?.action();
+            window.dispatchEvent(createKeyboardEvent({ key: 'n', code: 'KeyN', altKey: true }));
+        });
+
+        const ordinaryRouteCalls = testState.routerPush.mock.calls.filter(([route]) => (
+            typeof route === 'object'
+            && route !== null
+            && (route as { pathname?: unknown }).pathname === '/new'
+        ));
+        expect(ordinaryRouteCalls).toHaveLength(2);
+        expect(ordinaryRouteCalls).toEqual(expect.arrayContaining([
+            [{
+                pathname: '/new',
+                params: {
+                    draftId: expect.any(String),
+                    draftOrigin: 'ordinary',
+                },
+            }],
+        ]));
     });
 });
 

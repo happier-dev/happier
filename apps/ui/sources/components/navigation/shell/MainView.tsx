@@ -43,6 +43,10 @@ import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import type { FeatureId } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    shouldForceFreshNewSessionEntryFromPressEvent,
+    useResolveNewSessionOrdinaryEntryRoute,
+} from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 
 interface MainViewProps {
@@ -199,12 +203,19 @@ const HeaderTitle = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
 // Header right button - varies by tab
 const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => {
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { theme } = useUnistyles();
     const isCustomServer = isUsingCustomServer();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
+    const handleNewSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     if (activeTab === 'sessions') {
         return (
@@ -221,7 +232,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                 ) : null}
                 <Pressable
                     testID="main-header-start-new-session"
-                    onPress={() => router.push('/new')}
+                    onPress={handleNewSession}
                     hitSlop={15}
                     style={styles.headerButton}
                 >
@@ -287,6 +298,7 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
     const { theme } = useUnistyles();
     const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const activeSessionId = React.useMemo(() => readSessionIdFromPathname(pathname), [pathname]);
     const surfaceOwnership = React.useMemo(
         () => resolveSessionListSurfaceOwnership({
@@ -306,9 +318,12 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
         sessionListSurfaceDataActive: surfaceOwnership.dataActive,
     });
 
-    const handleNewSession = React.useCallback(() => {
-        router.push('/new');
-    }, [router]);
+    const handleNewSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     const storageChrome = (
         <SessionsListStorageChrome

@@ -15,6 +15,8 @@ import { AutomationsEmptyState } from '@/components/automations/shared/Automatio
 import { FAB } from '@/components/ui/buttons/FAB';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { t } from '@/text';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -82,7 +84,16 @@ export function AutomationsScreen() {
             </ItemList>
             {machines.length > 0 ? (
                 <FAB
-                    onPress={() => router.push('/new?automation=1' as any)}
+                    onPress={() => {
+                        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
+                        router.push({
+                            pathname: '/new',
+                            params: {
+                                ...buildNewSessionLaunchRouteParams({ draftId }),
+                                automation: '1',
+                            },
+                        } as any);
+                    }}
                     accessibilityLabel={t('automations.screen.createAutomationA11y')}
                 />
             ) : null}

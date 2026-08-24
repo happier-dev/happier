@@ -36,6 +36,8 @@ import {
 import { handleSourceControlBranchMenuSelect } from './handleSourceControlBranchMenuSelect';
 import { parsePullRequestReferenceInput } from './pullRequestReferenceInput';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
 export type SourceControlBranchMenuProps = Readonly<{
     sessionId: string;
@@ -83,12 +85,14 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     const canLaunchWorktreeSession = snapshot?.repo.isRepo === true;
 
     const openNewSessionForDirectory = React.useCallback((directory: string) => {
-        const params = machineTarget?.machineId
-            ? { machineId: machineTarget.machineId, directory }
-            : { directory };
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         router.push({
             pathname: '/new',
-            params,
+            params: buildNewSessionLaunchRouteParams({
+                draftId,
+                machineId: machineTarget?.machineId,
+                directory,
+            }),
         });
     }, [machineTarget?.machineId, router]);
 

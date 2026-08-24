@@ -757,6 +757,7 @@ describe('/session/[id]/info', () => {
         expect(completeSessionForkNavigationSpy).toHaveBeenCalledWith({
             childSessionId: 'child-session',
             parentSessionId: 'session-1234567890abcdef',
+            serverId: 'server-b',
             navigate: expect.any(Function),
         });
 
@@ -1183,6 +1184,7 @@ describe('/session/[id]/info', () => {
         expect(pushArg).toEqual({
             pathname: '/new',
             params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 dataId: expect.any(String),
                 machineId: 'machine-display',
                 directory: '/workspace/display',

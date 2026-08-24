@@ -33,6 +33,10 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    shouldForceFreshNewSessionEntryFromPressEvent,
+    useResolveNewSessionOrdinaryEntryRoute,
+} from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
 
@@ -51,7 +55,7 @@ export type SessionGettingStartedGuidanceViewModel = Readonly<{
     serverName: string;
     showServerSetup: boolean;
     onOpenSetup?: () => void;
-    onStartNewSession?: () => void;
+    onStartNewSession?: (event?: unknown) => void;
     onConnectTerminal?: () => void;
     onEnterUrlManually?: () => void;
     connectIsLoading?: boolean;
@@ -647,14 +651,18 @@ export function useShouldBlockNewSessionWithGettingStartedGuidance(): boolean {
 
 function useSessionGettingStartedGuidanceViewModelBase(): SessionGettingStartedGuidanceViewModel {
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const canOpenSetup = isTauriDesktop();
     const onOpenSetup = React.useCallback(() => {
         router.push('/setup' as any);
     }, []);
 
-    const onStartNewSession = React.useCallback(() => {
-        router.push('/new' as any);
-    }, []);
+    const onStartNewSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute]);
 
     return React.useMemo(() => ({
         kind: baseModel.kind,

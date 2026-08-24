@@ -79,6 +79,20 @@ describe('openSessionForkStrategyFlow source-context gate', () => {
         expect(opened?.availability.replay).toBe(true);
     });
 
+    it('addresses the configured new Session with a fresh UUID', () => {
+        sessionsRef.current[SESSION_ID] = FORK_SOURCE;
+        const { opened, navigateToNewSession } = openFlow(true);
+
+        opened?.configureNewSession?.();
+
+        expect(navigateToNewSession).toHaveBeenCalledWith(expect.objectContaining({
+            pathname: '/new',
+            params: expect.objectContaining({
+                draftId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+            }),
+        }));
+    });
+
     it('still opens for a Claude Session with Replay off, carrying the reason Native is closed', () => {
         // The shipped narrowing returned null here, so the header item, the info
         // row and the message button all deleted themselves and the user could

@@ -60,7 +60,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
-                machineId: undefined,
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 directory: '/repo/.worktrees/feature-auth',
             },
         });
@@ -111,6 +111,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 machineId: 'machine-1',
                 directory: '/repo/.dev/worktree/feature-auth',
             },
@@ -158,6 +159,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 machineId: 'machine-1',
                 directory: '/repo/.dev/worktree/feature-auth/packages/app',
             },
@@ -238,6 +240,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 machineId: 'machine-1',
                 directory: '/repo',
                 worktree: 'new',
@@ -393,6 +396,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 machineId: 'machine-1',
                 directory: '/repo/.dev/worktree/pr-42/packages/app',
             },

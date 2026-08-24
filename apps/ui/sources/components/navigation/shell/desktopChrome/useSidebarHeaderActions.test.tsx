@@ -54,4 +54,21 @@ describe('useSidebarHeaderActions', () => {
             'newSession',
         ]);
     });
+
+    it('opens the canonical ordinary draft route and forwards pointer modifiers', async () => {
+        const { useSidebarHeaderActions } = await import('./useSidebarHeaderActions');
+        const hook = await renderHook(() => useSidebarHeaderActions());
+
+        hook.getCurrent().headerActions.find((action) => action.id === 'newSession')?.onPress?.({
+            nativeEvent: { ctrlKey: true },
+        } as never);
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+                draftOrigin: 'ordinary',
+            },
+        });
+    });
 });

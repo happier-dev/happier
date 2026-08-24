@@ -20,6 +20,8 @@ import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
 
 export const ZenView = React.memo(() => {
@@ -124,11 +126,12 @@ export const ZenView = React.memo(() => {
             taskTitle: editedText
         };
         const dataId = storeTempData(sessionData);
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
 
         // Navigate to new session screen with the data ID
         router.push({
             pathname: '/new',
-            params: { dataId }
+            params: { ...buildNewSessionLaunchRouteParams({ draftId }), dataId }
         });
     };
 
@@ -144,11 +147,12 @@ export const ZenView = React.memo(() => {
             taskTitle: editedText
         };
         const dataId = storeTempData(sessionData);
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
 
         // Navigate to new session screen with the data ID
         router.push({
             pathname: '/new',
-            params: { dataId }
+            params: { ...buildNewSessionLaunchRouteParams({ draftId }), dataId }
         });
     };
 
