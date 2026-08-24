@@ -1,7 +1,7 @@
 import {
   isBaseCredentialDiagnosticKey,
   splitSensitiveDiagnosticKeySegments,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/diagnostics/sensitive-keys';
 
 export const CONNECTED_SERVICE_SECRET_REDACTION_MARKER = '[REDACTED]';
 export const CONNECTED_SERVICE_PROVIDER_RESUME_ID_REDACTION_MARKER = '[REDACTED_PROVIDER_RESUME_ID]';

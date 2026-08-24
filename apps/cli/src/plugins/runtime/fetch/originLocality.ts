@@ -3,7 +3,7 @@ import { lookup } from 'node:dns/promises';
 import {
     assessEndpointHostLocality,
     normalizeProviderEndpointUrlSyntax,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers';
 
 /** DNS is a genuine system boundary; every caller may substitute it. */
 export type PluginNetworkAddressResolver = (hostname: string) => Promise<readonly string[]>;

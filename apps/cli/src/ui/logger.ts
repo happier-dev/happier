@@ -6,7 +6,7 @@
  */
 
 import chalk from 'chalk'
-import { redactBugReportSensitiveText } from '@happier-dev/protocol'
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports'
 import { configuration } from '../configuration'
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'

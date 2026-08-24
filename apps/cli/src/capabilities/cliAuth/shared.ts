@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import {
   agentCliPathRequiresJavaScriptRuntime,
   resolveAgentCliJavaScriptRuntimeCommand,
-} from '@happier-dev/cli-common/agents';
+} from '@happier-dev/cli-common/agents/resolution';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 const execFileAsync = promisify(execFile);

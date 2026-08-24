@@ -1,8 +1,8 @@
 import {
     isBaseCredentialDiagnosticKey,
     splitSensitiveDiagnosticKeySegments,
-    type PluginRequestInterceptorContributionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/diagnostics/sensitive-keys';
+import type { PluginRequestInterceptorContributionV1 } from '@happier-dev/protocol';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
     HttpMethod,

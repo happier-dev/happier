@@ -3,7 +3,7 @@ import net from 'node:net';
 import {
   isLoopbackHostname as isProtocolLoopbackHostname,
   normalizeHostnameForLoopbackCheck,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/server/urls';
 
 function stripBrackets(hostname: string): string {
   const host = String(hostname ?? '').trim();

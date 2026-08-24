@@ -107,6 +107,11 @@
       "import": "./dist/agents/index.js",
       "default": "./dist/agents/index.js"
     },
+    "./agents/resolution": {
+      "types": "./dist/agents/resolution.d.ts",
+      "import": "./dist/agents/resolution.js",
+      "default": "./dist/agents/resolution.js"
+    },
     "./path": {
       "types": "./dist/path/index.d.ts",
       "import": "./dist/path/index.js",

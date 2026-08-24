@@ -4,7 +4,7 @@ import type { AgentModelConfig } from '../models.js';
 import type { AgentLocalCliConfig } from '../localCli.js';
 import type { AnyAgentRuntimeKindsManifest } from '../runtimeKinds.js';
 import type { EngineSpec } from '../runtime/engine/contracts.js';
-import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol';
+import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 
 export type AgentCatalogDefinition = Readonly<{
   id: AgentId;

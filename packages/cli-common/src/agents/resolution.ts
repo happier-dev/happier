@@ -1,17 +1,15 @@
 import { accessSync, closeSync, constants as fsConstants, existsSync, openSync, readSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 
+import { AGENT_IDS, type AgentId, type BundledAgentId } from '@happier-dev/agents/agent-ids';
 import {
-  AGENT_IDS,
   getAgentCliRuntimeSpec,
-  legacyCustomAcpCompat,
-  type AgentId,
-  type BundledAgentId,
   type AgentCliRuntimeSpec,
   type AgentCliManagedInstallSpec,
   type AgentCliSourcePreference,
-} from '@happier-dev/agents';
-import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+} from '@happier-dev/agents/cli/runtime';
+import * as legacyCustomAcpCompat from '@happier-dev/agents/compat/customAcp';
+import { buildBackendTargetKey, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 
 import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
 import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';

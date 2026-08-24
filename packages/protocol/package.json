@@ -155,6 +155,14 @@
       "types": "./dist/sessions/general.d.ts",
       "default": "./dist/sessions/general.js"
     },
+    "./sessions/replay-seed-budget": {
+      "types": "./dist/sessions/replaySeedBudget.d.ts",
+      "default": "./dist/sessions/replaySeedBudget.js"
+    },
+    "./sessions/messages/special-commands": {
+      "types": "./dist/sessions/messages/specialCommands.d.ts",
+      "default": "./dist/sessions/messages/specialCommands.js"
+    },
     "./sessions/subagents": {
       "types": "./dist/sessions/subagents/index.d.ts",
       "default": "./dist/sessions/subagents/index.js"
@@ -166,6 +174,10 @@
     "./bugs/reports": {
       "types": "./dist/bugs/reports/index.d.ts",
       "default": "./dist/bugs/reports/index.js"
+    },
+    "./diagnostics/sensitive-keys": {
+      "types": "./dist/common/sensitiveKeys.d.ts",
+      "default": "./dist/common/sensitiveKeys.js"
     },
     "./filesystem/portablePathSegment": {
       "types": "./dist/filesystem/portablePathSegment.d.ts",
@@ -182,6 +194,10 @@
     "./backends": {
       "types": "./dist/backends/index.d.ts",
       "default": "./dist/backends/index.js"
+    },
+    "./daemon/plugin-invocation-logs": {
+      "types": "./dist/daemon/pluginInvocationLogs.d.ts",
+      "default": "./dist/daemon/pluginInvocationLogs.js"
     },
     "./pets": {
       "types": "./dist/pets/index.d.ts",
@@ -362,6 +378,10 @@
     "./sessions/external/linked-metadata": {
       "types": "./dist/sessions/external/linkedSessionMetadata.d.ts",
       "default": "./dist/sessions/external/linkedSessionMetadata.js"
+    },
+    "./server/urls": {
+      "types": "./dist/server/urls/index.d.ts",
+      "default": "./dist/server/urls/index.js"
     },
     "./plugins/contributions/browser": {
       "types": "./dist/plugins/contributions/browser/index.d.ts",

@@ -14,7 +14,7 @@ import type {
 import {
     agentCliPathRequiresJavaScriptRuntime,
     resolveAgentCliJavaScriptRuntimeCommand,
-} from '@happier-dev/cli-common/agents';
+} from '@happier-dev/cli-common/agents/resolution';
 
 import {
     isPluginExecSystemToolSupportedOnHost,

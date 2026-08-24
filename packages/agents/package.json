@@ -18,6 +18,14 @@
       "types": "./dist/acpPresets.d.ts",
       "default": "./dist/acpPresets.js"
     },
+    "./agent-ids": {
+      "types": "./dist/generated/agentIds.d.ts",
+      "default": "./dist/generated/agentIds.js"
+    },
+    "./cli/runtime": {
+      "types": "./dist/cli/runtime.d.ts",
+      "default": "./dist/cli/runtime.js"
+    },
     "./process/shellCommand": {
       "types": "./dist/process/shellCommand.d.ts",
       "default": "./dist/process/shellCommand.js"
@@ -29,6 +37,14 @@
     "./definitions/agent-capabilities": {
       "types": "./dist/definitions/agentCapabilityProjection.d.ts",
       "default": "./dist/definitions/agentCapabilityProjection.js"
+    },
+    "./definitions": {
+      "types": "./dist/definitions/index.d.ts",
+      "default": "./dist/definitions/index.js"
+    },
+    "./compat/customAcp": {
+      "types": "./dist/compat/customAcp.d.ts",
+      "default": "./dist/compat/customAcp.js"
     },
     "./session/controls/checkpoints": {
       "types": "./dist/session/controls/checkpoints.d.ts",

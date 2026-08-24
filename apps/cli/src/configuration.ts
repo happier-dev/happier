@@ -16,7 +16,7 @@ import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './serve
 import packageJson from '../package.json'
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
 import { resolveIntEnvWithBounds } from './configuration/resolveIntEnvWithBounds'
-import { HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol'
+import { HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol/sessions/replay-seed-budget'
 import { resolveCliHappyHomeDir } from './configuration/resolveCliHappyHomeDir'
 import {
   readActiveServerFromSettingsFile,

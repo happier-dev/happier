@@ -10,7 +10,7 @@ export const CANONICAL_AGENT_CLI_RUNTIME_SPECS = CANONICAL_AGENT_CLI_RUNTIME_SPE
 export {
   isNonSteerablePromptPayload,
   parseSpecialCommand,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/messages/special-commands';
 
 export {
     AGENT_IDS,

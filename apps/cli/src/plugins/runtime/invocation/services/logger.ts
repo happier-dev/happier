@@ -2,14 +2,16 @@ import { createHash } from 'node:crypto';
 
 import {
     createSensitiveDiagnosticTextRedactor,
-    isBaseCredentialDiagnosticKey,
-    PluginInvocationLogRecordV1Schema,
     redactBugReportSensitiveText,
-    splitSensitiveDiagnosticKeySegments,
     trimBugReportTextHeadToMaxBytes,
     type SensitiveDiagnosticTextRedactor,
     type SensitiveDiagnosticValuesLease,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/bugs/reports';
+import {
+    isBaseCredentialDiagnosticKey,
+    splitSensitiveDiagnosticKeySegments,
+} from '@happier-dev/protocol/diagnostics/sensitive-keys';
+import { PluginInvocationLogRecordV1Schema } from '@happier-dev/protocol/daemon/plugin-invocation-logs';
 import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type { LoggerService as PluginLoggerService } from '@happier-dev/plugin-sdk';
 

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls';
 
 import { deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';

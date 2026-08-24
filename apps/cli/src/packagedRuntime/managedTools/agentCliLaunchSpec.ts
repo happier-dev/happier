@@ -4,7 +4,7 @@ import {
   resolveAgentCliCommandForRuntime,
   type AgentCliCommandResolution,
   type AgentCliRuntimeDescriptor,
-} from '@happier-dev/cli-common/agents';
+} from '@happier-dev/cli-common/agents/resolution';
 import { resolveDirectJavaScriptRuntimeCommand } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
 import { isWindowsShellShimPath } from '@happier-dev/cli-common/process';
 

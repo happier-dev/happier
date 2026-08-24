@@ -1,9 +1,9 @@
 import {
     getAllAgentDefinitionContracts,
     getAllAgentCatalogDefinitions,
-} from '@happier-dev/agents';
-import type { AgentCatalogDefinition } from '@happier-dev/agents';
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
+} from '@happier-dev/agents/definitions';
+import type { AgentCatalogDefinition } from '@happier-dev/agents/definitions';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { createAgentRuntimeCatalogEntryHooks } from '../agentCatalogEntryHooks';
 import type {
