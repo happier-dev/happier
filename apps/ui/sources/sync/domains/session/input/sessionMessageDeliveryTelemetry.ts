@@ -4,34 +4,13 @@ import {
     type SyncReliabilityTelemetry,
 } from '@/sync/runtime/syncReliabilityTelemetry';
 import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
+
 import {
-    isVersionSupported,
-    MINIMUM_CLI_PENDING_QUEUE_V2_VERSION,
-} from '@/utils/system/versionUtils';
-
-import { DEFAULT_BUSY_STEER_SEND_POLICY, type BusySteerSendPolicy, type MessageSendMode } from '../control/submitMode';
-
-type PendingSupportState =
-    | 'supported'
-    | 'unknown_session'
-    | 'unknown_pending_version'
-    | 'unsupported_cli_version';
-
-function getPendingSupportState(session: Session | null): PendingSupportState {
-    if (!session) {
-        return 'unknown_session';
-    }
-    if (typeof session.pendingVersion !== 'number') {
-        return 'unknown_pending_version';
-    }
-
-    const cliVersion = typeof session.metadata?.version === 'string' ? session.metadata.version.trim() : '';
-    if (cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION)) {
-        return 'unsupported_cli_version';
-    }
-
-    return 'supported';
-}
+    DEFAULT_BUSY_STEER_SEND_POLICY,
+    getPendingQueueSubmitSupportState,
+    type BusySteerSendPolicy,
+    type MessageSendMode,
+} from '../control/submitMode';
 
 export function recordSessionMessageDeliveryDecision(params: Readonly<{
     sessionId: string;
@@ -78,7 +57,7 @@ export function recordSessionMessageDeliveryDecision(params: Readonly<{
         busySteerSendPolicy: params.busySteerSendPolicy ?? DEFAULT_BUSY_STEER_SEND_POLICY,
         forceImmediate: params.forceImmediate === true,
         pendingRequested: requestedMode === 'server_pending' || requestedMode === 'interrupt',
-        pendingSupportState: getPendingSupportState(session),
+        pendingSupportState: getPendingQueueSubmitSupportState(session),
         supportRefreshAttempted: params.supportRefreshAttempted === true,
         supportRefreshSucceeded: params.supportRefreshSucceeded === true,
         pendingVersionPresent: typeof session?.pendingVersion === 'number',
