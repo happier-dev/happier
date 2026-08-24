@@ -5,7 +5,13 @@ import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
+import {
+  classifyVitestShardTermination,
+  summarizeVitestShardOutcomes,
+} from '../../../scripts/testing/vitestShardOutcomes.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
+
+export { classifyVitestShardTermination, summarizeVitestShardOutcomes };
 
 function parsePositiveInt(raw) {
   const parsed = Number.parseInt(String(raw ?? '').trim(), 10);
@@ -87,31 +93,6 @@ export function buildVitestShardRunArgs({ configPath, passthroughArgs, positiona
   ];
 }
 
-/**
- * How a finished shard terminated.
- *
- * `aborted` is reserved for an OPERATOR interrupt (Ctrl-C, `kill`, a hung-up terminal): the
- * remaining shards would be spawned straight into the same interrupt, so the run stops and
- * says so. Every other termination — a non-zero exit, or a crash signal such as SIGSEGV /
- * SIGABRT / an OOM-killer SIGKILL, which are exactly the failures sharding exists to contain —
- * is that shard's own failure and must NOT hide the shards after it. Stopping there is how a
- * sharded run reported "green" while later shards never executed.
- */
-export function classifyVitestShardTermination({ code, signal }) {
-  if (signal) {
-    const interrupted = signal === 'SIGINT' || signal === 'SIGTERM' || signal === 'SIGHUP';
-    return {
-      outcome: interrupted ? 'aborted' : 'failed',
-      exitCode: resolveSignalExitCode(signal),
-      signal,
-    };
-  }
-  if (typeof code === 'number' && code !== 0) {
-    return { outcome: 'failed', exitCode: code, signal: null };
-  }
-  return { outcome: 'passed', exitCode: 0, signal: null };
-}
-
 export async function runVitestShardRuns({ shardFiles, runShard }) {
   const outcomes = [];
   let aborted = false;
@@ -144,55 +125,6 @@ export function shouldVitestShardRunProceedWithoutFiles({ fileCount, passthrough
   return Array.from(passthroughArgs ?? []).some((arg) => (
     arg === '--passWithNoTests' || arg === '--passWithNoTests=true'
   ));
-}
-
-/**
- * Truthful aggregate for a whole sharded run: what actually ran, what failed, and what never
- * got the chance. The exit code is non-zero whenever any shard failed or the run was aborted.
- */
-export function summarizeVitestShardOutcomes({ shardCount, outcomes }) {
-  const allOutcomes = Array.from(outcomes ?? []);
-  const executed = allOutcomes.filter((entry) => (
-    entry.outcome === 'passed' || entry.outcome === 'failed' || entry.outcome === 'aborted'
-  ));
-  const failedShards = allOutcomes.filter((entry) => entry.outcome === 'failed');
-  const abortedShard = allOutcomes.find((entry) => entry.outcome === 'aborted') ?? null;
-  const passedCount = allOutcomes.filter((entry) => entry.outcome === 'passed').length;
-  const emptyCount = allOutcomes.filter((entry) => entry.outcome === 'empty').length;
-  const unexecutedCount = allOutcomes.filter((entry) => entry.outcome === 'unexecuted').length;
-
-  const lines = [];
-  if (abortedShard) {
-    lines.push(
-      `[vitest] run ABORTED by ${abortedShard.signal} at shard ${abortedShard.shard}/${shardCount};`
-      + ` shards after it did not run`,
-    );
-  }
-  lines.push(
-    `[vitest] ${executed.length} shard(s) ran of ${shardCount}:`
-    + ` ${passedCount} passed, ${failedShards.length} failed`
-    + (emptyCount > 0 ? `, ${emptyCount} empty` : '')
-    + (unexecutedCount > 0 ? `, ${unexecutedCount} unexecuted` : ''),
-  );
-  for (const entry of failedShards) {
-    lines.push(
-      `[vitest]   shard ${entry.shard}/${shardCount} FAILED`
-      + (entry.signal ? ` (signal ${entry.signal})` : ` (exit ${entry.exitCode})`)
-      + ` — ${entry.fileCount} file(s)`,
-    );
-  }
-
-  const exitCode = abortedShard?.exitCode ?? failedShards[0]?.exitCode ?? 0;
-  return {
-    exitCode,
-    failedShards,
-    abortedShard,
-    passedCount,
-    executedCount: executed.length,
-    emptyCount,
-    unexecutedCount,
-    lines,
-  };
 }
 
 export function partitionVitestFilesIntoShards(files, shardCount) {

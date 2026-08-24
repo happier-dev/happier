@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   resolveVitestConfigPath,
   resolveVitestIsolationPlan,
   resolveVitestShardCount,
+  runCliVitestShardRuns,
 } from '../runVitestShards.mjs';
 
 describe('runVitestShards', () => {
@@ -54,5 +55,16 @@ describe('runVitestShards', () => {
   it('returns null when --config is missing', () => {
     expect(resolveVitestConfigPath(['node', 'run'])).toBe(null);
   });
-});
 
+  it('runs every later shard after an earlier shard fails', async () => {
+    const runShard = vi.fn()
+      .mockResolvedValueOnce({ ok: true, code: 1, signal: null })
+      .mockResolvedValueOnce({ ok: true, code: 0, signal: null })
+      .mockResolvedValueOnce({ ok: true, code: 1, signal: null });
+
+    const outcomes = await runCliVitestShardRuns({ shardCount: 3, runShard });
+
+    expect(runShard.mock.calls.map(([entry]) => entry.shard)).toEqual([1, 2, 3]);
+    expect(outcomes.map((entry) => entry.outcome)).toEqual(['failed', 'passed', 'failed']);
+  });
+});
