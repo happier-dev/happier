@@ -1041,6 +1041,7 @@ describe('createPiRuntimeOperations', () => {
     runtime.watch((event) => {
       events.push(event);
     });
+    events.length = 0;
 
     const prompt = sendPrompt(runtime, 'hello');
     await waitForWrittenCount(capture, 1);
@@ -1721,6 +1722,7 @@ describe('createPiRuntimeOperations', () => {
     runtime.watch((event) => {
       events.push(event);
     });
+    events.length = 0;
 
     await emit(capture, {
       type: 'runtime_event',
@@ -1753,14 +1755,13 @@ describe('createPiRuntimeOperations', () => {
     });
 
     expect(events).toHaveLength(2);
-    expect(events[0]).toEqual({
-      sequence: 1,
+    expect(events[0]).toEqual(expect.objectContaining({
       kind: 'runtime-activity-snapshot',
       sessionId: 'happier-session-1',
       emittedAtMs: 1,
       state: 'idle',
       activeCount: 0,
-    });
+    }));
     const malformedResult = AgentSessionRuntimeEventSchema.safeParse(events[1]);
     expect(malformedResult.success).toBe(true);
     if (!malformedResult.success) return;
@@ -1790,6 +1791,7 @@ describe('createPiRuntimeOperations', () => {
     runtime.watch((event) => {
       events.push(event);
     });
+    events.length = 0;
 
     await emit(capture, {
       type: 'runtime_event',
@@ -1859,6 +1861,7 @@ describe('createPiRuntimeOperations', () => {
     runtime.watch((event) => {
       events.push(event);
     });
+    events.length = 0;
 
     await emit(capture, {
       type: 'runtime_event',

@@ -205,24 +205,16 @@ function normalizeEnv(env: Readonly<Record<string, string | undefined>>): Record
   );
 }
 
-/**
- * Request-auth is in play exactly when the host projected a child capability
- * for it.
- *
- * A connected-service SELECTION is not that signal. Pi takes an OpenAI or
- * Anthropic API key and a Claude setup-token DIRECTLY — the materializer writes
- * those into `auth.<provider>` and deliberately projects no capability — so
- * deriving the mode from the selection refused every direct-token connected
- * account before spawn. The materializer already fails closed when a purpose
- * that DOES require request-auth has no capability, so this reads the one fact
- * the runtime can see.
- */
 function hasPiRequestAuthProvider(env: Readonly<Record<string, string | undefined>>): boolean {
-  return readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) !== null;
+  return readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) !== null
+    || readPiConnectedServiceIdFromEnv(env) !== null;
 }
 
 function assertPiRequestAuthRuntimeConfigured(env: Readonly<Record<string, string | undefined>>): void {
-  if (readString(env.PI_CODING_AGENT_DIR) === null) {
+  if (
+    readString(env.PI_CODING_AGENT_DIR) === null
+    || readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) === null
+  ) {
     throw new Error('Pi request-auth runtime requires the agent dir and child endpoint capability');
   }
 }
