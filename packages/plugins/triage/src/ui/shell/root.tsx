@@ -21,6 +21,8 @@ import {
   type LayoutChangeEvent,
 } from '@happier-dev/plugin-ui';
 import { scaleTextStyleMetrics } from '@happier-dev/plugin-ui/presentation';
+import { TriageActionsEditor } from '../actions/ActionsEditor.js';
+import { useTriageActions } from '../actions/useTriageActions.js';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageEntryDetailLaunchInputV1 } from '../../composer/entryDetailLaunchInput.js';
@@ -227,6 +229,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const window = useTriageListWindow();
   const marks = useTriagePinnedEntries();
   const savedViews = useTriageSavedViews();
+  const configuredActions = useTriageActions();
+  const [editingActions, setEditingActions] = React.useState(false);
   /**
    * Whether the location this page OPENED at named a lens of its own.
    *
@@ -943,6 +947,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         // the source descriptor a control set needs but no `sectionId`, so
         // resolving it there would be a second target reader for one concept.
         target={actionTarget}
+        actions={configuredActions}
         onClose={dismissDetail}
       />
     ) : lastKnownHeader !== null ? (
@@ -1102,6 +1107,21 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           onUpdateView={updateView}
           onDeleteView={deleteView}
         />
+        {editingActions ? (
+          <TriageActionsEditor
+            actions={configuredActions}
+            onClose={() => { setEditingActions(false); }}
+          />
+        ) : (
+          <Row gap="small" align="center">
+            <Button
+              titleKey="plugins.triage.surface.actions.configure"
+              title="Configure actions"
+              variant="secondary"
+              onPress={() => { setEditingActions(true); }}
+            />
+          </Row>
+        )}
 
         <TriageFilterRail
           facets={facets}

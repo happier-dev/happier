@@ -17,7 +17,9 @@ import type { TriageEntrySessionStartPhaseV1 } from './useEntrySessionStart.js';
  * surface is what they are looking at.
  *
  * It projects; it does not retry. `resumeEntrySessionStart` owns the phase
- * retries, and a notice that offered its own would be a second retry policy.
+ * retries — reached by pressing the same action again, which the controller's
+ * retained custody turns into a resume of the same Session rather than a second
+ * one — and a notice that offered its own would be a second retry policy.
  */
 
 export type TriageEntrySessionNoticeV1 = Readonly<{
@@ -125,14 +127,52 @@ export function describeTriageEntrySessionPhaseV1(
     case 'idle':
     case 'choosing':
       return null;
+    case 'resolving':
+      return notice(
+        'muted',
+        'plugins.triage.surface.session.resolving',
+        'Resolving this action\u2019s profile, prompt and working directory\u2026',
+      );
     case 'starting':
       return notice(
         'muted',
         'plugins.triage.surface.session.starting',
         'Starting a session for this entry…',
       );
-    case 'settled':
-      return settledNotice(phase.result);
+    case 'settled': {
+      // The start's own verdict comes first: whether the Session exists is a
+      // bigger fact than what happened to the prompt afterwards. A delivery
+      // that failed is only reported once the start itself settled cleanly,
+      // because telling a reader their prompt did not land is useless while
+      // they are being told nothing was created.
+      const settled = settledNotice(phase.result);
+      if (phase.result.type !== 'opened') return settled;
+      switch (phase.delivery?.kind) {
+        case 'send':
+          // The canonical admission verdict, told as itself. A refusal and an
+          // unknown outcome used to arrive here as success, because the send was
+          // awaited and its value discarded — telling somebody their work has
+          // started when it has not is the worst thing this surface can say.
+          switch (phase.delivery.status) {
+            case 'rejected':
+              return notice(
+                'warning',
+                'plugins.triage.surface.session.deliveryFailed',
+                'The session opened, but this action\u2019s prompt could not be placed in it.',
+              );
+            case 'outcomeUnknown':
+              return notice(
+                'warning',
+                'plugins.triage.surface.session.deliveryUnknown',
+                'The session opened, but Happier could not confirm whether this action\u2019s prompt was sent. Pressing again resends the same one rather than a second.',
+              );
+            default:
+              return settled;
+          }
+        default:
+          return settled;
+      }
+    }
     case 'unavailable':
       switch (phase.reason) {
         case 'newSessionUnsupported':
@@ -152,6 +192,45 @@ export function describeTriageEntrySessionPhaseV1(
             'warning',
             'plugins.triage.surface.session.preparationUnsupported',
             'This source cannot prepare a review workspace, so a pull request cannot be fixed here.',
+          );
+        case 'reviewStartUnsupported':
+          return notice(
+            'warning',
+            'plugins.triage.surface.session.reviewStartUnsupported',
+            'A formal code review needs a workspace prepared from this pull request, and no configured source can prepare one \u2014 so nothing was started.',
+          );
+        // The four reference refusals. Each says which catalog, and each says
+        // whether the fix is to repair the configuration or to try again —
+        // because nothing was created, and the reader is the one who decides.
+        case 'profileMissing':
+          return notice(
+            'warning',
+            'plugins.triage.surface.session.profileMissing',
+            'This action\u2019s launch profile no longer exists, so nothing was started. Pick another one in Configure actions.',
+          );
+        case 'profileUnavailable':
+          return notice(
+            'warning',
+            'plugins.triage.surface.session.profileUnavailable',
+            'Happier could not read your launch profiles, so nothing was started. Try again in a moment.',
+          );
+        case 'promptMissing':
+          return notice(
+            'warning',
+            'plugins.triage.surface.session.promptMissing',
+            'This action\u2019s prompt no longer exists in your Prompt Library, so nothing was started. Pick another one in Configure actions.',
+          );
+        case 'promptInvalid':
+          return notice(
+            'warning',
+            'plugins.triage.surface.session.promptInvalid',
+            'This action\u2019s prompt resolved to no content, so nothing was started. Edit the prompt before trying again.',
+          );
+        case 'promptUnavailable':
+          return notice(
+            'warning',
+            'plugins.triage.surface.session.promptUnavailable',
+            'Happier could not read this action\u2019s prompt, so nothing was started. Try again in a moment.',
           );
         case 'dispatch':
           return notice(

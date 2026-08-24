@@ -1,5 +1,7 @@
+import { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/plugin-sdk/ui';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
+    defineProtocolArray,
     defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolString,
@@ -11,7 +13,13 @@ import {
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
+    TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
+import {
+    TRIAGE_ACTION_VALUE_GATE_UTF8_BYTES_V1,
+    TRIAGE_ACTION_VALUE_MARGIN_UTF8_BYTES_V1,
+} from './actionValueBudget.js';
+import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 
 /**
  * The strict contract of the two Session Actions the common header presses.
@@ -56,6 +64,13 @@ const triageIdentifier = defineProtocolString({
     maxLength: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
+
+/** How the canonical creator settled one start: created, rejoined, or already there. */
+const triageDisposition = defineProtocolUnion([
+    defineProtocolLiteral('created'),
+    defineProtocolLiteral('rejoined'),
+    defineProtocolLiteral('existing'),
+]);
 
 /**
  * The entry as the caller's device-local projection rendered it.
@@ -104,9 +119,23 @@ const TriageAgentExecutionTargetV1Schema = defineProtocolObject({
     }, { policy: 'closed' }),
 }, { policy: 'closed' });
 
+/**
+ * `profileId` is the ONE Session-authoring member a Triage start may carry, and
+ * it is not authoring: it is the reference the pressed action already stores.
+ * The canonical creator is the sole applier of what a profile means — its
+ * agent, model, permission and persistence defaults, its environment and its
+ * coding-prompt overrides — and Triage neither reads those nor restates them.
+ * Passing the id is what makes a configured action's profile decide the Session
+ * it starts; omitting it is exactly today's behaviour, where the profile a
+ * person configured did nothing at all.
+ *
+ * It is bounded by `LaunchProfileV2.id`'s own ceiling, so a value this wire
+ * would carry but the profile owner would refuse cannot be sent.
+ */
 const TriageNewSessionSpawnV1Schema = defineProtocolObject({
     executionTarget: TriageSessionExecutionTargetV1Schema,
     agentTarget: TriageAgentExecutionTargetV1Schema,
+    profileId: triageIdentifier.optional(),
 }, { policy: 'closed' });
 
 /**
@@ -200,23 +229,141 @@ const TriageStartEntrySessionWorkspaceModeV1Schema = defineProtocolUnion([
     defineProtocolLiteral('pull_request'),
 ]);
 
+/**
+ * The canonical per-string ceiling inside one runtime JSON value.
+ *
+ * The whole-value gate above is not the boundary a single member answers to:
+ * Encoded bytes consumed by every member of a maximal start input except the
+ * prompt body. The aggregate maximum test re-measures this frame from the real
+ * schema, so widening any sibling member invalidates the derivation here.
+ */
+const TRIAGE_START_ENTRY_SESSION_FIXED_FRAME_UTF8_BYTES_V1 = 457_269;
+
+/**
+ * JSON's worst encoded cost for one string character.
+ *
+ * The Action gate counts the bytes of `JSON.stringify(value)`, not the raw
+ * UTF-8 bytes of the string alone. A character requiring a `\uXXXX` escape
+ * therefore costs six bytes. The maximal-value derivation exercises that case.
+ */
+const WORST_CASE_ENCODED_JSON_BYTES_PER_CHARACTER_V1 = 6;
+
+/**
+ * The resolved prompt body's ceiling, derived from the Action's real whole-
+ * value transport rather than from an unrelated per-string runtime limit.
+ *
+ * Nothing smaller stands behind it: the canonical Session-input seam this text
+ * is delivered through sets no length of its own
+ * (`packages/protocol/src/sessions/messages/sessionInputAdmission.ts`), and the
+ * Prompt Library invocation it comes from sets none either. So the boundary is
+ * the one the Action transport enforces on this complete input. The fixed
+ * frame and retained Action margin are paid first; every remaining worst-case
+ * UTF-8 byte belongs to the user's prompt.
+ */
+export const MAX_TRIAGE_START_ENTRY_SESSION_PROMPT_CHARACTERS_V1 =
+    Math.floor(
+        (TRIAGE_ACTION_VALUE_GATE_UTF8_BYTES_V1
+            - TRIAGE_ACTION_VALUE_MARGIN_UTF8_BYTES_V1
+            - TRIAGE_START_ENTRY_SESSION_FIXED_FRAME_UTF8_BYTES_V1)
+        / WORST_CASE_ENCODED_JSON_BYTES_PER_CHARACTER_V1,
+    );
+
+const triagePromptBody = defineProtocolString({
+    minLength: 1,
+    maxLength: MAX_TRIAGE_START_ENTRY_SESSION_PROMPT_CHARACTERS_V1,
+});
+
+/**
+ * What the pressed action configured to deliver once the Session exists
+ * (`PLAN.md` §0a A4a).
+ *
+ * It travels on the START rather than being sent afterwards by the surface,
+ * because opening the Session retires that surface: a delivery that ran after
+ * the open was skipped outright whenever navigation got there first, and the
+ * reader arrived at a Session with nothing in it.
+ *
+ * Only the two attachment halves this input does not already carry are here.
+ * `entryRef` supplies the source and `display` supplies the scope label and the
+ * observed routing hint, so the whole attachment is rebuilt by its one owner on
+ * the far side rather than shipped as a second spelling of it. No provider
+ * prose rides along: the attachment resolves authoritative facts at dispatch.
+ *
+ * `compose` actions carry no delivery at all. Their text and attachment go into
+ * that Session's own composer, which only a mounted surface can write.
+ */
+const triageAttachmentFallbackTitle = defineProtocolString({
+    minLength: 1,
+    maxLength: MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 * 2,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
+const TriageStartEntrySessionDeliveryAttachmentV1Schema = defineProtocolObject({
+    entryRef: TriageEntryRefV1Schema,
+    display: TriageEntrySessionLinkDisplayV1Schema,
+    sourceInstanceId: TriageSourceInstanceIdV1Schema,
+    title: triageAttachmentFallbackTitle,
+}, { policy: 'closed' });
+
+const TriageStartEntrySessionDeliveryV1Schema = defineProtocolObject({
+    kind: defineProtocolLiteral('send'),
+    /** Absent when the action names no prompt; the entry attachment still goes. */
+    text: triagePromptBody.optional(),
+    /**
+     * Every selected entry carried by this one structured input, in reader
+     * order. The primary entry is included: treating it as an implicit special
+     * case and appending `additionalEntries` was the split shape that let the
+     * bulk caller accidentally send only the first attachment.
+     */
+    attachments: defineProtocolArray(
+        TriageStartEntrySessionDeliveryAttachmentV1Schema,
+        { maxItems: MAX_TRIAGE_LIST_WINDOW_ROWS_V1 },
+    ),
+    /**
+     * This press's one delivery identity, minted by the caller and re-sent
+     * unchanged on a retry — the same discipline `creationKey` follows, and for
+     * the same reason. It is never the Session id: a Session-scoped key would
+     * make a second, different action's prompt a duplicate of the first and
+     * dedupe it away.
+     */
+    idempotencyKey: triageIdentifier,
+}, { policy: 'closed' });
+
+/**
+ * Resume the phase that did not settle, instead of starting again.
+ *
+ * A press that answered `linkPending` or `openPending` left a real Session
+ * behind. Pressing again re-sends this input with the SAME creation and
+ * delivery keys plus the phase it stopped at, so the incumbent resume owner
+ * (`sessions/entrySessionOrchestrator.ts#resumeEntrySessionStart`) retries only
+ * that phase. Without it every press minted a new creation key and the copy
+ * promising that pressing again resumes the same Session was simply untrue.
+ *
+ * There is no durable retry record anywhere behind this: the identity is the
+ * caller's retained keys, and the canonical creator and the idempotent link
+ * already make repeating a phase safe.
+ */
+const TriageStartEntrySessionResumeV1Schema = defineProtocolObject({
+    phase: defineProtocolUnion([
+        defineProtocolLiteral('linkPending'),
+        defineProtocolLiteral('openPending'),
+    ]),
+    sessionId: triageSessionId,
+    disposition: triageDisposition,
+}, { policy: 'closed' });
+
 export const TriageStartEntrySessionInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     workspaceMode: TriageStartEntrySessionWorkspaceModeV1Schema,
     entryRef: TriageEntryRefV1Schema,
     display: TriageEntrySessionLinkDisplayV1Schema,
     destination: TriageStartEntrySessionDestinationV1Schema,
+    delivery: TriageStartEntrySessionDeliveryV1Schema.optional(),
+    resume: TriageStartEntrySessionResumeV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageStartEntrySessionInputV1 =
     ReturnType<typeof TriageStartEntrySessionInputV1Schema.parse>;
 export const TriageStartEntrySessionInputV1JsonSchema: PluginJsonSchema =
     TriageStartEntrySessionInputV1Schema.jsonSchema;
-
-const triageDisposition = defineProtocolUnion([
-    defineProtocolLiteral('created'),
-    defineProtocolLiteral('rejoined'),
-    defineProtocolLiteral('existing'),
-]);
 
 /**
  * The orchestrator's own phase-local verdict, carried out unchanged.
@@ -227,12 +374,33 @@ const triageDisposition = defineProtocolUnion([
  * are absent because this Action cannot request that materialization, and the
  * directory the other two arms would report is the one the caller just sent.
  */
+/**
+ * The canonical Session-input admission verdict, plus the two arms that mean the
+ * send never reached admission.
+ *
+ * It exists on the wire because the surface cannot ask again: the delivery
+ * happened inside the start, before the open. Every arm is reported as itself —
+ * a refusal and an unknown outcome are the two the previous surface reported as
+ * success, having awaited the send and discarded its value.
+ */
+const triageDeliveryOutcome = defineProtocolUnion([
+    /** The start carried no delivery: a `compose` action places its own. */
+    defineProtocolLiteral('notRequested'),
+    /** Requested, with neither a prompt nor a placeable attachment to send. */
+    defineProtocolLiteral('none'),
+    defineProtocolLiteral('accepted'),
+    defineProtocolLiteral('alreadyAccepted'),
+    defineProtocolLiteral('rejected'),
+    defineProtocolLiteral('outcomeUnknown'),
+]);
+
 export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         type: defineProtocolLiteral('opened'),
         sessionId: triageSessionId,
         disposition: triageDisposition,
+        delivery: triageDeliveryOutcome,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
@@ -243,10 +411,11 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
-        /** Linked, but navigation failed. Retry invokes only `session.open`. */
+        /** Linked and delivered, but navigation failed. Retry re-opens. */
         type: defineProtocolLiteral('openPending'),
         sessionId: triageSessionId,
         disposition: triageDisposition,
+        delivery: triageDeliveryOutcome,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),

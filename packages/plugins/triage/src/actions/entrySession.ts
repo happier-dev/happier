@@ -7,8 +7,13 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { unlinkEntryFromSession } from '../sessions/entrySessionLinks.js';
 import type { TriageSessionActionInvokerV1 } from '../sessions/entrySessionOpen.js';
 import {
+    materializationWorkspaceFacts,
+} from '../sessions/entrySessionWorkspace.js';
+import {
+    resumeEntrySessionStart,
     startEntrySession,
     type TriageEntrySessionDestinationV1,
+    type TriageEntrySessionPendingPhaseV1,
     type TriageEntrySessionStartResultV1,
 } from '../sessions/entrySessionOrchestrator.js';
 import type {
@@ -62,6 +67,13 @@ function destinationFrom(
         spawn: {
             executionTarget: destination.spawn.executionTarget,
             agentTarget: destination.spawn.agentTarget,
+            // The pressed action's configured Launch Profile, carried to the
+            // canonical creator that owns what a profile means. It is the only
+            // authored member this start forwards, and it forwards a reference,
+            // never a resolved default.
+            ...(destination.spawn.profileId === undefined
+                ? {}
+                : { profileId: destination.spawn.profileId }),
         },
         materialization: destination.materialization,
     };
@@ -79,8 +91,20 @@ function projectStartResult(
 ): TriageStartEntrySessionResultV1 {
     switch (result.type) {
         case 'opened':
-        case 'linkPending':
         case 'openPending':
+            return {
+                v: 1,
+                type: result.type,
+                sessionId: result.sessionId,
+                disposition: result.disposition,
+                // The admission owner's verdict on the structured delivery,
+                // carried out as it answered. The surface cannot ask again: the
+                // send happened inside this start, before the open.
+                delivery: result.delivery,
+            };
+        case 'linkPending':
+            // Nothing was delivered, because nothing is delivered into a Session
+            // this entry is not linked to yet.
             return {
                 v: 1,
                 type: result.type,
@@ -103,16 +127,62 @@ function projectStartResult(
     }
 }
 
+/**
+ * The workspace facts a resumed phase re-reports, read from the one owner.
+ *
+ * A resume repeats a phase of a start that already happened, so the facts it
+ * echoes are the ones that start settled on. They are derived from the caller's
+ * own materialization through `materializationWorkspaceFacts` rather than sent
+ * back across the wire, because a caller that could restate them is a caller
+ * that could change them, and an existing-Session start is reference-only by
+ * the gate's own rule.
+ */
+function resumedWorkspaceFacts(
+    destination: TriageStartEntrySessionInputV1['destination'],
+): TriageEntrySessionPendingPhaseV1['workspace'] {
+    return destination.kind === 'existing'
+        ? { kind: 'referenceOnly' }
+        : materializationWorkspaceFacts(destination.materialization);
+}
+
 export async function startTriageEntrySession(
     input: TriageStartEntrySessionInputV1,
     deps: TriageEntrySessionActionDepsV1,
 ): Promise<TriageStartEntrySessionResultV1> {
-    const result = await startEntrySession({
+    const orchestratorDeps = {
         collections: deps.collections,
         execute: deps.execute,
         nowMs: deps.nowMs(),
         ...(deps.signal ? { signal: deps.signal } : {}),
-    }, {
+    };
+    const delivery = input.delivery === undefined
+        ? undefined
+        : {
+            ...(input.delivery.text === undefined ? {} : { text: input.delivery.text }),
+            attachments: input.delivery.attachments,
+            idempotencyKey: input.delivery.idempotencyKey,
+        };
+
+    // A resume is not a second start path. It reaches the incumbent phase-retry
+    // owner with the caller's retained identity, so nothing respawns, nothing
+    // rematerializes and no new creation key is minted for a Session that
+    // already exists — which is what the "pressing again resumes the same one"
+    // copy has been promising with nothing behind it.
+    if (input.resume) {
+        return projectStartResult(await resumeEntrySessionStart(orchestratorDeps, {
+            entryRef: input.entryRef,
+            display: input.display,
+            pending: {
+                type: input.resume.phase,
+                sessionId: input.resume.sessionId,
+                disposition: input.resume.disposition,
+                workspace: resumedWorkspaceFacts(input.destination),
+            },
+            ...(delivery === undefined ? {} : { delivery }),
+        }));
+    }
+
+    const result = await startEntrySession(orchestratorDeps, {
         // Passed through exactly as the caller's projection produced it, for the
         // same reason the link Action does: the link's address is derived from
         // this reference, so a reference this module rebuilt could address a
@@ -121,6 +191,7 @@ export async function startTriageEntrySession(
         display: input.display,
         workspaceMode: input.workspaceMode,
         destination: destinationFrom(input.destination),
+        ...(delivery === undefined ? {} : { delivery }),
     });
     return projectStartResult(result);
 }

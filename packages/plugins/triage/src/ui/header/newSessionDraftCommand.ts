@@ -1,9 +1,9 @@
-import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 
 /**
  * The header's one path to the host's own New Session surface.
  *
- * Ask and Fix start a Session, and a Session needs an Agent. Triage cannot name
+ * A configured action starts a Session, and a Session needs an Agent. Triage cannot name
  * one: `agentTarget.identity` is the host's backend-target vocabulary, and a
  * plugin that reconstructed it would be inventing a catalog it does not own. So
  * the reader is taken to the surface that already owns that choice — the same
@@ -40,7 +40,7 @@ export type TriageNewSessionDraftHostV1 = Readonly<{
     selectActionInput(
         request: Readonly<{
             hostAction: typeof NEW_SESSION_DRAFT_REQUEST;
-            draft?: Readonly<Record<string, string>>;
+            draft?: Readonly<Record<string, JsonValue>>;
         }>,
         options?: PluginCancellationOptions,
     ): Promise<unknown>;
@@ -58,7 +58,7 @@ export type TriageNewSessionDraftResultV1 =
 
 export async function requestTriageNewSessionDraft(
     host: TriageNewSessionDraftHostV1,
-    seed: Readonly<Record<string, string>> | null,
+    seed: Readonly<Record<string, JsonValue>> | null,
     options?: PluginCancellationOptions,
 ): Promise<TriageNewSessionDraftResultV1> {
     let installed: readonly string[];

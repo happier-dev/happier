@@ -11,6 +11,7 @@ import {
 import {
     TESTKIT_SOURCE_INSTANCE_ID,
     TRIAGE_TESTKIT_SOURCE,
+    testkitEntryRef,
     testkitLocator,
 } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageEntrySessionLinkDisplayV1 } from '../entrySessionLinks.js';
@@ -55,15 +56,29 @@ export type TestkitActionInvoker = Readonly<{
 export function createTestkitActionInvoker(script: Readonly<{
     spawn?: readonly PluginActionResultById['session.spawn_new'][];
     openFails?: boolean;
+    /**
+     * What the canonical Session-input admission answers, in order. Absent means
+     * a plain acceptance, so a test that is not about delivery says nothing
+     * about it; `sendThrows` is the boundary never answering at all.
+     */
+    send?: readonly PluginActionResultById['session.message.send'][];
+    sendThrows?: boolean;
 }> = {}): TestkitActionInvoker {
     const calls: RecordedActionCall[] = [];
     const spawnResults = [...(script.spawn ?? [])];
+    const sendResults = [...(script.send ?? [])];
 
     const execute = (async (actionId, input) => {
         calls.push({ actionId, input });
         if (actionId === 'session.open') {
             if (script.openFails === true) throw new Error('session_open_failed');
             return null as PluginActionResultById[typeof actionId];
+        }
+        if (actionId === 'session.message.send') {
+            if (script.sendThrows === true) throw new Error('session_message_send_failed');
+            const answer = sendResults.shift()
+                ?? { status: 'accepted' as const, localId: 'pending-local-id' };
+            return answer as PluginActionResultById[typeof actionId];
         }
         const next = spawnResults.shift();
         if (!next) throw new Error('No scripted session.spawn_new result remains');
@@ -169,6 +184,22 @@ export function createTestkitPrepareReviewWorkspace(script: Readonly<{
         },
     };
 }
+
+/**
+ * What a `send` action asks the start to deliver once the Session exists. The
+ * attachment's other two halves come from the start's own `entryRef` and link
+ * display, so only these travel.
+ */
+export const TESTKIT_DELIVERY_REQUEST = Object.freeze({
+    text: 'Repair the failing parser test.',
+    attachments: Object.freeze([{
+        entryRef: testkitEntryRef(),
+        display: TESTKIT_LINK_DISPLAY,
+        sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+        title: 'Replace the duplicated normalizer',
+    }]),
+    idempotencyKey: 'delivery-key-a',
+});
 
 export const TESTKIT_SPAWN_REQUEST = Object.freeze({
     executionTarget: Object.freeze({ serverId: 'server-a', machineId: 'machine-a' }),

@@ -6,6 +6,13 @@ import {
     TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1,
     type TriageWorkspaceModeV1,
 } from '../../sessions/entrySessionWorkspace.js';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
+import type {
+    TriageActionCheckoutResolutionV1,
+    TriageActionExecutionPlacementV1,
+    TriageActionPlacementV1,
+} from '../../sessions/actionLaunch.js';
 
 /**
  * The one projection from the host's settled new-Session draft to the
@@ -19,9 +26,9 @@ import {
  * settled there into the exact `destination` the wire already declares.
  *
  * It decides nothing else. It mints no key, opens nothing, dispatches nothing
- * and reads no state; the intent-and-subject gate, the creation, the link and
- * the open all stay in `sessions/entrySessionOrchestrator.ts`. The one refusal
- * it does own is the pull-request Fix, and only because refusing it here is the
+ * and reads no state; the workspace-mode gate, the creation, the link and the
+ * open all stay in `sessions/entrySessionOrchestrator.ts`. The one refusal it
+ * does own is the pull-request mode, and only because refusing it here is the
  * difference between telling the reader up front and spending their Agent and
  * directory choice on a start the gate rejects afterwards.
  */
@@ -38,7 +45,7 @@ import {
  */
 export type TriageNewSessionPreferenceV1 = Readonly<{
     /**
-     * The Agent Triage settings pin for this intent, in the host's own
+     * The Agent Triage settings pin for this action, in the host's own
      * vocabulary: the agent local id, which is
      * the configured action's Launch Profile, resolved against the host inventory's
      * resolved `agentTarget.identity.localId`. It is deliberately not the
@@ -47,9 +54,37 @@ export type TriageNewSessionPreferenceV1 = Readonly<{
      * backend-target grammar this plugin must not own.
      */
     agentId?: string;
-    /** The working directory Triage settings pin for Ask and Fix, if any. */
+    /** The working directory Triage settings pin for an action, if any. */
     directory?: string;
 }>;
+
+export type TriageNewSessionPlacementSeedV1 = Readonly<{
+    profileId?: string;
+    checkoutIntent: TriageActionCheckoutResolutionV1;
+    placement: TriageActionPlacementV1;
+}>;
+
+/**
+ * Projects the placement owner's candidate unchanged into the public New
+ * Session seed grammar.
+ *
+ * Both the single-entry and bulk authoring paths reach this one conversion so
+ * neither invents a second candidate shape or drops the project identity that
+ * keeps a machine/path pair attributable to its registry row.
+ */
+export function projectTriageSessionPlacementCandidateV1(
+    candidate: Extract<TriageActionPlacementV1, { kind: 'launch' }>['candidate'],
+): PluginUiSessionPlacementCandidateV1 {
+    return Object.freeze({
+        projectKey: candidate.projectKey,
+        serverId: candidate.serverId,
+        machineId: candidate.machineId,
+        rootPath: candidate.rootPath,
+        ...(candidate.label === undefined ? {} : { label: candidate.label }),
+        reachable: candidate.reachable,
+        worktrees: [...candidate.worktrees],
+    });
+}
 
 /**
  * The seed the host's composer admits, or `null` when Triage has nothing to
@@ -61,12 +96,62 @@ export type TriageNewSessionPreferenceV1 = Readonly<{
  */
 export function triageNewSessionDraftSeedV1(
     preference: TriageNewSessionPreferenceV1,
-): Readonly<Record<string, string>> | null {
+    /**
+     * Where the launch placement resolved this press to run, when it resolved
+     * anywhere (`sessions/actionLaunch.ts`).
+     *
+     * Its two halves travel TOGETHER. A directory is not a place: seeded alone,
+     * it is composed against whichever machine the surface happens to be mounted
+     * on, which pairs a checkout on one machine with an execution target on
+     * another and starts an agent at a path that does not exist there. The host
+     * seed therefore admits the machine too, within its own stamped server
+     * (`apps/ui/sources/components/sessions/new/serverStartDraftComposer.ts`).
+     *
+     * Server and machine are sent together. Machine ids are not globally unique,
+     * so dropping the server would let the host combine a path from one server
+     * with an equal machine id mounted from another.
+     */
+    placement?: TriageActionExecutionPlacementV1 | TriageNewSessionPlacementSeedV1,
+): Readonly<Record<string, JsonValue>> | null {
     const agentId = preference.agentId?.trim();
-    const directory = preference.directory?.trim();
+    // A directory the reader pinned in Triage settings names no machine, so it
+    // wins as a stated choice and the host stamps its own scope.
+    const pinnedDirectory = preference.directory?.trim();
+    const resolved = placement === undefined
+        ? undefined
+        : 'checkoutIntent' in placement
+            ? placement.placement.kind === 'pinned'
+                ? {
+                    executionTarget: placement.placement.target,
+                    directory: placement.placement.directory,
+                }
+                : placement.placement.kind === 'launch'
+                    ? {
+                        executionTarget: {
+                            serverId: placement.placement.candidate.serverId,
+                            machineId: placement.placement.candidate.machineId,
+                        },
+                        directory: placement.placement.candidate.rootPath,
+                    }
+                    : undefined
+            : placement;
+    const directory = pinnedDirectory || resolved?.directory?.trim();
+    const executionTarget = pinnedDirectory ? undefined : resolved?.executionTarget;
+    const actionSeed = placement !== undefined && 'checkoutIntent' in placement ? placement : undefined;
+    const candidates = actionSeed === undefined
+        ? undefined
+        : actionSeed.placement.kind === 'launch'
+            ? [projectTriageSessionPlacementCandidateV1(actionSeed.placement.candidate)]
+            : actionSeed.placement.kind === 'prefill'
+                ? actionSeed.placement.candidates.map(projectTriageSessionPlacementCandidateV1)
+                : undefined;
     const seed = {
         ...(agentId ? { agentId } : {}),
+        ...(actionSeed?.profileId === undefined ? {} : { profileId: actionSeed.profileId }),
+        ...(actionSeed === undefined ? {} : { checkoutIntent: actionSeed.checkoutIntent }),
         ...(directory ? { directory } : {}),
+        ...(executionTarget === undefined ? {} : { executionTarget }),
+        ...(candidates === undefined ? {} : { candidates }),
     };
     return Object.keys(seed).length === 0 ? null : Object.freeze(seed);
 }
@@ -120,6 +205,14 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
     creationKey: string;
     /** Exactly what the host settled, unread and unreshaped until here. */
     settlement: unknown;
+    /**
+     * The pressed action's configured Launch Profile, carried through to the
+     * canonical creator that owns what a profile means. It is a reference, and
+     * the only authored member a Triage start forwards; every default it
+     * implies — agent, model, permission, persistence, environment, coding
+     * prompt — is resolved there, never here.
+     */
+    profileId?: string;
 }>): TriageNewSessionDestinationV1 {
     const kind = triageNewSessionWireMaterializationV1(input.workspaceMode);
     if (kind === null) return { status: 'refused', reason: 'preparedWorkspaceUnsupported' };
@@ -135,6 +228,7 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
             spawn: {
                 executionTarget: draft.data.executionTarget,
                 agentTarget: draft.data.agentTarget,
+                ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
             },
             // The action's declared mode IS the materialization request, read
             // from the one table the gate validates it against. A second copy

@@ -14,7 +14,11 @@ import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
-import { testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.test-support.js';
+import {
+    TESTKIT_SOURCE_INSTANCE_ID,
+    testkitEntryRef,
+    testkitLocator,
+} from '../corpus/testkit/observations.test-support.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import {
@@ -150,6 +154,118 @@ describe('the Session-start Action a mounted header can actually press', () => {
         }
     });
 
+    /**
+     * `PLAN.md` §0a A4a's whole delivery half, through the registered Action.
+     *
+     * The structured send happens INSIDE the start, between the link and the
+     * open, and its verdict comes back on the result. Before this, delivery ran
+     * in the mounted surface after the open — so navigation could retire that
+     * mount before the send ever ran — and the surface reported every resolved
+     * promise as sent, including a refusal.
+     */
+    it('sends the configured delivery before the open and reports admission as it answered', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const invoker = createTestkitActionInvoker({
+            spawn: [spawnSuccess()],
+            send: [{ status: 'rejected', code: 'session_input_archived' }],
+        });
+        const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
+
+        const result = await handler({
+            ...START_INPUT_BASE,
+            workspaceMode: 'reference_only',
+            destination: NEW_DESTINATION,
+            delivery: {
+                kind: 'send',
+                text: 'Repair the failing parser test.',
+                attachments: [{
+                    entryRef: START_INPUT_BASE.entryRef,
+                    display: START_INPUT_BASE.display,
+                    sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                    title: 'Replace the duplicated normalizer',
+                }, {
+                    entryRef: testkitEntryRef({ entryId: '18' }),
+                    display: TESTKIT_LINK_DISPLAY,
+                    sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                    title: 'Extract the selection reducer',
+                }],
+                idempotencyKey: 'delivery-key-a',
+            },
+        }, createContext(collections, invoker));
+
+        expect(result).toEqual({
+            v: 1,
+            type: 'opened',
+            sessionId: 'session-a',
+            disposition: 'created',
+            // Reported as itself. A refusal arriving as success is the failure
+            // the typed verdict exists to make unsayable.
+            delivery: 'rejected',
+        });
+        expect(invoker.calls.map((call) => call.actionId))
+            .toEqual(['session.spawn_new', 'session.message.send', 'session.open']);
+        const send = invoker.callsFor('session.message.send')[0]?.input as Readonly<{
+            attachments?: readonly unknown[];
+        }>;
+        expect(send.attachments).toHaveLength(2);
+    });
+
+    it('rejects the retired singular-plus-additional delivery spelling', () => {
+        expect(TriageStartEntrySessionInputV1Schema.safeParse({
+            ...START_INPUT_BASE,
+            workspaceMode: 'reference_only',
+            destination: NEW_DESTINATION,
+            delivery: {
+                kind: 'send',
+                sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                title: 'Only the first entry',
+                additionalEntries: [],
+                idempotencyKey: 'delivery-key-retired',
+            },
+        }).success).toBe(false);
+    });
+
+    /**
+     * The retry custody, at the seam that owns it.
+     *
+     * `resumeEntrySessionStart` had no production consumer at all, so the
+     * header's own notice — "pressing again resumes the same one rather than
+     * starting a second" — was untrue: every press minted a new creation key.
+     * A resume reaches that incumbent owner and repeats only the phase named.
+     */
+    it('resumes only the failed phase instead of starting a second Session', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const linked = await linkEntryToSession({
+            collections,
+            entryRef,
+            display: TESTKIT_LINK_DISPLAY,
+            sessionId: 'session-a',
+            nowMs: 1_760_000_900_000,
+        });
+        expect(linked.status).toBe('linked');
+
+        const invoker = createTestkitActionInvoker();
+        const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
+        const result = await handler({
+            ...START_INPUT_BASE,
+            entryRef,
+            workspaceMode: 'reference_only',
+            destination: NEW_DESTINATION,
+            resume: { phase: 'openPending', sessionId: 'session-a', disposition: 'created' },
+        }, createContext(collections, invoker));
+
+        expect(result).toEqual({
+            v: 1,
+            type: 'opened',
+            sessionId: 'session-a',
+            disposition: 'created',
+            delivery: 'notRequested',
+        });
+        // Nothing respawned, and no second creation key was spent.
+        expect(invoker.calls.map((call) => call.actionId)).toEqual(['session.open']);
+    });
+
     it('creates one Session, links it and opens it for a reference-only action on a new destination', async () => {
         const { collections } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
@@ -166,6 +282,9 @@ describe('the Session-start Action a mounted header can actually press', () => {
             type: 'opened',
             sessionId: 'session-a',
             disposition: 'created',
+            // No delivery travelled with this start, and the wire says exactly
+            // that rather than borrowing the vocabulary of one that did.
+            delivery: 'notRequested',
         });
         // Exactly one create and one open, in that order, and no second create.
         expect(invoker.calls.map((call) => call.actionId))

@@ -10,14 +10,14 @@ import {
 /**
  * The header's one path to the Session-start orchestrator.
  *
- * `startEntrySession` owns the whole vertical — the intent-and-subject gate,
- * the materialization, the generic create-or-rejoin, the idempotent link and
- * the canonical open — and a mounted surface can reach none of it directly: it
+ * `startEntrySession` owns the whole vertical — the workspace-mode gate, the
+ * materialization, the generic create-or-rejoin, the idempotent link and the
+ * canonical open — and a mounted surface can reach none of it directly: it
  * holds a Host API with no Account storage and no canonical creator. So a press
  * leaves through here and nowhere else.
  *
  * The module owns no state and makes no decision. It does not choose a
- * destination, mint a creation key, decide whether an intent is allowed, retry,
+ * destination, mint a creation key, decide whether a mode is admissible, retry,
  * or interpret an outcome: every one of those belongs to the orchestrator, and
  * a second opinion here would be a second start owner for one entry.
  */

@@ -16,11 +16,18 @@ import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
  */
 
 /**
- * The two host Actions this lane invokes, typed by the canonical generated
- * Action map. The invoker is the host RPC boundary; the orchestrator's own
- * decisions stay in-process.
+ * The host Actions this lane invokes, typed by the canonical generated Action
+ * map. The invoker is the host RPC boundary; the orchestrator's own decisions
+ * stay in-process.
+ *
+ * `session.message.send` is here because the structured delivery is a phase of
+ * the start rather than something a mounted surface does afterwards
+ * (`entrySessionDelivery.ts`), and it therefore travels the same one invoker.
  */
-export type TriageSessionActionIdV1 = 'session.spawn_new' | 'session.open';
+export type TriageSessionActionIdV1 =
+    | 'session.spawn_new'
+    | 'session.open'
+    | 'session.message.send';
 
 export type TriageSessionActionInvokerV1 = <TActionId extends TriageSessionActionIdV1>(
     actionId: TActionId,
@@ -28,12 +35,19 @@ export type TriageSessionActionInvokerV1 = <TActionId extends TriageSessionActio
     options?: Readonly<{ signal?: AbortSignal }>,
 ) => Promise<PluginActionResultById[TActionId]>;
 
+/** The narrow host boundary needed by a read-only linked-Session opener. */
+export type TriageSessionOpenInvokerV1 = (
+    actionId: 'session.open',
+    input: PluginActionInputById['session.open'],
+    options?: Readonly<{ signal?: AbortSignal }>,
+) => Promise<unknown>;
+
 export type TriageOpenLinkedSessionResultV1 =
     | Readonly<{ status: 'opened' }>
     | Readonly<{ status: 'failed' }>;
 
 export async function openLinkedSession(input: Readonly<{
-    execute: TriageSessionActionInvokerV1;
+    execute: TriageSessionOpenInvokerV1;
     sessionId: SessionId;
     signal?: AbortSignal;
 }>): Promise<TriageOpenLinkedSessionResultV1> {

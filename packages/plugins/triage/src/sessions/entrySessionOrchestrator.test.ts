@@ -18,6 +18,7 @@ import {
     createTestkitActionInvoker,
     createTestkitPrepareReviewWorkspace,
     spawnSuccess,
+    TESTKIT_DELIVERY_REQUEST,
     TESTKIT_LINK_DISPLAY,
     TESTKIT_OBSERVED_REVISION,
     TESTKIT_SELECTED_WORKSPACE,
@@ -70,7 +71,6 @@ function deps(
         collections: fixture.collections,
         execute: invoker.execute,
         nowMs: NOW_MS,
-        mintCardPublicationId: () => 'publication-id-a',
         ...(source ? { prepareReviewWorkspace: source.deps } : {}),
     };
 }
@@ -107,6 +107,7 @@ describe('startEntrySession', () => {
             sessionId: 'session-a',
             disposition: 'created',
             workspace: { kind: 'referenceOnly' },
+            delivery: 'notRequested',
         });
         // Exactly one creation and one open, in that order, and nothing else.
         expect(invoker.calls.map((call) => call.actionId)).toEqual([
@@ -129,7 +130,6 @@ describe('startEntrySession', () => {
             entryTag: expect.any(String),
             sessionId: 'session-a',
             linkedAtMs: NOW_MS,
-            cardPublicationId: 'publication-id-a',
             entryRef,
             identityEntryRef: entryRef,
             displayPathAtLink: 'example/repository #17',
@@ -227,6 +227,7 @@ describe('startEntrySession', () => {
             sessionId: 'session-existing',
             disposition: 'existing',
             workspace: { kind: 'referenceOnly' },
+            delivery: 'notRequested',
         });
         expect(invoker.calls.map((call) => call.actionId)).toEqual(['session.open']);
     });
@@ -356,6 +357,7 @@ describe('startEntrySession', () => {
             sessionId: 'session-a',
             disposition: 'created',
             workspace: { kind: 'selectedProject', directory: '/projects/example' },
+            delivery: 'notRequested',
         });
         expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
             directory: '/projects/example',
@@ -385,6 +387,7 @@ describe('startEntrySession', () => {
             sessionId: 'session-a',
             disposition: 'created',
             workspace: PREPARED_FACTS,
+            delivery: 'notRequested',
         });
         // One preparation, and the directory the Session is created in is the
         // one the source prepared — never a path Triage chose.
@@ -477,6 +480,7 @@ describe('startEntrySession', () => {
                 directory: '/workspaces/example-review',
                 reviewEligibility: { status: 'ineligible', reason: 'localHeadStale' },
             },
+            delivery: 'notRequested',
         });
         expect(invoker.callsFor('session.open')).toHaveLength(1);
     });
@@ -565,6 +569,180 @@ describe('startEntrySession', () => {
         expect(invoker.calls.map((call) => call.actionId)).toEqual(['session.spawn_new']);
     });
 
+    /**
+     * `PLAN.md` §0a A4a approves `resolve -> spawn/rejoin -> link -> send
+     * structured input -> open`, and the order is the whole point rather than a
+     * preference. Delivery used to run in the mounted Triage surface AFTER the
+     * orchestrator had navigated to the Session, so the host retiring that mount
+     * — which opening a Session is exactly the thing that does — skipped the
+     * delivery outright and the reader arrived at an empty Session.
+     *
+     * This case fails if the send moves back after the open, or disappears.
+     */
+    it('delivers the structured input after the link and BEFORE the open', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+
+        const result = await startEntrySession(deps(fixture, invoker), {
+            entryRef,
+            display: TESTKIT_LINK_DISPLAY,
+            workspaceMode: 'reference_only',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-a',
+                spawn: TESTKIT_SPAWN_REQUEST,
+                materialization: { kind: 'referenceOnly', directory: '/projects/example' },
+            },
+            delivery: TESTKIT_DELIVERY_REQUEST,
+        });
+
+        expect(result).toEqual({
+            type: 'opened',
+            sessionId: 'session-a',
+            disposition: 'created',
+            workspace: { kind: 'referenceOnly' },
+            delivery: 'accepted',
+        });
+        expect(invoker.calls.map((call) => call.actionId)).toEqual([
+            'session.spawn_new',
+            'session.message.send',
+            'session.open',
+        ]);
+        // The link committed before the send: a delivery into a Session this
+        // entry is not linked to would be context for a relationship nothing
+        // records.
+        const linkTag = await deriveSessionLinkTag(fixture.collections.sessionLinks, entryRef, 'session-a');
+        expect(await fixture.collections.sessionLinks.get(linkTag)).not.toBeNull();
+
+        const send = invoker.callsFor('session.message.send')[0]?.input as Readonly<{
+            sessionId: string;
+            message: string;
+            idempotencyKey: string;
+            attachments?: readonly Readonly<{ attachmentLocalId: string }>[];
+        }>;
+        expect(send.sessionId).toBe('session-a');
+        expect(send.message).toBe('Repair the failing parser test.');
+        // The press's own delivery identity, never the Session id: a
+        // Session-scoped key would make a second, different action's prompt a
+        // duplicate of the first and dedupe it away.
+        expect(send.idempotencyKey).toBe('delivery-key-a');
+        expect(send.idempotencyKey).not.toBe('session-a');
+        // The prompt never travels alone. Entry context rides the declared
+        // attachment, whose `resolveForDispatch` reads authoritative facts at
+        // dispatch rather than any prose this start embedded.
+        expect(send.attachments).toHaveLength(1);
+        expect(send.attachments?.[0]?.attachmentLocalId).toBe('entry');
+        expect(send.message).not.toContain('example/repository');
+    });
+
+    it('delivers every selected entry when one bulk unit asks for one Session', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef({ entryId: '17' });
+        const secondEntryRef = testkitEntryRef({ entryId: '18' });
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+
+        await startEntrySession(deps(fixture, invoker), {
+            entryRef,
+            display: TESTKIT_LINK_DISPLAY,
+            workspaceMode: 'reference_only',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-all',
+                spawn: TESTKIT_SPAWN_REQUEST,
+                materialization: { kind: 'referenceOnly', directory: '/projects/example' },
+            },
+            delivery: {
+                ...TESTKIT_DELIVERY_REQUEST,
+                attachments: [...TESTKIT_DELIVERY_REQUEST.attachments, {
+                    entryRef: secondEntryRef,
+                    display: TESTKIT_LINK_DISPLAY,
+                    sourceInstanceId: TESTKIT_DELIVERY_REQUEST.attachments[0]!.sourceInstanceId,
+                    title: 'Extract the selection reducer',
+                }],
+            } as never,
+        });
+
+        const send = invoker.callsFor('session.message.send')[0]?.input as Readonly<{
+            attachments?: readonly Readonly<{
+                value?: Readonly<{ value?: Readonly<{ entryRef?: unknown }> }>;
+            }>[];
+        }>;
+        expect(send.attachments).toHaveLength(2);
+        expect(send.attachments?.map((attachment) => attachment.value?.value?.entryRef)).toEqual([
+            entryRef,
+            secondEntryRef,
+        ]);
+    });
+
+    /**
+     * The failure this whole phase exists to stop: the previous surface awaited
+     * the send, discarded its value and reported EVERY resolved promise as
+     * `sent`. A refusal and a genuinely unknown outcome both reached the reader
+     * as success, which is the worst thing a start can say.
+     */
+    it('reports a refused delivery as refused and an unanswered one as unknown', async () => {
+        const refusedFixture = createTestkitCorpusCollections();
+        const refused = createTestkitActionInvoker({
+            spawn: [spawnSuccess()],
+            send: [{ status: 'rejected', code: 'session_input_archived' }],
+        });
+        const refusedResult = await startEntrySession(deps(refusedFixture, refused), {
+            entryRef: testkitEntryRef(),
+            display: TESTKIT_LINK_DISPLAY,
+            workspaceMode: 'reference_only',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-a',
+                spawn: TESTKIT_SPAWN_REQUEST,
+                materialization: { kind: 'referenceOnly', directory: '/projects/example' },
+            },
+            delivery: TESTKIT_DELIVERY_REQUEST,
+        });
+        // The start itself still succeeded: the Session exists, is linked and
+        // opened. Only the delivery was refused, and it says so.
+        expect(refusedResult).toMatchObject({ type: 'opened', delivery: 'rejected' });
+
+        const unknownFixture = createTestkitCorpusCollections();
+        const unanswered = createTestkitActionInvoker({
+            spawn: [spawnSuccess()],
+            sendThrows: true,
+        });
+        const unknownResult = await startEntrySession(deps(unknownFixture, unanswered), {
+            entryRef: testkitEntryRef(),
+            display: TESTKIT_LINK_DISPLAY,
+            workspaceMode: 'reference_only',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-a',
+                spawn: TESTKIT_SPAWN_REQUEST,
+                materialization: { kind: 'referenceOnly', directory: '/projects/example' },
+            },
+            delivery: TESTKIT_DELIVERY_REQUEST,
+        });
+        expect(unknownResult).toMatchObject({ type: 'opened', delivery: 'outcomeUnknown' });
+        // A send that never answered still opens the Session it created.
+        expect(unanswered.callsFor('session.open')).toHaveLength(1);
+
+        const silentFixture = createTestkitCorpusCollections();
+        const silent = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+        const silentResult = await startEntrySession(deps(silentFixture, silent), {
+            entryRef: testkitEntryRef(),
+            display: TESTKIT_LINK_DISPLAY,
+            workspaceMode: 'reference_only',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-a',
+                spawn: TESTKIT_SPAWN_REQUEST,
+                materialization: { kind: 'referenceOnly', directory: '/projects/example' },
+            },
+        });
+        // A start that carried no delivery says so, rather than borrowing the
+        // vocabulary of one that did.
+        expect(silentResult).toMatchObject({ type: 'opened', delivery: 'notRequested' });
+        expect(silent.callsFor('session.message.send')).toHaveLength(0);
+    });
+
     it('reports a link failure as pending and resumes with only the link and the open', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
@@ -608,6 +786,7 @@ describe('startEntrySession', () => {
             sessionId: 'session-a',
             disposition: 'created',
             workspace: { kind: 'referenceOnly' },
+            delivery: 'notRequested',
         });
         // The resume respawned nothing: creation stays a single call.
         expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);
@@ -636,6 +815,7 @@ describe('startEntrySession', () => {
             sessionId: 'session-a',
             disposition: 'created',
             workspace: { kind: 'referenceOnly' },
+            delivery: 'notRequested',
         });
 
         const linkTag = await deriveSessionLinkTag(fixture.collections.sessionLinks, entryRef, 'session-a');
@@ -647,6 +827,7 @@ describe('startEntrySession', () => {
             sessionId: 'session-a',
             disposition: 'created',
             workspace: { kind: 'referenceOnly' },
+            delivery: 'notRequested',
         });
         // Only the failed phase repeats: no creation, no second link write.
         expect(retry.calls.map((call) => call.actionId)).toEqual(['session.open']);

@@ -28,7 +28,8 @@ import {
   type TriageListLaneV1,
   type TriageListRowV1,
 } from '../../projection/listWindow.js';
-import { TRIAGE_DEFAULT_ENTRY_ACTIONS_V1 } from '../../settings/entryActions.js';
+import { buildTriageEntryAttachmentPresentation } from '../../composer/mutationPlan.js';
+import type { TriageMountedActionsV1 } from '../actions/useTriageActions.js';
 import {
   TriageEntryActionControls,
   type TriageEntryActionRequestV1,
@@ -36,6 +37,7 @@ import {
 import { describeTriageEntrySessionPhaseV1 } from '../header/sessionStartOutcome.js';
 import { useTriageEntrySessionStart } from '../header/useEntrySessionStart.js';
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
+import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { projectTriageDetailHeaderV1, type TriageDetailHeaderV1 } from './header.js';
 import {
   readTriageSourceDetailContributionV1,
@@ -82,6 +84,15 @@ export type TriageDetailRegionProps = Readonly<{
   target: TriageActionTargetV1;
   /** Clears the selection; the stacked composition returns to the list. */
   onClose: () => void;
+  /**
+   * The configured action catalog, read once by the shell.
+   *
+   * It arrives as a prop for the same reason `target` does: one mount, one
+   * read. A hook here would give the detail region its own copy of durable
+   * Account configuration, so the editor and pressed controls could show
+   * different sets of the same actions between two settled writes.
+   */
+  actions: TriageMountedActionsV1;
 }>;
 
 function headerEntries(
@@ -225,29 +236,16 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const text = usePluginTranslation();
   const lookup = readTriageSourceDetailContributionV1(context, props.row.entryRef.source);
 
+  const selected = React.useMemo(
+    () => readTriageSelectedObservationV1(props.row),
+    [props.row],
+  );
   const selection = React.useMemo(() => (
-    props.row.selected.kind === 'selected'
-      ? { entryRef: props.row.entryRef, sourceInstanceId: props.row.selected.sourceInstanceId }
-      : null
-  ), [props.row]);
-  const observation = React.useMemo(() => {
-    if (selection === null) return null;
-    const found = props.row.observations.find(
-      (candidate) => candidate.sourceInstanceId === selection.sourceInstanceId
-        && candidate.outcome.kind === 'present',
-    );
-    if (found === undefined || found.outcome.kind !== 'present') return null;
-    return {
-      entryRef: props.row.entryRef,
-      observedAtMs: found.observedAtMs,
-      locator: found.outcome.locator,
-      snapshot: found.outcome.snapshot,
-      viewer: found.outcome.viewer,
-      ...(found.outcome.sourceUpdatedAtMs === undefined
-        ? {}
-        : { sourceUpdatedAtMs: found.outcome.sourceUpdatedAtMs }),
-    };
-  }, [props.row, selection]);
+    selected === null
+      ? null
+      : { entryRef: props.row.entryRef, sourceInstanceId: selected.sourceInstanceId }
+  ), [props.row, selected]);
+  const observation = selected?.observation ?? null;
 
   const detail = useTriageEntryDetail(
     selection === null || observation === null ? null : { selection, observation },
@@ -287,17 +285,25 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       ? null
       : { locator: observation.locator, scopeLabel: observation.snapshot.scopeLabel }
   ), [observation]);
+  const repository = selected?.repository;
+  const snapshot = observation?.snapshot;
+  const locator = observation?.locator;
   const workflowSubject = header.workflowSubject;
   const onAction = React.useCallback((request: TriageEntryActionRequestV1) => {
-    // The declared mode travels unchanged: this is the last place a press could
-    // have re-decided what it asked for, and it does not.
-    if (display === null) return;
+    if (display === null || snapshot === undefined) return;
     controller.start({
-      workspaceMode: request.action.workspaceMode,
+      action: request.action,
       entryRef: request.entryRef,
       display,
+      sourceInstance: { source: request.entryRef.source, sourceInstanceId: request.sourceInstanceId },
+      presentation: buildTriageEntryAttachmentPresentation({
+        title: snapshot.title,
+        scopeLabel: snapshot.scopeLabel,
+      }),
+      ...(locator === undefined ? {} : { lastKnownLocator: locator }),
+      ...(repository === undefined ? {} : { repository }),
     });
-  }, [controller, display]);
+  }, [controller, display, locator, repository, snapshot]);
   const notice = describeTriageEntrySessionPhaseV1(controller.phase);
 
   return (
@@ -308,7 +314,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         <Stack gap="small">
           <TriageEntryActionControls
             target={props.target}
-            actions={TRIAGE_DEFAULT_ENTRY_ACTIONS_V1}
+            actions={props.actions.actions}
             workflowSubject={workflowSubject}
             preparesReviewWorkspace={preparesReviewWorkspace}
             onAction={onAction}

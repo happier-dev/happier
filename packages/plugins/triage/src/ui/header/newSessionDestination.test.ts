@@ -6,6 +6,7 @@ import {
     triageNewSessionDraftSeedV1,
     triageNewSessionWireMaterializationV1,
 } from './newSessionDestination.js';
+import type { TriageActionPlacementV1 } from '../../sessions/actionLaunch.js';
 
 /**
  * The one projection from the host's own settled new-Session draft to the
@@ -172,5 +173,114 @@ describe('seeding the new-Session surface', () => {
             agentId: 'claude',
             directory: '/workspaces/example',
         })).toEqual({ agentId: 'claude', directory: '/workspaces/example' });
+    });
+
+    /**
+     * A resolved placement travels WHOLE or not at all.
+     *
+     * A path is not a place. Seeding the checkout's directory while leaving the
+     * host to stamp whichever machine the surface is mounted on is how a Session
+     * gets a directory from one machine and an execution target from another —
+     * so the machine rides with the path, and the host composes against it.
+     */
+    it('carries the machine a resolved placement named beside its directory', () => {
+        const placement: TriageActionPlacementV1 = {
+            kind: 'launch',
+            candidate: {
+                projectKey: { id: 'project-api' },
+                serverId: 'server-1',
+                machineId: 'machine-b',
+                rootPath: '/checkouts/api',
+                label: 'API',
+                reachable: true,
+                worktrees: [{ path: '/checkouts/api', branch: 'main', isMain: true, isCurrent: true }],
+            },
+        };
+
+        expect(triageNewSessionDraftSeedV1({}, {
+            profileId: 'profile-repair',
+            checkoutIntent: 'reuseWorkspace',
+            placement,
+        })).toEqual({
+            profileId: 'profile-repair',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-b' },
+            directory: '/checkouts/api',
+            checkoutIntent: 'reuseWorkspace',
+            candidates: [{
+                projectKey: { id: 'project-api' },
+                serverId: 'server-1',
+                machineId: 'machine-b',
+                rootPath: '/checkouts/api',
+                label: 'API',
+                reachable: true,
+                worktrees: [{ path: '/checkouts/api', branch: 'main', isMain: true, isCurrent: true }],
+            }],
+        });
+    });
+
+    /**
+     * A placement that named a machine and no path still names the machine: the
+     * reader picks the directory on THAT machine rather than on this surface's.
+     */
+    it('carries a machine a placement pinned with no directory', () => {
+        expect(triageNewSessionDraftSeedV1({}, {
+            profileId: 'profile-repair',
+            checkoutIntent: 'reuseWorkspace',
+            placement: {
+                kind: 'pinned',
+                target: { serverId: 'server-1', machineId: 'machine-b' },
+            },
+        })).toEqual({
+            profileId: 'profile-repair',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-b' },
+            checkoutIntent: 'reuseWorkspace',
+        });
+    });
+
+    it('carries an ambiguous placement to the Session owner without picking a checkout', () => {
+        const candidates = ['a', 'b'].map((projectId) => ({
+            projectKey: { id: projectId },
+            serverId: 'server-1',
+            machineId: `machine-${projectId}`,
+            rootPath: `/src/${projectId}`,
+            reachable: true,
+            worktrees: [],
+        }));
+
+        expect(triageNewSessionDraftSeedV1({}, {
+            profileId: 'profile-repair',
+            checkoutIntent: 'ask',
+            placement: { kind: 'prefill', reason: 'ambiguous', candidates },
+        })).toEqual({
+            profileId: 'profile-repair',
+            checkoutIntent: 'ask',
+            candidates: [
+                {
+                    projectKey: { id: 'a' },
+                    serverId: 'server-1',
+                    machineId: 'machine-a',
+                    rootPath: '/src/a',
+                    reachable: true,
+                    worktrees: [],
+                },
+                {
+                    projectKey: { id: 'b' },
+                    serverId: 'server-1',
+                    machineId: 'machine-b',
+                    rootPath: '/src/b',
+                    reachable: true,
+                    worktrees: [],
+                },
+            ],
+        });
+    });
+
+    /**
+     * A directory the reader pinned in Triage settings names no machine, so it
+     * is seeded alone and the host stamps its own — unchanged behaviour.
+     */
+    it('leaves a stated preference to the host’s own machine', () => {
+        expect(triageNewSessionDraftSeedV1({ directory: '/pinned' }))
+            .toEqual({ directory: '/pinned' });
     });
 });

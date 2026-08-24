@@ -5,9 +5,13 @@ import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import {
     linkEntryToSession,
-    type TriageCardPublicationIdMintV1,
     type TriageEntrySessionLinkDisplayV1,
 } from './entrySessionLinks.js';
+import {
+    deliverEntrySessionInput,
+    type TriageEntrySessionDeliveryOutcomeV1,
+    type TriageEntrySessionDeliveryRequestV1,
+} from './entrySessionDelivery.js';
 import { openLinkedSession, type TriageSessionActionInvokerV1 } from './entrySessionOpen.js';
 import {
     materializationDirectory,
@@ -32,6 +36,10 @@ export type {
     TriageWorkspacePreparationFailureV1,
 } from './entrySessionWorkspace.js';
 export type { TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
+export type {
+    TriageEntrySessionDeliveryOutcomeV1,
+    TriageEntrySessionDeliveryRequestV1,
+} from './entrySessionDelivery.js';
 
 type SessionSpawnInput = PluginActionInputById['session.spawn_new'];
 
@@ -102,6 +110,14 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
      */
     workspaceMode: TriageWorkspaceModeV1;
     destination: TriageEntrySessionDestinationV1;
+    /**
+     * What the pressed action configured to deliver once the Session exists.
+     *
+     * Absent means the press delivers nothing through this start — a `compose`
+     * action, whose whole point is that the reader looks first, places its text
+     * and attachment in that Session's own composer and sends nothing.
+     */
+    delivery?: TriageEntrySessionDeliveryRequestV1;
 }>;
 
 export type TriageEntrySessionRejectionReasonV1 =
@@ -118,6 +134,8 @@ export type TriageEntrySessionStartResultV1 =
         sessionId: SessionId;
         disposition: TriageEntrySessionDispositionV1;
         workspace: TriageEntrySessionWorkspaceFactsV1;
+        /** The admission owner's own verdict on the structured delivery. */
+        delivery: TriageEntrySessionDeliveryOutcomeV1;
     }>
     | Readonly<{
         type: 'linkPending';
@@ -130,6 +148,7 @@ export type TriageEntrySessionStartResultV1 =
         sessionId: SessionId;
         disposition: TriageEntrySessionDispositionV1;
         workspace: TriageEntrySessionWorkspaceFactsV1;
+        delivery: TriageEntrySessionDeliveryOutcomeV1;
     }>
     | Readonly<{
         type: 'creationPending';
@@ -160,11 +179,24 @@ export type TriageEntrySessionDepsV1 = Readonly<{
      */
     prepareReviewWorkspace?: TriageReviewWorkspacePreparationDepsV1;
     nowMs: number;
-    mintCardPublicationId?: TriageCardPublicationIdMintV1;
     signal?: AbortSignal;
 }>;
 
-async function linkThenOpen(
+/**
+ * Link, then deliver, then open — the approved order, in one place.
+ *
+ * The delivery sits between the link and the open on purpose (`PLAN.md` §0a
+ * A4a). Opening a Session navigates the client away from Triage and retires the
+ * surface that used to be responsible for delivering; a send that runs first
+ * cannot be lost to that navigation, and the open is the last thing that
+ * happens rather than the thing that pre-empts the work.
+ *
+ * A delivery outcome never changes the start's own verdict. The Session exists,
+ * is linked and opens whatever admission said; the two facts are reported side
+ * by side so a reader is never told the start failed because their prompt was
+ * refused, nor told everything worked when it was.
+ */
+async function linkDeliverThenOpen(
     deps: TriageEntrySessionDepsV1,
     input: Readonly<{
         entryRef: TriageEntryRefV1;
@@ -172,6 +204,7 @@ async function linkThenOpen(
         sessionId: SessionId;
         disposition: TriageEntrySessionDispositionV1;
         workspace: TriageEntrySessionWorkspaceFactsV1;
+        delivery?: TriageEntrySessionDeliveryRequestV1;
     }>,
 ): Promise<TriageEntrySessionStartResultV1> {
     const link = await linkEntryToSession({
@@ -180,10 +213,12 @@ async function linkThenOpen(
         display: input.display,
         sessionId: input.sessionId,
         nowMs: deps.nowMs,
-        ...(deps.mintCardPublicationId ? { mintCardPublicationId: deps.mintCardPublicationId } : {}),
         ...(deps.signal ? { signal: deps.signal } : {}),
     });
     if (link.status !== 'linked') {
+        // Nothing is delivered into a Session this entry is not linked to: the
+        // link is the relationship the delivery is context for, and the caller
+        // retries this phase from the top.
         return {
             type: 'linkPending',
             sessionId: input.sessionId,
@@ -191,6 +226,14 @@ async function linkThenOpen(
             workspace: input.workspace,
         };
     }
+    const delivery: TriageEntrySessionDeliveryOutcomeV1 = input.delivery === undefined
+        ? 'notRequested'
+        : await deliverEntrySessionInput({
+            execute: deps.execute,
+            sessionId: input.sessionId,
+            delivery: input.delivery,
+            ...(deps.signal ? { signal: deps.signal } : {}),
+        });
     const opened = await openLinkedSession({
         execute: deps.execute,
         sessionId: input.sessionId,
@@ -201,20 +244,40 @@ async function linkThenOpen(
         sessionId: input.sessionId,
         disposition: input.disposition,
         workspace: input.workspace,
+        delivery,
     };
 }
 
-export type TriageEntrySessionPendingPhaseV1 = Extract<
-    TriageEntrySessionStartResultV1,
-    Readonly<{ type: 'linkPending' | 'openPending' }>
->;
+/**
+ * The phase a settled start stopped at, and everything a retry of it needs.
+ *
+ * It is stated rather than extracted from the result union because a resume
+ * needs strictly less than a verdict carries: the delivery outcome the settled
+ * arms report is history, and re-declaring it here would make a caller echo an
+ * answer back that the resume is about to ask for again.
+ */
+export type TriageEntrySessionPendingPhaseV1 = Readonly<{
+    type: 'linkPending' | 'openPending';
+    sessionId: SessionId;
+    disposition: TriageEntrySessionDispositionV1;
+    workspace: TriageEntrySessionWorkspaceFactsV1;
+}>;
 
 /**
  * Retries exactly the phase that failed, and nothing earlier.
  *
- * A pending link retries the idempotent link and then opens; a pending open
- * re-invokes only `session.open` with the same stable id. Neither respawns,
- * rematerializes, reseeds a draft or calls Composer.
+ * A pending link retries the idempotent link, delivers and then opens; a pending
+ * open re-delivers under the SAME idempotency key and re-invokes only
+ * `session.open` with the same stable id. Neither respawns, rematerializes,
+ * reseeds a draft or mints a second identity for one press — which is the whole
+ * reason the caller retains its keys instead of minting new ones, and the whole
+ * reason the notice may promise that pressing again resumes the same Session.
+ *
+ * The re-delivery is safe by construction rather than by a remembered verdict:
+ * the same key rejoins the same durable input, so an accepted send answers
+ * `alreadyAccepted` and an unknown one settles. Keeping a per-phase memory of
+ * what admission last said, only to decide whether to ask again, would be state
+ * this path does not need.
  */
 export async function resumeEntrySessionStart(
     deps: TriageEntrySessionDepsV1,
@@ -222,18 +285,29 @@ export async function resumeEntrySessionStart(
         entryRef: TriageEntryRefV1;
         display: TriageEntrySessionLinkDisplayV1;
         pending: TriageEntrySessionPendingPhaseV1;
+        delivery?: TriageEntrySessionDeliveryRequestV1;
     }>,
 ): Promise<TriageEntrySessionStartResultV1> {
     const pending = input.pending;
+    const delivery = input.delivery;
     if (pending.type === 'linkPending') {
-        return await linkThenOpen(deps, {
+        return await linkDeliverThenOpen(deps, {
             entryRef: input.entryRef,
             display: input.display,
             sessionId: pending.sessionId,
             disposition: pending.disposition,
             workspace: pending.workspace,
+            ...(delivery === undefined ? {} : { delivery }),
         });
     }
+    const delivered: TriageEntrySessionDeliveryOutcomeV1 = delivery === undefined
+        ? 'notRequested'
+        : await deliverEntrySessionInput({
+            execute: deps.execute,
+            sessionId: pending.sessionId,
+            delivery,
+            ...(deps.signal ? { signal: deps.signal } : {}),
+        });
     const opened = await openLinkedSession({
         execute: deps.execute,
         sessionId: pending.sessionId,
@@ -244,6 +318,7 @@ export async function resumeEntrySessionStart(
         sessionId: pending.sessionId,
         disposition: pending.disposition,
         workspace: pending.workspace,
+        delivery: delivered,
     };
 }
 
@@ -330,12 +405,13 @@ export async function startEntrySession(
 
     const destination = request.destination;
     if (destination.kind === 'existing') {
-        return await linkThenOpen(deps, {
+        return await linkDeliverThenOpen(deps, {
             entryRef: request.entryRef,
             display: request.display,
             sessionId: destination.sessionId,
             disposition: 'existing',
             workspace: { kind: 'referenceOnly' },
+            ...(request.delivery === undefined ? {} : { delivery: request.delivery }),
         });
     }
 
@@ -383,11 +459,12 @@ export async function startEntrySession(
         // receives a new key.
         return { type: 'creationFailed', creationKey: destination.creationKey, workspace };
     }
-    return await linkThenOpen(deps, {
+    return await linkDeliverThenOpen(deps, {
         entryRef: request.entryRef,
         display: request.display,
         sessionId: result.sessionId,
         disposition: result.disposition,
         workspace,
+        ...(request.delivery === undefined ? {} : { delivery: request.delivery }),
     });
 }
