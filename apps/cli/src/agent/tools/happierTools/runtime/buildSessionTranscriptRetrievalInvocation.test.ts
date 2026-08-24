@@ -35,6 +35,17 @@ describe('buildSessionTranscriptRetrievalInvocation', () => {
     expect(payload.input.limit).toBeLessThanOrEqual(100);
   });
 
+  it('renders the action_execute form for a native_extension Agent', () => {
+    const render = buildSessionTranscriptRetrievalInvocation({ ...base, agentId: 'pi' });
+    expect(render).not.toBeNull();
+    const rendered = render!(4_200);
+    expect(rendered.startsWith('action_execute ')).toBe(true);
+    expect(JSON.parse(rendered.slice('action_execute '.length))).toMatchObject({
+      actionId: 'session.transcript.get',
+      input: { sessionId: 'sess_1', cursor: '4200' },
+    });
+  });
+
   it('omits the cursor when there is no anchor yet, so the first page is the newest one', () => {
     const render = buildSessionTranscriptRetrievalInvocation({ ...base, agentId: 'claude' })!;
     const payload = JSON.parse(render(null).slice('action_execute '.length)) as { input: { cursor: unknown } };

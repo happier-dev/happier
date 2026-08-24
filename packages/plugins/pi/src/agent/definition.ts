@@ -50,7 +50,7 @@ export const AGENT_DEFINITION = Object.freeze({
       inFlightSteerSupported: true,
       terminalPromptInjectionSupported: false,
     },
-    tools: { delivery: 'shell_bridge', support: 'experimental' },
+    tools: { delivery: 'native_extension', support: 'experimental' },
   },
   sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
   sessionModesKind: 'none',

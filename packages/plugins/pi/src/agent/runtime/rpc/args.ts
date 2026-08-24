@@ -79,11 +79,20 @@ export function buildPiRpcArgs(opts?: Readonly<{
   resumeSessionId?: string | null;
   connectedServiceId?: string | null;
   env?: Readonly<Record<string, string | undefined>>;
+  happierToolsExtension?: Readonly<{ extensionPath: string; configPath: string }>;
 }>): readonly string[] {
   const launchSelection = resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
   const tools = buildPiToolsForPermissionMode(opts?.permissionMode);
   const args: string[] = [
     ...resolvePiRequestAuthExtensionArgs(opts?.env),
+    ...(opts?.happierToolsExtension
+      ? [
+          '--extension',
+          opts.happierToolsExtension.extensionPath,
+          '--happier-tools-config',
+          opts.happierToolsExtension.configPath,
+        ]
+      : []),
     ...(launchSelection
       ? [
         '--provider',

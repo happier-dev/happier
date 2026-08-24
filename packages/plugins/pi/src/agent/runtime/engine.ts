@@ -8,9 +8,15 @@ import type {
   AgentSessionRuntimeContext,
   AgentSessionUsageLimitRecoveryControl,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
+import { join } from 'node:path';
 
 import { createPiRuntimeOperations } from './rpc/operations.js';
 import { preparePiQualifiedConnectedAccounts } from './qualifiedConnectedAccounts.js';
+import {
+  preparePiHappierToolsExtension,
+  type PreparedPiHappierToolsExtension,
+} from '../tools/assets.js';
 
 export {
   piExternalSessionsContribution,
@@ -62,10 +68,21 @@ async function openPiSession(
     launchEnvironment: readEnvironment(request),
     context,
   });
+  let preparedTools: PreparedPiHappierToolsExtension | null = null;
   let runtime: AgentSessionRuntime;
   try {
     const session = context.session as AgentSessionRuntimeContext['session'] | undefined;
     const models = session && 'services' in session ? session.services.models : null;
+    const happierTools = session && 'services' in session ? session.services.happierTools : null;
+    if (happierTools) {
+      const config = await happierTools.resolveNativeBridge({
+        systemPrompt: request.startupInstructions?.instructions,
+      }, { signal: context.signal });
+      const launchEnv = prepared.launchEnvironment.values;
+      const agentDir = launchEnv.PI_CODING_AGENT_DIR?.trim()
+        || join(resolveHomeDirFromEnvironment(launchEnv), '.pi', 'agent');
+      preparedTools = await preparePiHappierToolsExtension({ agentDir, config });
+    }
     runtime = prepared.bind(await createPiRuntimeOperations({
       services: context.services,
       ...(models ? { models } : {}),
@@ -76,10 +93,25 @@ async function openPiSession(
       permissionMode: readPermissionMode(request),
       resumeSessionId: request.kind === 'resume' ? request.providerSessionId : null,
       sessionId: request.sessionId,
+      ...(preparedTools ? { happierToolsExtension: preparedTools } : {}),
     }));
+    if (preparedTools) {
+      const inner = runtime;
+      const tools = preparedTools;
+      runtime = {
+        ...inner,
+        async dispose(reason) {
+          try {
+            await inner.dispose(reason);
+          } finally {
+            await tools.dispose();
+          }
+        },
+      };
+    }
   } catch (error) {
     try {
-      await prepared.dispose();
+      await Promise.all([prepared.dispose(), preparedTools?.dispose()]);
     } catch (disposeError) {
       throw new AggregateError([error, disposeError], 'Pi session preparation failed');
     }

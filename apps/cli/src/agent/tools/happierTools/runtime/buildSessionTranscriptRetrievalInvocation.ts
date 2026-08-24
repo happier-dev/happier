@@ -84,7 +84,7 @@ export function buildSessionTranscriptRetrievalInvocation(params: Readonly<{
   const delivery = resolveAgentToolsDelivery(params.agentId);
   if (delivery === 'unsupported') return null;
 
-  if (delivery === 'native_mcp') {
+  if (delivery === 'native_mcp' || delivery === 'native_extension') {
     // `session_transcript_get` is exposed to the in-session `agent` surface as
     // `discoverable_only`, so the direct tool name is NOT callable there; the
     // agent surface reaches it through the `action_execute` manual tool.

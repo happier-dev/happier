@@ -130,4 +130,23 @@ describe('buildPiRpcArgs', () => {
       },
     })).not.toContain('--extension');
   });
+
+  it('composes the Happier tools extension with request-auth', () => {
+    const agentDir = '/tmp/pi-agent';
+    expect(buildPiRpcArgs({
+      env: {
+        PI_CODING_AGENT_DIR: agentDir,
+        [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/tmp/request-auth-capability.json',
+      },
+      happierToolsExtension: {
+        extensionPath: '/tmp/happier-pi-tools-bridge.js',
+        configPath: '/tmp/happier-pi-tools-config.json',
+      },
+    })).toEqual([
+      '--extension', resolvePiRequestAuthExtensionPath(agentDir),
+      '--extension', '/tmp/happier-pi-tools-bridge.js',
+      '--happier-tools-config', '/tmp/happier-pi-tools-config.json',
+      '--mode', 'rpc',
+    ]);
+  });
 });
