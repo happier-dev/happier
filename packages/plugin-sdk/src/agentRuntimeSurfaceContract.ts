@@ -599,6 +599,7 @@ type _SessionHostServicesMustStayNarrowAndProviderNeutral = AssertTrue<
     | 'activeInput'
     | 'workflowActivity'
     | 'toolExecution'
+    | 'happierTools'
   >
 >;
 

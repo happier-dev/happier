@@ -480,6 +480,33 @@ export type AgentToolExecutionService = Readonly<{
   ): Promise<AgentToolExecutionBeforeResult>;
 }>;
 
+export type AgentSessionNativeToolDescriptor = Readonly<{
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: JsonValue;
+}>;
+
+export type AgentSessionNativeToolBridgeConfig = Readonly<{
+  v: 1;
+  sessionId: string;
+  directory: string;
+  systemPrompt: string;
+  tools: readonly AgentSessionNativeToolDescriptor[];
+  launch: Readonly<{
+    executablePath: string;
+    argsPrefix: readonly string[];
+    env?: Readonly<Record<string, string>>;
+  }>;
+}>;
+
+export type AgentSessionHappierToolsService = Readonly<{
+  resolveNativeBridge(
+    request: Readonly<{ systemPrompt?: string | null }>,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<AgentSessionNativeToolBridgeConfig>;
+}>;
+
 /**
  * Host capabilities bound to one live native Agent session. The host creates
  * this bag once for that session and retires it with the session or its
@@ -499,6 +526,7 @@ export type AgentSessionHostServices = Readonly<{
   mcp: AgentSessionMcpService;
   workflowActivity: AgentSessionWorkflowActivityService;
   toolExecution: AgentToolExecutionService;
+  happierTools?: AgentSessionHappierToolsService;
 }>;
 
 export type AgentSessionRuntimeContext = AgentRuntimeContext & Readonly<{
