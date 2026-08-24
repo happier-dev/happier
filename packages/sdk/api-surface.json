@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@happier-dev/sdk",
+  "entrypoints": [
+    {
+      "specifier": ".",
+      "declarationModule": "dist/index.d.ts"
+    }
+  ],
+  "symbols": [
+    {
+      "specifier": ".",
+      "exportName": "ActionExecute",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ActionExecute"
+    },
+    {
+      "specifier": ".",
+      "exportName": "ActionExecutionOptions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ActionExecutionOptions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "ActionTarget",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ActionTarget"
+    },
+    {
+      "specifier": ".",
+      "exportName": "ContributedActionId",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ContributedActionId"
+    },
+    {
+      "specifier": ".",
+      "exportName": "FollowTranscriptOptions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "FollowTranscriptOptions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierActionError",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierActionError"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierActions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierActions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierAgentUnavailableError",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierAgentUnavailableError"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierAgentUnavailableReason",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierAgentUnavailableReason"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierClient",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierClient"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierClientClosedError",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierClientClosedError"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierConnectOptions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierConnectOptions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierExecutionRunStream",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierExecutionRunStream"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierExecutionRunStreamEvent",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierExecutionRunStreamEvent"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierExecutionRuns",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierExecutionRuns"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierMachine",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierMachine"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierMachineActionExecute",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierMachineActionExecute"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierMachineActionExecutionOptions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierMachineActionExecutionOptions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierMachineActions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierMachineActions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierMachineClient",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierMachineClient"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierMachineExecutionRuns",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierMachineExecutionRuns"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierMachineSessions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierMachineSessions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierSession",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierSession"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierSessionInitialInputError",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierSessionInitialInputError"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierSessionSpawnError",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierSessionSpawnError"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierSessionSpawnInput",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierSessionSpawnInput"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierSessionSpawnOptions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierSessionSpawnOptions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierSessions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierSessions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierTranscriptItem",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierTranscriptItem"
+    },
+    {
+      "specifier": ".",
+      "exportName": "HappierTransportError",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierTransportError"
+    },
+    {
+      "specifier": ".",
+      "exportName": "MachineListOptions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "MachineListOptions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "PublicActionId",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "PublicActionId"
+    },
+    {
+      "specifier": ".",
+      "exportName": "PublicActionInputById",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "PublicActionInputById"
+    },
+    {
+      "specifier": ".",
+      "exportName": "PublicActionResultById",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "PublicActionResultById"
+    },
+    {
+      "specifier": ".",
+      "exportName": "connect",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "connect"
+    }
+  ]
+}

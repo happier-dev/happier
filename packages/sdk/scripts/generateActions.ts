@@ -99,13 +99,13 @@ export function renderGeneratedActions(rows: readonly SdkMethodRow[]): string {
 async function currentRows(): Promise<readonly SdkMethodRow[]> {
   await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/protocol'], {
     includeDevDependencies: false,
-    publicationMode: 'live',
+    force: true,
+    publicationMode: 'artifact',
     quiet: true,
   });
   const actionOwner = await import('../../protocol/dist/actions/index.js');
-  return actionOwner.ACTION_SPECS
-    .filter((spec) => !actionOwner.isInternalActionId(spec.id)
-      && !actionOwner.isPluginProvenanceOnlyActionId(spec.id))
+  return actionOwner.PUBLIC_ACTION_IDS
+    .map((actionId) => actionOwner.getActionSpec(actionId))
     .map((spec) => ({
       actionId: spec.id,
       methodPath: actionOwner.resolveActionSdkMethodName(spec),

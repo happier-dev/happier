@@ -1,4 +1,7 @@
-import { ExternalActionHttpErrorV1Schema } from '@happier-dev/protocol/actions';
+import {
+  ExternalActionHttpErrorV1Schema,
+  parseExternalActionResponseEnvelopeV1,
+} from '@happier-dev/protocol/actions';
 
 import { createGeneratedActions, MUTATING_PUBLIC_ACTION_IDS } from './actions/generated.js';
 import { HappierActionError, HappierClientClosedError, HappierTransportError } from './errors.js';
@@ -13,7 +16,12 @@ import {
   type HappierMachine,
   type MachineListOptions,
 } from './machines.js';
-import { createTranscriptIterable, type FollowTranscriptOptions } from './subscriptions.js';
+import {
+  createTranscriptIterable,
+  startExecutionRunStream,
+  type FollowTranscriptOptions,
+  type HappierExecutionRunStream,
+} from './subscriptions.js';
 import type {
   ActionExecute,
   ActionExecutionOptions,
@@ -25,17 +33,6 @@ import type {
   PublicActionInputById,
   PublicActionResultById,
 } from './actions/generated.js';
-
-type ExternalActionExecution =
-  | Readonly<{ ok: true; result: unknown }>
-  | Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
-
-type ExternalActionResponse = Readonly<{
-  v: 1;
-  actionId: string;
-  requestId?: string;
-  execution: ExternalActionExecution;
-}>;
 
 function requireNonEmpty(value: string, name: string): string {
   const normalized = value.trim();
@@ -56,26 +53,6 @@ function normalizeEndpoint(endpoint: string | URL): URL {
 
 function combinedSignal(signal: AbortSignal | undefined, closeSignal: AbortSignal): AbortSignal {
   return signal === undefined ? closeSignal : AbortSignal.any([signal, closeSignal]);
-}
-
-function isExternalActionResponse(value: unknown): value is ExternalActionResponse {
-  if (value === null || typeof value !== 'object') return false;
-  const candidate = value as Partial<ExternalActionResponse>;
-  if (
-    candidate.v !== 1
-    || typeof candidate.actionId !== 'string'
-    || (candidate.requestId !== undefined && typeof candidate.requestId !== 'string')
-    || candidate.execution === null
-    || typeof candidate.execution !== 'object'
-  ) {
-    return false;
-  }
-  const execution = candidate.execution as Partial<ExternalActionExecution>;
-  return execution.ok === true
-    ? Object.prototype.hasOwnProperty.call(execution, 'result')
-    : execution.ok === false
-      && typeof execution.errorCode === 'string'
-      && typeof execution.error === 'string';
 }
 
 function transportErrorCode(body: unknown): string | undefined {
@@ -131,20 +108,31 @@ export type HappierMachineActions = MachineBoundActionMethods<ReturnType<typeof 
   ) => Promise<PublicActionResultById['action.invoke']>;
 }>;
 
+export type HappierExecutionRuns<TOptions extends ActionExecutionOptions = ActionExecutionOptions> = Readonly<{
+  startStream: (
+    input: PublicActionInputById['execution.run.stream.start'],
+    options?: TOptions,
+  ) => Promise<HappierExecutionRunStream>;
+}>;
+
+export type HappierMachineExecutionRuns = HappierExecutionRuns<HappierMachineActionExecutionOptions>;
+
 export type HappierClient = Readonly<{
   actions: HappierActions;
   machines: Readonly<{
     list: (options?: MachineListOptions) => Promise<readonly HappierMachine[]>;
   }>;
   sessions: HappierSessions;
+  runs: HappierExecutionRuns;
   machine: (machineId: string) => HappierMachineClient;
   close: () => void;
 }>;
 
 export type HappierMachineClient = Readonly<
-  Omit<HappierClient, 'actions' | 'machine' | 'sessions'> & Readonly<{
+  Omit<HappierClient, 'actions' | 'machine' | 'sessions' | 'runs'> & Readonly<{
     actions: HappierMachineActions;
     sessions: HappierMachineSessions;
+    runs: HappierMachineExecutionRuns;
     machine: (machineId: string) => HappierMachineClient;
   }>
 >;
@@ -227,13 +215,18 @@ function createClient(
       if (lifecycle.controller.signal.aborted && params.allowAfterClose !== true) {
         throw lifecycle.controller.signal.reason;
       }
-      throw error;
+      if (params.signal?.aborted) throw params.signal.reason;
+      throw new HappierTransportError('Could not reach the Happier API.', { cause: error });
     }
 
     let body: unknown;
     try {
       body = await response.json();
     } catch (error) {
+      if (lifecycle.controller.signal.aborted && params.allowAfterClose !== true) {
+        throw lifecycle.controller.signal.reason;
+      }
+      if (params.signal?.aborted) throw params.signal.reason;
       throw new HappierTransportError('The Happier API returned invalid JSON.', {
         status: response.status,
         cause: error,
@@ -271,29 +264,58 @@ function createClient(
       signal: options.signal,
       allowAfterClose,
     });
-    if (!isExternalActionResponse(body) || body.actionId !== actionId) {
+    const externalActionResponse = parseExternalActionResponseEnvelopeV1(body);
+    if (!externalActionResponse || externalActionResponse.actionId !== actionId) {
       throw new HappierTransportError('The Happier Action API returned an invalid response envelope.', {
         details: body,
       });
     }
-    if (!body.execution.ok) {
-      throw new HappierActionError(body.execution.errorCode, body.execution.error, body.execution.details);
+    if (!externalActionResponse.execution.ok) {
+      throw new HappierActionError(
+        externalActionResponse.execution.errorCode,
+        externalActionResponse.execution.error,
+        externalActionResponse.execution.details,
+      );
     }
-    return body.execution.result as PublicActionResultById[K];
+    return externalActionResponse.execution.result as PublicActionResultById[K];
   };
   const execute: ActionExecute = (actionId, input, options) => executeRequest(actionId, input, options);
-  const actions = createActions(execute);
+  const createExecutionRuns = <TOptions extends ActionExecutionOptions>(params: Readonly<{
+    execute: ActionExecute;
+    cancel: (
+      input: PublicActionInputById['execution.run.stream.cancel'],
+      options: Readonly<Pick<ActionExecutionOptions, 'target'>>,
+    ) => Promise<void>;
+  }>): HappierExecutionRuns<TOptions> => Object.freeze({
+    startStream: async (input, options) => {
+      const scope = input.sessionId === undefined ? {} : { sessionId: input.sessionId };
+      const routing = options?.target === undefined ? {} : { target: options.target };
+      return await startExecutionRunStream({
+        runId: input.runId,
+        start: () => params.execute('execution.run.stream.start', input, options),
+        read: (readInput, signal) => params.execute('execution.run.stream.read', {
+          ...scope,
+          ...readInput,
+        }, { ...routing, signal }),
+        cancel: async (cancelInput) => {
+          await params.cancel({ ...scope, ...cancelInput }, routing);
+        },
+        closeSignal: lifecycle.controller.signal,
+        signal: options?.signal,
+      });
+    },
+  });
 
   const followTranscript = (sessionId: string, options?: FollowTranscriptOptions) => (
     createTranscriptIterable({
-          execute,
-          release: async (input) => {
-            await executeRequest('transcript.unfollow', input, {}, true);
-          },
-          sessionId: requireNonEmpty(sessionId, 'sessionId'),
-          closeSignal: lifecycle.controller.signal,
-          options,
-        })
+      execute,
+      release: async (input) => {
+        await executeRequest('transcript.unfollow', input, {}, true);
+      },
+      sessionId: requireNonEmpty(sessionId, 'sessionId'),
+      closeSignal: lifecycle.controller.signal,
+      options,
+    })
   );
   const machines = Object.freeze({
     async list(options: MachineListOptions = {}) {
@@ -323,26 +345,41 @@ function createClient(
       requireSessionId: (sessionId) => requireNonEmpty(sessionId, 'sessionId'),
       spawn: (input, options) => machineExecute('session.spawn_new', input, options),
     });
+    const runs = createExecutionRuns<HappierMachineActionExecutionOptions>({
+      execute: machineExecute,
+      cancel: async (input) => {
+        await executeRequest('execution.run.stream.cancel', input, { target: defaultTarget }, true);
+      },
+    });
     return Object.freeze({
       actions: createMachineActions(machineExecute),
       machines,
       sessions,
+      runs,
       machine,
       close,
     });
   }
 
+  const actions = createActions(execute);
   const sessions = createSessions({
     execute,
     spawn: (input, options) => execute('session.spawn_new', input, options),
     followTranscript,
     requireSessionId: (sessionId) => requireNonEmpty(sessionId, 'sessionId'),
   });
+  const runs = createExecutionRuns<ActionExecutionOptions>({
+    execute,
+    cancel: async (input, options) => {
+      await executeRequest('execution.run.stream.cancel', input, options, true);
+    },
+  });
 
   return Object.freeze({
     actions,
     machines,
     sessions,
+    runs,
     machine,
     close,
   });

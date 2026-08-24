@@ -1,10 +1,20 @@
 import { followTranscriptSourceWithFiniteActions } from '@happier-dev/agents/runtime/facets/transcriptSource';
 
-import type { PublicActionResultById } from './actions/generated.js';
+import type { PublicActionInputById, PublicActionResultById } from './actions/generated.js';
 import type { ActionExecute, ActionExecutionOptions } from './types.js';
 
 /** A raw row emitted by the canonical finite `transcript.follow` Action. */
 export type HappierTranscriptItem = PublicActionResultById['transcript.follow']['items'][number];
+
+export type HappierExecutionRunStreamEvent = PublicActionResultById['execution.run.stream.read']['events'][number];
+
+/** A direct handle for the canonical bounded execution-run stream Actions. */
+export type HappierExecutionRunStream = Readonly<{
+  runId: string;
+  streamId: string;
+  cancel: () => Promise<void>;
+  [Symbol.asyncIterator]: () => AsyncIterator<HappierExecutionRunStreamEvent>;
+}>;
 
 export type FollowTranscriptOptions = Readonly<{
   cursor?: string;
@@ -19,6 +29,93 @@ type Deferred<T> = Readonly<{
   resolve: (result: IteratorResult<T>) => void;
   reject: (error: unknown) => void;
 }>;
+
+type ExecutionRunStreamReadInput = PublicActionInputById['execution.run.stream.read'];
+type ExecutionRunStreamReadResult = PublicActionResultById['execution.run.stream.read'];
+
+export async function startExecutionRunStream(params: Readonly<{
+  runId: string;
+  start: () => Promise<PublicActionResultById['execution.run.stream.start']>;
+  read: (
+    input: Readonly<Pick<ExecutionRunStreamReadInput, 'runId' | 'streamId' | 'cursor'>>,
+    signal: AbortSignal,
+  ) => Promise<ExecutionRunStreamReadResult>;
+  cancel: (input: Readonly<Pick<ExecutionRunStreamReadInput, 'runId' | 'streamId'>>) => Promise<void>;
+  closeSignal: AbortSignal;
+  signal?: AbortSignal;
+}>): Promise<HappierExecutionRunStream> {
+  const started = await params.start();
+  const controller = new AbortController();
+  const signal = params.signal === undefined
+    ? AbortSignal.any([params.closeSignal, controller.signal])
+    : AbortSignal.any([params.closeSignal, controller.signal, params.signal]);
+  let cursor = 0;
+  let events: readonly HappierExecutionRunStreamEvent[] = [];
+  let terminal = false;
+  let cancelled = false;
+  let cancelPromise: Promise<void> | undefined;
+
+  const removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+  const cancel = (): Promise<void> => {
+    if (cancelPromise !== undefined) return cancelPromise;
+    cancelled = true;
+    cancelPromise = Promise.resolve()
+      .then(async () => {
+        await params.cancel({ runId: params.runId, streamId: started.streamId });
+      })
+      .finally(removeAbortListener);
+    controller.abort();
+    return cancelPromise;
+  };
+  const onAbort = () => {
+    void cancel().catch(() => undefined);
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
+  if (signal.aborted) onAbort();
+
+  const iterator: AsyncIterator<HappierExecutionRunStreamEvent> = {
+    async next(): Promise<IteratorResult<HappierExecutionRunStreamEvent>> {
+      if (cancelled) return { done: true, value: undefined };
+
+      while (true) {
+        const event = events[0];
+        if (event !== undefined) {
+          events = events.slice(1);
+          return { done: false, value: event };
+        }
+        if (terminal) {
+          await cancel();
+          return { done: true, value: undefined };
+        }
+
+        try {
+          const page = await params.read({
+            runId: params.runId,
+            streamId: started.streamId,
+            cursor,
+          }, signal);
+          cursor = page.nextCursor;
+          events = page.events;
+          terminal = page.done;
+        } catch (error) {
+          await cancel().catch(() => undefined);
+          throw error;
+        }
+      }
+    },
+    async return(): Promise<IteratorResult<HappierExecutionRunStreamEvent>> {
+      await cancel();
+      return { done: true, value: undefined };
+    },
+  };
+
+  return Object.freeze({
+    runId: params.runId,
+    streamId: started.streamId,
+    cancel,
+    [Symbol.asyncIterator]: () => iterator,
+  });
+}
 
 function waitForPoll(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
@@ -58,6 +155,26 @@ export function createTranscriptIterable(params: Readonly<{
   let complete = false;
   let failure: unknown;
   let runner: Promise<void> | undefined;
+  let resolveConsumerDemand: (() => void) | undefined;
+
+  const notifyConsumerDemand = () => {
+    const resolve = resolveConsumerDemand;
+    resolveConsumerDemand = undefined;
+    resolve?.();
+  };
+  const waitForConsumerDemand = (): Promise<void> => {
+    if (signal.aborted || (values.length === 0 && waiters.length > 0)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = () => {
+        signal.removeEventListener('abort', finish);
+        if (resolveConsumerDemand === finish) resolveConsumerDemand = undefined;
+        resolve();
+      };
+      resolveConsumerDemand = finish;
+      signal.addEventListener('abort', finish, { once: true });
+      if (signal.aborted || (values.length === 0 && waiters.length > 0)) finish();
+    });
+  };
 
   const emit = (value: HappierTranscriptItem) => {
     const waiter = waiters.shift();
@@ -98,8 +215,9 @@ export function createTranscriptIterable(params: Readonly<{
       )),
       waitForNextPoll: async () => waitForPoll(params.options?.pollIntervalMs ?? 250, signal),
       shouldContinue: () => !signal.aborted,
-      onItems: ({ items }) => {
+      onItems: async ({ items }) => {
         for (const item of items) emit(item);
+        await waitForConsumerDemand();
       },
     }).then(
       () => settle(),
@@ -117,13 +235,18 @@ export function createTranscriptIterable(params: Readonly<{
         next(): Promise<IteratorResult<HappierTranscriptItem>> {
           start();
           const value = values.shift();
-          if (value !== undefined) return Promise.resolve({ done: false, value });
+          if (value !== undefined) {
+            return Promise.resolve({ done: false, value });
+          }
           if (complete) {
             return failure === undefined
               ? Promise.resolve({ done: true, value: undefined })
               : Promise.reject(failure);
           }
-          return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+          return new Promise((resolve, reject) => {
+            waiters.push({ resolve, reject });
+            notifyConsumerDemand();
+          });
         },
         async return(): Promise<IteratorResult<HappierTranscriptItem>> {
           iteratorController.abort();

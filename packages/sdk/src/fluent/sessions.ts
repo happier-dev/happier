@@ -29,8 +29,10 @@ export type HappierSessionSpawnInput = Readonly<
   }>
 >;
 
-/** Per-call controls that cannot replace the Machine selected by the fluent client. */
-export type HappierSessionSpawnOptions = Readonly<Omit<ActionExecutionOptions, 'target'>>;
+/** Per-call controls for an unbound fluent Session client. */
+export type HappierSessionSpawnOptions = ActionExecutionOptions;
+
+type HappierMachineSessionOptions = Readonly<Omit<ActionExecutionOptions, 'target'>>;
 
 export type HappierAgentUnavailableReason = 'not_installed' | 'disabled' | 'identity_unavailable';
 
@@ -63,22 +65,22 @@ export class HappierSessionSpawnError extends Error {
   }
 }
 
-export type HappierSession = Readonly<{
+export type HappierSession<TOptions extends ActionExecutionOptions = ActionExecutionOptions> = Readonly<{
   id: string;
   send: (
     message: string,
-    options?: ActionExecutionOptions,
+    options?: TOptions,
   ) => Promise<PublicActionResultById['session.message.send']>;
   waitForIdle: (
     input?: WithoutSessionId<PublicActionInputById['session.wait.idle']>,
-    options?: ActionExecutionOptions,
+    options?: TOptions,
   ) => Promise<PublicActionResultById['session.wait.idle']>;
   history: (
     input?: WithoutSessionId<PublicActionInputById['session.transcript.get']>,
-    options?: ActionExecutionOptions,
+    options?: TOptions,
   ) => Promise<PublicActionResultById['session.transcript.get']>;
   followTranscript: (options?: FollowTranscriptOptions) => AsyncIterable<HappierTranscriptItem>;
-  stop: (options?: ActionExecutionOptions) => Promise<PublicActionResultById['session.stop']>;
+  stop: (options?: TOptions) => Promise<PublicActionResultById['session.stop']>;
 }>;
 
 /**
@@ -86,11 +88,11 @@ export type HappierSession = Readonly<{
  * fluent API was not admitted. Continue with `session`; inspect
  * `result.initialInput` for the canonical admission disposition.
  */
-export class HappierSessionInitialInputError extends Error {
-  readonly session: HappierSession;
+export class HappierSessionInitialInputError<TOptions extends ActionExecutionOptions = ActionExecutionOptions> extends Error {
+  readonly session: HappierSession<TOptions>;
   readonly result: SessionSpawnSuccessWithInitialInputFailure;
 
-  constructor(session: HappierSession, result: SessionSpawnSuccessWithInitialInputFailure) {
+  constructor(session: HappierSession<TOptions>, result: SessionSpawnSuccessWithInitialInputFailure) {
     super(
       `Session ${JSON.stringify(result.sessionId)} was committed, but its initial message was not admitted: ${result.initialInput.status}.`,
     );
@@ -100,12 +102,12 @@ export class HappierSessionInitialInputError extends Error {
   }
 }
 
-export type HappierSessions = Readonly<{
+export type HappierSessions<TOptions extends ActionExecutionOptions = ActionExecutionOptions> = Readonly<{
   spawn: (
     input: HappierSessionSpawnInput,
-    options?: HappierSessionSpawnOptions,
-  ) => Promise<HappierSession>;
-  get: (sessionId: string) => HappierSession;
+    options?: TOptions,
+  ) => Promise<HappierSession<TOptions>>;
+  get: (sessionId: string) => HappierSession<TOptions>;
   followTranscript: (
     sessionId: string,
     options?: FollowTranscriptOptions,
@@ -113,13 +115,13 @@ export type HappierSessions = Readonly<{
 }>;
 
 /** The same fluent Session collection, with routing fixed by its bound client. */
-export type HappierMachineSessions = HappierSessions;
+export type HappierMachineSessions = HappierSessions<HappierMachineSessionOptions>;
 
 type SessionCollectionParams = Readonly<{
   execute: ActionExecute;
   spawn: (
     input: SessionSpawnActionInput,
-    options?: HappierSessionSpawnOptions,
+    options?: ActionExecutionOptions,
   ) => Promise<PublicActionResultById['session.spawn_new']>;
   followTranscript: (
     sessionId: string,
@@ -147,38 +149,45 @@ function hasInitialInputFailure(
   return result.initialInput.status !== 'accepted' && result.initialInput.status !== 'alreadyAccepted';
 }
 
-export function createSessions(params: SessionCollectionParams): HappierSessions {
-  const get = (sessionId: string): HappierSession => {
+export function createSessions<TOptions extends ActionExecutionOptions = ActionExecutionOptions>(
+  params: SessionCollectionParams,
+): HappierSessions<TOptions> {
+  const get = (sessionId: string): HappierSession<TOptions> => {
     const id = params.requireSessionId(sessionId);
     return Object.freeze({
       id,
-      send: (message: string, options?: ActionExecutionOptions) => params.execute(
+      send: (message: string, options?: TOptions) => params.execute(
         'session.message.send',
         { sessionId: id, message },
         options,
       ),
-      waitForIdle: (input = {}, options?: ActionExecutionOptions) => params.execute(
+      waitForIdle: (input = {}, options?: TOptions) => params.execute(
         'session.wait.idle',
         { ...input, sessionId: id },
         options,
       ),
-      history: (input = {}, options?: ActionExecutionOptions) => params.execute(
+      history: (input = {}, options?: TOptions) => params.execute(
         'session.transcript.get',
         { ...input, sessionId: id },
         options,
       ),
       followTranscript: (options?: FollowTranscriptOptions) => params.followTranscript(id, options),
-      stop: (options?: ActionExecutionOptions) => params.execute('session.stop', { sessionId: id }, options),
+      stop: (options?: TOptions) => params.execute('session.stop', { sessionId: id }, options),
     });
   };
 
   return Object.freeze({
-    async spawn(input: HappierSessionSpawnInput, options?: HappierSessionSpawnOptions) {
+    async spawn(input: HappierSessionSpawnInput, options?: TOptions) {
       const { agent, ...actionInput } = input;
       const inventory = await params.execute(
         'agents.backends.list',
         { includeDisabled: true },
-        options?.signal === undefined ? undefined : { signal: options.signal },
+        options === undefined
+          ? undefined
+          : {
+              ...(options.target === undefined ? {} : { target: options.target }),
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+            },
       );
       const result = await params.spawn({
         ...actionInput,
@@ -187,7 +196,7 @@ export function createSessions(params: SessionCollectionParams): HappierSessions
       if (result.type !== 'success') throw new HappierSessionSpawnError(result);
       const session = get(result.sessionId);
       if (input.initialMessage !== undefined && hasInitialInputFailure(result)) {
-        throw new HappierSessionInitialInputError(session, result);
+        throw new HappierSessionInitialInputError<TOptions>(session, result);
       }
       return session;
     },
@@ -199,5 +208,5 @@ export function createSessions(params: SessionCollectionParams): HappierSessions
 export function createMachineSessions(
   params: SessionCollectionParams,
 ): HappierMachineSessions {
-  return createSessions(params);
+  return createSessions<HappierMachineSessionOptions>(params);
 }

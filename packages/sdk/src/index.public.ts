@@ -6,13 +6,20 @@ export {
   type HappierMachineActionExecutionOptions,
   type HappierMachineActions,
   type HappierMachineClient,
+  type HappierMachineExecutionRuns,
+  type HappierExecutionRuns,
 } from './connect.js';
 export {
   HappierActionError,
   HappierClientClosedError,
   HappierTransportError,
 } from './errors.js';
-export type { FollowTranscriptOptions, HappierTranscriptItem } from './subscriptions.js';
+export type {
+  FollowTranscriptOptions,
+  HappierExecutionRunStream,
+  HappierExecutionRunStreamEvent,
+  HappierTranscriptItem,
+} from './subscriptions.js';
 export type { HappierMachine, MachineListOptions } from './machines.js';
 export {
   HappierAgentUnavailableError,

@@ -18,6 +18,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "approval.request.decide",
   "browser.automation.cancelActive",
   "browser.automation.click",
+  "browser.automation.drag",
   "browser.automation.focus",
   "browser.automation.goBack",
   "browser.automation.goForward",
@@ -31,6 +32,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "browser.automation.setValue",
   "browser.automation.tap",
   "browser.automation.type",
+  "browser.automation.upload",
   "browser.context.annotation.attachComment",
   "browser.context.annotation.attachStroke",
   "browser.context.annotation.attachStyleIntent",
@@ -117,11 +119,11 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "plugin.webhook.endpoint.ensure",
   "plugin.webhook.endpoint.retarget",
   "plugin.webhook.endpoint.revoke",
-  "plugins.author.build",
-  "plugins.author.install",
-  "plugins.author.test",
-  "plugins.author.typecheck",
-  "plugins.dev",
+  "plugins.dev.build",
+  "plugins.dev.install",
+  "plugins.dev.submit",
+  "plugins.dev.test",
+  "plugins.dev.typecheck",
   "plugins.doctor",
   "plugins.install",
   "plugins.pack",
@@ -242,6 +244,7 @@ export type GeneratedActions = Readonly<{
     readonly automation: Readonly<{
       readonly cancelActive: (input: PublicActionInputById["browser.automation.cancelActive"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.cancelActive"]>;
       readonly click: (input: PublicActionInputById["browser.automation.click"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.click"]>;
+      readonly drag: (input: PublicActionInputById["browser.automation.drag"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.drag"]>;
       readonly focus: (input: PublicActionInputById["browser.automation.focus"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.focus"]>;
       readonly goBack: (input: PublicActionInputById["browser.automation.goBack"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.goBack"]>;
       readonly goForward: (input: PublicActionInputById["browser.automation.goForward"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.goForward"]>;
@@ -261,6 +264,7 @@ export type GeneratedActions = Readonly<{
         readonly get: (input: PublicActionInputById["browser.automation.timeline.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.timeline.get"]>;
       }> ;
       readonly type: (input: PublicActionInputById["browser.automation.type"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.type"]>;
+      readonly upload: (input: PublicActionInputById["browser.automation.upload"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.upload"]>;
       readonly waitFor: (input: PublicActionInputById["browser.automation.waitFor"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.waitFor"]>;
     }> ;
     readonly context: Readonly<{
@@ -464,16 +468,16 @@ export type GeneratedActions = Readonly<{
     }> ;
   }> ;
   readonly plugins: Readonly<{
-    readonly author: Readonly<{
-      readonly build: (input: PublicActionInputById["plugins.author.build"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.author.build"]>;
-      readonly install: (input: PublicActionInputById["plugins.author.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.author.install"]>;
-      readonly test: (input: PublicActionInputById["plugins.author.test"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.author.test"]>;
-      readonly typecheck: (input: PublicActionInputById["plugins.author.typecheck"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.author.typecheck"]>;
-    }> ;
     readonly change: Readonly<{
       readonly status: (input: PublicActionInputById["plugins.change.status"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.change.status"]>;
     }> ;
-    readonly dev: (input: PublicActionInputById["plugins.dev"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev"]>;
+    readonly dev: Readonly<{
+      readonly build: (input: PublicActionInputById["plugins.dev.build"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.build"]>;
+      readonly install: (input: PublicActionInputById["plugins.dev.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.install"]>;
+      readonly submit: (input: PublicActionInputById["plugins.dev.submit"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.submit"]>;
+      readonly test: (input: PublicActionInputById["plugins.dev.test"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.test"]>;
+      readonly typecheck: (input: PublicActionInputById["plugins.dev.typecheck"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.typecheck"]>;
+    }> ;
     readonly doctor: (input: PublicActionInputById["plugins.doctor"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.doctor"]>;
     readonly install: (input: PublicActionInputById["plugins.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.install"]>;
     readonly list: (input: PublicActionInputById["plugins.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.list"]>;
@@ -511,6 +515,9 @@ export type GeneratedActions = Readonly<{
     }> ;
     readonly uninstall: (input: PublicActionInputById["plugins.uninstall"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.uninstall"]>;
   }> ;
+  readonly projects: Readonly<{
+    readonly list: (input: PublicActionInputById["projects.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["projects.list"]>;
+  }> ;
   readonly promptAsset: Readonly<{
     readonly export: (input: PublicActionInputById["prompt_asset.export"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_asset.export"]>;
   }> ;
@@ -522,6 +529,14 @@ export type GeneratedActions = Readonly<{
   }> ;
   readonly promptRegistry: Readonly<{
     readonly install: (input: PublicActionInputById["prompt_registry.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_registry.install"]>;
+  }> ;
+  readonly prompts: Readonly<{
+    readonly invocation: Readonly<{
+      readonly resolve: (input: PublicActionInputById["prompts.invocation.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompts.invocation.resolve"]>;
+    }> ;
+    readonly invocations: Readonly<{
+      readonly list: (input: PublicActionInputById["prompts.invocations.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompts.invocations.list"]>;
+    }> ;
   }> ;
   readonly review: Readonly<{
     readonly engines: Readonly<{
@@ -816,6 +831,7 @@ export function createGeneratedActions(execute: ActionExecute): GeneratedActions
       automation: {
         cancelActive: (input: PublicActionInputById["browser.automation.cancelActive"], options?: ActionExecutionOptions) => execute("browser.automation.cancelActive", input, options),
         click: (input: PublicActionInputById["browser.automation.click"], options?: ActionExecutionOptions) => execute("browser.automation.click", input, options),
+        drag: (input: PublicActionInputById["browser.automation.drag"], options?: ActionExecutionOptions) => execute("browser.automation.drag", input, options),
         focus: (input: PublicActionInputById["browser.automation.focus"], options?: ActionExecutionOptions) => execute("browser.automation.focus", input, options),
         goBack: (input: PublicActionInputById["browser.automation.goBack"], options?: ActionExecutionOptions) => execute("browser.automation.goBack", input, options),
         goForward: (input: PublicActionInputById["browser.automation.goForward"], options?: ActionExecutionOptions) => execute("browser.automation.goForward", input, options),
@@ -835,6 +851,7 @@ export function createGeneratedActions(execute: ActionExecute): GeneratedActions
           get: (input: PublicActionInputById["browser.automation.timeline.get"], options?: ActionExecutionOptions) => execute("browser.automation.timeline.get", input, options),
         },
         type: (input: PublicActionInputById["browser.automation.type"], options?: ActionExecutionOptions) => execute("browser.automation.type", input, options),
+        upload: (input: PublicActionInputById["browser.automation.upload"], options?: ActionExecutionOptions) => execute("browser.automation.upload", input, options),
         waitFor: (input: PublicActionInputById["browser.automation.waitFor"], options?: ActionExecutionOptions) => execute("browser.automation.waitFor", input, options),
       },
       context: {
@@ -1038,16 +1055,16 @@ export function createGeneratedActions(execute: ActionExecute): GeneratedActions
       },
     },
     plugins: {
-      author: {
-        build: (input: PublicActionInputById["plugins.author.build"], options?: ActionExecutionOptions) => execute("plugins.author.build", input, options),
-        install: (input: PublicActionInputById["plugins.author.install"], options?: ActionExecutionOptions) => execute("plugins.author.install", input, options),
-        test: (input: PublicActionInputById["plugins.author.test"], options?: ActionExecutionOptions) => execute("plugins.author.test", input, options),
-        typecheck: (input: PublicActionInputById["plugins.author.typecheck"], options?: ActionExecutionOptions) => execute("plugins.author.typecheck", input, options),
-      },
       change: {
         status: (input: PublicActionInputById["plugins.change.status"], options?: ActionExecutionOptions) => execute("plugins.change.status", input, options),
       },
-      dev: (input: PublicActionInputById["plugins.dev"], options?: ActionExecutionOptions) => execute("plugins.dev", input, options),
+      dev: {
+        build: (input: PublicActionInputById["plugins.dev.build"], options?: ActionExecutionOptions) => execute("plugins.dev.build", input, options),
+        install: (input: PublicActionInputById["plugins.dev.install"], options?: ActionExecutionOptions) => execute("plugins.dev.install", input, options),
+        submit: (input: PublicActionInputById["plugins.dev.submit"], options?: ActionExecutionOptions) => execute("plugins.dev.submit", input, options),
+        test: (input: PublicActionInputById["plugins.dev.test"], options?: ActionExecutionOptions) => execute("plugins.dev.test", input, options),
+        typecheck: (input: PublicActionInputById["plugins.dev.typecheck"], options?: ActionExecutionOptions) => execute("plugins.dev.typecheck", input, options),
+      },
       doctor: (input: PublicActionInputById["plugins.doctor"], options?: ActionExecutionOptions) => execute("plugins.doctor", input, options),
       install: (input: PublicActionInputById["plugins.install"], options?: ActionExecutionOptions) => execute("plugins.install", input, options),
       list: (input: PublicActionInputById["plugins.list"], options?: ActionExecutionOptions) => execute("plugins.list", input, options),
@@ -1085,6 +1102,9 @@ export function createGeneratedActions(execute: ActionExecute): GeneratedActions
       },
       uninstall: (input: PublicActionInputById["plugins.uninstall"], options?: ActionExecutionOptions) => execute("plugins.uninstall", input, options),
     },
+    projects: {
+      list: (input: PublicActionInputById["projects.list"], options?: ActionExecutionOptions) => execute("projects.list", input, options),
+    },
     promptAsset: {
       export: (input: PublicActionInputById["prompt_asset.export"], options?: ActionExecutionOptions) => execute("prompt_asset.export", input, options),
     },
@@ -1096,6 +1116,14 @@ export function createGeneratedActions(execute: ActionExecute): GeneratedActions
     },
     promptRegistry: {
       install: (input: PublicActionInputById["prompt_registry.install"], options?: ActionExecutionOptions) => execute("prompt_registry.install", input, options),
+    },
+    prompts: {
+      invocation: {
+        resolve: (input: PublicActionInputById["prompts.invocation.resolve"], options?: ActionExecutionOptions) => execute("prompts.invocation.resolve", input, options),
+      },
+      invocations: {
+        list: (input: PublicActionInputById["prompts.invocations.list"], options?: ActionExecutionOptions) => execute("prompts.invocations.list", input, options),
+      },
     },
     review: {
       engines: {
