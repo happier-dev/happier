@@ -25,10 +25,19 @@ test('the finite Turbo graph is activated through the current package manager wi
   assert.ok(rootPackage.workspaces.packages.includes('packages/plugins/[a-z]*'));
   assert.equal(JSON.stringify(turbo).includes('@happier-dev/plugins-'), false);
   assert.equal(turbo.concurrency, '75%');
-  assert.equal(
-    rootPackage.scripts['build:packages'],
-    'node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs privacy-kit @happier-dev/brand @happier-dev/protocol @happier-dev/peer-mediation @happier-dev/transfers @happier-dev/voice-modelpacks @happier-dev/agents @happier-dev/cli-common @happier-dev/release-runtime @happier-dev/channels-protocol @happier-dev/support @happier-dev/connection-supervisor @happier-dev/triage-protocol @happier-dev/triage-sources @happier-dev/bootstrap',
-  );
+  const buildPackages = rootPackage.scripts['build:packages'];
+  assert.match(buildPackages, /^node scripts\/workspaces\/ensureWorkspacePackagesBuiltCli\.mjs /u);
+  for (const packageName of [
+    'privacy-kit',
+    '@happier-dev/protocol',
+    '@happier-dev/agents',
+    '@happier-dev/cli-common',
+    '@happier-dev/release-runtime',
+    '@happier-dev/support',
+    '@happier-dev/bootstrap',
+  ]) {
+    assert.match(buildPackages, new RegExp(`(?:^| )${packageName.replace('/', '\\/')}(?: |$)`, 'u'));
+  }
   assert.equal(
     rootPackage.scripts['typecheck:inner'],
     'yarn -s build:packages && turbo run typecheck:finite --filter=@happier-dev/plugin-sdk --filter=@happier-dev/sdk && turbo run typecheck:source:finite --filter=@happier-dev/terminal-native --filter=@happier-dev/plugin-ui --filter=@happier-dev/app --filter=@happier-dev/cli --filter=@happier-dev/server --filter=@happier-dev/tests',

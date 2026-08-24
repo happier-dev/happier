@@ -13,6 +13,8 @@ function createPackageJsonText(): string {
     {
       scripts: {
         test: 'yarn -s test:unit',
+        'check:public-sdk:finite': 'apps/stack/bin/hstack-exec --script=check:public-sdk:finite:local',
+        'check:public-sdk:finite:local': 'turbo run api:finite test:finite typecheck:finite --filter=@happier-dev/plugin-sdk --filter=@happier-dev/plugin-ui --filter=@happier-dev/sdk',
         'test:unit': 'yarn workspace privacy-kit test && yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/peer-mediation test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/support test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/plugin-sdk test && yarn workspace @happier-dev/plugin-ui test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit',
         'test:plugin-workspaces': 'node --experimental-strip-types scripts/testing/runPluginWorkspaceTests.ts',
         'test:plugin-platform:contracts': 'yarn workspace @happier-dev/tests test:plugin-platform:contracts',
@@ -184,6 +186,62 @@ test('flags shared package unit workflow drift when peer mediation coverage fall
   assert.match(messages, /Workflow coverage is missing for test/);
 });
 
+test('recognizes the exact finite public SDK task as unit coverage for its three workspaces', () => {
+  const workflowText = createWorkflowText()
+    .replace('      - run: yarn workspace @happier-dev/plugin-sdk test\n', '')
+    .replace('      - run: yarn workspace @happier-dev/plugin-ui test\n', '')
+    .replace('      - run: yarn test:plugin-workspaces\n', '      - run: yarn -s check:public-sdk:finite\n      - run: yarn test:plugin-workspaces\n');
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText: createPackageJsonText(),
+    workflowText,
+    docsText: createDocsText(),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+  assert.doesNotMatch(report.issues.map((issue) => issue.message).join('\n'), /@happier-dev\/(?:plugin-sdk|plugin-ui|sdk) test script/u);
+});
+
+test('withholds finite public SDK credit from a workspace its turbo filter no longer covers', () => {
+  const packageJsonText = createPackageJsonText().replace(
+    '--filter=@happier-dev/plugin-sdk --filter=@happier-dev/plugin-ui --filter=@happier-dev/sdk',
+    '--filter=@happier-dev/plugin-sdk --filter=@happier-dev/sdk',
+  );
+  const workflowText = createWorkflowText()
+    .replace('      - run: yarn workspace @happier-dev/plugin-sdk test\n', '')
+    .replace('      - run: yarn workspace @happier-dev/plugin-ui test\n', '')
+    .replace('      - run: yarn test:plugin-workspaces\n', '      - run: yarn -s check:public-sdk:finite\n      - run: yarn test:plugin-workspaces\n');
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText,
+    workflowText,
+    docsText: createDocsText(),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+
+  const messages = report.issues.map((issue) => issue.message).join('\n');
+  assert.match(messages, /no CI step runs the @happier-dev\/plugin-ui test script/u);
+  assert.doesNotMatch(messages, /no CI step runs the @happier-dev\/plugin-sdk test script/u);
+});
+
+test('withholds finite public SDK credit when the command no longer runs the workspace test task', () => {
+  const packageJsonText = createPackageJsonText().replace(
+    'turbo run api:finite test:finite typecheck:finite',
+    'turbo run api:finite typecheck:finite',
+  );
+  const workflowText = createWorkflowText()
+    .replace('      - run: yarn workspace @happier-dev/plugin-sdk test\n', '')
+    .replace('      - run: yarn workspace @happier-dev/plugin-ui test\n', '')
+    .replace('      - run: yarn test:plugin-workspaces\n', '      - run: yarn -s check:public-sdk:finite\n      - run: yarn test:plugin-workspaces\n');
+  const report = collectWorkflowScriptParityReport({
+    packageJsonText,
+    workflowText,
+    docsText: createDocsText(),
+    configTexts: createFeatureGatingConfigTexts(),
+  });
+
+  const messages = report.issues.map((issue) => issue.message).join('\n');
+  assert.match(messages, /no CI step runs the @happier-dev\/plugin-sdk test script/u);
+  assert.match(messages, /no CI step runs the @happier-dev\/plugin-ui test script/u);
+});
+
 test('requires the derived plugin workspace test runner in scripts, docs, and CI', () => {
   const packageJson = JSON.parse(createPackageJsonText());
   delete packageJson.scripts['test:plugin-workspaces'];
@@ -292,16 +350,22 @@ test('wires shared SDK packages into the default root validation lanes', () => {
   assert.match(unitLane, /yarn workspace @happier-dev\/peer-mediation test/);
   assert.match(unitLane, /yarn workspace @happier-dev\/plugin-sdk test/);
   assert.match(unitLane, /yarn workspace @happier-dev\/plugin-ui test/);
-  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /yarn workspace @happier-dev\/terminal-native typecheck/);
-  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /yarn workspace @happier-dev\/support typecheck/);
-  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /yarn workspace @happier-dev\/plugin-ui typecheck/);
+  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /turbo run typecheck:source:finite/);
+  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /--filter=@happier-dev\/terminal-native/);
+  assert.match(
+    packageJson.scripts?.['build:packages'] ?? '',
+    /@happier-dev\/support/,
+    'Support source compilation is reused as its typecheck evidence before the source-only Turbo lane',
+  );
+  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /--filter=@happier-dev\/plugin-ui/);
   assert.match(workflowText, /yarn workspace @happier-dev\/voice-modelpacks test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/terminal-native test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/sherpa-native test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/support test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/peer-mediation test/);
-  assert.match(workflowText, /yarn workspace @happier-dev\/plugin-sdk test/);
-  assert.match(workflowText, /yarn workspace @happier-dev\/plugin-ui test/);
+  assert.match(workflowText, /yarn -s check:public-sdk:finite/);
+  assert.doesNotMatch(workflowText, /yarn workspace @happier-dev\/plugin-sdk test/);
+  assert.doesNotMatch(workflowText, /yarn workspace @happier-dev\/plugin-ui test/);
 });
 
 test('routes the root ordinary integration lane through the Stack executor', () => {

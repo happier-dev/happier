@@ -602,11 +602,23 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: Regenerate and check published plugin API records
-        run: |
-          yarn workspace @happier-dev/plugin-sdk prepare:declarations
-          yarn workspace @happier-dev/plugin-sdk check:api-governance
-          yarn workspace @happier-dev/plugin-ui check:api-governance
+      - name: Restore public SDK Turbo cache
+        if: env.ACT != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            .turbo/cache
+            packages/plugin-sdk/.tsbuildinfo
+            packages/plugin-sdk/node_modules/.cache/tsc/*.tsbuildinfo
+            packages/plugin-ui/.tsbuildinfo
+            packages/sdk/.tsbuildinfo
+            packages/sdk/node_modules/.cache/tsc/*.tsbuildinfo
+          key: turbo-public-sdk-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-public-sdk-${{ runner.os }}-
+
+      - name: Build, govern, typecheck, and test public SDK packages
+        run: yarn -s check:public-sdk:finite
 
       - name: Run shared package unit tests
         if: ${{ !cancelled() }}
@@ -623,15 +635,12 @@ jobs:
           yarn workspace @happier-dev/support test
           yarn workspace @happier-dev/connection-supervisor test
           yarn workspace @happier-dev/bootstrap test
-          yarn workspace @happier-dev/plugin-sdk test
-          yarn workspace @happier-dev/plugin-ui test
           yarn workspace @happier-dev/triage-protocol test
           yarn workspace @happier-dev/triage-sources test
           yarn workspace @happier-dev/ssh-native test
           yarn workspace @happier-dev/audio-stream-native test
           yarn workspace docs test
           yarn --cwd packages/relay-server test
-          yarn workspace @happier-dev/sdk test
 
       - name: Run public plugin SDK consumer contracts
         if: ${{ !cancelled() }}
@@ -1652,6 +1661,23 @@ jobs:
         uses: ./.github/actions/install-yarn-dependencies
         with:
           args: --frozen-lockfile --ignore-engines
+
+      - name: Restore typecheck Turbo cache
+        if: env.ACT != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            .turbo/cache
+            apps/ui/node_modules/.cache/tsc/*.tsbuildinfo
+            apps/cli/node_modules/.cache/tsc/*.tsbuildinfo
+            apps/server/node_modules/.cache/tsc/*.tsbuildinfo
+            packages/plugin-ui/.tsbuildinfo
+            packages/plugin-ui/node_modules/.cache/tsc/*.tsbuildinfo
+            packages/terminal-native/node_modules/.cache/tsc/*.tsbuildinfo
+            packages/tests/node_modules/.cache/tsc/*.tsbuildinfo
+          key: turbo-typecheck-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-typecheck-${{ runner.os }}-
 
       - name: Run governance self-tests
         run: yarn test:wiring:self && yarn test:policy:self && yarn test:tooling:self

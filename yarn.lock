@@ -7719,6 +7719,36 @@
   resolved "https://registry.npmjs.org/@tsconfig/node16/-/node16-1.0.4.tgz"
   integrity sha512-vxhUy4J8lyeyinH7Azl1pdd43GJhZH/tP2weN8TntQblOY+A0XbT8DJk1/oCPuOOyg/Ja757rG0CgHcWC8OfMA==
 
+"@turbo/darwin-64@2.10.11":
+  version "2.10.11"
+  resolved "https://registry.npmjs.org/@turbo/darwin-64/-/darwin-64-2.10.11.tgz#9b17cc8191b4fce5e026fdaaa8727c23d331fa6e"
+  integrity sha512-v3R+1R/Ysozyo+p7Ri8MCIbndOvYt3DgPFrGLhrhQHfvyvbxyH3WyJj+A/2JTNmNleuAlh3JUyCV0iSVHIONTA==
+
+"@turbo/darwin-arm64@2.10.11":
+  version "2.10.11"
+  resolved "https://registry.npmjs.org/@turbo/darwin-arm64/-/darwin-arm64-2.10.11.tgz#13bfa946b58168422b77e2f4c4fc4c7d0798b8da"
+  integrity sha512-R0a0CvGAeYYsBgPIgFNB3agGXh6qukjduNhFlwVVX1Ss2IdBJLXmgjytNGmo084bLKS0B6UdLRwKhXMHKKaObQ==
+
+"@turbo/linux-64@2.10.11":
+  version "2.10.11"
+  resolved "https://registry.npmjs.org/@turbo/linux-64/-/linux-64-2.10.11.tgz#77bfea20a5131df22a240782551fee55fd9c9faf"
+  integrity sha512-dGlY2vg7jpsLjGS1bf9sD/cw1sGMAYbeHGQKGRFxd5Zaj+Ufbj8cNXl/vIit8ueCU97zhL/znn60ZV5iSfZAxw==
+
+"@turbo/linux-arm64@2.10.11":
+  version "2.10.11"
+  resolved "https://registry.npmjs.org/@turbo/linux-arm64/-/linux-arm64-2.10.11.tgz#08f169043e7665016a13243dd8a521f4698f69a2"
+  integrity sha512-eSP9+jjsSCBs2x0QpJZlp49dSD1EIMwXH7PsMIhdWk7w6IThhuKJ+jL95JQ2IW7tRjRmdh8gKcKQtrHLD5R5lA==
+
+"@turbo/windows-64@2.10.11":
+  version "2.10.11"
+  resolved "https://registry.npmjs.org/@turbo/windows-64/-/windows-64-2.10.11.tgz#57f7667b2db2edc7c77ce7459d4e10702ff5f02f"
+  integrity sha512-4aD7edogJ8arK8DOyvjTI2KKwmchD5M/WM4BZgidrtFf7aSgn8Ce2rJnDwmriw980c2cKlHnhXtlGy38VtKB8g==
+
+"@turbo/windows-arm64@2.10.11":
+  version "2.10.11"
+  resolved "https://registry.npmjs.org/@turbo/windows-arm64/-/windows-arm64-2.10.11.tgz#cec8a1e503c411d12630623a5793f75c5ddd6c3c"
+  integrity sha512-m8tJkIrTrbQ9O1uHxV0GUq623Zg1678xGna8eMsy4KbygUX/wVFgdZDYV/AxyoyaW/U7nyKoBvaDVwm22p9xqA==
+
 "@tybys/wasm-util@^0.10.1", "@tybys/wasm-util@^0.10.3":
   version "0.10.3"
   resolved "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.3.tgz#015cba9e9dd47ce14d03d2a8c5d547bfb169665d"
@@ -21190,6 +21220,18 @@ tunnel-agent@^0.6.0:
   integrity sha512-McnNiV1l8RYeY8tBgEpuodCC1mLUdbSN+CYBL7kJsJNInOP8UjDDEwdk6Mw60vdLLrr5NHKZhMAOSrR2NZuQ+w==
   dependencies:
     safe-buffer "^5.0.1"
+
+turbo@2.10.11:
+  version "2.10.11"
+  resolved "https://registry.npmjs.org/turbo/-/turbo-2.10.11.tgz#6f4a08574e9974c3fbc18a15b8a097611ac531d4"
+  integrity sha512-yQfwQVoRXwOuyX1LxiJFBFNg6VfuYh+/RyZLd82+isgyLkBXw3S5XRRzvcck1FAjSCG5sVyLd+O1eDMvYa3J7g==
+  optionalDependencies:
+    "@turbo/darwin-64" "2.10.11"
+    "@turbo/darwin-arm64" "2.10.11"
+    "@turbo/linux-64" "2.10.11"
+    "@turbo/linux-arm64" "2.10.11"
+    "@turbo/windows-64" "2.10.11"
+    "@turbo/windows-arm64" "2.10.11"
 
 tweetnacl@^1.0.3:
   version "1.0.3"
