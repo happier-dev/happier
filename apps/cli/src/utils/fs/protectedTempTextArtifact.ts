@@ -20,7 +20,7 @@ export type ProtectedTempTextArtifact = Readonly<{
  *
  * Use when a subprocess flag must carry potentially large or private text (`--flag <text>`
  * vs `--flag <path>` where the tool re-reads an existing path): argv is process-list-visible
- * and subject to platform argument-length limits, a protected file is neither.
+ * and subject to platform argument-length limits, while the protected file contents are not.
  *
  * The directory (0700) and file (0600) use the protected-local-state owners, including
  * Windows ACL handling. The artifact is retained until `cleanup()` — a reader that reloads

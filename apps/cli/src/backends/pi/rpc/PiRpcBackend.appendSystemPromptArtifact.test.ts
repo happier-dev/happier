@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { AgentMessage } from '@/agent/core';
+import { PI_BRIDGE_CONFIG_PATH_FLAG } from '@/backends/pi/bridgeExtension';
 import { PiRpcBackend } from './PiRpcBackend';
 
 let backend: PiRpcBackend | null = null;
@@ -139,6 +140,35 @@ describe('PiRpcBackend append-system-prompt artifact delivery', () => {
     const stats = statSync(flagValue);
     expect(stats.mode & 0o777).toBe(0o600);
     expect(readFileSync(flagValue, 'utf8')).toBe(secretPromptText);
+  });
+
+  it('passes tools-bridge configuration through a protected artifact and removes it on dispose', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'happier-pi-rpc-artifact-'));
+    const argvOutPath = join(tempDir, 'argv.json');
+    const scriptPath = writeFakePiRpcArgvRecorderScript(tempDir, argvOutPath, 'pi-session-tools-bridge-artifact');
+    const toolsBridgeConfigText = '{"v":1,"private":"TOOLS-BRIDGE-CONFIG-DO-NOT-LEAK-INTO-ARGV"}';
+
+    backend = new PiRpcBackend({
+      cwd: tempDir,
+      command: process.execPath,
+      args: [scriptPath],
+      toolsBridgeConfigText,
+    });
+
+    await backend.startSession();
+
+    const argv = JSON.parse(readFileSync(argvOutPath, 'utf8')) as string[];
+    const flagIndex = argv.indexOf(`--${PI_BRIDGE_CONFIG_PATH_FLAG}`);
+    expect(flagIndex).toBeGreaterThanOrEqual(0);
+    expect(argv).not.toContain(toolsBridgeConfigText);
+    const artifactPath = argv[flagIndex + 1]!;
+    expect(artifactPath).not.toBe(toolsBridgeConfigText);
+    expect(statSync(artifactPath).mode & 0o777).toBe(0o600);
+    expect(readFileSync(artifactPath, 'utf8')).toBe(toolsBridgeConfigText);
+
+    await backend.dispose();
+    backend = null;
+    expect(() => statSync(artifactPath)).toThrow();
   });
 
   it('omits the flag entirely when no append text is configured', async () => {

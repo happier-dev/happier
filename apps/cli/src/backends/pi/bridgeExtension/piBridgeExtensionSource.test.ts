@@ -98,6 +98,7 @@ describe('pi bridge extension behavior', () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-execute-'));
     try {
       const argvPath = join(dir, 'argv.json');
+      const overflowPidPath = join(dir, 'overflow-pid.txt');
       const executableScript = join(dir, 'fake-happier-cli.cjs');
       writeFileSync(executableScript, `
 const { writeFileSync } = require('node:fs');
@@ -111,6 +112,7 @@ if (args.input.value === 'fail') {
 } else if (args.input.value === 'unicode-large') {
   process.stdout.write(JSON.stringify({ ok: true, data: { output: '😀'.repeat(30000) } }) + '\\n');
 } else if (args.input.value === 'transport-overflow') {
+  writeFileSync(${JSON.stringify(overflowPidPath)}, String(process.pid));
   process.stdout.write('x'.repeat(2 * 1024 * 1024));
   setInterval(() => {}, 1000);
 } else if (args.input.value === 'process-failure') {
@@ -213,6 +215,15 @@ if (args.input.value === 'fail') {
       } finally {
         clearTimeout(overflowAbortTimer);
       }
+      const overflowPid = Number(readFileSync(overflowPidPath, 'utf8'));
+      await expect.poll(() => {
+        try {
+          process.kill(overflowPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }).toBe(false);
 
       const processFailure = harness.tools[0]!.execute(
         'call-process-failure',
