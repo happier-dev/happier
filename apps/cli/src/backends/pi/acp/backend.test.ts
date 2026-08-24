@@ -247,6 +247,26 @@ describe('happy tools bridge extension args', () => {
     expect(backend.options?.env).not.toHaveProperty('HAPPIER_PI_BRIDGE_CONFIG');
     expect(JSON.parse(backend.options?.toolsBridgeConfigText ?? '{}')).toEqual(baseBridge.sessionConfig);
   });
+
+  it.each(['plan', 'read-only', 'safe-yolo'] as const)(
+    'keeps native bridge tools available when %s restricts Pi built-in tools',
+    (permissionMode) => {
+      process.env.PATH = '';
+      process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+      const backend = createPiBackend({
+        cwd: '/tmp',
+        env: {},
+        permissionMode,
+        happierSessionId: 'happy-session-1',
+        happyToolsBridge: baseBridge,
+      }) as unknown as { options?: { args?: string[] } };
+
+      const toolsFlagIndex = backend.options?.args?.indexOf('--tools') ?? -1;
+      expect(toolsFlagIndex).toBeGreaterThanOrEqual(0);
+      expect(backend.options?.args?.[toolsFlagIndex + 1]?.split(',')).toContain('change_title');
+    },
+  );
 });
 
 describe('buildPiRpcArgs', () => {

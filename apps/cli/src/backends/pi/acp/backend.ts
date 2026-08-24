@@ -61,9 +61,16 @@ export function buildPiToolsForPermissionMode(permissionMode?: PermissionMode): 
   return ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 }
 
-export function buildPiRpcArgs(opts?: Readonly<{ permissionMode?: PermissionMode; thinkingLevel?: string | null }>): string[] {
+export function buildPiRpcArgs(opts?: Readonly<{
+  permissionMode?: PermissionMode;
+  thinkingLevel?: string | null;
+  extensionToolNames?: readonly string[];
+}>): string[] {
   const permissionMode = opts?.permissionMode;
-  const tools = buildPiToolsForPermissionMode(permissionMode);
+  const restrictedTools = buildPiToolsForPermissionMode(permissionMode);
+  const tools = restrictedTools
+    ? [...new Set([...restrictedTools, ...(opts?.extensionToolNames ?? [])])]
+    : null;
   const args: string[] = ['--mode', 'rpc'];
   if (tools) args.push('--tools', tools.join(','));
   const thinking = providers.pi.normalizePiThinkingLevel(opts?.thinkingLevel);
@@ -154,7 +161,11 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
           launchSelection.modelScope,
         ]
         : []),
-      ...buildPiRpcArgs({ permissionMode: options.permissionMode, thinkingLevel }),
+      ...buildPiRpcArgs({
+        permissionMode: options.permissionMode,
+        thinkingLevel,
+        extensionToolNames: options.happyToolsBridge?.sessionConfig.directTools.map((tool) => tool.name),
+      }),
     ],
     happierSessionId: options.happierSessionId ?? null,
     toolsBridgeConfigText: options.happyToolsBridge
