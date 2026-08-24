@@ -40,7 +40,7 @@ function readStrictJson(value: unknown): StrictJson | null {
     }
     if (!value || typeof value !== 'object') return null;
     const record = value as Readonly<Record<string, unknown>>;
-    const parsed: Record<string, StrictJson> = {};
+    const parsed = Object.create(null) as Record<string, StrictJson>;
     for (const key of Object.keys(record)) {
         const item = record[key];
         const normalized = readStrictJson(item);

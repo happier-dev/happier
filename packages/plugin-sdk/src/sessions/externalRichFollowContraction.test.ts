@@ -3,8 +3,8 @@ import { describe, expectTypeOf, it } from 'vitest';
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionsContribution,
+    AgentExternalSessionsListCandidatesRequest,
 } from './external/index.js';
-import type { ExternalSessionListCandidatesParamsV1 } from './external.js';
 
 /* @sdk-negative-type-case:src-sessions-externalRichFollowContraction-test-ts-107:UmljaCBFeHRlcm5hbCBTZXNzaW9ucyBydW50aW1lIGNvbnRleHQgaXMgbm90IGFuIGF1dGhvcmluZyBjb250cmFjdC4:aW1wb3J0IHR5cGUgeyBFeHRlcm5hbFNlc3Npb25SdW50aW1lQ29udGV4dFYxIH0gZnJvbSAnLi9leHRlcm5hbC9pbmRleC5qcyc7 */
 type ExternalSessionRuntimeContextV1 = never; /* @sdk-negative-type-case-end */
@@ -23,6 +23,6 @@ describe('External Sessions Plugin SDK public contract', () => {
     it('retains the canonical auxiliary contribution and scoped host DTOs', () => {
         expectTypeOf<AgentExternalSessionsContribution>().toBeObject();
         expectTypeOf<AgentExternalSessionObservationContribution>().toBeObject();
-        expectTypeOf<ExternalSessionListCandidatesParamsV1>().toBeObject();
+        expectTypeOf<AgentExternalSessionsListCandidatesRequest>().toBeObject();
     });
 });

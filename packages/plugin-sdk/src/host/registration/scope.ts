@@ -466,20 +466,11 @@ function snapshotAgentExternalSessionsContribution(
         contribution,
         'Agent External Sessions contribution',
     );
-    const hasUnknownPublicOperation = Reflect.ownKeys(receiver).some((key) => {
-        const knownKey = typeof key === 'string'
-            && (AGENT_EXTERNAL_SESSIONS_KEYS.includes(
-                key as (typeof AGENT_EXTERNAL_SESSIONS_KEYS)[number],
-            ) || AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS.includes(
-                key as (typeof AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS)[number],
-            ));
-        if (knownKey) return false;
-        const descriptor = Object.getOwnPropertyDescriptor(receiver, key);
-        return descriptor?.enumerable === true
-            && 'value' in descriptor
-            && typeof descriptor.value === 'function';
-    });
-    if (hasUnknownPublicOperation) {
+    const allowedKeys = new Set<PropertyKey>([
+        ...AGENT_EXTERNAL_SESSIONS_KEYS,
+        ...AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS,
+    ]);
+    if (Reflect.ownKeys(receiver).some((key) => !allowedKeys.has(key))) {
         throw new TypeError('Agent External Sessions contribution contains unknown operations');
     }
     const snapshot: Record<string, unknown> = {};

@@ -30,4 +30,18 @@ describe('external-session candidate precedence', () => {
             projectB,
         ]);
     });
+
+    it('includes an own __proto__ JSON field in private candidate identity', () => {
+        const linkDataA = JSON.parse('{"__proto__":{"projectId":"project-a"}}') as Record<string, unknown>;
+        const linkDataB = JSON.parse('{"__proto__":{"projectId":"project-b"}}') as Record<string, unknown>;
+
+        expect(Object.prototype.hasOwnProperty.call(linkDataA, '__proto__')).toBe(true);
+        expect(resolveExternalSessionCandidateIdentityKey({
+            remoteSessionId: 'shared-session',
+            linkData: linkDataA,
+        })).not.toBe(resolveExternalSessionCandidateIdentityKey({
+            remoteSessionId: 'shared-session',
+            linkData: linkDataB,
+        }));
+    });
 });

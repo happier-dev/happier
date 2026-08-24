@@ -93,6 +93,38 @@ describe('Agent External Sessions registration staging', () => {
         expect(unrelatedOperation).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ['data', (value: Record<PropertyKey, unknown>) => {
+            value.notAnOperation = true;
+        }],
+        ['symbol', (value: Record<PropertyKey, unknown>) => {
+            value[Symbol('unknown')] = true;
+        }],
+        ['accessor', (value: Record<PropertyKey, unknown>) => {
+            Object.defineProperty(value, 'notAnOperation', {
+                configurable: true,
+                get: () => true,
+            });
+        }],
+        ['non-enumerable', (value: Record<PropertyKey, unknown>) => {
+            Object.defineProperty(value, 'notAnOperation', {
+                configurable: true,
+                enumerable: false,
+                value: true,
+            });
+        }],
+    ] as const)('rejects every unknown own %s member', (_kind, addUnknown) => {
+        const contribution = { ...externalSessions } as Record<PropertyKey, unknown>;
+        addUnknown(contribution);
+        const registrationScope = scope();
+        registrationScope.api.agents.registerExternalSessions(
+            'assistant',
+            contribution as unknown as AgentExternalSessionsContribution,
+        );
+
+        expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/iu);
+    });
+
     it('captures current callbacks at commit and freezes their facades', async () => {
         const mutable = { ...externalSessions };
         const replacement = vi.fn(async () => ({ ok: true as const, value: { source: {} as never } }));
@@ -142,8 +174,9 @@ describe('Agent External Sessions registration staging', () => {
 
     it('captures class, prototype, and accessor-backed operations with the author receiver', async () => {
         class StructuralExternalSessions {
-            readonly ignoredByRegistration = true;
-            readonly owner = 'structural-runtime';
+            get owner() {
+                return 'structural-runtime';
+            }
 
             resolveSource({ source }: { source: unknown }) {
                 return Promise.resolve({
@@ -214,7 +247,6 @@ describe('Agent External Sessions registration staging', () => {
         const snapshot = registration.value.externalSessions;
         expect(snapshot).not.toBe(contribution);
         expect(Object.isFrozen(snapshot)).toBe(true);
-        expect(snapshot).not.toHaveProperty('ignoredByRegistration');
         await expect(Reflect.apply(snapshot.resolveSource, { owner: 'foreign' }, [{ source: 'source' }]))
             .resolves.toEqual({
                 ok: true,
