@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { PiRpcBackend } from './PiRpcBackend';
+import { buildPiExtensionAskUserQuestionInput } from './piExtensionUiRequest';
 
 function writeFakePiExtensionUiScript(dir: string): string {
   const scriptPath = join(dir, 'fake-pi-extension-ui.js');
@@ -85,6 +86,25 @@ describe('PiRpcBackend extension UI requests', () => {
     for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
+  it('publishes confirm choices in the canonical option presentation shape', () => {
+    expect(buildPiExtensionAskUserQuestionInput({
+      id: 'pi-confirm-1',
+      method: 'confirm',
+      title: 'Continue?',
+    })).toEqual({
+      questions: [{
+        id: 'pi-confirm-1',
+        question: 'Continue?',
+        header: 'Pi',
+        multiSelect: false,
+        options: [
+          { label: 'Yes', description: '' },
+          { label: 'No', description: '' },
+        ],
+      }],
+    });
+  });
+
   it('routes blocking Pi dialogs through the canonical permission coordinator and preserves the provider request id', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-extension-ui-'));
     tempDirs.push(dir);
@@ -122,7 +142,10 @@ describe('PiRpcBackend extension UI requests', () => {
           question: 'Choose scope',
           header: 'Pi',
           multiSelect: false,
-          options: ['Repository', 'Workspace'],
+          options: [
+            { label: 'Repository', description: '' },
+            { label: 'Workspace', description: '' },
+          ],
         }],
       },
     );
