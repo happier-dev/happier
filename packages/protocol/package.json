@@ -235,6 +235,10 @@
       "types": "./dist/plugins/contributionIdentity.d.ts",
       "default": "./dist/plugins/contributionIdentity.js"
     },
+    "./plugins/source-spec": {
+      "types": "./dist/plugins/sourceSpecV1.d.ts",
+      "default": "./dist/plugins/sourceSpecV1.js"
+    },
     "./plugins/plugin-id": {
       "types": "./dist/plugins/pluginId.d.ts",
       "default": "./dist/plugins/pluginId.js"
