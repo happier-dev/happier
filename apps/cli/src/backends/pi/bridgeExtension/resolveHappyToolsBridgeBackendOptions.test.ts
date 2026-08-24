@@ -24,114 +24,115 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
   it('returns null when Happier does not control the Pi agent dir', async () => {
     expect(await resolveHappyToolsBridgeBackendOptions({
       agentDir: null,
-      settings: null,
-      memoryRecallGuidanceEnabled: true,
-    })).toBeNull();
-
-    expect(await resolveHappyToolsBridgeBackendOptions({
-      agentDir: '',
+      sessionId: 'happy-session-1',
       settings: null,
       memoryRecallGuidanceEnabled: true,
     })).toBeNull();
   });
 
-  it('materializes a config-independent asset and derives the bridge config from prompt signals', async () => {
+  it('materializes a config-independent asset and resolves the canonical session tool manifest', async () => {
     const agentDir = tempAgentDir();
-
     const enabled = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
+      sessionId: 'happy-session-1',
       settings: null,
       memoryRecallGuidanceEnabled: true,
       memoryMachineId: 'machine-1',
     });
+
     expect(enabled).not.toBeNull();
-    expect(enabled?.sessionRenameMode).toBe('ongoing');
-    expect(enabled?.promptOptionsEnabled).toBe(true); // responseOptions defaults to 'agent'
-    expect(enabled?.memoryMachineId).toBe('machine-1');
-    expect(enabled?.disabledActionIds).not.toContain('memory.search');
-    expect(enabled?.disabledActionIds).not.toContain('session.title.set');
+    expect(enabled?.sessionConfig.sessionId).toBe('happy-session-1');
+    expect(enabled?.sessionConfig.directTools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      'change_title',
+      'action_spec_search',
+      'action_spec_get',
+      'action_options_resolve',
+      'action_execute',
+      'memory_search',
+      'memory_get_window',
+    ]));
+    expect(enabled?.sessionConfig.promptAddition).toContain('memory_search');
     expect(enabled?.extensionPath).toBe(resolvePiBridgeExtensionPath(agentDir));
     expect(existsSync(enabled!.extensionPath)).toBe(true);
 
-    // The asset is config-independent: every behavior knob rides launch flags, so
-    // sessions with different configs share one materialized file.
     const content = readFileSync(enabled!.extensionPath, 'utf8');
-    expect(content).not.toContain('RENAME_ENABLED');
-    expect(content).not.toContain('MEMORY_ENABLED');
+    expect(content).not.toContain('happy-session-1');
+    expect(content).not.toContain('memory_search');
   });
 
-  it('resolves the rename mode and response options from settings', async () => {
+  it('keeps title guidance and tool registration on one effective profile decision', async () => {
     const agentDir = tempAgentDir();
-    const resolved = await resolveHappyToolsBridgeBackendOptions({
+    const disabled = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
+      sessionId: 'happy-session-1',
       settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'disabled', responseOptions: 'agent' } },
-      memoryRecallGuidanceEnabled: true,
-      memoryMachineId: 'machine-1',
+      memoryRecallGuidanceEnabled: false,
     });
-    expect(resolved?.sessionRenameMode).toBe('disabled');
-    expect(resolved?.promptOptionsEnabled).toBe(true);
-    expect(resolved?.disabledActionIds).toContain('session.title.set');
+    expect(disabled?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('change_title');
+    expect(disabled?.sessionConfig.promptAddition).not.toContain('change_title');
 
     const initial = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
+      sessionId: 'happy-session-1',
       settings: { codingPromptBehaviorV1: { sessionTitleUpdates: 'initial' } },
-      memoryRecallGuidanceEnabled: true,
-      memoryMachineId: 'machine-1',
+      memoryRecallGuidanceEnabled: false,
     });
-    expect(initial?.sessionRenameMode).toBe('initial');
-    // The materialized asset does not change with config (one file for all configs).
-    // Capture the first content BEFORE the second resolution so the comparison proves the
-    // second call did not rewrite the asset, not just that both reads agree after the fact.
-    const initialContent = readFileSync(initial!.extensionPath, 'utf8');
-    const second = await resolveHappyToolsBridgeBackendOptions({
-      agentDir,
-      settings: { codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'agent' } },
-      memoryRecallGuidanceEnabled: true,
-      memoryMachineId: 'machine-1',
-    });
-    expect(second?.sessionRenameMode).toBe('ongoing');
-    expect(readFileSync(second!.extensionPath, 'utf8')).toBe(initialContent);
+    expect(initial?.sessionConfig.directTools.map((tool) => tool.name)).toContain('change_title');
+    expect(initial?.sessionConfig.promptAddition).toContain('change_title');
+    expect(readFileSync(initial!.extensionPath, 'utf8')).toBe(readFileSync(disabled!.extensionPath, 'utf8'));
   });
 
-  it('binds memory to a machine id and disables it when guidance is off or no id is bound', async () => {
+  it('registers memory from the guidance requirement without probing mutable index readiness', async () => {
     const agentDir = tempAgentDir();
-
     const guidanceOff = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
+      sessionId: 'happy-session-1',
       settings: null,
       memoryRecallGuidanceEnabled: false,
       memoryMachineId: 'machine-1',
     });
-    expect(guidanceOff?.memoryMachineId).toBeNull();
-    expect(guidanceOff?.disabledActionIds).toEqual(expect.arrayContaining([
-      'memory.search',
-      'memory.get_window',
-    ]));
+    expect(guidanceOff?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('memory_search');
 
     const noMachineId = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
+      sessionId: 'happy-session-1',
       settings: null,
       memoryRecallGuidanceEnabled: true,
       memoryMachineId: null,
     });
-    expect(noMachineId?.memoryMachineId).toBeNull();
+    expect(noMachineId?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('memory_search');
+
+    const explicitlyDiscoverable = await resolveHappyToolsBridgeBackendOptions({
+      agentDir,
+      sessionId: 'happy-session-1',
+      settings: {
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'memory.search': { toolExposureModes: { session_agent: 'discoverable_only' } },
+          },
+        },
+      },
+      memoryRecallGuidanceEnabled: true,
+      memoryMachineId: 'machine-1',
+    });
+    expect(explicitlyDiscoverable?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('memory_search');
+    expect(explicitlyDiscoverable?.sessionConfig.promptAddition).not.toContain('memory_search');
   });
 
-  it('bakes a Happier CLI launch spec into the asset', async () => {
+  it('bakes only the Happier CLI launch spec into the shared asset', async () => {
     const agentDir = tempAgentDir();
     const resolved = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
+      sessionId: 'happy-session-1',
       settings: null,
-      memoryRecallGuidanceEnabled: true,
-      memoryMachineId: 'machine-1',
+      memoryRecallGuidanceEnabled: false,
     });
     const content = readFileSync(resolved!.extensionPath, 'utf8');
     expect(content).toMatch(/const HAPPIER_CLI_FILE_PATH = ".*";/);
     const prefixMatch = content.match(/const HAPPIER_CLI_ARG_PREFIX = (\[.*?\]);/s);
     expect(prefixMatch).not.toBeNull();
-    // The prefix ends just before the `tools` subcommand, which the bridge appends per call.
     const prefix = JSON.parse(prefixMatch![1]) as string[];
-    expect(Array.isArray(prefix)).toBe(true);
     expect(prefix[prefix.length - 1]).not.toBe('tools');
     expect(prefix.length).toBeGreaterThan(0);
   });

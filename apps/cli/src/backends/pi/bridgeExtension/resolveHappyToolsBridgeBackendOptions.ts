@@ -1,12 +1,25 @@
 import {
+  ActionsSettingsV1Schema,
+  HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1,
+  MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS,
+  buildMemoryRecallGuidanceBlockV1,
   isCodingPromptResponseOptionsEnabled,
+  isActionEnabledByActionsSettings,
   resolveCodingPromptSessionTitleUpdatesModeV1,
-  type CodingPromptSessionTitleUpdatesModeV1,
+  type ActionId,
+  type ActionsSettingsV1,
 } from '@happier-dev/protocol';
 
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 
 import { ensurePiBridgeExtensionAsset } from './piBridgeExtensionAssets';
+import { readActionsSettingsFromEnv } from '@/settings/actionsSettings';
+import { resolveSessionAgentToolPresentation } from '@/agent/tools/happierTools/resolveSessionAgentToolPresentation';
+import { PiBridgeSessionConfigSchema, type PiBridgeSessionConfig } from './piBridgeSessionConfig';
 
 /**
  * Resolved tools-bridge backend options for a Pi session. `extensionPath` is passed via
@@ -18,25 +31,37 @@ import { ensurePiBridgeExtensionAsset } from './piBridgeExtensionAssets';
  */
 export type HappyToolsBridgeBackendOptions = Readonly<{
   extensionPath: string;
-  /** Session title updates mode (`disabled` gates both the tool and its guidance). */
-  sessionRenameMode: CodingPromptSessionTitleUpdatesModeV1;
-  /** Whether the response-options (`<options>`) guidance is enabled. */
-  promptOptionsEnabled: boolean;
-  /**
-   * Daemon machine id binding the memory tools. `null` keeps the memory tools and the
-   * memory-recall guidance off (a tool that is guaranteed to fail at call time must not
-   * be registered at all).
-   */
-  memoryMachineId: string | null;
-  /**
-   * Whether the full session-agent tool surface registers in the extension (the
-   * `--happy-session-tools` flag). Off by default while the surface rolls out; when
-   * enabled, every session_agent-surfaced built-in tool becomes available to the model.
-   */
-  sessionToolsEnabled: boolean;
-  /** Daemon-resolved action ids disabled for the `session_agent` surface. */
-  disabledActionIds: readonly string[];
+  sessionConfig: PiBridgeSessionConfig;
 }>;
+
+function resolveActionsSettings(settings: Record<string, unknown> | null | undefined): ActionsSettingsV1 {
+  const parsed = ActionsSettingsV1Schema.safeParse(settings?.actionsSettingsV1);
+  return parsed.success ? parsed.data : readActionsSettingsFromEnv();
+}
+
+function buildPromptAddition(params: Readonly<{
+  sessionRenameMode: ReturnType<typeof resolveCodingPromptSessionTitleUpdatesModeV1>;
+  promptOptionsEnabled: boolean;
+  directToolNames: ReadonlySet<string>;
+  memoryGuidanceRequested: boolean;
+}>): string {
+  const blocks: string[] = [];
+  if (params.directToolNames.has('change_title')) {
+    if (params.sessionRenameMode === 'initial') blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1);
+    if (params.sessionRenameMode === 'ongoing') blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1);
+  }
+  if (params.promptOptionsEnabled) blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1);
+  blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1);
+  blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1);
+  if (
+    params.memoryGuidanceRequested
+    && params.directToolNames.has('memory_search')
+    && params.directToolNames.has('memory_get_window')
+  ) {
+    blocks.push(buildMemoryRecallGuidanceBlockV1('generic'));
+  }
+  return blocks.map((block) => block.trim()).filter(Boolean).join('\n\n');
+}
 
 /**
  * Resolve the tools-bridge backend options for a Pi session, materializing the
@@ -48,6 +73,7 @@ export type HappyToolsBridgeBackendOptions = Readonly<{
  */
 export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   agentDir: string | null;
+  sessionId: string;
   settings: Record<string, unknown> | null | undefined;
   memoryRecallGuidanceEnabled: boolean;
   memoryMachineId?: string | null;
@@ -58,26 +84,40 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
 
   const sessionRenameMode = resolveCodingPromptSessionTitleUpdatesModeV1(params.settings ?? null);
   const promptOptionsEnabled = isCodingPromptResponseOptionsEnabled(params.settings ?? null);
-  const memoryMachineId = params.memoryRecallGuidanceEnabled === true
+  const defaultSessionMachineId = params.memoryRecallGuidanceEnabled === true
     && typeof params.memoryMachineId === 'string'
     && params.memoryMachineId.trim()
     ? params.memoryMachineId.trim()
     : null;
-  const sessionToolsEnabled = params.sessionToolsEnabled === true;
-  const disabledActionIdSet = new Set(
-    (params.disabledActionIds ?? [])
-      .map((value) => String(value ?? '').trim())
-      .filter(Boolean),
-  );
-  // These launch-config decisions also disable their corresponding actions. Include
-  // them in the same daemon-owned projection so direct rows and action_execute cannot
-  // bypass the curated tool gates inside the extension.
-  if (sessionRenameMode === 'disabled') disabledActionIdSet.add('session.title.set');
-  if (!memoryMachineId) {
-    disabledActionIdSet.add('memory.search');
-    disabledActionIdSet.add('memory.get_window');
-  }
-  const disabledActionIds = Array.from(disabledActionIdSet).sort((a, b) => a.localeCompare(b));
+  const actionsSettings = resolveActionsSettings(params.settings);
+  const isActionEnabled = (id: ActionId) => isActionEnabledByActionsSettings(id, actionsSettings, {
+    surface: 'session_agent',
+  });
+  const requiredDirectActionIds = defaultSessionMachineId
+    ? MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS
+    : [];
+  const resolvedTools = resolveSessionAgentToolPresentation({
+    actionsSettings,
+    isActionEnabled,
+    defaultSessionId: params.sessionId,
+    defaultSessionMachineId,
+    requiredDirectActionIds,
+  });
+  const directTools = sessionRenameMode === 'disabled'
+    ? resolvedTools.filter((tool) => tool.name !== 'change_title')
+    : resolvedTools;
+  const directToolNames = new Set(directTools.map((tool) => tool.name));
+  const sessionConfig: PiBridgeSessionConfig = PiBridgeSessionConfigSchema.parse({
+    v: 1,
+    sessionId: params.sessionId,
+    directTools: [...directTools],
+    promptAddition: buildPromptAddition({
+      sessionRenameMode,
+      promptOptionsEnabled,
+      directToolNames,
+      memoryGuidanceRequested: params.memoryRecallGuidanceEnabled === true,
+    }),
+  });
 
   const launchSpec = buildHappyCliSubprocessLaunchSpec(['tools']);
   const argv = [...launchSpec.args];
@@ -90,12 +130,5 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     launchEnv: launchSpec.env ?? {},
   });
 
-  return {
-    extensionPath,
-    sessionRenameMode,
-    promptOptionsEnabled,
-    memoryMachineId,
-    sessionToolsEnabled,
-    disabledActionIds,
-  };
+  return { extensionPath, sessionConfig };
 }

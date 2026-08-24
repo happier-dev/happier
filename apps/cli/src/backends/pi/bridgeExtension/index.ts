@@ -1,11 +1,8 @@
 export {
-  PI_BRIDGE_SESSION_ID_FLAG,
-  PI_BRIDGE_SESSION_RENAME_FLAG,
-  PI_BRIDGE_PROMPT_OPTIONS_FLAG,
-  PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
-  PI_BRIDGE_SESSION_TOOLS_FLAG,
-  PI_BRIDGE_DISABLED_ACTION_IDS_FLAG,
+  PI_BRIDGE_CONFIG_PATH_FLAG,
+  PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE,
 } from './piBridgeExtensionEnv';
+export { PiBridgeSessionConfigSchema, type PiBridgeSessionConfig } from './piBridgeSessionConfig';
 export {
   PI_BRIDGE_EXTENSION_VERSION,
   buildPiBridgeExtensionSource,

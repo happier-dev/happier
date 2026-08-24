@@ -196,87 +196,36 @@ describe('pi backend argv', () => {
 describe('happy tools bridge extension args', () => {
   const baseBridge = {
     extensionPath: '/agent/extensions/happier-pi-tools-bridge.js',
-    sessionRenameMode: 'ongoing' as const,
-    promptOptionsEnabled: true,
-    memoryMachineId: 'machine-1' as string | null,
+    sessionConfig: {
+      v: 1 as const,
+      sessionId: 'happy-session-1',
+      directTools: [{
+        name: 'change_title',
+        title: 'Change title',
+        description: 'Change the session title',
+        inputSchema: { type: 'object' },
+        call: { toolName: 'change_title', actionId: null },
+      }],
+      promptAddition: 'TITLE_GUIDANCE',
+    },
   };
 
-  it('passes --extension, the session binding, and the resolved config flags', () => {
+  it('passes only the shared extension path in static argv', () => {
     expect(resolveHappyBridgeExtensionArgs({
-      happierSessionId: 'happy-session-1',
       happyToolsBridge: baseBridge,
     })).toEqual([
       '--extension',
       baseBridge.extensionPath,
-      '--happy-session-id',
-      'happy-session-1',
-      '--happy-session-rename',
-      'ongoing',
-      '--happy-prompt-options',
-      '--happy-memory-machine-id',
-      'machine-1',
     ]);
   });
 
-  it('omits config flags entirely in their disabled state (absent = disabled)', () => {
+  it('emits no extension args without resolved bridge options', () => {
     expect(resolveHappyBridgeExtensionArgs({
-      happierSessionId: 'happy-session-1',
-      happyToolsBridge: {
-        extensionPath: baseBridge.extensionPath,
-        sessionRenameMode: 'disabled',
-        promptOptionsEnabled: false,
-        memoryMachineId: null,
-      },
-    })).toEqual([
-      '--extension',
-      baseBridge.extensionPath,
-      '--happy-session-id',
-      'happy-session-1',
-    ]);
-  });
-
-  it('passes the daemon-projected disabled action ids as a deterministic JSON flag', () => {
-    const args = resolveHappyBridgeExtensionArgs({
-      happierSessionId: 'happy-session-1',
-      happyToolsBridge: {
-        ...baseBridge,
-        disabledActionIds: ['session.title.set', 'memory.search'],
-      },
-    });
-    expect(args).toEqual(expect.arrayContaining([
-      '--happy-session-disabled-actions',
-      JSON.stringify(['memory.search', 'session.title.set']),
-    ]));
-  });
-
-  it('passes the initial rename mode verbatim', () => {
-    const args = resolveHappyBridgeExtensionArgs({
-      happierSessionId: 'happy-session-1',
-      happyToolsBridge: { ...baseBridge, sessionRenameMode: 'initial' },
-    });
-    expect(args).toContain('--happy-session-rename');
-    expect(args[args.indexOf('--happy-session-rename') + 1]).toBe('initial');
-  });
-
-  it('emits no bridge args without the session binding (extension never travels alone)', () => {
-    expect(resolveHappyBridgeExtensionArgs({
-      happierSessionId: null,
-      happyToolsBridge: baseBridge,
-    })).toEqual([]);
-    expect(resolveHappyBridgeExtensionArgs({
-      happierSessionId: '   ',
-      happyToolsBridge: baseBridge,
-    })).toEqual([]);
-  });
-
-  it('emits no bridge args without the resolved bridge options (binding never travels alone)', () => {
-    expect(resolveHappyBridgeExtensionArgs({
-      happierSessionId: 'happy-session-1',
       happyToolsBridge: undefined,
     })).toEqual([]);
   });
 
-  it('wires bridge args into the Pi backend without env side channels', () => {
+  it('keeps session policy in protected config text rather than argv or env', () => {
     process.env.PATH = '';
     process.env.HAPPIER_PI_PATH = createFakeBin('pi');
 
@@ -286,36 +235,16 @@ describe('happy tools bridge extension args', () => {
       permissionMode: 'default',
       happierSessionId: 'happy-session-1',
       happyToolsBridge: baseBridge,
-    }) as unknown as { options?: { args?: string[]; env?: Record<string, string> } };
+    }) as unknown as { options?: { args?: string[]; env?: Record<string, string>; toolsBridgeConfigText?: string | null } };
 
     expect(backend.options?.args).toEqual(expect.arrayContaining([
       '--extension',
       baseBridge.extensionPath,
-      '--happy-session-id',
-      'happy-session-1',
-      '--happy-session-rename',
-      'ongoing',
-      '--happy-prompt-options',
-      '--happy-memory-machine-id',
-      'machine-1',
     ]));
-    expect(backend.options?.env).not.toHaveProperty('HAPPIER_PI_BRIDGE_MEMORY_MACHINE_ID');
-  });
-
-  it('omits the memory machine id flag when no machine id is bound', () => {
-    process.env.PATH = '';
-    process.env.HAPPIER_PI_PATH = createFakeBin('pi');
-
-    const backend = createPiBackend({
-      cwd: '/tmp',
-      env: {},
-      permissionMode: 'default',
-      happierSessionId: 'happy-session-1',
-      happyToolsBridge: { ...baseBridge, memoryMachineId: null },
-    }) as unknown as { options?: { args?: string[]; env?: Record<string, string> } };
-
-    expect(backend.options?.args).not.toContain('--happy-memory-machine-id');
-    expect(backend.options?.env).not.toHaveProperty('HAPPIER_PI_BRIDGE_MEMORY_MACHINE_ID');
+    expect(backend.options?.args).not.toContain('TITLE_GUIDANCE');
+    expect(backend.options?.args).not.toContain('happy-session-1');
+    expect(backend.options?.env).not.toHaveProperty('HAPPIER_PI_BRIDGE_CONFIG');
+    expect(JSON.parse(backend.options?.toolsBridgeConfigText ?? '{}')).toEqual(baseBridge.sessionConfig);
   });
 });
 

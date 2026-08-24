@@ -14,27 +14,7 @@
  */
 
 /** Pi CLI flag carrying the Happier session id the Pi process is bound to. */
-export const PI_BRIDGE_SESSION_ID_FLAG = 'happy-session-id';
-
-/**
- * Pi CLI flag carrying the session title updates mode (`disabled` | `initial` |
- * `ongoing`, the protocol's `CodingPromptSessionTitleUpdatesModeV1` enum). Absent or
- * `disabled` means the `change_title` tool and its title guidance stay off.
- */
-export const PI_BRIDGE_SESSION_RENAME_FLAG = 'happy-session-rename';
-
-/**
- * Pi CLI flag enabling the Happier response-options guidance (the `<options>` block).
- * Absent means the guidance is off.
- */
-export const PI_BRIDGE_PROMPT_OPTIONS_FLAG = 'happy-prompt-options';
-
-/**
- * Pi CLI flag carrying the daemon machine id that binds the memory bridge tools.
- * Absent means the `memory_search` / `memory_get_window` tools and the memory-recall
- * guidance stay off.
- */
-export const PI_BRIDGE_MEMORY_MACHINE_ID_FLAG = 'happy-memory-machine-id';
+export const PI_BRIDGE_CONFIG_PATH_FLAG = 'happy-tools-config';
 
 /**
  * Pi CLI flag enabling the full session-agent tool surface (session_list,

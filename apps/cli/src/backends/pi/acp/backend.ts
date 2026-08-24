@@ -1,14 +1,6 @@
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import type { PermissionMode } from '@/api/types';
-import type { CodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol';
-import {
-  PI_BRIDGE_DISABLED_ACTION_IDS_FLAG,
-  PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
-  PI_BRIDGE_PROMPT_OPTIONS_FLAG,
-  PI_BRIDGE_SESSION_ID_FLAG,
-  PI_BRIDGE_SESSION_RENAME_FLAG,
-  PI_BRIDGE_SESSION_TOOLS_FLAG,
-} from '@/backends/pi/bridgeExtension';
+import type { PiBridgeSessionConfig } from '@/backends/pi/bridgeExtension';
 import {
   PI_BROKER_PROVIDERS,
   PI_BROKER_SELECTIONS_ENV,
@@ -45,11 +37,7 @@ export interface PiBackendOptions extends AgentFactoryOptions {
    */
   happyToolsBridge?: Readonly<{
     extensionPath: string;
-    sessionRenameMode: CodingPromptSessionTitleUpdatesModeV1;
-    promptOptionsEnabled: boolean;
-    memoryMachineId?: string | null;
-    sessionToolsEnabled?: boolean;
-    disabledActionIds?: readonly string[];
+    sessionConfig: PiBridgeSessionConfig;
   }>;
 }
 
@@ -137,36 +125,10 @@ function resolvePiBrokerExtensionArgs(env: Readonly<Record<string, string>>): st
  * passed only in its enabled state, never with a disabling value.
  */
 export function resolveHappyBridgeExtensionArgs(opts?: Readonly<{
-  happierSessionId?: string | null;
   happyToolsBridge?: PiBackendOptions['happyToolsBridge'];
 }>): string[] {
-  const sessionId = typeof opts?.happierSessionId === 'string' ? opts.happierSessionId.trim() : '';
   const bridge = opts?.happyToolsBridge;
-  if (!sessionId || !bridge) return [];
-
-  const args = [
-    '--extension',
-    bridge.extensionPath,
-    `--${PI_BRIDGE_SESSION_ID_FLAG}`,
-    sessionId,
-  ];
-  if (bridge.sessionRenameMode !== 'disabled') {
-    args.push(`--${PI_BRIDGE_SESSION_RENAME_FLAG}`, bridge.sessionRenameMode);
-  }
-  if (bridge.promptOptionsEnabled) args.push(`--${PI_BRIDGE_PROMPT_OPTIONS_FLAG}`);
-  if (bridge.sessionToolsEnabled) args.push(`--${PI_BRIDGE_SESSION_TOOLS_FLAG}`);
-  const disabledActionIds = Array.from(new Set(
-    (bridge.disabledActionIds ?? [])
-      .map((value) => String(value ?? '').trim())
-      .filter(Boolean),
-  )).sort((a, b) => a.localeCompare(b));
-  if (disabledActionIds.length > 0) {
-    args.push(`--${PI_BRIDGE_DISABLED_ACTION_IDS_FLAG}`, JSON.stringify(disabledActionIds));
-  }
-  if (typeof bridge.memoryMachineId === 'string' && bridge.memoryMachineId.trim()) {
-    args.push(`--${PI_BRIDGE_MEMORY_MACHINE_ID_FLAG}`, bridge.memoryMachineId.trim());
-  }
-  return args;
+  return bridge ? ['--extension', bridge.extensionPath] : [];
 }
 
 export function createPiBackend(options: PiBackendOptions): AgentBackend {
@@ -184,7 +146,6 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
       ...launch.args,
       ...resolvePiBrokerExtensionArgs(env),
       ...resolveHappyBridgeExtensionArgs({
-        happierSessionId: options.happierSessionId,
         happyToolsBridge: options.happyToolsBridge,
       }),
       ...(launchSelection
@@ -200,6 +161,9 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
       ...buildPiRpcArgs({ permissionMode: options.permissionMode, thinkingLevel }),
     ],
     happierSessionId: options.happierSessionId ?? null,
+    toolsBridgeConfigText: options.happyToolsBridge
+      ? JSON.stringify(options.happyToolsBridge.sessionConfig)
+      : null,
     // The append text is delivered as a protected temp file by the backend itself; the
     // args above must never carry the literal prompt content.
     appendSystemPromptText: options.appendSystemPromptText ?? null,

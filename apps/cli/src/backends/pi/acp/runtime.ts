@@ -119,6 +119,7 @@ export function createPiAcpRuntime(params: {
           ?? join((typeof process.env.HOME === 'string' && process.env.HOME.trim()) || homedir(), '.pi', 'agent');
         const resolved = await resolveHappyToolsBridgeBackendOptions({
           agentDir,
+          sessionId: session.sessionId,
           settings: mergedSettings,
           memoryRecallGuidanceEnabled,
           memoryMachineId: params.machineId,

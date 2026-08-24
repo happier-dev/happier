@@ -59,14 +59,9 @@ describe('Pi ACP runtime spawn system prompt', () => {
       // left for the daemon to deliver.
       expect(createCalls[0]?.appendSystemPromptText).toBeUndefined();
       expect(createCalls[0]?.happyToolsBridge).toBeDefined();
-      expect(createCalls[0]?.happyToolsBridge?.sessionRenameMode).toBe('ongoing');
-      expect(createCalls[0]?.happyToolsBridge?.promptOptionsEnabled).toBe(true);
-      expect(createCalls[0]?.happyToolsBridge?.memoryMachineId).toBeNull();
-      expect(createCalls[0]?.happyToolsBridge?.disabledActionIds).toEqual(expect.arrayContaining([
-        'session.message.send',
-        'memory.search',
-        'memory.get_window',
-      ]));
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.directTools.map((tool) => tool.name)).toContain('change_title');
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.promptAddition).toContain('<options>');
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('memory_search');
     } finally {
       removeTempDirSync(agentDir);
     }
@@ -102,7 +97,10 @@ describe('Pi ACP runtime spawn system prompt', () => {
       const appendSystemPromptText = createCalls[0]?.appendSystemPromptText ?? '';
       expect(appendSystemPromptText).not.toContain('memory_search');
       expect(appendSystemPromptText).not.toContain('machine-9');
-      expect(createCalls[0]?.happyToolsBridge?.memoryMachineId).toBe('machine-9');
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.directTools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(['memory_search', 'memory_get_window']),
+      );
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.promptAddition).toContain('memory_search');
     } finally {
       removeTempDirSync(agentDir);
     }
@@ -158,8 +156,9 @@ describe('Pi ACP runtime spawn system prompt', () => {
       // setting, so the config flags carry exactly that merged decision.
       expect(createCalls[0]?.appendSystemPromptText ?? '').not.toContain('change_title');
       expect(createCalls[0]?.happyToolsBridge).toBeDefined();
-      expect(createCalls[0]?.happyToolsBridge?.sessionRenameMode).toBe('disabled');
-      expect(createCalls[0]?.happyToolsBridge?.promptOptionsEnabled).toBe(true);
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('change_title');
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.promptAddition).not.toContain('change_title');
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.promptAddition).toContain('<options>');
     } finally {
       removeTempDirSync(agentDir);
     }
@@ -201,8 +200,9 @@ describe('Pi ACP runtime spawn system prompt', () => {
       await runtime.startOrLoad({});
 
       expect(createCalls[0]?.appendSystemPromptText ?? '').not.toContain('change_title');
-      expect(createCalls[0]?.happyToolsBridge?.sessionRenameMode).toBe('ongoing');
-      expect(createCalls[0]?.happyToolsBridge?.promptOptionsEnabled).toBe(true);
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.directTools.map((tool) => tool.name)).toContain('change_title');
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.promptAddition).toContain('change_title');
+      expect(createCalls[0]?.happyToolsBridge?.sessionConfig.promptAddition).toContain('<options>');
     } finally {
       removeTempDirSync(agentDir);
     }
