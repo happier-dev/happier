@@ -3,9 +3,11 @@ import {
     evaluateScmRemoteMutationPolicy as canonicalEvaluateScmRemoteMutationPolicy,
     isScmPatchBoundToPath as canonicalIsScmPatchBoundToPath,
     normalizeScmBranchSourceRef as canonicalNormalizeScmBranchSourceRef,
+    normalizeScmHostingRepositoryIdentity as canonicalNormalizeScmHostingRepositoryIdentity,
     normalizeScmRemoteName as canonicalNormalizeScmRemoteName,
     normalizeScmRemoteRequest as canonicalNormalizeScmRemoteRequest,
     normalizeScmRemoteUrl as canonicalNormalizeScmRemoteUrl,
+    sameScmHostingRepositoryIdentity as canonicalSameScmHostingRepositoryIdentity,
     resolveScmScopedChangedPaths as canonicalResolveScmScopedChangedPaths,
     SCM_COMMIT_MESSAGE_MAX_LENGTH as canonicalScmCommitMessageMaxLength,
     SCM_COMMIT_PATCH_MAX_COUNT as canonicalScmCommitPatchMaxCount,
@@ -56,6 +58,35 @@ export type ScmRemoteUrlNormalizationResult =
     | { ok: false; error: string };
 
 export type ScmRepoMode = '.git' | '.sl';
+
+export type ScmHostingRepositoryIdentityV1<
+    TKind extends ScmHostingProviderKind = ScmHostingProviderKind,
+> = Readonly<{
+    kind: TKind;
+    deployment: string;
+    repository: string;
+}>;
+
+export const normalizeScmHostingRepositoryIdentity: {
+    <TKind extends ScmHostingProviderKind>(
+        value: Readonly<{
+            kind: TKind;
+            deployment?: unknown;
+            repository?: unknown;
+        }>,
+    ): ScmHostingRepositoryIdentityV1<TKind> | null;
+    (
+        value: Readonly<{
+            kind?: unknown;
+            deployment?: unknown;
+            repository?: unknown;
+        }> | null | undefined,
+    ): ScmHostingRepositoryIdentityV1 | null;
+} = canonicalNormalizeScmHostingRepositoryIdentity;
+export const sameScmHostingRepositoryIdentity = canonicalSameScmHostingRepositoryIdentity as (
+    left: ScmHostingRepositoryIdentityV1 | null | undefined,
+    right: ScmHostingRepositoryIdentityV1 | null | undefined,
+) => boolean;
 export type ScmBranchIntegrationOperation = 'merge' | 'rebase';
 export type ScmDefaultBranchPushPolicy = 'allow' | 'requires-feature-branch' | 'deny';
 export type ScmSelectedMutationPath = string;

@@ -1,4 +1,7 @@
-import type { ScmHostingProviderRef } from './pullRequests.js';
+import {
+  ScmHostingProviderKindSchema,
+  type ScmHostingProviderRef,
+} from './pullRequests.js';
 
 /**
  * The joinable identity of one repository on one forge deployment.
@@ -8,13 +11,21 @@ import type { ScmHostingProviderRef } from './pullRequests.js';
  * local path, or a display label. Two observers that resolved the same
  * repository produce equal identities; nothing else does.
  */
-export type ScmHostingRepositoryIdentityV1 = Readonly<{
-  kind: ScmHostingProviderRef['kind'];
+export type ScmHostingRepositoryIdentityV1<
+  TKind extends ScmHostingProviderRef['kind'] = ScmHostingProviderRef['kind'],
+> = Readonly<{
+  kind: TKind;
   /** The forge deployment: origin plus the deployment's own base path. */
   deployment: string;
-  /** The forge's own repository path, compared case-insensitively. */
+  /** The forge's source-canonical comparable repository identity. */
   repository: string;
 }>;
+
+const CASE_INSENSITIVE_REPOSITORY_KINDS = new Set<ScmHostingProviderRef['kind']>([
+  'github',
+  'gitlab',
+  'bitbucket',
+]);
 
 function stripSurroundingSlashes(value: string): string {
   return value.replace(/^\/+/, '').replace(/\/+$/, '');
@@ -27,24 +38,38 @@ function stripSurroundingSlashes(value: string): string {
  * repository. It yields `null` rather than a deployment-only identity, because
  * a deployment-only identity would match every repository on that forge.
  */
-export function readScmHostingRepositoryIdentity(
-  hostingProvider: Readonly<{
+export function normalizeScmHostingRepositoryIdentity<TKind extends ScmHostingProviderRef['kind']>(
+  value: Readonly<{
+    kind: TKind;
+    deployment?: unknown;
+    repository?: unknown;
+  }>,
+): ScmHostingRepositoryIdentityV1<TKind> | null;
+export function normalizeScmHostingRepositoryIdentity(
+  value: Readonly<{
     kind?: unknown;
-    baseUrl?: unknown;
-    nameWithOwner?: unknown;
+    deployment?: unknown;
+    repository?: unknown;
+  }> | null | undefined,
+): ScmHostingRepositoryIdentityV1 | null;
+export function normalizeScmHostingRepositoryIdentity(
+  value: Readonly<{
+    kind?: unknown;
+    deployment?: unknown;
+    repository?: unknown;
   }> | null | undefined,
 ): ScmHostingRepositoryIdentityV1 | null {
-  if (!hostingProvider) return null;
-  const kind = typeof hostingProvider.kind === 'string' ? hostingProvider.kind.trim() : '';
-  const baseUrl = typeof hostingProvider.baseUrl === 'string' ? hostingProvider.baseUrl.trim() : '';
-  const nameWithOwner = typeof hostingProvider.nameWithOwner === 'string'
-    ? stripSurroundingSlashes(hostingProvider.nameWithOwner.trim())
+  if (!value) return null;
+  const kind = ScmHostingProviderKindSchema.safeParse(value.kind);
+  const deployment = typeof value.deployment === 'string' ? value.deployment.trim() : '';
+  const repository = typeof value.repository === 'string'
+    ? stripSurroundingSlashes(value.repository.trim())
     : '';
-  if (!kind || !baseUrl || !nameWithOwner) return null;
+  if (!kind.success || !deployment || !repository) return null;
 
   let parsed: URL;
   try {
-    parsed = new URL(baseUrl);
+    parsed = new URL(deployment);
   } catch {
     return null;
   }
@@ -52,20 +77,39 @@ export function readScmHostingRepositoryIdentity(
 
   const basePath = stripSurroundingSlashes(parsed.pathname);
   return Object.freeze({
-    kind: kind as ScmHostingProviderRef['kind'],
+    kind: kind.data,
     deployment: basePath ? `${parsed.origin}/${basePath}` : parsed.origin,
-    repository: nameWithOwner,
+    repository: CASE_INSENSITIVE_REPOSITORY_KINDS.has(kind.data)
+      ? repository.toLowerCase()
+      : repository,
   });
+}
+
+export function readScmHostingRepositoryIdentity(
+  hostingProvider: Readonly<{
+    kind?: unknown;
+    baseUrl?: unknown;
+    nameWithOwner?: unknown;
+  }> | null | undefined,
+): ScmHostingRepositoryIdentityV1 | null {
+  return normalizeScmHostingRepositoryIdentity(hostingProvider
+    ? {
+        kind: hostingProvider.kind,
+        deployment: hostingProvider.baseUrl,
+        repository: hostingProvider.nameWithOwner,
+      }
+    : hostingProvider);
 }
 
 /**
  * Whether two resolved identities address the same repository.
  *
- * Repository paths are compared case-insensitively: every forge in the
- * `ScmHostingProviderKind` vocabulary treats owner/name as case-insensitive for
- * addressing, so a case difference between two observers is the same
- * repository. The deployment half is compared exactly, because it was already
- * canonicalized by `readScmHostingRepositoryIdentity` through `URL`.
+ * Every component is compared exactly. Repository case rules are source-owned:
+ * the source publishes its canonical comparable repository identity and the
+ * working snapshot publishes the corresponding canonical identity. Applying a
+ * universal case fold here would silently apply one forge's addressing rules to
+ * every other forge, including custom/self-hosted deployments whose repository
+ * paths may be case-sensitive.
  */
 export function sameScmHostingRepositoryIdentity(
   left: ScmHostingRepositoryIdentityV1 | null | undefined,
@@ -74,5 +118,5 @@ export function sameScmHostingRepositoryIdentity(
   if (!left || !right) return false;
   return left.kind === right.kind
     && left.deployment === right.deployment
-    && left.repository.toLowerCase() === right.repository.toLowerCase();
+    && left.repository === right.repository;
 }

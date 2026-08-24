@@ -1,14 +1,62 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
+  normalizeScmHostingRepositoryIdentity,
   readScmHostingRepositoryIdentity,
   sameScmHostingRepositoryIdentity,
+  type ScmHostingRepositoryIdentityV1,
 } from './hostingRepositoryIdentity.js';
 
 const GITHUB = Object.freeze({
   kind: 'github',
   baseUrl: 'https://github.com',
   nameWithOwner: 'acme/app',
+});
+
+describe('normalizeScmHostingRepositoryIdentity', () => {
+  it('preserves a validated provider-kind literal while keeping untyped input broad', () => {
+    const github = normalizeScmHostingRepositoryIdentity({
+      kind: 'github',
+      deployment: 'https://github.com',
+      repository: 'Acme/App',
+    });
+    const broadInput: Readonly<{
+      kind?: unknown;
+      deployment?: unknown;
+      repository?: unknown;
+    }> = {
+      kind: 'github',
+      deployment: 'https://github.com',
+      repository: 'Acme/App',
+    };
+    const broad = normalizeScmHostingRepositoryIdentity(broadInput);
+
+    expectTypeOf(github).toEqualTypeOf<ScmHostingRepositoryIdentityV1<'github'> | null>();
+    expectTypeOf(broad).toEqualTypeOf<ScmHostingRepositoryIdentityV1 | null>();
+  });
+
+  it('rejects a runtime provider kind outside the canonical vocabulary', () => {
+    expect(normalizeScmHostingRepositoryIdentity({
+      kind: 'gitea',
+      deployment: 'https://forge.example',
+      repository: 'acme/app',
+    })).toBeNull();
+  });
+
+  it.each(['custom', 'unknown'] as const)(
+    'preserves the %s provider kind and repository casing',
+    (kind) => {
+      expect(normalizeScmHostingRepositoryIdentity({
+        kind,
+        deployment: 'https://forge.example',
+        repository: 'Acme/App',
+      })).toEqual({
+        kind,
+        deployment: 'https://forge.example',
+        repository: 'Acme/App',
+      });
+    },
+  );
 });
 
 describe('readScmHostingRepositoryIdentity', () => {
@@ -47,17 +95,43 @@ describe('readScmHostingRepositoryIdentity', () => {
       repository: 'acme/team/app',
     });
   });
+
+  it.each([
+    ['github', 'Acme/App', 'acme/app'],
+    ['gitlab', 'Acme/Team/App', 'acme/team/app'],
+    ['bitbucket', 'Acme/App', 'acme/app'],
+    ['azure-devops', 'AcmeOrg/Payments/Gateway', 'AcmeOrg/Payments/Gateway'],
+  ] as const)('applies the %s repository addressing rule at the identity owner', (
+    kind,
+    repository,
+    expectedRepository,
+  ) => {
+    expect(readScmHostingRepositoryIdentity({
+      kind,
+      baseUrl: kind === 'azure-devops'
+        ? 'https://dev.azure.com/AcmeOrg'
+        : `https://${kind}.example.com`,
+      nameWithOwner: repository,
+    })?.repository).toBe(expectedRepository);
+  });
 });
 
 describe('sameScmHostingRepositoryIdentity', () => {
-  it('matches two observers of the same repository across host case, default port and trailing slash', () => {
+  it('compares already-normalized repository identities exactly', () => {
     const left = readScmHostingRepositoryIdentity(GITHUB);
-    const right = readScmHostingRepositoryIdentity({
+    const sameCanonicalRepository = readScmHostingRepositoryIdentity({
       kind: 'github',
       baseUrl: 'https://GitHub.com:443/',
       nameWithOwner: 'Acme/App',
     });
-    expect(sameScmHostingRepositoryIdentity(left, right)).toBe(true);
+    const differentRepositoryBytes = {
+      kind: 'github' as const,
+      deployment: 'https://github.com',
+      repository: 'Acme/App',
+    };
+
+    expect(sameScmHostingRepositoryIdentity(left, sameCanonicalRepository)).toBe(true);
+    expect(sameScmHostingRepositoryIdentity(left, differentRepositoryBytes)).toBe(false);
   });
 
   it('separates a different repository, a different deployment and a different forge kind', () => {

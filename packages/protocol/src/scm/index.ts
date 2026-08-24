@@ -677,3 +677,4 @@ export {
   sameScmHostingRepositoryIdentity,
   type ScmHostingRepositoryIdentityV1,
 } from './hostingRepositoryIdentity.js';
+  normalizeScmHostingRepositoryIdentity,

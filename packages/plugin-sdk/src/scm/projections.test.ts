@@ -24,6 +24,7 @@ import {
     type ScmHostingRepositoryAuthSummary as ProtocolScmHostingRepositoryAuthSummary,
     type ScmHostingRepositoryDescribePublishTargetsRequest as ProtocolScmHostingRepositoryDescribePublishTargetsRequest,
     type ScmHostingRepositoryDescribePublishTargetsResponse as ProtocolScmHostingRepositoryDescribePublishTargetsResponse,
+    type ScmHostingRepositoryIdentityV1 as ProtocolScmHostingRepositoryIdentityV1,
     type ScmHostingRepositoryPublishRequest as ProtocolScmHostingRepositoryPublishRequest,
     type ScmHostingRepositoryPublishResponse as ProtocolScmHostingRepositoryPublishResponse,
     type ScmHostingRepositoryPublishTarget as ProtocolScmHostingRepositoryPublishTarget,
@@ -59,7 +60,9 @@ import {
     createScmCapabilities,
     encodeCompareRef,
     evaluateScmRemoteMutationPreconditions,
+    normalizeScmHostingRepositoryIdentity,
     parseScmRemoteUrl,
+    sameScmHostingRepositoryIdentity,
     stripTrailingSlash,
     type ScmCapabilities,
     type ScmCloneProtocol,
@@ -98,11 +101,13 @@ const ROOT_RUNTIME_EXPORTS = [
     'evaluateScmRemoteMutationPreconditions',
     'isScmPatchBoundToPath',
     'normalizeScmBranchSourceRef',
+    'normalizeScmHostingRepositoryIdentity',
     'normalizeScmRemoteName',
     'normalizeScmRemoteRequest',
     'normalizeScmRemoteUrl',
     'parseScmRemoteUrl',
     'resolveScmScopedChangedPaths',
+    'sameScmHostingRepositoryIdentity',
     'stripTrailingSlash',
 ] as const;
 
@@ -148,6 +153,7 @@ const ROOT_TYPE_EXPORTS = [
     'ScmHostingRepositoryAuthSummary',
     'ScmHostingRepositoryDescribePublishTargetsRequest',
     'ScmHostingRepositoryDescribePublishTargetsResponse',
+    'ScmHostingRepositoryIdentityV1',
     'ScmHostingRepositoryPublishRequest',
     'ScmHostingRepositoryPublishResponse',
     'ScmHostingRepositoryPublishTarget',
@@ -402,6 +408,7 @@ type RootProjectionTypes = [
     scmProjection.ScmHostingRepositoryAuthSummary,
     scmProjection.ScmHostingRepositoryDescribePublishTargetsRequest,
     scmProjection.ScmHostingRepositoryDescribePublishTargetsResponse,
+    scmProjection.ScmHostingRepositoryIdentityV1,
     scmProjection.ScmHostingRepositoryPublishRequest,
     scmProjection.ScmHostingRepositoryPublishResponse,
     scmProjection.ScmHostingRepositoryPublishTarget,
@@ -543,6 +550,10 @@ describe('SCM package-local projections', () => {
         expect(stripTrailingSlash).toBe(sourceStripTrailingSlash);
         expect(evaluateScmRemoteMutationPreconditions)
             .toBe(sourceEvaluateScmRemoteMutationPreconditions);
+        expect(normalizeScmHostingRepositoryIdentity)
+            .toBe(protocolScm.normalizeScmHostingRepositoryIdentity);
+        expect(sameScmHostingRepositoryIdentity)
+            .toBe(protocolScm.sameScmHostingRepositoryIdentity);
         for (const exportName of PORTABLE_VALUE_PROJECTIONS[1].exports) {
             expect(backendProjection[exportName]).toBe(protocolScm[exportName]);
             expect(scmBackend[exportName]).toBe(backendProjection[exportName]);
@@ -582,6 +593,27 @@ describe('SCM package-local projections', () => {
             .toEqualTypeOf<ProtocolScmHostingRepositoryDescribePublishTargetsRequest>();
         expectTypeOf<scmProjection.ScmHostingRepositoryDescribePublishTargetsResponse>()
             .toEqualTypeOf<ProtocolScmHostingRepositoryDescribePublishTargetsResponse>();
+        expectTypeOf<scmProjection.ScmHostingRepositoryIdentityV1>()
+            .toEqualTypeOf<ProtocolScmHostingRepositoryIdentityV1>();
+        const githubIdentity = normalizeScmHostingRepositoryIdentity({
+            kind: 'github',
+            deployment: 'https://github.com',
+            repository: 'Acme/App',
+        });
+        const broadIdentityInput: Readonly<{
+            kind?: unknown;
+            deployment?: unknown;
+            repository?: unknown;
+        }> = {
+            kind: 'github',
+            deployment: 'https://github.com',
+            repository: 'Acme/App',
+        };
+        const broadIdentity = normalizeScmHostingRepositoryIdentity(broadIdentityInput);
+        expectTypeOf(githubIdentity)
+            .toEqualTypeOf<scmProjection.ScmHostingRepositoryIdentityV1<'github'> | null>();
+        expectTypeOf(broadIdentity)
+            .toEqualTypeOf<scmProjection.ScmHostingRepositoryIdentityV1 | null>();
         expectTypeOf<scmProjection.ScmHostingRepositoryPublishRequest>()
             .toEqualTypeOf<ProtocolScmHostingRepositoryPublishRequest>();
         expectTypeOf<scmProjection.ScmHostingRepositoryPublishResponse>()
