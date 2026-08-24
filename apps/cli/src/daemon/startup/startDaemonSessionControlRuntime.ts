@@ -156,6 +156,7 @@ import {
 import {
     finalizeComposerStagedMediaToSession,
 } from '@/session/media/finalizeComposerStagedMediaToSession';
+import { prepareComposerAttachmentDraftsForSendV1 } from '@/session/composer/prepareComposerAttachmentDraftsForSendV1';
 import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
 import { settleComposerStagedMediaAdmissionV1 } from '@/session/media/settleComposerStagedMediaAdmission';
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
@@ -11503,165 +11504,14 @@ export async function startDaemonSessionControlRuntime(
                                                 'Composer attachments are unavailable',
                                         });
                                     }
-                                    const admittedSelected = attachments.admit({
-                                        phase: 'draft',
-                                        attachments: selected,
-                                    });
-                                    const groups = new Map<string, {
-                                        attachment: (typeof admittedSelected)[number]['attachment'];
-                                        inputs: Array<(typeof admittedSelected)[number]>;
-                                    }>();
-                                    for (const input of admittedSelected) {
-                                        const attachment = input.attachment;
-                                        const key = `${attachment.pluginId}\u0000${attachment.localId}`;
-                                        let group = groups.get(key);
-                                        if (!group) {
-                                            group = {
-                                                attachment: Object.freeze({
-                                                    pluginId:
-                                                        attachment.pluginId,
-                                                    localId:
-                                                        attachment.localId,
-                                                }),
-                                                inputs: [],
-                                            };
-                                            groups.set(key, group);
-                                        }
-                                        group.inputs.push(input);
-                                    }
-                                    const preparedByInstanceId = new Map<
-                                        string,
-                                        (typeof admittedSelected)[number]
-                                    >();
-                                    for (const group of groups.values()) {
-                                        if (
-                                            !attachments.isDeclared(
-                                                group.attachment,
-                                            )
-                                        ) {
-                                            throw new PluginError({
-                                                code:
-                                                    'composer_attachment_unavailable',
-                                                message:
-                                                    `Composer attachment '${group.attachment.pluginId}/${group.attachment.localId}' is unavailable`,
-                                            });
-                                        }
-                                        const parsedRequest =
-                                            ComposerAttachmentPrepareRequestV1Schema
-                                                .safeParse({
-                                                    sessionId,
-                                                    localId:
-                                                        operationRequest.payload
-                                                            .localId,
-                                                    attachments: group.inputs.map(
-                                                        (input) => ({
-                                                            instanceId:
-                                                                input.instanceId,
-                                                            key: input.key,
-                                                            value: input.value,
-                                                            ...(input.content
-                                                                ? {
-                                                                    content:
-                                                                        input.content,
-                                                                }
-                                                                : {}),
-                                                        }),
-                                                    ),
-                                                });
-                                        if (!parsedRequest.success) {
-                                            throw new PluginError({
-                                                code:
-                                                    'composer_attachment_request_invalid',
-                                                message:
-                                                    'Composer attachment preparation requires the canonical session and local identity',
-                                            });
-                                        }
-                                        if (
-                                            !attachments.requires({
-                                                attachment: group.attachment,
-                                                phase: 'prepareForSend',
-                                            })
-                                        ) {
-                                            for (const input of group.inputs) {
-                                                preparedByInstanceId.set(
-                                                    input.instanceId,
-                                                    input,
-                                                );
-                                            }
-                                            continue;
-                                        }
-                                        if (
-                                            !await attachments.supports({
-                                                attachment: group.attachment,
-                                                phase: 'prepareForSend',
-                                            })
-                                        ) {
-                                            throw new PluginError({
-                                                code:
-                                                    'composer_attachment_callback_unavailable',
-                                                message:
-                                                    `Composer attachment '${group.attachment.pluginId}/${group.attachment.localId}' does not provide 'prepareForSend'`,
-                                            });
-                                        }
-                                        const result =
-                                            await attachments.prepareForSend({
-                                                attachment: group.attachment,
-                                                request: parsedRequest.data,
-                                                signal,
-                                            });
-                                        result.attachments.forEach(
-                                            (outcome, index) => {
-                                                // Message preparation is all-or-none, like the
-                                                // dispatch-phase resolution owner: a blocked
-                                                // outcome rejects the whole preparation and
-                                                // keeps the plugin's typed reason, instead of
-                                                // silently admitting the remaining attachments.
-                                                if (
-                                                    outcome.status !== 'ready'
-                                                ) {
-                                                    throw new PluginError({
-                                                        code:
-                                                            `composer_attachment_prepare_${outcome.status}`,
-                                                        retryable:
-                                                            outcome.retryable,
-                                                        message: outcome.message
-                                                            ?? `Composer attachment preparation is ${outcome.status}`,
-                                                    });
-                                                }
-                                                const input =
-                                                    group.inputs[index]!;
-                                                preparedByInstanceId.set(
-                                                    input.instanceId,
-                                                    Object.freeze({
-                                                        ...input,
-                                                        value: outcome.value,
-                                                        ...(outcome.content
-                                                            ? {
-                                                                content:
-                                                                    outcome.content,
-                                                            }
-                                                            : {}),
-                                                        ...(outcome.presentation
-                                                            ? {
-                                                                presentation:
-                                                                    Object.freeze({
-                                                                        ...input.presentation,
-                                                                        ...outcome.presentation,
-                                                                    }),
-                                                            }
-                                                            : {}),
-                                                    }),
-                                                );
-                                            },
-                                        );
-                                    }
                                     const preparedDraftAttachments =
-                                        admittedSelected.flatMap((input) => {
-                                            const prepared =
-                                                preparedByInstanceId.get(
-                                                    input.instanceId,
-                                                );
-                                            return prepared ? [prepared] : [];
+                                        await prepareComposerAttachmentDraftsForSendV1({
+                                            attachments,
+                                            sessionId,
+                                            messageLocalId:
+                                                operationRequest.payload.localId,
+                                            drafts: selected,
+                                            signal,
                                         });
                                     const messageLocalId =
                                         typeof operationRequest.payload.localId

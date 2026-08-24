@@ -3622,6 +3622,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         params.externalSessionPluginAdmissionOwner,
                 }
                 : {}),
+            // Read at dispatch, never at construction: this registry's own
+            // Composer attachment target is built below, and a plugin
+            // `SessionHandle.send` reaches it only while executing an Action.
+            resolveComposerAttachmentSendPreparation: () => composerAttachments,
         })
         : null;
     const resolveCurrentComposerExecutionTarget = () => {

@@ -8,7 +8,6 @@ import {
   type ActionExecuteResult,
   type ActionExecutorContext,
   type PluginMachineMaterializationRefV1,
-  type PluginSessionInputRequestV1,
   type SessionInputAdmissionResultV1,
 } from '@happier-dev/protocol';
 
@@ -29,7 +28,8 @@ export async function executePluginSessionMessageAction(params: Readonly<{
    */
   resolveCallerMaterialization?(): PluginMachineMaterializationRefV1 | null;
   sessionId: string;
-  request: PluginSessionInputRequestV1;
+  /** Public SDK input is validated and narrowed at this host boundary. */
+  request: unknown;
   signal: AbortSignal;
 }>): Promise<SessionInputAdmissionResultV1> {
   const request = PluginSessionInputRequestV1Schema.safeParse(params.request);
@@ -69,6 +69,7 @@ export async function executePluginSessionMessageAction(params: Readonly<{
         message: request.data.text,
         idempotencyKey: request.data.idempotencyKey,
         ...(request.data.source ? { source: request.data.source } : {}),
+        ...(request.data.attachments ? { attachments: request.data.attachments } : {}),
       },
       {
         surface: 'plugin',

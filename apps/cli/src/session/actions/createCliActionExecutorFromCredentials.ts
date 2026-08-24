@@ -45,6 +45,7 @@ import type {
   RevalidatePluginActionCallerImmutableGeneration,
   RevalidatePluginActionCallerMaterialization,
 } from '@/plugins/runtime/invocation/services/actionCaller';
+import type { ComposerAttachmentSendPreparationRegistryV1 } from '@/session/composer/prepareComposerAttachmentDraftsForSendV1';
 import type {
   MachineActionDirectTargetTransport,
   SessionSpawnDirectTargetTransport,
@@ -343,6 +344,8 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   machineAdmissionTransport?: NonNullable<
     Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
   >;
+  /** Late-bound plugin-runtime Composer attachments for declared Session input. */
+  resolveComposerAttachmentSendPreparation?: () => ComposerAttachmentSendPreparationRegistryV1 | null;
   sessionLogAccess?: Readonly<{
     workingDirectory: string;
     accessPolicy: FilesystemAccessPolicy;
@@ -417,6 +420,12 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
         : {}),
       ...(params.machineAdmissionTransport
         ? { machineAdmissionTransport: params.machineAdmissionTransport }
+        : {}),
+      ...(params.resolveComposerAttachmentSendPreparation
+        ? {
+            resolveComposerAttachmentSendPreparation:
+              params.resolveComposerAttachmentSendPreparation,
+          }
         : {}),
       resolveTranscriptStore: async (sessionId) => {
         const transport = await resolveSessionTransportContext({

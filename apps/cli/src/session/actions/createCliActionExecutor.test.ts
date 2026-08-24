@@ -154,6 +154,7 @@ vi.mock('@/api/machine/machineOperationProtocolCapabilities', () => ({
 }));
 
 import { createCliActionExecutor } from './createCliActionExecutor';
+import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { registerSessionSpawnNewRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
@@ -167,11 +168,19 @@ import {
   SessionCreationKeyV1Schema,
   SessionOwnerMetadataV1Schema,
   type SessionSpawnNewInputV2,
+  createActionExecutor,
+  type ActionExecutorDeps,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { configuration } from '@/configuration';
+import type { ComposerAttachmentRuntime, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+  readHappierStructuredInputV1FromMeta,
+  type PluginSessionInputAttachmentV1,
+} from '@happier-dev/protocol';
+import { createTargetComposerAttachmentRegistry } from '@/plugins/runtime/lifecycle/contributions/targetComposerAttachments';
 
 const env = process.env;
 const PLUGIN_ACTION_ID = 'acme.cli-action-exec.plugin/review-start';
@@ -2218,6 +2227,188 @@ describe('createCliActionExecutor', () => {
       wait: false,
       timeoutMs: 10_000,
     }));
+  });
+
+  it('carries an attachment-only plugin send through admission, retry, dispatch resolution, and transcript replay', async () => {
+    const attachment = { pluginId: 'happier.triage', localId: 'entry' } as const;
+    const authored: readonly PluginSessionInputAttachmentV1[] = [{
+      attachmentLocalId: attachment.localId,
+      value: {
+        key: 'forge/items:pull-request:origin:42',
+        value: { v: 1, entryId: '42' },
+        presentation: { label: 'Replace the duplicated normalizer', description: 'example/repository' },
+      },
+    }];
+    const prepareForSend = vi.fn<NonNullable<ComposerAttachmentRuntime['prepareForSend']>>(async (request) => ({
+      attachments: request.attachments.map((item) => ({
+        instanceId: item.instanceId,
+        status: 'ready' as const,
+        value: { ...(item.value as Record<string, unknown>), qualified: true },
+      })),
+    }));
+    const resolveForDispatch = vi.fn<NonNullable<ComposerAttachmentRuntime['resolveForDispatch']>>(async (request) => ({
+      attachments: request.attachments.map((item) => ({ instanceId: item.instanceId, status: 'ready' as const })),
+    }));
+    const afterMessageAccepted = vi.fn<NonNullable<ComposerAttachmentRuntime['afterMessageAccepted']>>(async () => {});
+    const registry = createTargetComposerAttachmentRegistry({
+      activateAttachmentOnDemand: async () => {},
+      declaredAttachments: [{
+        attachment,
+        title: { key: 'triage.attachment.entry.title', fallback: 'Triage entry' },
+        cardinality: 'many',
+        valueSchema: {
+          type: 'object',
+          properties: { v: { const: 1 }, entryId: { type: 'string' } },
+          required: ['v', 'entryId'],
+          additionalProperties: false,
+        },
+        preparedValueSchema: {
+          type: 'object',
+          properties: { v: { const: 1 }, entryId: { type: 'string' }, qualified: { const: true } },
+          required: ['v', 'entryId', 'qualified'],
+          additionalProperties: false,
+        },
+        runtime: { prepareForSend: true, resolveForDispatch: true, afterMessageAccepted: true },
+      }],
+      targetRegistrations: [{
+        pluginId: attachment.pluginId,
+        generation: '1',
+        registration: {
+          family: 'composerAttachments',
+          localId: attachment.localId,
+          value: { prepareForSend, resolveForDispatch, afterMessageAccepted },
+        },
+      }],
+      resolveGenerationLifecycle: () => ({
+        isCurrent: () => true,
+        retirementSignal: new AbortController().signal,
+      }),
+      createInvocationContext: (input) => ({
+        context: {
+          plugin: { id: attachment.pluginId, version: '1.0.0' },
+          contribution: {
+            id: attachment.localId,
+            qualifiedId: `${attachment.pluginId}/composerAttachments/${attachment.localId}`,
+          },
+          surface: 'cli',
+          signal: input.signal,
+          services: { logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), diagnostic: vi.fn() } },
+        } as unknown as PluginInvocationContext,
+        complete: vi.fn(),
+      }),
+    });
+    const cliDeps = createCliActionExecutorHarness({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: null,
+      resolveComposerAttachmentSendPreparation: () => registry,
+    }).deps;
+    const executor = createActionExecutor({
+      sessionSendMessage: cliDeps.sessionSendMessage,
+    } as ActionExecutorDeps);
+    const caller = {
+      surface: 'plugin' as const,
+      defaultSessionId: 'sess-1',
+      actionCaller: {
+        kind: 'plugin' as const,
+        pluginId: attachment.pluginId,
+        contributionLocalId: 'entry-action',
+      },
+    };
+    const input = {
+      sessionId: 'sess-1',
+      message: '',
+      idempotencyKey: 'delivery-key-1',
+      attachments: authored,
+    };
+    sendSessionMessage
+      .mockResolvedValueOnce({
+        ok: true,
+        sessionId: 'sess-1',
+        localId: 'local-1',
+        waited: false,
+        admissionResult: { status: 'accepted', localId: 'local-1' },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        sessionId: 'sess-1',
+        localId: 'local-1',
+        waited: false,
+        admissionResult: { status: 'alreadyAccepted', localId: 'local-1' },
+      });
+
+    const firstResult = await executor.execute('session.message.send', input, caller);
+    expect(sendSessionMessage).toHaveBeenCalledTimes(1);
+    expect(firstResult).toEqual({
+      ok: true,
+      result: { status: 'accepted', localId: 'local-1' },
+    });
+    expect(await executor.execute('session.message.send', input, caller)).toEqual({
+      ok: true,
+      result: { status: 'alreadyAccepted', localId: 'local-1' },
+    });
+    await vi.waitFor(() => expect(afterMessageAccepted).toHaveBeenCalledTimes(2));
+    expect(afterMessageAccepted).toHaveBeenNthCalledWith(1, {
+      sessionId: 'sess-1',
+      localId: 'local-1',
+      attachments: [{
+        instanceId: expect.any(String),
+        key: 'forge/items:pull-request:origin:42',
+        value: { v: 1, entryId: '42', qualified: true },
+      }],
+    }, expect.any(Object));
+
+    const firstWrite = sendSessionMessage.mock.calls.at(-2)?.[0];
+    const retryWrite = sendSessionMessage.mock.calls.at(-1)?.[0];
+    expect(retryWrite?.localId).toBe(firstWrite?.localId);
+    expect(retryWrite?.messageMeta).toEqual(firstWrite?.messageMeta);
+    const persisted = readHappierStructuredInputV1FromMeta(firstWrite?.messageMeta);
+    expect(persisted?.composerAttachments).toHaveLength(1);
+    await expect(registry.resolveForDispatch({
+      attachment,
+      request: {
+        sessionId: 'sess-1',
+        localId: String(firstWrite?.localId),
+        attachments: (persisted?.composerAttachments ?? []).map((item) => ({
+          instanceId: item.instanceId,
+          key: item.key,
+          value: item.value,
+        })),
+      },
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ attachments: [{ status: 'ready' }] });
+    const transcriptModulePath = '../../../../ui/'
+      + 'sources/components/sessions/transcript/composerAttachments/messageComposerAttachments';
+    const transcriptProjection = await import(transcriptModulePath) as Readonly<{
+      resolveMessageComposerAttachments(meta: unknown): readonly Readonly<{
+        typeLabel: string;
+        label: string;
+        description: string | null;
+      }>[];
+    }>;
+    expect(transcriptProjection.resolveMessageComposerAttachments(firstWrite?.messageMeta)).toEqual([expect.objectContaining({
+      typeLabel: 'Triage entry',
+      label: 'Replace the duplicated normalizer',
+      description: 'example/repository',
+    })]);
+    expect(prepareForSend).toHaveBeenCalledTimes(2);
+    expect(resolveForDispatch).toHaveBeenCalledTimes(1);
+
+    const rejected = await executor.execute('session.message.send', {
+      ...input,
+      idempotencyKey: 'delivery-key-invalid',
+      attachments: [{ ...authored[0]!, attachmentLocalId: 'not-declared' }],
+    }, caller);
+    expect(rejected).toEqual({
+      ok: true,
+      result: { status: 'rejected', code: 'session_input_invalid' },
+    });
+    expect(sendSessionMessage).toHaveBeenCalledTimes(2);
   });
 
   it('executes session.mode.set via the setSessionMode service', async () => {

@@ -58,6 +58,7 @@ import {
   type SessionCreationTargetPreparationResultV1,
   type AgentExecutionTargetV1,
   type ActionCaller,
+  type ComposerAttachmentInputV1,
 } from '@happier-dev/protocol';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import {
@@ -99,6 +100,9 @@ import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { getSessionStatus } from '@/session/services/getSessionStatus';
 import { listSessions } from '@/session/services/listSessions';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
+import { admitPluginSessionInputAttachmentsV1 } from '@/session/composer/admitPluginSessionInputAttachmentsV1';
+import type { ComposerAttachmentSendPreparationRegistryV1 } from '@/session/composer/prepareComposerAttachmentDraftsForSendV1';
+import { notifyComposerAttachmentsAfterMessageAccepted } from '@/session/composer/notifyComposerAttachmentsAfterMessageAccepted';
 import {
   sendSessionMessage,
 } from '@/session/services/sendSessionMessage';
@@ -641,6 +645,13 @@ export function createCliActionDeps(params: Readonly<{
   >;
   sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
   machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
+  /**
+   * Read at dispatch time so the plugin runtime's declared Composer attachments
+   * are reachable from the Session-input writer. It is absent for hosts that
+   * run no plugin runtime, in which case a declared attachment is refused
+   * rather than dropped.
+   */
+  resolveComposerAttachmentSendPreparation?: () => ComposerAttachmentSendPreparationRegistryV1 | null;
 }> & SessionStoredContentCryptoContext): ActionExecutorDeps {
   const inventoryDeps = createCliActionInventoryDeps(params);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials }) : null;
@@ -2692,6 +2703,7 @@ export function createCliActionDeps(params: Readonly<{
       idempotencyKey,
       localId,
       source,
+      attachments,
       wait,
       timeoutSeconds,
       permissionModeOverride,
@@ -2787,6 +2799,35 @@ export function createCliActionDeps(params: Readonly<{
           })
         : undefined;
 
+      // Declared attachments reach the canonical structured-input admission
+      // owner before the Session writer, exactly as a Composer-authored draft
+      // does. Only a plugin caller owns a declaration the host can qualify.
+      let admittedAttachmentMeta: Record<string, unknown> | undefined;
+      let admittedComposerAttachments: readonly ComposerAttachmentInputV1[] = [];
+      const composerAttachmentRegistry = params.resolveComposerAttachmentSendPreparation?.() ?? null;
+      if (attachments && attachments.length > 0) {
+        if (!pluginCaller || !pluginLocalId) {
+          return {
+            status: 'rejected' as const,
+            code: 'session_input_untrusted_assertion' as const,
+          };
+        }
+        const attachmentAdmission = await admitPluginSessionInputAttachmentsV1({
+          attachments: composerAttachmentRegistry,
+          pluginId: pluginCaller.pluginId,
+          sessionId,
+          messageLocalId: pluginLocalId,
+          text: String(message ?? ''),
+          authored: attachments,
+          ...(signal ? { signal } : {}),
+        });
+        if (attachmentAdmission.status === 'rejected') {
+          return { status: 'rejected' as const, code: attachmentAdmission.code };
+        }
+        admittedAttachmentMeta = attachmentAdmission.meta;
+        admittedComposerAttachments = attachmentAdmission.attachments;
+      }
+
       const dispatchMessageHook = async (canonicalSessionId: string, source: 'plugin' | 'user') => {
         try {
           await dispatchSessionLifecycleHookEvent({
@@ -2813,6 +2854,7 @@ export function createCliActionDeps(params: Readonly<{
           timeoutMs: normalizedTimeoutSeconds * 1000,
           localId: pluginLocalId,
           inputAdmission: pluginInputAdmission,
+          ...(admittedAttachmentMeta ? { messageMeta: admittedAttachmentMeta } : {}),
           ...(params.machineAdmissionTransport
             ? { machineAdmissionTransport: params.machineAdmissionTransport }
             : {}),
@@ -2824,8 +2866,27 @@ export function createCliActionDeps(params: Readonly<{
           && protectedResult.sessionId.trim().length > 0
           ? protectedResult.sessionId
           : sessionId;
+        const admissionResult = protectedResult.admissionResult;
+        if (
+          composerAttachmentRegistry
+          && (admissionResult.status === 'accepted' || admissionResult.status === 'alreadyAccepted')
+        ) {
+          notifyComposerAttachmentsAfterMessageAccepted({
+            sessionId: canonicalSessionId,
+            localId: admissionResult.localId,
+            attachments: admittedComposerAttachments,
+            notify: ({ attachment, event, signal: notificationSignal }) => (
+              composerAttachmentRegistry.afterMessageAccepted({
+                attachment,
+                event,
+                signal: notificationSignal,
+              })
+            ),
+            signal: signal ?? new AbortController().signal,
+          });
+        }
         await dispatchMessageHook(canonicalSessionId, 'plugin');
-        return protectedResult.admissionResult;
+        return admissionResult;
       }
 
       const result = await sendSessionMessage({
