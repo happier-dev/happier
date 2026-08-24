@@ -363,6 +363,10 @@ export type ConnectedServicesContribution = Readonly<{
         sourceRoot: string;
         materializedRootDir: string;
     }>) => readonly ConnectedServiceSessionFileImportRoot[];
+    reconcileStateSharingSource?: (params: Readonly<{
+        sourceRoot: string;
+        materializedRootDir: string;
+    }>) => Promise<void> | void;
     resolveVendorResumeIdFromImportedFile?: (detail: ConnectedServiceSessionFileImportDetail) => string | null;
     readConnectedServiceId: (selection: unknown) => ConnectedServiceId | null;
     createAuthMaterializationInput: (

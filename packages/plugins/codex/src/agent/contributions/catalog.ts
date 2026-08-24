@@ -37,6 +37,7 @@ import {
   createCodexSessionImportRoots,
   resolveCodexVendorResumeIdFromImportedSessionFile,
 } from '../auth/services/home/sync/sessionFiles.js';
+import { reconcileCodexSharedJsonlState } from '../auth/services/home/sync/fixedJsonlState.js';
 import { codexPreflightSessionControlsProbeConfig } from '../lifecycle/preflight/sessionControls.js';
 import { resolveCodexSessionRuntimePreferences } from '../lifecycle/runtimePreferences.js';
 import { openAiCodexQuotaFetcherDescriptor } from '../auth/services/quota/openaiFetcher.js';
@@ -347,6 +348,7 @@ export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
         destinationCodexHome: materializedRootDir,
         sourceCodexHome: sourceRoot,
       }),
+    reconcileStateSharingSource: reconcileCodexSharedJsonlState,
     resolveVendorResumeIdFromImportedFile: resolveCodexVendorResumeIdFromImportedSessionFile,
     readConnectedServiceId: readCodexConnectedServiceId,
     createAuthMaterializationInput: createCodexAuthMaterializationInput,

@@ -85,7 +85,10 @@ import { sanitizeConnectedServiceDiagnosticString } from '@/daemon/connectedServ
 import { canResumeFromMaterializedStateCore } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedStateCore';
 import { REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON } from '@/daemon/connectedServices/verifyResumeReachableTypes';
 import { applyConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
-import { withConnectedServiceStateSharingDestinationLock } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
+import {
+    withConnectedServiceStateSharingDestinationLock,
+    withConnectedServiceStateSharingLocks,
+} from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
 import {
     readConnectedServiceStateSharingManifest,
     writeConnectedServiceStateSharingManifest,
@@ -1043,10 +1046,13 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
     ) {
         return { diagnostics: [], effectiveStateMode: params.stateSharingPolicy.stateMode };
     }
-    return await withConnectedServiceStateSharingDestinationLock(params.materializedRootDir, async () => {
-        const settings = params.stateSharingPolicy;
-        const sourceRoot = resolveStateSharingSourceRoot({ env: params.env });
-        const stateSourceRoot = readString(params.stateSourceRoot) ?? sourceRoot;
+    const settings = params.stateSharingPolicy;
+    const sourceRoot = resolveStateSharingSourceRoot({ env: params.env });
+    const stateSourceRoot = readString(params.stateSourceRoot) ?? sourceRoot;
+    const lockRoots = settings.stateMode === 'shared'
+        ? [params.materializedRootDir, sourceRoot, stateSourceRoot]
+        : [params.materializedRootDir];
+    return await withConnectedServiceStateSharingLocks(lockRoots, async () => {
         const stateEntryNames = await params.connectedServices.resolveStateSharingStateEntryNames?.({
             sourceRoot: stateSourceRoot,
             materializedRootDir: params.materializedRootDir,
@@ -1069,6 +1075,12 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
             params.connectedServices.materializedHomeCredentialEntries,
         );
         const existingManifest = await readConnectedServiceStateSharingManifest(params.materializedRootDir);
+        if (settings.stateMode === 'shared') {
+            await params.connectedServices.reconcileStateSharingSource?.({
+                sourceRoot: stateSourceRoot,
+                materializedRootDir: params.materializedRootDir,
+            });
+        }
         const applyResult = await applyConnectedServiceStateSharingDescriptor({
             descriptor: params.connectedServices.stateSharingDescriptor,
             nativeSourceContext: {
