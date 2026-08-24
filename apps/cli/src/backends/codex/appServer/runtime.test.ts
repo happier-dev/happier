@@ -153,6 +153,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     rejectReviewStartMethodUnavailable?: boolean;
     rejectStructuredTurnInput?: boolean;
     rejectStructuredSteerInput?: boolean;
+    threadStartServiceTier?: string | null;
     steerUserMessageEchoDelayMs?: number;
     emitResumeContinuationUserInputRequest?: boolean;
     emitHistoricalResumeUserInputRequestBeforeResponse?: boolean;
@@ -204,7 +205,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32000, message: "missing thread/start flags" } }) + "\\n");',
         '            continue;',
         '        }',
-        '        process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: null, activePermissionProfile: msg.params?.permissions ?? null } }) + "\\n");',
+        `        process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: ${JSON.stringify(params.threadStartServiceTier ?? null)}, activePermissionProfile: msg.params?.permissions ?? null } }) + "\\n");`,
         `        if (${JSON.stringify(params.emitIdleMcpRequestAfterThreadStart === true)}) {`,
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ id: "idle-mcp-request", method: "mcpServer/elicitation/request", params: { threadId: "thread-started", id: "request_scoped_idle_mcp", serverName: "happier", message: "Tool \\"change_title\\" needs input", _meta: { tool_params: { title: "Idle Title" } } } }) + "\\n");',
@@ -1591,6 +1592,7 @@ describe('createCodexAppServerRuntime', () => {
             rejectReviewStartMethodUnavailable?: boolean;
             rejectStructuredTurnInput?: boolean;
             rejectStructuredSteerInput?: boolean;
+            threadStartServiceTier?: string | null;
             steerUserMessageEchoDelayMs?: number;
             emitResumeContinuationUserInputRequest?: boolean;
             emitHistoricalResumeUserInputRequestBeforeResponse?: boolean;
@@ -1649,6 +1651,7 @@ describe('createCodexAppServerRuntime', () => {
             rejectReviewStartMethodUnavailable: options.rejectReviewStartMethodUnavailable,
             rejectStructuredTurnInput: options.rejectStructuredTurnInput,
             rejectStructuredSteerInput: options.rejectStructuredSteerInput,
+            threadStartServiceTier: options.threadStartServiceTier,
             steerUserMessageEchoDelayMs: options.steerUserMessageEchoDelayMs,
             emitResumeContinuationUserInputRequest: options.emitResumeContinuationUserInputRequest,
             emitHistoricalResumeUserInputRequestBeforeResponse: options.emitHistoricalResumeUserInputRequestBeforeResponse,
@@ -6993,6 +6996,32 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.setSessionConfigOption('service_tier', 'fast');
         await runtime.startOrLoad({});
         await runtime.sendPrompt('fast-persist');
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        const firstTurnStart = requestLog.find((entry) => entry.method === 'turn/start');
+        expect(firstTurnStart).toMatchObject({
+            params: expect.objectContaining({
+                serviceTier: 'fast',
+            }),
+        });
+    });
+
+    it('keeps Fast service tier when thread/start responds with the current priority tier id', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture(
+            'happier-codex-app-server-runtime-thread-start-priority-persist-',
+            { threadStartServiceTier: 'priority' },
+        );
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+
+        await runtime.setSessionModel('gpt-5.6-sol');
+        await runtime.setSessionConfigOption('service_tier', 'fast');
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('priority-persist');
 
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
         const firstTurnStart = requestLog.find((entry) => entry.method === 'turn/start');

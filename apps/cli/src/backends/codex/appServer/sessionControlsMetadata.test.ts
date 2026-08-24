@@ -111,6 +111,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                                 displayName: 'GPT-5.4',
                                 contextWindow: 400_000,
                                 isDefault: true,
+                                additionalSpeedTiers: ['fast'],
                             },
                         ],
                     };
@@ -169,6 +170,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                                 id: 'gpt-5.5',
                                 displayName: 'GPT-5.5',
                                 isDefault: true,
+                                additionalSpeedTiers: ['fast'],
                             },
                         ],
                     };
@@ -203,6 +205,61 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
         });
     });
 
+    it('includes Speed for GPT 5.6 Sol when model/list advertises the Fast service tier', async () => {
+        const client = {
+            request: vi.fn(async (method: string) => {
+                if (method === 'collaborationMode/list') {
+                    return { data: [] };
+                }
+                if (method === 'model/list') {
+                    return {
+                        data: [
+                            {
+                                id: 'gpt-5.6-sol',
+                                displayName: 'GPT-5.6-Sol',
+                                isDefault: true,
+                                serviceTiers: [
+                                    {
+                                        id: 'priority',
+                                        name: 'Fast',
+                                        description: '1.5x speed, increased usage',
+                                    },
+                                ],
+                            },
+                        ],
+                    };
+                }
+                throw new Error(`Unexpected method: ${method}`);
+            }),
+        };
+        const { session, getMetadata } = createSessionHarness();
+
+        await publishCodexAppServerSessionControlsMetadata({
+            client,
+            session,
+            provider: 'codex',
+            updatedAt: 780,
+            authMethod: 'oauth_cli',
+            currentModelId: 'gpt-5.6-sol',
+            currentServiceTier: 'priority',
+        });
+
+        expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toMatchObject({
+            availableModels: [
+                {
+                    id: 'gpt-5.6-sol',
+                    modelOptions: [
+                        {
+                            id: 'service_tier',
+                            name: 'Speed',
+                            currentValue: 'fast',
+                        },
+                    ],
+                },
+            ],
+        });
+    });
+
     it('accepts snake_case reasoning effort fields from model/list', async () => {
         const client = {
             request: vi.fn(async (method: string) => {
@@ -218,6 +275,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                                 id: 'gpt-5.4',
                                 displayName: 'GPT-5.4',
                                 isDefault: true,
+                                additional_speed_tiers: ['fast'],
                                 supported_reasoning_efforts: [
                                     { reasoning_effort: 'medium', description: 'Balanced' },
                                     { reasoning_effort: 'high', description: 'Deep' },
@@ -295,6 +353,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                                     id: 'gpt-5.4',
                                     displayName: 'GPT-5.4',
                                     isDefault: true,
+                                    additionalSpeedTiers: ['fast'],
                                     supported_reasoning_efforts: [
                                         { reasoning_effort: 'medium', description: 'Balanced' },
                                         { reasoning_effort: 'high', description: 'Deep' },
@@ -374,6 +433,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                                 displayName: 'GPT-5.4',
                                 description: 'Latest default',
                                 isDefault: true,
+                                serviceTiers: [{ id: 'priority', name: 'Fast' }],
                                 supportedReasoningEfforts: [
                                     { reasoningEffort: 'low', description: 'Fast responses with lighter reasoning' },
                                     { reasoningEffort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
@@ -499,6 +559,7 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                         id: 'gpt-5.4',
                         displayName: 'GPT-5.4',
                         isDefault: true,
+                        serviceTiers: [{ id: 'priority', name: 'Fast' }],
                         supportedReasoningEfforts: [
                             { reasoningEffort: 'low', description: 'Fast responses with lighter reasoning' },
                             { reasoningEffort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
@@ -623,7 +684,12 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                 if (method === 'model/list') {
                     return {
                         data: [
-                            { id: 'gpt-5.4', displayName: 'GPT-5.4', isDefault: true },
+                            {
+                                id: 'gpt-5.4',
+                                displayName: 'GPT-5.4',
+                                isDefault: true,
+                                serviceTiers: [{ id: 'priority', name: 'Fast' }],
+                            },
                         ],
                     };
                 }
@@ -691,7 +757,12 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
                 if (method === 'model/list') {
                     return {
                         data: [
-                            { id: 'gpt-5.4', displayName: 'gpt-5.4', isDefault: true },
+                            {
+                                id: 'gpt-5.4',
+                                displayName: 'gpt-5.4',
+                                isDefault: true,
+                                serviceTiers: [{ id: 'priority', name: 'Fast' }],
+                            },
                             { id: 'gpt-5.4-mini', displayName: 'GPT-5.4-Mini' },
                             { id: 'gpt-5.3-codex', displayName: 'gpt-5.3-codex' },
                         ],
