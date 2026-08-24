@@ -62,6 +62,29 @@ describe('buildAskUserQuestionAnswerPayload', () => {
         });
     });
 
+    it('preserves an explicitly empty freeform value on the modern protocol', () => {
+        const result = buildAskUserQuestionAnswerPayload({
+            questions: [{
+                question: 'Edit value',
+                header: 'Value',
+                multiSelect: false,
+                options: [],
+                freeform: { allowEmpty: true, multiline: true },
+            }],
+            selections: new Map(),
+            freeformAnswers: new Map([[0, '']]),
+            structuredQuestionAnswersV1Supported: true,
+        });
+
+        expect(result).toEqual({
+            kind: 'modern',
+            send: {
+                protocol: 'structured-question-v1',
+                structuredAnswersV1: { 'Edit value': [''] },
+            },
+        });
+    });
+
     it('submits canonical option values while leaving display labels independent', () => {
         const result = buildAskUserQuestionAnswerPayload({
             questions: [{

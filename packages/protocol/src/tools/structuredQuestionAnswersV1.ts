@@ -66,7 +66,13 @@ export type StructuredQuestionDescriptor = Readonly<{
   keys: readonly string[];
   options: readonly StructuredQuestionDescriptorOption[];
   multiSelect: boolean;
-  freeform?: Readonly<{ placeholder?: string; description?: string; initialValue?: string }>;
+  freeform?: Readonly<{
+    placeholder?: string;
+    description?: string;
+    initialValue?: string;
+    multiline?: boolean;
+    allowEmpty?: boolean;
+  }>;
   allowsFreeform: boolean;
 }>;
 
@@ -168,10 +174,14 @@ export function normalizeStructuredQuestionDescriptors(
         const placeholder = readString(rawQuestion.freeform.placeholder, true);
         const description = readString(rawQuestion.freeform.description, true);
         const initialValue = readString(rawQuestion.freeform.initialValue, true);
+        const multiline = readOptionalBoolean(rawQuestion.freeform.multiline);
+        const allowEmpty = readOptionalBoolean(rawQuestion.freeform.allowEmpty);
         freeform = Object.freeze({
           ...(placeholder !== undefined ? { placeholder } : {}),
           ...(description !== undefined ? { description } : {}),
           ...(initialValue !== undefined ? { initialValue } : {}),
+          ...(multiline !== undefined ? { multiline } : {}),
+          ...(allowEmpty !== undefined ? { allowEmpty } : {}),
         });
       }
 

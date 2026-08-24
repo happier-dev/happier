@@ -89,6 +89,32 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     expect(session.agentState.requests['pending-1']).toBeFalsy();
   });
 
+  it('cancels one pending request without aborting neighboring permissions', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const expired = handler.handleToolCall('expired-1', 'AskUserQuestion', {
+      questions: [{ question: 'Continue?', header: 'Test', multiSelect: false, options: [{ label: 'Yes', description: '' }] }],
+    });
+    const remaining = handler.handleToolCall('remaining-1', 'bash', { command: 'pwd' });
+
+    expect(handler.cancelPendingRequest('expired-1', 'Provider dialog timed out')).toBe(true);
+    await expect(expired).resolves.toEqual({ decision: 'abort' });
+    expect(session.agentState.requests['expired-1']).toBeFalsy();
+    expect(session.agentState.completedRequests['expired-1']).toMatchObject({
+      status: 'canceled',
+      decision: 'abort',
+      reason: 'Provider dialog timed out',
+    });
+    expect(await settledState(remaining)).toBe('pending');
+
+    await session.rpcHandlerManager.handlers.get('permission')?.({
+      id: 'remaining-1',
+      approved: false,
+      decision: 'denied',
+    });
+    await expect(remaining).resolves.toEqual({ decision: 'denied' });
+  });
+
   it('auto-approves ACP fs bridge tool names to avoid duplicate host-side permission prompts', async () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });

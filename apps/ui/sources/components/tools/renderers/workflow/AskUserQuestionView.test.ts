@@ -17,6 +17,7 @@ const openAttachedSessionTerminal = vi.fn();
 const setWorkspaceTrust = vi.fn();
 const setResumeChoice = vi.fn();
 let supportsAnswersInPermission = true;
+let supportsStructuredQuestionAnswersV1 = false;
 let attachedSessionTerminalAvailable = true;
 let attachedSessionTerminalUnavailableReason: 'missing_machine' | 'terminal_disabled' | 'cli_update_required' | null = null;
 let activeAskUserQuestionRequest: { tool: string; kind?: 'user_action'; source?: string } | null = null;
@@ -36,7 +37,10 @@ installWorkflowRendererCommonModuleMocks({
         return createStorageModuleStub({
             useSession: () => ({
                 agentState: {
-                    capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission },
+                    capabilities: {
+                        askUserQuestionAnswersInPermission: supportsAnswersInPermission,
+                        structuredQuestionAnswersV1Supported: supportsStructuredQuestionAnswersV1,
+                    },
                     requests: activeAskUserQuestionRequest
                         ? {
                             [activeAskUserQuestionRequestId]: {
@@ -65,7 +69,10 @@ installWorkflowRendererCommonModuleMocks({
                     sessions: {
                         s1: {
                             agentState: {
-                                capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission },
+                                capabilities: {
+                                    askUserQuestionAnswersInPermission: supportsAnswersInPermission,
+                                    structuredQuestionAnswersV1Supported: supportsStructuredQuestionAnswersV1,
+                                },
                                 requests: activeAskUserQuestionRequest
                                     ? {
                                         [activeAskUserQuestionRequestId]: {
@@ -214,6 +221,7 @@ describe('AskUserQuestionView', () => {
         setWorkspaceTrust.mockReset();
         setResumeChoice.mockReset();
         supportsAnswersInPermission = true;
+        supportsStructuredQuestionAnswersV1 = false;
         attachedSessionTerminalAvailable = true;
         attachedSessionTerminalUnavailableReason = null;
         activeAskUserQuestionRequestId = 'toolu_1';
@@ -694,6 +702,38 @@ describe('AskUserQuestionView', () => {
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
             protocol: 'legacy-permission',
             answers: { 'Which file should I inspect?': 'src/index.ts' },
+        });
+    });
+
+    it('renders multiline freeform questions and permits an explicitly empty answer', async () => {
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        supportsStructuredQuestionAnswersV1 = true;
+        const tool = makeFreeformTool();
+        tool.input = {
+            questions: [{
+                question: 'Edit release notes',
+                header: 'Notes',
+                multiSelect: false,
+                options: [],
+                freeform: { initialValue: 'Existing notes', multiline: true, allowEmpty: true },
+            }],
+        };
+
+        const screen = await renderView(tool);
+        const input = screen.findByProps({ testID: 'ask-user-question.freeform:0' });
+        expect(input.props.multiline).toBe(true);
+        await act(async () => {
+            changeTextTestInstance(input, '', 'ask-user-question freeform input');
+        });
+
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
+        expect(submit).toBeTruthy();
+        expect(submit!.props.disabled).toBe(false);
+        await pressTestInstanceAsync(submit!, 'tools.askUserQuestion.submit');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'Edit release notes': [''] },
         });
     });
 
