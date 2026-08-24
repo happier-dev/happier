@@ -1,6 +1,6 @@
 /** @moduleRealm daemon */
 import { randomUUID } from 'node:crypto';
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { withJsonOwnerFileLock } from './host/fs/jsonOwnerFileLock.js';
@@ -62,6 +62,13 @@ export async function writeAtomicTextFile(input: FsAtomicWriteTextInput): Promis
             await unlink(temporaryPath).catch(() => undefined);
         }
     }
+}
+
+export async function writeAtomicTextFileIfChanged(input: FsAtomicWriteTextInput): Promise<boolean> {
+    const current = await readFile(input.path, 'utf8').catch(() => null);
+    if (current === input.contents) return false;
+    await writeAtomicTextFile(input);
+    return true;
 }
 
 export async function writeAtomicJsonFile(input: FsAtomicWriteJsonInput): Promise<void> {

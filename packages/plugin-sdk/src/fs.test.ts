@@ -20,6 +20,12 @@ type FsModule = Readonly<{
     mode?: number;
     temporaryDirectory?: string | null;
   }>): Promise<void>;
+  writeAtomicTextFileIfChanged(input: Readonly<{
+    path: string;
+    contents: string;
+    mode?: number;
+    temporaryDirectory?: string | null;
+  }>): Promise<boolean>;
 }>;
 
 async function loadFs(): Promise<FsModule> {
@@ -174,6 +180,24 @@ describe('fs helpers', () => {
     expect(await readFile(path, 'utf8')).toBe('{\n  "token": "new-token"\n}\n');
     const entries = await import('node:fs/promises').then(({ readdir }) => readdir(dirname(path)));
     expect(entries).toEqual(['auth.json']);
+  });
+
+  it('atomically publishes generated text only when its bytes change', async () => {
+    const fs = await loadFs();
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-fs-text-'));
+    const path = join(root, 'nested', 'extension.js');
+
+    expect(await fs.writeAtomicTextFileIfChanged({
+      path,
+      contents: 'export default {}\n',
+      mode: 0o600,
+    })).toBe(true);
+    expect(await fs.writeAtomicTextFileIfChanged({
+      path,
+      contents: 'export default {}\n',
+      mode: 0o600,
+    })).toBe(false);
+    expect(await readFile(path, 'utf8')).toBe('export default {}\n');
   });
 
   it('excludes a second process and preserves a successor lock during exact-owner release', async () => {

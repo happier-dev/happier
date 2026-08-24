@@ -10,5 +10,5 @@ export { resolveHomeDirFromEnvironment } from '../sessions/fileStores/paths.js';
 export { resolveConfiguredPath } from '../sessions/fileStores/paths.js';
 export { withExclusiveFileLock } from '../fs.js';
 export { writeAtomicJsonFile } from '../fs.js';
-export { writeAtomicTextFile } from '../fs.js';
+export { writeAtomicTextFile, writeAtomicTextFileIfChanged } from '../fs.js';
 export { writeSecureTempTextFileSync } from '../runtime/tempTextFile.js';

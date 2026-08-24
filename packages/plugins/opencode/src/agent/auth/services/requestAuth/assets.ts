@@ -1,5 +1,6 @@
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { writeAtomicTextFileIfChanged } from '@happier-dev/plugin-sdk/fs';
 
 import {
   buildConnectedAccountRequestAuthClientSource,
@@ -64,12 +65,6 @@ function buildAssetSource(
   });
 }
 
-async function writeFileIfChanged(path: string, content: string): Promise<void> {
-  const existing = await readFile(path, 'utf8').catch(() => null);
-  if (existing === content) return;
-  await writeFile(path, content, { mode: 0o600 });
-}
-
 export async function ensureOpenCodeRequestAuthPluginAssets(
   configHome: string,
   purposes: OpenCodeRequestAuthPurposeMap,
@@ -81,7 +76,11 @@ export async function ensureOpenCodeRequestAuthPluginAssets(
     const purpose = purposes[provider];
     if (!purpose) continue;
     const path = resolveOpenCodeRequestAuthPluginPath(configHome, provider);
-    await writeFileIfChanged(path, buildAssetSource(provider, purpose));
+    await writeAtomicTextFileIfChanged({
+      path,
+      contents: buildAssetSource(provider, purpose),
+      mode: 0o600,
+    });
     written.push(path);
   }
   return Object.freeze(written);

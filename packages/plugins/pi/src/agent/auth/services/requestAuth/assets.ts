@@ -1,5 +1,6 @@
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { writeAtomicTextFileIfChanged } from '@happier-dev/plugin-sdk/fs';
 
 import {
   buildConnectedAccountRequestAuthClientSource,
@@ -68,18 +69,16 @@ export function buildPiRequestAuthExtensionAssetSource(
   });
 }
 
-async function writeFileIfChanged(path: string, content: string): Promise<void> {
-  const existing = await readFile(path, 'utf8').catch(() => null);
-  if (existing === content) return;
-  await writeFile(path, content, { mode: 0o600 });
-}
-
 export async function ensurePiRequestAuthExtensionAsset(
   agentDir: string,
   purposes: PiRequestAuthPurposeMap,
 ): Promise<string> {
   await mkdir(resolvePiRequestAuthExtensionDir(agentDir), { recursive: true });
   const path = resolvePiRequestAuthExtensionPath(agentDir);
-  await writeFileIfChanged(path, buildPiRequestAuthExtensionAssetSource(purposes));
+  await writeAtomicTextFileIfChanged({
+    path,
+    contents: buildPiRequestAuthExtensionAssetSource(purposes),
+    mode: 0o600,
+  });
   return path;
 }
