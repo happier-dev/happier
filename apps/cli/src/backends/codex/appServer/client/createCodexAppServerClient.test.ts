@@ -19,6 +19,55 @@ import {
 } from '../testkit/fakeCodexAppServer';
 
 describe('createCodexAppServerClient', () => {
+    it('terminates the complete app-server process tree when disposed', async () => {
+        await withTempDir('happier-codex-app-server-client-process-tree-', async (root) => {
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                importLines: ['import { spawn } from "node:child_process";'],
+                bodyLines: [
+                    'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+                    'child.unref();',
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "initialized") continue;',
+                    '  if (msg.method === "state/read") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { childPid: child.pid } }) + "\\n");',
+                    '  }',
+                    '}',
+                ],
+            });
+            const client = await createCodexAppServerClient({
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer),
+            });
+            const result = await client.request('state/read') as { childPid: number };
+            const isAlive = (): boolean => {
+                try {
+                    process.kill(result.childPid, 0);
+                    return true;
+                } catch {
+                    return false;
+                }
+            };
+
+            try {
+                expect(isAlive()).toBe(true);
+                await client.dispose();
+                await waitForCondition(() => !isAlive(), {
+                    timeoutMs: 2_000,
+                    intervalMs: 25,
+                    label: 'Codex app-server descendant to terminate on dispose',
+                });
+            } finally {
+                if (isAlive()) process.kill(result.childPid, 'SIGKILL');
+            }
+        });
+    });
+
     it('initializes once and reuses the same app-server process across multiple requests', async () => {
         await withTempDir('happier-codex-app-server-client-persistent-init-', async (root) => {
             const fakeAppServer = await writeFakeCodexAppServerScript({
@@ -361,6 +410,45 @@ describe('createCodexAppServerClient', () => {
         });
     });
 
+    it('does not terminate a pending thread/resume request at the configured startup deadline', async () => {
+        await withTempDir('happier-codex-app-server-client-resume-no-deadline-', async (root) => {
+            const fakeAppServer = await writeFakeCodexAppServerScript({
+                dir: root,
+                bodyLines: [
+                    'for await (const line of rl) {',
+                    '  if (!line.trim()) continue;',
+                    '  const msg = JSON.parse(line);',
+                    '  if (msg.method === "initialize") {',
+                    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake", version: "0.0.0" } } }) + "\\n");',
+                    '    continue;',
+                    '  }',
+                    '  if (msg.method === "initialized") continue;',
+                    '  if (msg.method === "thread/resume") {',
+                    '    setTimeout(() => {',
+                    '      process.stdout.write(JSON.stringify({ id: msg.id, result: { thread: { id: "thread-slow" } } }) + "\\n");',
+                    '    }, 400);',
+                    '  }',
+                    '}',
+                ],
+            });
+
+            const client = await createCodexAppServerClient({
+                processEnv: createCodexAppServerProcessEnv(fakeAppServer, {
+                    HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '250',
+                    HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '250',
+                }),
+            });
+
+            try {
+                await expect(client.request('thread/resume', { threadId: 'thread-slow' })).resolves.toEqual({
+                    thread: { id: 'thread-slow' },
+                });
+            } finally {
+                await client.dispose();
+            }
+        });
+    });
+
     it('reads RPC timeout from the passed processEnv instead of global process.env', async () => {
         await withTempDir('happier-codex-app-server-client-timeout-env-', async (root) => {
             const fakeAppServer = await writeFakeCodexAppServerScript({
@@ -430,7 +518,7 @@ describe('createCodexAppServerClient', () => {
             const client = await createCodexAppServerClient({
                 processEnv: createCodexAppServerProcessEnv(fakeAppServer, {
                     HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '250',
-                    HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '1200',
+                    HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '5000',
                 }),
             });
 
@@ -442,8 +530,8 @@ describe('createCodexAppServerClient', () => {
         });
     });
 
-    it('keeps a fork-owned initialize request alive without a local hard timeout', async () => {
-        await withTempDir('happier-codex-app-server-client-fork-initialize-no-timeout-', async (root) => {
+    it('keeps the configured startup timeout when initialize is operation-cancellable', async () => {
+        await withTempDir('happier-codex-app-server-client-cancellable-initialize-', async (root) => {
             const fakeAppServer = await writeFakeCodexAppServerScript({
                 dir: root,
                 bodyLines: [
@@ -461,12 +549,14 @@ describe('createCodexAppServerClient', () => {
                 ],
             });
 
+            const controller = new AbortController();
+
             const client = await createCodexAppServerClient({
                 processEnv: createCodexAppServerProcessEnv(fakeAppServer, {
                     HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '250',
-                    HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '250',
+                    HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '5000',
                 }),
-                initializeRequestOptions: { timeoutMs: null },
+                initializeRequestOptions: { signal: controller.signal },
             });
 
             await client.dispose();
@@ -530,6 +620,7 @@ describe('createCodexAppServerClient', () => {
             await expect(createCodexAppServerClient({
                 processEnv: createCodexAppServerProcessEnv(fakeAppServer, {
                     HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '250',
+                    HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '250',
                 }),
             })).rejects.toThrow();
 
@@ -645,7 +736,7 @@ describe('createCodexAppServerClient', () => {
                         return true;
                     }
                 }, {
-                    timeoutMs: 1_000,
+                    timeoutMs: 5_000,
                     label: 'malformed-frame app-server process exit',
                 });
             } finally {

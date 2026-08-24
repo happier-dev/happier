@@ -12,6 +12,7 @@ const TEST_CODEX_HOME_ENV: NodeJS.ProcessEnv = {
   HOME: TEST_HOME_PATH,
   USERPROFILE: TEST_HOME_PATH,
   CODEX_HOME: '',
+  CODEX_SQLITE_HOME: join(TEST_HOME_PATH, '.codex'),
 };
 const DEFAULT_CODEX_HOME_PATH = resolveConfiguredCodexHome(TEST_CODEX_HOME_ENV);
 
@@ -116,6 +117,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
 	                vendorSessionId: 'thread-app-server',
 	                home: 'user',
 	                homePath: DEFAULT_CODEX_HOME_PATH,
+	                sqliteHomePath: DEFAULT_CODEX_HOME_PATH,
 	              },
 	            },
 	          },
@@ -169,6 +171,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
 	                vendorSessionId: 'thread-1',
 	                home: 'user',
 	                homePath: DEFAULT_CODEX_HOME_PATH,
+	                sqliteHomePath: DEFAULT_CODEX_HOME_PATH,
 	              },
 	            },
 	          },
@@ -194,6 +197,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
 	                vendorSessionId: 'thread-1',
 	                home: 'user',
 	                homePath: DEFAULT_CODEX_HOME_PATH,
+	                sqliteHomePath: DEFAULT_CODEX_HOME_PATH,
 	              },
 	            },
 	          },
@@ -316,6 +320,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       transcriptStorage: 'direct',
       codexHome: '/Users/test/.codex',
       activeServerDir: '/Users/test/.happier/servers/cloud',
+      processEnv: { HOME: '/Users/test', CODEX_SQLITE_HOME: '/Users/test/.codex' },
       updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => {
         updates.push(updater(createTestMetadata({ machineId: 'machine-1', path: '/repo' })));
       },
@@ -343,6 +348,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
                 vendorSessionId: 'thread-direct',
                 home: 'user',
                 homePath: '/Users/test/.codex',
+                sqliteHomePath: '/Users/test/.codex',
               },
             },
           },
@@ -371,6 +377,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
                   vendorSessionId: 'thread-direct',
                   home: 'user',
                   homePath: '/Users/test/.codex',
+                  sqliteHomePath: '/Users/test/.codex',
                 },
               },
             },
@@ -415,6 +422,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       backendMode: 'appServer',
       codexHome: '/Users/test/.happier/servers/cloud/daemon/connected-services/homes/openai-codex/profile-1/codex/codex-home',
       activeServerDir: '/Users/test/.happier/servers/cloud',
+      processEnv: { CODEX_SQLITE_HOME: '/Users/test/.codex-state' },
       updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => {
         updates.push(updater(createTestMetadata({ path: '/repo' })));
       },
@@ -446,6 +454,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
                 connectedServiceId: 'openai-codex',
                 connectedServiceProfileId: 'profile-1',
                 homePath: '/Users/test/.happier/servers/cloud/daemon/connected-services/homes/openai-codex/profile-1/codex/codex-home',
+                sqliteHomePath: '/Users/test/.codex-state',
               },
             },
           },
@@ -465,6 +474,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       codexHome,
       activeServerDir: '/Users/test/.happier/servers/cloud',
       processEnv: {
+        CODEX_SQLITE_HOME: '/Users/test/.codex-state',
         [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
           kind: 'profile',
           serviceId: 'openai-codex',
@@ -492,6 +502,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
             connectedServiceId: 'openai-codex',
             connectedServiceProfileId: 'profile-1',
             homePath: codexHome,
+            sqliteHomePath: '/Users/test/.codex-state',
           },
         },
       },

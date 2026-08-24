@@ -12,6 +12,7 @@ import {
 
 import type { CodexSessionBundle, ImportedSessionHandoffBundle } from '../../../session/handoff/types';
 import { resolveConfiguredCodexHome } from '../utils/resolveConfiguredCodexHome';
+import { resolveConfiguredCodexSqliteHome } from '../connectedServices/codexStateFileNames';
 
 function resolveCodexRuntimeSourceAffinity(source: unknown): Readonly<{
   home?: 'user' | 'connectedService';
@@ -51,6 +52,7 @@ export async function importCodexSessionBundle(params: Readonly<{
   sessionStorageMode?: 'direct' | 'persisted';
 }>): Promise<ImportedSessionHandoffBundle> {
   const codexHome = resolveConfiguredCodexHome(params.env);
+  const sqliteHome = resolveConfiguredCodexSqliteHome(params.env);
   const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(params.bundle) ?? { backendMode: 'appServer' as const };
   const importedRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(params.bundle.affinity?.runtimeDescriptor, 'codex');
   const sourceAffinity = resolveCodexRuntimeSourceAffinity(params.bundle.affinity?.source);
@@ -65,12 +67,14 @@ export async function importCodexSessionBundle(params: Readonly<{
       // Handoff bundles must be portable across machines; never import a source-machine homePath.
       // Rollout files are written into the *target* CODEX_HOME below, so the runtime must use that.
       homePath: codexHome,
+      sqliteHomePath: sqliteHome,
     })
     : buildCodexAgentRuntimeDescriptor({
       backendMode: runtimeIdentity.backendMode,
       vendorSessionId: params.bundle.remoteSessionId,
       ...sourceAffinity,
       homePath: codexHome,
+      sqliteHomePath: sqliteHome,
     });
   const directSource = runtimeDescriptor.provider.home === 'connectedService'
     ? {
@@ -100,7 +104,7 @@ export async function importCodexSessionBundle(params: Readonly<{
       directory: params.targetPath,
       agent: 'codex',
       resume: params.bundle.remoteSessionId,
-      environmentVariables: { CODEX_HOME: codexHome },
+      environmentVariables: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: sqliteHome },
       transcriptStorage: params.sessionStorageMode === 'persisted' ? 'persisted' : 'direct',
       approvedNewDirectoryCreation: true,
       ...(runtimeIdentity ? { codexBackendMode: runtimeIdentity.backendMode } : {}),

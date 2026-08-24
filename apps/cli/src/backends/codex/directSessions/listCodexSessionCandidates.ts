@@ -6,6 +6,7 @@ import { createCodexAppServerClient } from '../appServer/client/createCodexAppSe
 import { listCodexDirectSessionCandidatesViaExistingAppServerClient } from '../appServer/session/listCodexDirectSessionCandidatesViaAppServer';
 import { listCodexDirectSessionCandidatesViaRollouts } from './listCodexDirectSessionCandidatesViaRollouts';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
+import { resolveCodexAppServerProcessEnv } from '../appServer/resolveCodexAppServerProcessEnv';
 
 type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
 
@@ -61,11 +62,13 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
   let incomplete = false;
   const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
   for (const homeEntry of homeEntries) {
-    const processEnv = {
-      ...process.env,
-      ...params.env,
-      CODEX_HOME: homeEntry.codexHome,
-    } as NodeJS.ProcessEnv;
+    const processEnv = await resolveCodexAppServerProcessEnv({
+      processEnv: { ...process.env, ...params.env },
+      affinity: {
+        home: homeEntry.source.kind === 'codexHome' ? homeEntry.source.home : 'user',
+        homePath: homeEntry.codexHome,
+      },
+    });
     const startedAtMs = Date.now();
     let timedOut = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;

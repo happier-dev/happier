@@ -3904,23 +3904,25 @@ export function createCodexAppServerRuntime(params: Readonly<{
             preserveRequestedThreadId: boolean;
             strictNativeResumeIdentity?: boolean;
             allowOversizedResponseRecovery?: boolean;
+            includeTurns?: boolean;
         }>,
     ): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
         historyBoundary.beginHydration();
-        const requestOptions = options.allowOversizedResponseRecovery
+        const resumeRequestOptions = { timeoutMs: null } as const;
+        const recoveryReadRequestOptions = options.allowOversizedResponseRecovery
             ? { timeoutMs: readCodexAppServerResumeRecoveryTimeoutMs(runtimeEnv) }
             : undefined;
         const readResumedThreadHistory = async (): Promise<unknown> => {
             const startedAt = Date.now();
             logger.debug('[codex-app-server] Reading authoritative thread history after oversized resume response', {
                 threadId: requestedThreadId,
-                timeoutMs: requestOptions?.timeoutMs ?? null,
+                timeoutMs: recoveryReadRequestOptions?.timeoutMs ?? null,
             });
             try {
                 const result = await client.request('thread/read', {
                     threadId: requestedThreadId,
                     includeTurns: true,
-                }, requestOptions);
+                }, recoveryReadRequestOptions);
                 logger.debug('[codex-app-server] Authoritative thread history read completed after oversized resume response', {
                     threadId: requestedThreadId,
                     elapsedMs: Date.now() - startedAt,
@@ -3952,10 +3954,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
             ...buildThreadConfigOverrideParams(currentReasoningEffort),
             ...buildCurrentPermissionParams('thread'),
             persistExtendedHistory: true,
+            excludeTurns: options.includeTurns === true ? false : true,
         };
         let response: unknown;
         try {
-            response = await client.request('thread/resume', requestParams, requestOptions);
+            response = await client.request('thread/resume', requestParams, resumeRequestOptions);
             if (Object.prototype.hasOwnProperty.call(requestParams, 'permissions')) {
                 permissionSupport = 'supported';
             }
@@ -3979,7 +3982,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         ...buildThreadConfigOverrideParams(currentReasoningEffort),
                         ...buildCurrentLegacyPermissionParams('thread'),
                         persistExtendedHistory: true,
-                    }, requestOptions);
+                        excludeTurns: options.includeTurns === true ? false : true,
+                    }, resumeRequestOptions);
                 } catch (legacyError) {
                     const legacyRecoveredResponse = await recoverOversizedResumeResponse(legacyError);
                     if (!legacyRecoveredResponse) {
@@ -4066,12 +4070,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     preserveRequestedThreadId: options.strictNativeResumeIdentity === true,
                     strictNativeResumeIdentity: options.strictNativeResumeIdentity === true,
                     allowOversizedResponseRecovery: !importHistory,
+                    includeTurns: importHistory,
                 });
             }
             if (existingSessionId) {
                 return await resumeThread(client, existingSessionId, {
                     preserveRequestedThreadId: false,
                     allowOversizedResponseRecovery: !importHistory,
+                    includeTurns: importHistory,
                 });
             }
             const requestParams = {
