@@ -10,6 +10,7 @@ import {
 } from '../release/lib/public-release-rings.mjs';
 import {
   RELEASE_VALIDATION_PROFILE_IDS,
+  RELEASE_VALIDATION_SUITE_IDS,
   resolveReleaseValidationProfile,
   resolveReleaseValidationSourceKind,
   resolveReleaseValidationSuite,
@@ -42,6 +43,10 @@ import {
   resolveSessionContinuityExecution,
   runSessionContinuityValidation,
 } from './executors/session-continuity.mjs';
+import {
+  resolveSdkDualOriginExecution,
+  runSdkDualOriginValidation,
+} from './executors/sdk-dual-origin.mjs';
 
 const PLATFORM_ALIASES = new Map([
   ['linux', 'linux'],
@@ -145,6 +150,8 @@ function resolveExecution({ suite, repoRoot, platform, source, update, execution
       return resolveDaemonContinuityExecution({ repoRoot, source });
     case 'session-continuity':
       return resolveSessionContinuityExecution({ repoRoot, source });
+    case 'sdk-dual-origin':
+      return resolveSdkDualOriginExecution({ repoRoot, source });
     default:
       return null;
   }
@@ -216,15 +223,7 @@ async function main() {
   }
   const suite = resolveReleaseValidationSuite(suiteId);
   if (!suite) {
-    fail(`--suite must be one of ${JSON.stringify([
-      'installers-smoke',
-      'binary-smoke',
-      'artifact-verify',
-      'docker-release-assets',
-      'cli-update',
-      'daemon-continuity',
-      'session-continuity',
-    ])} (got: ${suiteId || '<empty>'})`);
+    fail(`--suite must be one of ${JSON.stringify(RELEASE_VALIDATION_SUITE_IDS)} (got: ${suiteId || '<empty>'})`);
   }
 
   const platform =
@@ -384,6 +383,10 @@ async function main() {
     }
     if (suite.id === 'session-continuity') {
       runSessionContinuityValidation({ repoRoot, source });
+      return;
+    }
+    if (suite.id === 'sdk-dual-origin') {
+      runSdkDualOriginValidation({ repoRoot, source });
       return;
     }
   }

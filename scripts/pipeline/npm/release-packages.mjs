@@ -16,6 +16,7 @@ import { resolveRollingPublishVersion } from '../release/lib/rolling-version-all
 import { admitNpmPublication, resolvePublicNpmPackageNames } from '../release/admit-release.mjs';
 import { assertCleanWorktree } from '../git/ensure-clean-worktree.mjs';
 import { exportPackSandboxTarball } from '../../../apps/stack/scripts/pack.mjs';
+import { resolvePublicSdkTarballValidationTimeoutMs } from './validate-public-sdk-tarballs.mjs';
 
 function fail(message) {
   console.error(message);
@@ -325,7 +326,10 @@ function publicSdkPublicationConfig(packageRelDir, version, peers) {
       expectedPackageName: '@happier-dev/sdk',
       requiredFiles: ['API.md', 'api-declarations.md', 'api-surface.json'],
       expectedPeerDependencies: peers,
-      apiGovernance: { profileId: 'sdk' },
+      // SDK's existing prepack is the single owner that turns its staged
+      // workspace dependency links into the physical bundled artifact tree.
+      // Other public packages retain their prepare-only candidate lifecycle.
+      apiGovernance: { profileId: 'sdk', candidatePreparation: 'prepack' },
     };
   }
   fail(`Unknown public SDK package directory: ${packageRelDir}`);
@@ -379,10 +383,15 @@ function runPublicSdkTarballValidationPhase(repoRoot, publicTarballs, opts) {
     ...(pluginUiTarball ? ['--plugin-ui-tarball', pluginUiTarball] : []),
     ...(sdkTarball ? ['--sdk-tarball', sdkTarball] : []),
   ];
-  // The phase runs three existing full-consumer proofs. Their individual
-  // command ceilings are ten minutes, so the parent must not cancel the
-  // combined sequential phase after the ordinary single-package ceiling.
-  run(opts, process.execPath, args, { cwd: repoRoot, timeoutMs: 30 * 60_000 });
+  run(opts, process.execPath, args, {
+    cwd: repoRoot,
+    timeoutMs: resolvePublicSdkTarballValidationTimeoutMs({
+      repoRoot,
+      pluginSdkTarball,
+      pluginUiTarball,
+      sdkTarball,
+    }),
+  });
 }
 
 async function main() {

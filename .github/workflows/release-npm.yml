@@ -268,10 +268,6 @@ jobs:
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: yarn --cwd "${SERVER_RUNNER_DIR}" test
 
-      - name: Prepare public plugin package declarations
-        if: inputs.publish_plugin_sdk
-        run: yarn --cwd packages/plugin-sdk -s prepare:declarations
-
       - name: Run public plugin package tests
         if: inputs.publish_plugin_sdk && inputs.run_tests
         run: |

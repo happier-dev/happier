@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { isAbsolute, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
@@ -58,7 +60,7 @@ const PACKED_SDK_SESSION_FLOW_DRIVER_HEADROOM_MS = 30_000;
 const PACKED_SDK_SESSION_FLOW_DRIVER_TIMEOUT_MS = (
   PACKED_SDK_SESSION_IDLE_TIMEOUT_SECONDS * PACKED_SDK_SESSION_IDLE_WAITS_PER_FLOW * 1_000
 ) + PACKED_SDK_SESSION_FLOW_DRIVER_HEADROOM_MS;
-const LIVE_SESSION_FLOW_COUNT = 3;
+const LIVE_SESSION_FLOW_COUNT = 5;
 const DUAL_ORIGIN_E2E_NON_SESSION_HEADROOM_MS = 300_000;
 const DUAL_ORIGIN_E2E_TIMEOUT_MS = (
   PACKED_SDK_SESSION_FLOW_DRIVER_TIMEOUT_MS * LIVE_SESSION_FLOW_COUNT
@@ -74,6 +76,12 @@ type ExternalSdkDriverRequest =
     machineId: string;
     operation: 'invoke';
     input?: unknown;
+  }>
+  | Readonly<{
+    endpoint: string;
+    machineId: string;
+    operation: 'search';
+    query: string;
   }>
   | Readonly<{
     endpoint: string;
@@ -104,6 +112,8 @@ type ExternalSdkDriverResult = Readonly<{
 type PackedSdkConsumer = Readonly<{
   consumerDir: string;
   driverPath: string;
+  logPaths: string[];
+  sdkCandidateTarballPath: string | null;
 }>;
 
 type FakeClaudeSessionTurnSentinel = Readonly<{
@@ -111,6 +121,13 @@ type FakeClaudeSessionTurnSentinel = Readonly<{
   fakeClaudeSessionId: string;
   followUpMessage: string;
   initialMessage: string;
+}>;
+
+type PackedSdkRunStreamProbe = Readonly<{
+  cancelled: true;
+  firstEventType: string;
+  runId: string;
+  streamId: string;
 }>;
 
 type FirstClassCliSessionFlowResult = Readonly<{
@@ -153,14 +170,22 @@ function parseJsonRecords(raw: string): Readonly<Record<string, unknown>>[] {
     .filter((value): value is Readonly<Record<string, unknown>> => value !== null);
 }
 
-function parseLastJsonRecord(raw: string, context: string): Readonly<Record<string, unknown>> {
-  const parsed = parseJsonRecords(raw).at(-1);
-  if (!parsed) throw new Error(`${context} did not emit a JSON object`);
-  return parsed;
+function parseSingleJsonRecord(raw: string, context: string): Readonly<Record<string, unknown>> {
+  const text = raw.trim();
+  if (!text) throw new Error(`${context} did not emit a JSON object`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error(`${context} did not emit exactly one JSON object`);
+  }
+  const record = asRecord(parsed);
+  if (!record) throw new Error(`${context} did not emit a JSON object`);
+  return record;
 }
 
 function parseExternalSdkDriverResult(raw: string): ExternalSdkDriverResult {
-  const parsed = parseLastJsonRecord(raw, 'Packed SDK driver');
+  const parsed = parseSingleJsonRecord(raw, 'Packed SDK driver');
   if (typeof parsed.ok !== 'boolean') throw new Error('Packed SDK driver did not emit a valid result');
   return {
     ok: parsed.ok,
@@ -170,6 +195,15 @@ function parseExternalSdkDriverResult(raw: string): ExternalSdkDriverResult {
       : {}),
     ...(Object.hasOwn(parsed, 'result') ? { result: parsed.result } : {}),
   };
+}
+
+function resolveReleaseValidationSdkTarball(): string | null {
+  const tarballPath = process.env.HAPPIER_RELEASE_VALIDATION_SDK_TARBALL?.trim() ?? '';
+  if (!tarballPath) return null;
+  if (!isAbsolute(tarballPath) || !tarballPath.endsWith('.tgz')) {
+    throw new Error('HAPPIER_RELEASE_VALIDATION_SDK_TARBALL must be an absolute .tgz path');
+  }
+  return resolve(tarballPath);
 }
 
 function externalConsumerEnv(params: Readonly<{
@@ -241,6 +275,8 @@ async function writePackedSdkDriver(params: Readonly<{ consumerDir: string }>): 
     '  let result;',
     '  if (request.operation === "invoke") {',
     `    result = await account.machine(requireMachineId()).actions.invoke({ pluginId: ${JSON.stringify(EXTERNAL_PLUGIN_ID)}, localId: ${JSON.stringify(EXTERNAL_ACTION_LOCAL_ID)} }, request.input ?? {});`,
+    '  } else if (request.operation === "search") {',
+    '    result = await account.machine(requireMachineId()).actions.search({ query: request.query, limit: 10 });',
     '  } else if (request.operation === "sessionStatus") {',
     '    result = await account.machine(requireMachineId()).actions.execute("session.status.get", { sessionId: request.sessionId, live: false });',
     '  } else if (request.operation === "sessionFlow") {',
@@ -273,10 +309,49 @@ async function writePackedSdkDriver(params: Readonly<{ consumerDir: string }>): 
     `      await session.waitForIdle({ timeoutSeconds: ${PACKED_SDK_SESSION_IDLE_TIMEOUT_SECONDS} });`,
     '      await session.send(request.followUpMessage);',
     `      await session.waitForIdle({ timeoutSeconds: ${PACKED_SDK_SESSION_IDLE_TIMEOUT_SECONDS} });`,
-    '      result = {',
+    '      const startedRun = await machine.actions.execute("execution.run.start", {',
     '        sessionId: session.id,',
-    '        transcript: await session.history({ limit: 10 }),',
-    '      };',
+    '        intent: "voice_agent",',
+    '        backendTarget: { kind: "backend", backendId: "claude", sourceKind: "built_in" },',
+    '        permissionMode: "read_only",',
+    '        retentionPolicy: "resumable",',
+    '        runClass: "long_lived",',
+    '        ioMode: "streaming",',
+    '        chatModelId: "packed-sdk-stream-chat",',
+    '        commitModelId: "packed-sdk-stream-commit",',
+    '        idleTtlSeconds: 300,',
+    '        initialContext: "Exercise the packed SDK execution-run stream.",',
+    '        verbosity: "short",',
+    '      });',
+    '      try {',
+    '        const stream = await machine.runs.startStream({',
+    '          sessionId: session.id,',
+    '          runId: startedRun.runId,',
+    '          message: "Emit one stream event, then let the caller cancel it.",',
+    '        });',
+    '        const iterator = stream[Symbol.asyncIterator]();',
+    '        const first = await iterator.next();',
+    '        if (first.done || !first.value || typeof first.value.t !== "string") {',
+    '          throw new Error("packed_sdk_run_stream_emitted_no_event");',
+    '        }',
+    '        if (!iterator.return) throw new Error("packed_sdk_run_stream_is_not_cancellable");',
+    '        await iterator.return();',
+    '        result = {',
+    '          sessionId: session.id,',
+    '          transcript: await session.history({ limit: 10 }),',
+    '          runStream: {',
+    '            runId: stream.runId,',
+    '            streamId: stream.streamId,',
+    '            firstEventType: first.value.t,',
+    '            cancelled: true,',
+    '          },',
+    '        };',
+    '      } finally {',
+    '        await machine.actions.execute("execution.run.stop", {',
+    '          sessionId: session.id,',
+    '          runId: startedRun.runId,',
+    '        });',
+    '      }',
     '    } finally {',
     '      await session.stop();',
     '    }',
@@ -299,7 +374,10 @@ async function writePackedSdkDriver(params: Readonly<{ consumerDir: string }>): 
   return driverPath;
 }
 
-async function installPackedSdkConsumer(params: Readonly<{ testDir: string }>): Promise<PackedSdkConsumer> {
+async function installPackedSdkConsumer(params: Readonly<{
+  testDir: string;
+  sdkCandidateTarballPath: string | null;
+}>): Promise<PackedSdkConsumer> {
   const packageDir = resolve(join(params.testDir, 'packed-sdk'));
   const consumerDir = resolve(join(params.testDir, 'sdk-consumer'));
   await Promise.all([
@@ -307,35 +385,97 @@ async function installPackedSdkConsumer(params: Readonly<{ testDir: string }>): 
     mkdir(consumerDir, { recursive: true }),
   ]);
 
-  // The package is packed only as part of this slow live gate. This source is
-  // intentionally inert until the approved candidate/governance work is ready.
-  const packed = await exportPackSandboxTarball({
-    monorepoRoot: repoRootDir(),
-    packageRelDir: 'packages/sdk',
-    destinationDir: packageDir,
-  });
-  expect(packed.package).toMatchObject({ name: '@happier-dev/sdk' });
-  const tarballName = requireNonEmptyString(packed.tarball?.name, 'SDK tarball name');
-  expect(tarballName).toMatch(/\.tgz$/u);
-  const tarballPath = resolve(join(packageDir, tarballName));
+  const tarballPath = params.sdkCandidateTarballPath ?? await (async () => {
+    // The regular source test packs its own sandbox artifact. Candidate validation
+    // instead consumes the exact tarball supplied by the release-validation owner.
+    const packed = await exportPackSandboxTarball({
+      monorepoRoot: repoRootDir(),
+      packageRelDir: 'packages/sdk',
+      destinationDir: packageDir,
+    });
+    expect(packed.package).toMatchObject({ name: '@happier-dev/sdk' });
+    const tarballName = requireNonEmptyString(packed.tarball?.name, 'SDK tarball name');
+    expect(tarballName).toMatch(/\.tgz$/u);
+    return resolve(join(packageDir, tarballName));
+  })();
 
   await writeFile(join(consumerDir, 'package.json'), JSON.stringify({
     name: 'external-packed-sdk-consumer',
     private: true,
     type: 'module',
   }, null, 2) + '\n', 'utf8');
+  const npmInstallStdoutPath = join(consumerDir, 'npm-install.stdout.log');
+  const npmInstallStderrPath = join(consumerDir, 'npm-install.stderr.log');
   await runLoggedCommand({
     command: 'npm',
     args: ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarballPath],
     cwd: consumerDir,
     env: process.env,
-    stdoutPath: join(consumerDir, 'npm-install.stdout.log'),
-    stderrPath: join(consumerDir, 'npm-install.stderr.log'),
+    stdoutPath: npmInstallStdoutPath,
+    stderrPath: npmInstallStderrPath,
     timeoutMs: 120_000,
   });
 
   const driverPath = await writePackedSdkDriver({ consumerDir });
-  return { consumerDir, driverPath };
+  return {
+    consumerDir,
+    driverPath,
+    logPaths: [npmInstallStdoutPath, npmInstallStderrPath],
+    sdkCandidateTarballPath: params.sdkCandidateTarballPath,
+  };
+}
+
+async function runPackedSdkBasicExample(params: Readonly<{
+  consumer: PackedSdkConsumer;
+  endpoint: string;
+  endpointMode: 'daemon' | 'server';
+  token: string;
+  workspaceDir: string;
+  logPrefix: string;
+}>): Promise<Readonly<{
+  sessionId: string;
+  followedTranscript: readonly unknown[];
+  transcript: readonly unknown[];
+}>> {
+  const examplePath = resolve(
+    params.consumer.consumerDir,
+    'node_modules',
+    '@happier-dev',
+    'sdk',
+    'examples',
+    'basic',
+    'index.ts',
+  );
+  const stdoutPath = join(params.consumer.consumerDir, `${params.logPrefix}.stdout.log`);
+  const stderrPath = join(params.consumer.consumerDir, `${params.logPrefix}.stderr.log`);
+  params.consumer.logPaths.push(stdoutPath, stderrPath);
+  const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href;
+  await runLoggedCommand({
+    command: process.execPath,
+    args: ['--import', tsxLoader, examplePath],
+    cwd: params.consumer.consumerDir,
+    env: {
+      ...externalConsumerEnv({
+        endpoint: params.endpoint,
+        token: params.token,
+        workspaceDir: params.workspaceDir,
+      }),
+      HAPPIER_ENDPOINT_MODE: params.endpointMode,
+      HAPPIER_AGENT_ID: 'claude',
+    },
+    stdoutPath,
+    stderrPath,
+    timeoutMs: PACKED_SDK_SESSION_FLOW_DRIVER_TIMEOUT_MS,
+  });
+  const result = parseSingleJsonRecord(await readFile(stdoutPath, 'utf8'), 'Packed SDK basic example');
+  if (!Array.isArray(result.followedTranscript) || !Array.isArray(result.transcript)) {
+    throw new Error('Packed SDK basic example did not return transcript arrays');
+  }
+  return {
+    sessionId: requireNonEmptyString(result.sessionId, 'packed SDK basic-example session id'),
+    followedTranscript: result.followedTranscript,
+    transcript: result.transcript,
+  };
 }
 
 function createFakeClaudeSessionTurnSentinel(origin: 'server' | 'local' | 'cli'): FakeClaudeSessionTurnSentinel {
@@ -377,7 +517,11 @@ async function runPackedSdkSessionFlow(params: Readonly<{
   workspaceDir: string;
   logPrefix: string;
   machineId?: string;
-}>): Promise<Readonly<{ sessionId: string; transcript: unknown }>> {
+}>): Promise<Readonly<{
+  sessionId: string;
+  transcript: unknown;
+  runStream: PackedSdkRunStreamProbe;
+}>> {
   const response = await runExternalSdkDriver({
     consumer: params.consumer,
     endpoint: params.endpoint,
@@ -401,12 +545,19 @@ async function runPackedSdkSessionFlow(params: Readonly<{
     throw new Error(`Packed SDK session flow failed (${response.code ?? 'unknown'})`);
   }
   const result = asRecord(response.result);
-  if (!result || !Object.hasOwn(result, 'transcript')) {
-    throw new Error('Packed SDK session flow did not return a transcript');
+  const runStream = asRecord(result?.runStream);
+  if (!result || !Object.hasOwn(result, 'transcript') || !runStream || runStream.cancelled !== true) {
+    throw new Error('Packed SDK session flow did not return transcript and cancelled stream evidence');
   }
   return {
     sessionId: requireNonEmptyString(result.sessionId, 'session-flow session id'),
     transcript: result.transcript,
+    runStream: {
+      runId: requireNonEmptyString(runStream.runId, 'session-flow stream run id'),
+      streamId: requireNonEmptyString(runStream.streamId, 'session-flow stream id'),
+      firstEventType: requireNonEmptyString(runStream.firstEventType, 'session-flow stream first event type'),
+      cancelled: true,
+    },
   };
 }
 
@@ -428,26 +579,49 @@ async function runFirstClassCliSessionFlow(params: Readonly<{
     ...params.cliLaunchSpec.env,
     HAPPIER_TOKEN: params.token,
   };
-  const invoke = async (logPrefix: string, args: string[], timeoutMs = 120_000) => {
+  const invokeRaw = async (
+    logPrefix: string,
+    args: string[],
+    timeoutMs = 120_000,
+    options: Readonly<{ explicitApiToken?: string }> = {},
+  ) => {
     const stdoutPath = join(params.logDir, `${logPrefix}.stdout.log`);
     const stderrPath = join(params.logDir, `${logPrefix}.stderr.log`);
     logPaths.push(stdoutPath, stderrPath);
+    const invocationEnv = { ...cliEnv };
+    if (options.explicitApiToken) delete invocationEnv.HAPPIER_TOKEN;
     await runLoggedCommand({
       command: params.cliLaunchSpec.command,
       args: [
         ...params.cliLaunchSpec.args,
         '--server-url',
         params.serverUrl,
+        ...(options.explicitApiToken ? ['--api-token', options.explicitApiToken] : []),
         ...args,
       ],
       cwd: params.cliLaunchSpec.cwd ?? params.logDir,
-      env: cliEnv,
+      env: invocationEnv,
       stdoutPath,
       stderrPath,
       timeoutMs,
     });
-    return parseLastJsonRecord(await readFile(stdoutPath, 'utf8'), `First-class CLI ${logPrefix}`);
+    return await readFile(stdoutPath, 'utf8');
   };
+  const invoke = async (
+    logPrefix: string,
+    args: string[],
+    timeoutMs = 120_000,
+    options: Readonly<{ explicitApiToken?: string }> = {},
+  ) => {
+    return parseSingleJsonRecord(
+      await invokeRaw(logPrefix, args, timeoutMs, options),
+      `First-class CLI ${logPrefix}`,
+    );
+  };
+
+  const historyHelp = await invokeRaw('cli-first-class-history-help', ['history', '--help']);
+  expect(historyHelp).toContain('happier history <session-id-or-prefix-or-tag>');
+  expect(historyHelp).not.toContain('happier session');
 
   const spawned = await invoke('cli-first-class-spawn', [
     'spawn',
@@ -477,7 +651,12 @@ async function runFirstClassCliSessionFlow(params: Readonly<{
   const spawnedData = asRecord(spawned.data);
   const spawnedSession = asRecord(spawnedData?.session);
   const sessionId = requireNonEmptyString(spawnedSession?.id, 'first-class CLI spawned session id');
+  const uniqueSessionPrefix = sessionId.slice(0, 12);
+  if (uniqueSessionPrefix.length !== 12) {
+    throw new Error('First-class CLI spawned session id is too short for a unique-prefix probe');
+  }
 
+  let followProcess: SpawnedProcess | null = null;
   try {
     const initialIdle = await invoke('cli-first-class-wait-initial', [
       'wait',
@@ -493,9 +672,32 @@ async function runFirstClassCliSessionFlow(params: Readonly<{
       data: { sessionId, idle: true },
     });
 
+    const followStdoutPath = join(params.logDir, 'cli-first-class-history-follow.stdout.log');
+    const followStderrPath = join(params.logDir, 'cli-first-class-history-follow.stderr.log');
+    logPaths.push(followStdoutPath, followStderrPath);
+    followProcess = spawnLoggedProcess({
+      command: params.cliLaunchSpec.command,
+      args: [
+        ...params.cliLaunchSpec.args,
+        '--server-url',
+        params.serverUrl,
+        'history',
+        uniqueSessionPrefix,
+        '--follow',
+        '--jsonl',
+      ],
+      cwd: params.cliLaunchSpec.cwd ?? params.logDir,
+      env: cliEnv,
+      stdoutPath: followStdoutPath,
+      stderrPath: followStderrPath,
+    });
+    // The finite follow action starts from tail. Give the first CLI poll time
+    // to acquire that cursor before the distinct follow-up turn is admitted.
+    await sleep(1_000);
+
     const sent = await invoke('cli-first-class-send', [
       'send',
-      sessionId,
+      uniqueSessionPrefix,
       params.fakeClaudeSentinel.followUpMessage,
       '--json',
     ]);
@@ -508,7 +710,7 @@ async function runFirstClassCliSessionFlow(params: Readonly<{
 
     const followUpIdle = await invoke('cli-first-class-wait-follow-up', [
       'wait',
-      sessionId,
+      uniqueSessionPrefix,
       '--timeout',
       String(PACKED_SDK_SESSION_IDLE_TIMEOUT_SECONDS),
       '--json',
@@ -520,13 +722,14 @@ async function runFirstClassCliSessionFlow(params: Readonly<{
       data: { sessionId, idle: true },
     });
 
-    const history = await invoke('cli-first-class-history', [
+    const firstClassHistoryRaw = await invokeRaw('cli-first-class-history', [
       'history',
-      sessionId,
+      uniqueSessionPrefix,
       '--tail',
       '10',
       '--json',
     ]);
+    const history = parseSingleJsonRecord(firstClassHistoryRaw, 'First-class CLI cli-first-class-history');
     expect(history).toMatchObject({
       v: 1,
       ok: true,
@@ -537,15 +740,74 @@ async function runFirstClassCliSessionFlow(params: Readonly<{
     if (!historyData || !Array.isArray(historyData.messages)) {
       throw new Error('First-class CLI history did not return messages');
     }
-    return { sessionId, transcript: historyData.messages, logPaths };
-  } finally {
-    const stopped = await invoke('cli-first-class-stop', ['stop', sessionId, '--json']);
-    expect(stopped).toMatchObject({
+
+    const nestedHistoryRaw = await invokeRaw('cli-nested-history', [
+      'session',
+      'history',
+      uniqueSessionPrefix,
+      '--tail',
+      '10',
+      '--json',
+    ]);
+    expect(nestedHistoryRaw).toBe(firstClassHistoryRaw);
+
+    const compactHistory = await invokeRaw('cli-first-class-history-compact', [
+      'history',
+      uniqueSessionPrefix,
+      '--tail',
+      '10',
+    ]);
+    expect(compactHistory).toContain(`assistant: FAKE_CLAUDE_OK_2`);
+    expect(compactHistory).toContain('History fetched (');
+
+    const delegated = await invoke('cli-first-class-delegate', [
+      'delegate',
+      uniqueSessionPrefix,
+      'Confirm the current Agent can run a delegated task.',
+      '--agent',
+      'claude',
+      '--permission-mode',
+      'read_only',
+      '--json',
+    ], 120_000, { explicitApiToken: params.token });
+    expect(delegated).toMatchObject({
       v: 1,
       ok: true,
-      kind: 'session_stop',
-      data: { sessionId },
+      kind: 'session_delegate_start',
+      data: {
+        sessionId,
+        results: expect.arrayContaining([
+          expect.objectContaining({ key: expect.stringContaining('claude'), ok: true }),
+        ]),
+      },
     });
+
+    return { sessionId, transcript: historyData.messages, logPaths };
+  } finally {
+    try {
+      const stopped = await invoke('cli-first-class-stop', ['stop', uniqueSessionPrefix, '--json']);
+      expect(stopped).toMatchObject({
+        v: 1,
+        ok: true,
+        kind: 'session_stop',
+        data: { sessionId },
+      });
+    } finally {
+      if (followProcess) {
+        try {
+          await waitForLoggedProcessExit(followProcess, 'first-class history --follow termination');
+        } catch (error) {
+          await followProcess.stop().catch(() => {});
+          throw error;
+        }
+        const followOutput = await readFile(followProcess.stdoutPath, 'utf8');
+        const followLines = followOutput.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+        const followRecords = parseJsonRecords(followOutput);
+        expect(followRecords).toHaveLength(followLines.length);
+        expect(followRecords).not.toHaveLength(0);
+        expect(JSON.stringify(followRecords)).toContain(params.fakeClaudeSentinel.followUpMessage);
+      }
+    }
   }
 }
 
@@ -594,6 +856,7 @@ async function runExternalSdkDriver(params: Readonly<{
 }>): Promise<ExternalSdkDriverResult> {
   const stdoutPath = join(params.consumer.consumerDir, `${params.logPrefix}.stdout.log`);
   const stderrPath = join(params.consumer.consumerDir, `${params.logPrefix}.stderr.log`);
+  params.consumer.logPaths.push(stdoutPath, stderrPath);
   await runLoggedCommand({
     command: process.execPath,
     args: [params.consumer.driverPath],
@@ -613,13 +876,16 @@ function startExternalSdkDriver(params: Readonly<{
   request: ExternalSdkDriverRequest;
   logPrefix: string;
 }>): SpawnedProcess {
+  const stdoutPath = join(params.consumer.consumerDir, `${params.logPrefix}.stdout.log`);
+  const stderrPath = join(params.consumer.consumerDir, `${params.logPrefix}.stderr.log`);
+  params.consumer.logPaths.push(stdoutPath, stderrPath);
   return spawnLoggedProcess({
     command: process.execPath,
     args: [params.consumer.driverPath],
     cwd: params.consumer.consumerDir,
     env: externalDriverEnv(params),
-    stdoutPath: join(params.consumer.consumerDir, `${params.logPrefix}.stdout.log`),
-    stderrPath: join(params.consumer.consumerDir, `${params.logPrefix}.stderr.log`),
+    stdoutPath,
+    stderrPath,
   });
 }
 
@@ -640,6 +906,16 @@ async function waitForExternalSdkDriverResult(process: SpawnedProcess): Promise<
     throw new Error('Packed SDK driver exited unsuccessfully');
   }
   return parseExternalSdkDriverResult(await readFile(process.stdoutPath, 'utf8'));
+}
+
+async function waitForLoggedProcessExit(process: SpawnedProcess, context: string): Promise<void> {
+  await waitFor(async () => process.child.exitCode !== null || process.child.signalCode !== null, {
+    timeoutMs: 45_000,
+    intervalMs: 100,
+    context,
+  });
+  expect(process.child.exitCode).toBe(0);
+  expect(process.child.signalCode).toBeNull();
 }
 
 function buildTargetActionArtifactHeader(request: TargetActionApprovalRequestV1): Readonly<Record<string, unknown>> {
@@ -1066,6 +1342,7 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     });
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
+    const sdkCandidateTarballPath = resolveReleaseValidationSdkTarball();
     const daemonEnv: NodeJS.ProcessEnv = {
       ...process.env,
       ...liveEnv,
@@ -1084,6 +1361,12 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     delete daemonEnv.HAPPY_E2E_FAKE_CLAUDE_LOG;
     delete daemonEnv.HAPPY_E2E_FAKE_CLAUDE_INVOCATION_ID;
     delete daemonEnv.HAPPY_E2E_FAKE_CLAUDE_SESSION_ID;
+    if (sdkCandidateTarballPath) {
+      // The shipped example does not carry test-only spawn environment controls.
+      // Configure the daemon's test fixture once so both public origins can run it.
+      daemonEnv.HAPPIER_CLAUDE_PATH = fakeClaudePath;
+      daemonEnv.HAPPIER_E2E_FAKE_CLAUDE_LOG = fakeClaudeLogPath;
+    }
     const daemonLaunchSpec = pendingDaemonLaunchSpec;
     if (!daemonLaunchSpec) throw new Error('Expected a prepared daemon CLI launch spec');
     // startTestDaemon owns launch-spec cleanup from invocation onward, including startup failure.
@@ -1109,7 +1392,7 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
       presentUserToken: auth.token,
       label: 'dual-origin packed SDK primary',
     });
-    const consumer = await installPackedSdkConsumer({ testDir });
+    const consumer = await installPackedSdkConsumer({ testDir, sdkCandidateTarballPath });
 
     // No daemon address or machine id is supplied here. The packed test-owned
     // consumer must discover the current machine through the Account server then relay.
@@ -1129,6 +1412,12 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
       sentinel: serverFakeClaudeSentinel,
     });
     expect(JSON.stringify(serverSession.transcript)).toContain('FAKE_CLAUDE_OK_2');
+    expect(serverSession.runStream).toMatchObject({
+      cancelled: true,
+      runId: expect.any(String),
+      streamId: expect.any(String),
+      firstEventType: expect.any(String),
+    });
 
     const localEndpoint = `http://127.0.0.1:${daemon.state.httpPort}`;
     const localFakeClaudeSentinel = createFakeClaudeSessionTurnSentinel('local');
@@ -1149,6 +1438,36 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     });
     expect(localSession.sessionId).not.toBe(serverSession.sessionId);
     expect(JSON.stringify(localSession.transcript)).toContain('FAKE_CLAUDE_OK_2');
+    expect(localSession.runStream).toMatchObject({
+      cancelled: true,
+      runId: expect.any(String),
+      streamId: expect.any(String),
+      firstEventType: expect.any(String),
+    });
+
+    if (consumer.sdkCandidateTarballPath) {
+      const serverBasicExample = await runPackedSdkBasicExample({
+        consumer,
+        endpoint: server.baseUrl,
+        endpointMode: 'server',
+        token: primaryPat.token,
+        workspaceDir,
+        logPrefix: 'server-shipped-basic-example',
+      });
+      const localBasicExample = await runPackedSdkBasicExample({
+        consumer,
+        endpoint: localEndpoint,
+        endpointMode: 'daemon',
+        token: primaryPat.token,
+        workspaceDir,
+        logPrefix: 'local-shipped-basic-example',
+      });
+      expect(serverBasicExample.sessionId).not.toBe(localBasicExample.sessionId);
+      expect(serverBasicExample.followedTranscript).not.toHaveLength(0);
+      expect(serverBasicExample.transcript).not.toHaveLength(0);
+      expect(localBasicExample.followedTranscript).not.toHaveLength(0);
+      expect(localBasicExample.transcript).not.toHaveLength(0);
+    }
 
     const cliFakeClaudeSentinel = createFakeClaudeSessionTurnSentinel('cli');
     const cliSession = await runFirstClassCliSessionFlow({
@@ -1169,14 +1488,14 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     });
     expect(JSON.stringify(cliSession.transcript)).toContain('FAKE_CLAUDE_OK_2');
 
-    const serverRawRequestId = `raw-server-backends-${randomUUID()}`;
+    const rawBackendsRequestId = `raw-backends-${randomUUID()}`;
     const serverRawBackends = await requestRawExternalAction({
       actionId: 'agents.backends.list',
       baseUrl: server.baseUrl,
       token: primaryPat.token,
       body: {
         v: 1,
-        requestId: serverRawRequestId,
+        requestId: rawBackendsRequestId,
         target: { kind: 'machine', machineId: seeded.machineId },
         input: { includeDisabled: true },
       },
@@ -1186,7 +1505,7 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     expect(serverRawBackends.data).toMatchObject({
       v: 1,
       actionId: 'agents.backends.list',
-      requestId: serverRawRequestId,
+      requestId: rawBackendsRequestId,
       execution: {
         ok: true,
         result: { items: expect.any(Array) },
@@ -1207,14 +1526,13 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     expect(serverRawMalformed.headers.get('cache-control')).toBe('no-store');
     expect(serverRawMalformed.data).toEqual({ error: 'invalid_request', code: 'invalid_envelope' });
 
-    const daemonRawRequestId = `raw-daemon-backends-${randomUUID()}`;
     const daemonRawBackends = await requestRawExternalAction({
       actionId: 'agents.backends.list',
       baseUrl: localEndpoint,
       token: primaryPat.token,
       body: {
         v: 1,
-        requestId: daemonRawRequestId,
+        requestId: rawBackendsRequestId,
         input: { includeDisabled: true },
       },
     });
@@ -1223,12 +1541,13 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     expect(daemonRawBackends.data).toMatchObject({
       v: 1,
       actionId: 'agents.backends.list',
-      requestId: daemonRawRequestId,
+      requestId: rawBackendsRequestId,
       execution: {
         ok: true,
         result: { items: expect.any(Array) },
       },
     });
+    expect(daemonRawBackends.data).toEqual(serverRawBackends.data);
     const daemonRawMalformed = await requestRawExternalAction({
       actionId: 'agents.backends.list',
       baseUrl: localEndpoint,
@@ -1242,6 +1561,7 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     expect(daemonRawMalformed.status).toBe(400);
     expect(daemonRawMalformed.headers.get('cache-control')).toBe('no-store');
     expect(daemonRawMalformed.data).toEqual({ error: 'invalid_request', code: 'invalid_envelope' });
+    expect(daemonRawMalformed.data).toEqual(serverRawMalformed.data);
 
     await installReviewedPackedPlugin({
       testDir,
@@ -1249,6 +1569,47 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
       daemonHomeDir,
       serverBaseUrl: server.baseUrl,
       markerPath: actionMarkerPath,
+    });
+
+    const localActionSearch = await runExternalSdkDriver({
+      consumer,
+      endpoint: localEndpoint,
+      token: primaryPat.token,
+      request: {
+        endpoint: localEndpoint,
+        machineId: seeded.machineId,
+        operation: 'search',
+        query: EXTERNAL_ACTION_ID,
+      },
+      logPrefix: 'local-contributed-action-search',
+    });
+    expect(localActionSearch).toMatchObject({
+      ok: true,
+      result: {
+        actionSpecs: expect.arrayContaining([
+          expect.objectContaining({ id: EXTERNAL_ACTION_ID }),
+        ]),
+      },
+    });
+    const relayActionSearch = await runExternalSdkDriver({
+      consumer,
+      endpoint: server.baseUrl,
+      token: primaryPat.token,
+      request: {
+        endpoint: server.baseUrl,
+        machineId: seeded.machineId,
+        operation: 'search',
+        query: EXTERNAL_ACTION_ID,
+      },
+      logPrefix: 'relay-contributed-action-search',
+    });
+    expect(relayActionSearch).toMatchObject({
+      ok: true,
+      result: {
+        actionSpecs: expect.arrayContaining([
+          expect.objectContaining({ id: EXTERNAL_ACTION_ID }),
+        ]),
+      },
     });
 
     const approvedMarker = `approve-${randomUUID()}`;
@@ -1299,6 +1660,53 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
     });
     expect(execution.execution).toMatchObject({ ok: true });
 
+    const relayApprovedMarker = `relay-approve-${randomUUID()}`;
+    const relayApprovalDriver = startExternalSdkDriver({
+      consumer,
+      endpoint: server.baseUrl,
+      token: primaryPat.token,
+      request: {
+        endpoint: server.baseUrl,
+        machineId: seeded.machineId,
+        operation: 'invoke',
+        input: { marker: relayApprovedMarker },
+      },
+      logPrefix: 'relay-approved-action',
+    });
+    pendingDriver = relayApprovalDriver;
+    const relayApproved = await waitForOpenTargetActionApproval({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      cliAccessKey,
+      inputMarker: relayApprovedMarker,
+    });
+    expect(relayApproved.request).toMatchObject({
+      requestedSurface: 'api',
+      qualifiedActionId: EXTERNAL_ACTION_ID,
+      status: 'open',
+      input: { marker: relayApprovedMarker },
+    });
+    expect(await readMarkerLines(actionMarkerPath)).toHaveLength(1);
+    expect(relayApprovalDriver.child.exitCode).toBeNull();
+    expect(relayApprovalDriver.child.signalCode).toBeNull();
+    await decideTargetActionApproval({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      cliAccessKey,
+      approval: relayApproved,
+      decision: 'approve',
+    });
+    expect(await waitForExternalSdkDriverResult(relayApprovalDriver)).toMatchObject({ ok: true });
+    pendingDriver = null;
+    await waitForMarkerLineCount(actionMarkerPath, 2);
+    const relayExecution = await waitForTargetActionApprovalExecution({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      cliAccessKey,
+      artifactId: relayApproved.artifact.id,
+    });
+    expect(relayExecution.execution).toMatchObject({ ok: true });
+
     const rejectedMarker = `reject-${randomUUID()}`;
     const relayRejectionDriver = startExternalSdkDriver({
       consumer,
@@ -1319,7 +1727,7 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
       cliAccessKey,
       inputMarker: rejectedMarker,
     });
-    expect(await readMarkerLines(actionMarkerPath)).toHaveLength(1);
+    expect(await readMarkerLines(actionMarkerPath)).toHaveLength(2);
     expect(relayRejectionDriver.child.exitCode).toBeNull();
     expect(relayRejectionDriver.child.signalCode).toBeNull();
     await decideTargetActionApproval({
@@ -1334,7 +1742,7 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
       code: 'plugin_action_current_intent_rejected',
     });
     pendingDriver = null;
-    expect(await readMarkerLines(actionMarkerPath)).toHaveLength(1);
+    expect(await readMarkerLines(actionMarkerPath)).toHaveLength(2);
 
     const disabled = await runExternalSdkDriver({
       consumer,
@@ -1434,6 +1842,7 @@ describe('core e2e: packed SDK external Actions use one authenticated daemon exe
         ...serverLogPaths,
         daemon.proc.stdoutPath,
         daemon.proc.stderrPath,
+        ...consumer.logPaths,
         ...cliSession.logPaths,
       ],
     });

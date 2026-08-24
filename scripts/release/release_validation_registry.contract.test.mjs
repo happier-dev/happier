@@ -21,6 +21,7 @@ test('release-validation registry exposes the canonical suite and source ids', (
     'cli-update',
     'daemon-continuity',
     'session-continuity',
+    'sdk-dual-origin',
   ]);
 
   assert.deepEqual(RELEASE_VALIDATION_SOURCE_KINDS, [
@@ -34,6 +35,7 @@ test('release-validation registry exposes the canonical suite and source ids', (
   assert.equal(resolveReleaseValidationSourceKind(' local-build '), 'local-build');
   assert.equal(resolveReleaseValidationSourceKind('unknown'), null);
   assert.equal(resolveReleaseValidationSuite(' cli-update ')?.executorId, 'cli-update');
+  assert.deepEqual(resolveReleaseValidationSuite('sdk-dual-origin')?.supportedDirectSourceKinds, ['local-pack']);
   assert.equal(resolveReleaseValidationSuite('unknown'), null);
 });
 
@@ -141,6 +143,8 @@ test('release-validation registry owns the integrated, stable, and deep release 
   assert.equal(deep?.checksProfile, null);
   assert.equal(deep?.manualEntrypoint, 'skills/happier-release-validation/SKILL.md');
   assert.deepEqual(deep?.automaticSuiteIds, []);
+  assert.equal(integrated?.automaticSuiteIds.includes('sdk-dual-origin'), false);
+  assert.equal(stable?.automaticSuiteIds.includes('sdk-dual-origin'), false);
   assert.deepEqual(Object.keys(integrated ?? {}).sort(), [
     'automaticSuiteIds',
     'checksProfile',

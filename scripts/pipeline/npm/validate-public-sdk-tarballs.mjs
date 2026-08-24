@@ -7,6 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { sanitizePackageArtifactEnv } from './sanitize-package-artifact-env.mjs';
+import {
+  runSdkDualOriginValidation,
+  SDK_DUAL_ORIGIN_VALIDATION_TIMEOUT_MS,
+} from '../release-validation/executors/sdk-dual-origin.mjs';
+
+export const PUBLIC_SDK_TARBALL_CONSUMER_TIMEOUT_MS = 10 * 60_000;
 
 function requireAbsoluteTarballPath(value, name) {
   const tarballPath = String(value ?? '').trim();
@@ -89,6 +95,16 @@ export function buildPublicSdkTarballValidationPlan({
   })));
 }
 
+/**
+ * The parent phase owns one ceiling derived from the exact child command plan.
+ * @param {{ repoRoot: string; pluginSdkTarball?: string | null; pluginUiTarball?: string | null; sdkTarball?: string | null }} options
+ */
+export function resolvePublicSdkTarballValidationTimeoutMs(options) {
+  const commands = buildPublicSdkTarballValidationPlan(options);
+  return (commands.length * PUBLIC_SDK_TARBALL_CONSUMER_TIMEOUT_MS)
+    + (options.sdkTarball ? SDK_DUAL_ORIGIN_VALIDATION_TIMEOUT_MS : 0);
+}
+
 async function assertExactTarball(tarballPath, label) {
   const stats = await lstat(tarballPath).catch((error) => {
     if (error?.code === 'ENOENT') {
@@ -107,7 +123,7 @@ function runValidationCommand({ repoRoot, env, command, execFileSyncImpl }) {
     cwd: repoRoot,
     env,
     stdio: 'inherit',
-    timeout: 10 * 60_000,
+    timeout: PUBLIC_SDK_TARBALL_CONSUMER_TIMEOUT_MS,
   });
 }
 
@@ -137,6 +153,15 @@ export async function validatePublicSdkTarballs({
       env: artifactEnv,
       command,
       execFileSyncImpl,
+    });
+  }
+  if (sdkTarball) {
+    process.stdout.write(`[pipeline] validate public package artifact: SDK dual-origin exact candidate (${sdkTarball})\n`);
+    runSdkDualOriginValidation({
+      repoRoot,
+      source: { kind: 'local-pack', ref: sdkTarball },
+      env: artifactEnv,
+      exec: execFileSyncImpl,
     });
   }
 }
