@@ -301,6 +301,12 @@ export async function createSessionScanner(opts: {
             });
             if (disposition === 'ignore') continue;
             if (disposition === 'diagnostic') {
+                for (const message of messages) {
+                    await processSessionMessage(
+                        normalizeClaudeToolUseNamesInRawJsonLines(message),
+                        { suppressSideEffects: true },
+                    );
+                }
                 discoveredSessions.add(sessionId);
                 continue;
             }
