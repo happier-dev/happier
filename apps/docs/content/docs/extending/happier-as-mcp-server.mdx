@@ -148,7 +148,7 @@ Call `session_message_send`:
 }
 ```
 
-Optional overrides (when supported by the backend):
+Optional overrides (when supported by the Agent):
 
 - `permissionModeOverride`
 - `modelOverride` (use `null` to clear an override when applicable)
@@ -200,7 +200,7 @@ Call `session_permission_mode_set`:
 
 ### Start an execution run (plan/review/delegate/voice agent)
 
-Call `execution_run_start` to start a structured Happier-managed run in a session. It requires an `intent` plus a backend target.
+Call `execution_run_start` to start a structured Happier-managed run in a session. It requires an `intent` plus an Agent target in the retained `backendTarget` field.
 
 Example:
 
@@ -213,7 +213,9 @@ Example:
 }
 ```
 
-The backend target selects which provider/backend runs the execution run. It is not a capacity slot. If you choose multiple backend targets through an action that supports that shape, Happier starts one managed run per selected provider/backend.
+The target selects which Agent runs the execution run. It is not a capacity
+slot. If you choose multiple targets through an Action that supports that
+shape, Happier starts one managed run per selected Agent.
 
 ## What tools you get
 
@@ -293,7 +295,7 @@ Use it when:
 
 - you already know the exact `actionId`
 - you want to call an action that does not have a dedicated named tool
-- you want to manage approval artifacts programmatically
+- you want to create, inspect, or list approval artifacts programmatically
 
 Shape:
 
@@ -312,10 +314,11 @@ Notes:
 - `actionId` is the canonical dotted id (example: `session.title.set`).
 - Tool names are typically `snake_case` (example: `session_title_set`) and map to the same underlying action.
 
-This is also the path to advanced approval actions such as:
+This is also the path to approval-queue actions such as:
 
 - `approval.request.create`
-- `approval.request.decide`
+- `approval.request.get`
+- `approval.request.list`
 
 Those approval actions are available through the action catalog, but they are not advertised as separate named MCP tools. Use `action_execute` when you need them.
 
@@ -345,23 +348,11 @@ Use the app's **Inbox** to approve/deny and view the final result:
 - [Inbox and approvals](/sessions/inbox-and-approvals)
 - [Happier tools & actions](/extending/happier-tools)
 
-### Programmatic approval decisions
+### Approval decisions require a present user
 
-If you want an MCP host to manage approvals directly, call `action_execute` with `approval.request.decide`.
+External MCP hosts can create and inspect approval requests, but they cannot approve or reject them. `approval.request.decide` remains discoverable in the shared action catalog and truthfully returns `present_user_required` to automation callers.
 
-Example:
-
-```json
-{
-  "actionId": "approval.request.decide",
-  "input": {
-    "artifactId": "2765bc88-69ea-4316-9085-290ce5b3a3b6",
-    "decision": "approve"
-  }
-}
-```
-
-That executes the same approval object you can review in the app Inbox. The same generic approval model works regardless of whether the request came from the CLI, an external MCP host, a session agent, or another Happier surface.
+Review and decide the request in the app's **Inbox**. This boundary prevents the same automation credential from requesting an approval and granting it to itself.
 
 ### Direct tool exposure
 
@@ -387,7 +378,7 @@ If you’re targeting a self-hosted server, ensure the MCP host launches Happier
 
 ### `No daemon running` / session create fails
 
-Starting and managing local provider processes (creating sessions, sending messages, attaching, etc.) generally requires a running Happier daemon on that machine.
+Starting and managing local Agent processes (creating sessions, sending messages, attaching, etc.) generally requires a running Happier daemon on that machine.
 
 If a tool call fails with an error like `No daemon running` (or similar), run:
 

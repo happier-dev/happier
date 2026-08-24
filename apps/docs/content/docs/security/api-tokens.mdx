@@ -56,15 +56,26 @@ plugins** entries under **Integrations**. Set each independently to:
 - **Ask first** — a present user must approve the Action before it runs.
 - **Off** — the integration cannot invoke the Action.
 
+Every API-eligible Action starts **Allowed**, so API Token calls run without an
+approval prompt unless you change that Action's **API** setting—the External API
+& SDK control—to **Ask first** or **Off**. The **Trusted plugins** setting also
+starts **Allowed** for Actions available on that surface. Review these defaults
+before handing a token to automation. They never override an Action's required
+authority, runtime availability, or placement, and host-internal Actions are
+not exposed at all.
+
 An API Token follows the **API** setting. An installed trusted plugin follows
 the **Trusted plugins** setting. Start with the smallest set of Actions your
 automation needs.
 
 An API token cannot create, revoke, or replace API tokens; sign out every
-device; change Action, API, or security policy; approve requests; or make other
-present-user security and trust decisions. Those operations remain
-discoverable where applicable but return `present_user_required` instead of
-treating a bearer token as an interactive user.
+device; change Action, API, or security policy; approve requests; install or
+uninstall plugins; change Agent session-hook installations; or make other
+present-user security and trust decisions. Those operations remain discoverable
+where applicable but return `present_user_required` instead of treating a
+bearer token as an interactive user. Trusted plugins have the same
+`account_automation` ceiling: their **Trusted plugins** setting cannot turn one
+of these controls into a present-user operation.
 
 ## Revoke access
 
@@ -87,6 +98,8 @@ be reached. Once the cache expires, an unreachable server produces
 Only API Tokens authenticate public Action API routes. A signed-in session
 bearer and the daemon's private control token are not substitutes for one.
 Always send a token in the `Authorization` header, never in a URL.
+Both public ingress routes verify the bearer before their JSON parser accepts a
+request body.
 
 The Action API's server-mediated transport is intentionally readable by the
 configured server while it forwards the request to the exact connected daemon.

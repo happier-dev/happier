@@ -62,10 +62,21 @@ for anything stored in plain mode.
 
 ## API tokens and Action API traffic
 
-API Tokens are server-side credentials: the server retains a digest-backed
-record, while the full token is shown only to its creator. They authenticate
-automation, not a present user, so they cannot approve requests or loosen the
-security controls that limit them.
+In the current Developer Preview source, API Tokens are server-side credentials:
+the server retains a digest-backed record, while the full token is shown only to
+its creator. They authenticate automation, not a present user, so they cannot
+approve requests or loosen the security controls that limit them.
+
+The **API** setting starts **Allowed** for API-eligible Actions, so Action
+Settings do not add an approval prompt by default. Before sharing a token, open
+each needed Action under **Settings → Actions**, then review **Integrations →
+API** and change it to **Ask first** or **Off** where appropriate. A non-safe
+contributed Action can still require its own live current-intent confirmation;
+**Allowed** does not suppress that independent safety contract. These settings
+do not expose host-internal Actions or override present-user-only controls such
+as API-token administration, plugin uninstall, Agent session-hook changes,
+approval decisions, and security-policy changes. Trusted plugins have the same
+account-automation authority ceiling.
 
 The Developer Preview Action API is a separate transport boundary. A configured
 server can read a request and response when it mediates that traffic, even when

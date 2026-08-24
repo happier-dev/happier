@@ -12,15 +12,16 @@ We intentionally avoid the full REST verb palette because many operations span m
 ## Authentication
 Most endpoints require `Authorization: Bearer <token>`.
 
-### Challenge transition (development source)
+### Challenge transition (supported compatibility)
 
-The v1 challenge shape below remains a compatibility transition, not a future
-permanent contract. Development source adds an audience-bound, single-use v2
-challenge and capability negotiation. A server retains v1 only while the
-measured supported-client frontier includes v1-only authenticating clients; the
-retirement condition is that every supported authenticating client advertises
-v2 and the frontier has advanced beyond the recorded predecessor releases. Do
-not replace that condition with a calendar date.
+The v1 challenge shape below is a compatibility transition, not a permanent
+contract. Retain it only while a published stable or preview artifact, or the
+current `../remote-dev` predecessor, can still send v1 to a v2-capable server.
+New clients choose v1 only when the ready server capability says
+`auth.keyChallenge.v2` is unavailable. Retire v1 only after immutable
+stable/preview artifact evidence and the current predecessor show that no
+supported authenticating client still needs it. This is a release-frontier
+decision based on immutable artifact evidence and current predecessor behavior.
 
 Auth flows:
 - `POST /v1/auth`
@@ -47,6 +48,14 @@ Auth flows:
 - `POST /v1/auth/account/response`
   - Body: `{ response, publicKey }` (requires Bearer auth)
 
+Signed terminal credentials carry `account_automation`, not present-user
+authority. Automation definition/run management reads and mutations, run
+cancellation, and webhook
+endpoint/status/replay/discard controls therefore return
+`present_user_required` to terminal callers. Automation worker routes use the
+separate machine path: the request must carry a current machine-installation
+publisher proof whose machine matches the requested `machineId`.
+
 ### API Tokens (development source)
 
 API Tokens are opaque `hap_v1_…` credentials stored server-side as
@@ -62,6 +71,22 @@ through their individual or all-token controls instead. Server-origin
 verification sees revocation on its next verification. The daemon has only a
 bounded, in-memory positive validation cache: at most 60 seconds and never
 extended while server introspection is unavailable.
+
+The direct Account-server routes behind Settings and daemon verification are:
+
+- `POST /v1/auth/api-tokens/create` — requires `present_user` and returns the
+  plaintext bearer once with its non-secret summary.
+- `POST /v1/auth/api-tokens/list` — returns non-secret summaries through the
+  signed Account credential path; an API Token is not accepted as the route
+  credential.
+- `POST /v1/auth/api-tokens/revoke` — requires `present_user` and revokes the
+  exact Account-owned token id.
+- `POST /v1/auth/api-tokens/revoke-all` — requires `present_user` and revokes
+  every API Token for the authenticated Account.
+- `POST /v1/auth/api-tokens/introspect` — uses the daemon's signed Account
+  credential to verify a PAT supplied as the request subject. It returns only
+  the minimal Account-bound `account_automation` principal and never returns
+  the bearer.
 
 ## External Action API (Developer Preview source contract)
 
@@ -111,15 +136,65 @@ preserves the canonical Action result:
 
 Only PAT bearer authentication is accepted on public Action routes; signed
 session bearers and `x-happier-daemon-token` are distinct credentials for other
-surfaces. The API does not use SSE, has a 100 MiB request-body ceiling, sends
-`Cache-Control: no-store`, and does not enable CORS. The server-mediated design
-is intentionally plaintext to the configured server and avoids requiring an
-inbound public daemon address; use daemon-local transport for direct local
-delivery. The transport does not retry or fail a mutation over to another
-origin.
+surfaces. Each public ingress verifies the PAT in Fastify `onRequest`, before
+the JSON body parser runs. The API does not use SSE, has a 32 MiB
+(33,554,432-byte) request-body ceiling, sends `Cache-Control: no-store`, and
+does not enable CORS. The server-to-daemon relay accepts a 33 MiB
+(34,603,008-byte) request carrier, leaving one MiB of framing headroom above
+the public body limit. The server-mediated design is intentionally plaintext to
+the configured server and avoids requiring an inbound public daemon address;
+use daemon-local transport for direct local delivery. The transport does not
+retry or fail a mutation over to another origin.
 
-The generated [SDK API inventory](../packages/sdk/API.md) is the source of
-exported method names. It must not be duplicated as a hand-written action list.
+The API and Trusted plugins settings default to Allowed for Actions available on
+those surfaces, so Action Settings add no approval prompt by default. A non-safe
+contributed Action still requires the canonical live current-intent confirmation;
+Allowed does not suppress the contribution's independent safety contract. A
+present user can change either setting to require approval or turn the Action
+off; neither setting exposes host-internal Actions or raises an API Token or
+plugin above `account_automation`. Token management, approval decisions, and
+other present-user controls remain discoverable where applicable but return
+`present_user_required`.
+
+### Contributed Action discovery and invocation
+
+`action.spec.search` includes definitions contributed by the selected daemon's
+currently committed plugin runtime when they are available and enabled for the
+API surface. `action.spec.get` accepts the returned qualified id in
+`<pluginId>/actions/<localId>` form and returns the complete declared input
+schema. Invocation remains one host Action: call `action.invoke` with the exact
+`{ pluginId, localId }` identity and declared input. The daemon resolves the
+current plugin generation again before execution and applies the qualified
+Action's API setting, plugin authorization/grants, availability, and any
+non-safe current-intent confirmation; installation alone grants none of those
+decisions.
+
+Both the daemon-local and server origins limit the complete serialized response
+envelope—not only `execution.result`—to 24,000,000 UTF-8 bytes. When an Action
+finishes but its response would exceed that limit, the admitted HTTP response
+uses the normal envelope with `execution.ok: false`,
+`execution.errorCode: "result_too_large"`, and:
+
+```json
+{
+  "executionCompleted": true,
+  "maxSerializedBytes": 24000000
+}
+```
+
+Those fields are the error's `execution.details`. `executionCompleted: true`
+means the Action may already have committed a mutation, so callers must not
+blindly retry it. They should inspect current state or use the Action owner's
+idempotency contract. Actions with large data should return Artifact references,
+use an existing stream Action, or expose bounded or paginated reads instead of
+one oversized inline result.
+
+The generated [SDK API inventory](../packages/sdk/API.md) is an export census,
+not a complete Action method reference. Built-in Action contracts live in the
+generated [Host Actions reference](../apps/docs/content/docs/plugins/api/host-actions.mdx).
+Runtime callers discover available Actions with `actions.search` and
+`action.spec.get`, then use raw `actions.execute` when the id is selected
+dynamically. None of these should be duplicated as a hand-written Action list.
 
 ## Endpoint catalog
 ### Sessions
