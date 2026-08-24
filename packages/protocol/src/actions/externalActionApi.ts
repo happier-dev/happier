@@ -193,6 +193,17 @@ export type ExternalActionResponseEnvelopeV1 = Readonly<{
 }>;
 
 /**
+ * The one strict JSON response projection prepared after external Action
+ * execution. Same-process HTTP adapters send these bytes directly; a process
+ * boundary carries only `response` and prepares it again after receipt.
+ */
+export type PreparedExternalActionResponseEnvelopeV1 = Readonly<{
+  response: ExternalActionResponseEnvelopeV1;
+  body: string;
+  byteLength: number;
+}>;
+
+/**
  * Projects an exact-daemon relay result onto the one strict public response
  * union. Only execution metadata is normalized; relay envelope fields remain
  * closed and are never rewritten by a transport adapter.
@@ -361,11 +372,9 @@ export function measureExternalActionResponseEnvelopeUtf8BytesV1(value: unknown)
  * after Action execution. Both public entry points consume this one prepared
  * projection rather than owning separate response serializers.
  */
-function prepareExternalActionResponseEnvelopeV1(value: unknown): Readonly<{
-  response: ExternalActionResponseEnvelopeV1;
-  body: string;
-  byteLength: number;
-}> {
+export function prepareExternalActionResponseEnvelopeV1(
+  value: unknown,
+): PreparedExternalActionResponseEnvelopeV1 {
   const response = parseExternalActionResponseEnvelopeV1(value);
   if (!response) {
     throw new TypeError('Invalid external Action response envelope');

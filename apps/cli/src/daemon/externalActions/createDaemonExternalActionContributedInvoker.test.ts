@@ -424,7 +424,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       currentMachineId: 'machine-local',
       resolveTarget: createCanonicalSessionTargetResolver(),
       executor,
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,

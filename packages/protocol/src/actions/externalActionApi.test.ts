@@ -17,6 +17,7 @@ import {
   enforceExternalActionResponseEnvelopeLimitV1,
   measureExternalActionResponseEnvelopeUtf8BytesV1,
   parseExternalActionResponseEnvelopeV1,
+  prepareExternalActionResponseEnvelopeV1,
   parseExternalActionDaemonDispatchResultV1,
   projectExternalActionDaemonDispatchResultV1,
   projectExternalActionResponseEnvelopeV1,
@@ -235,6 +236,20 @@ describe('External Action API envelope v1', () => {
     expect(measureExternalActionResponseEnvelopeUtf8BytesV1(response)).toBe(
       new TextEncoder().encode(JSON.stringify(response)).byteLength,
     );
+  });
+
+  it('returns one consumable strict response projection with its exact serialized bytes', () => {
+    const response = {
+      v: 1,
+      actionId: 'session.spawn_new',
+      requestId: 'request-prepared',
+      execution: { ok: true, result: { sessionId: 'session-1' } },
+    } as const;
+
+    const prepared = prepareExternalActionResponseEnvelopeV1(response);
+    expect(prepared.response).toEqual(response);
+    expect(prepared.body).toBe(JSON.stringify(response));
+    expect(prepared.byteLength).toBe(new TextEncoder().encode(prepared.body).byteLength);
   });
 
   it('projects a strict under-limit response that native JSON cannot represent to invalid_action_output', () => {

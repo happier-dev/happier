@@ -109,6 +109,10 @@ export function registerExternalActionRpcHandler(
       executor: options.executor,
       ...(signal ? { signal } : {}),
     });
-    return result;
+    if (result.kind === 'invalid_request') return result;
+    return {
+      kind: 'response',
+      response: result.response,
+    };
   });
 }

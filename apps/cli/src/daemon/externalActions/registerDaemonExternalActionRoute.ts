@@ -5,8 +5,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
   projectExternalActionHttpErrorV1,
-  serializeExternalActionResponseEnvelopeV1,
   type ExternalActionHttpErrorCodeV1,
+  type PreparedExternalActionResponseEnvelopeV1,
 } from '@happier-dev/protocol/actions';
 
 import type { DaemonPatVerifier, VerifiedDaemonPat } from '../auth/daemonPatVerifier';
@@ -46,9 +46,11 @@ function sendExternalActionSerializedJson(
     .send(body);
 }
 
-function sendExternalActionResponse(reply: FastifyReply, payload: unknown): FastifyReply {
-  const serialized = serializeExternalActionResponseEnvelopeV1(payload);
-  return sendExternalActionSerializedJson(reply, 200, serialized.body, serialized.byteLength);
+function sendExternalActionResponse(
+  reply: FastifyReply,
+  prepared: PreparedExternalActionResponseEnvelopeV1,
+): FastifyReply {
+  return sendExternalActionSerializedJson(reply, 200, prepared.body, prepared.byteLength);
 }
 
 function sendExternalActionHttpError(
@@ -216,7 +218,7 @@ export function registerDaemonExternalActionRoute(
       if (result.kind === 'invalid_request') {
         return sendExternalActionHttpError(reply, result.errorCode);
       }
-      return sendExternalActionResponse(reply, result.response);
+      return sendExternalActionResponse(reply, result.prepared);
     } finally {
       disposeExternalActionRequestAdmission(request);
     }

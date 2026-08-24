@@ -34,6 +34,34 @@ function createExactLimitMultibyteResult(): string {
 }
 
 describe('executeExternalAction', () => {
+  it('returns the one prepared direct-HTTP response projection from the ingress owner', async () => {
+    const result = await executeExternalAction({
+      actionId: 'session.spawn_new',
+      envelope: { v: 1, requestId: 'request-prepared', input: {} },
+      principal,
+      currentMachineId: 'machine-1',
+      resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-1' }),
+      executor: {
+        execute: async () => ({ ok: true, result: { sessionId: 'session-1' } }),
+      },
+    });
+
+    expect(result).toMatchObject({
+      kind: 'response',
+      prepared: {
+        response: {
+          v: 1,
+          actionId: 'session.spawn_new',
+          requestId: 'request-prepared',
+          execution: { ok: true, result: { sessionId: 'session-1' } },
+        },
+      },
+    });
+    if (result.kind !== 'response') throw new Error('expected admitted response');
+    expect(result.prepared.body).toBe(JSON.stringify(result.prepared.response));
+    expect(result.prepared.byteLength).toBe(new TextEncoder().encode(result.prepared.body).byteLength);
+  });
+
   it.each([
     ['BigInt', () => ({ value: BigInt(1) })],
     ['cyclic data', () => {
@@ -56,7 +84,7 @@ describe('executeExternalAction', () => {
       currentMachineId: 'machine-1',
       resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-1' }),
       executor: { execute },
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -96,7 +124,7 @@ describe('executeExternalAction', () => {
       .toBe(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
     expect(exact.response.execution).toEqual({ ok: true, result: exactLimitResult });
 
-    await expect(executeExternalAction(request)).resolves.toEqual({
+    await expect(executeExternalAction(request)).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -114,7 +142,7 @@ describe('executeExternalAction', () => {
       },
     });
 
-    await expect(executeExternalAction(request)).resolves.toEqual({
+    await expect(executeExternalAction(request)).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -151,7 +179,7 @@ describe('executeExternalAction', () => {
       resolveTarget,
       executor: { execute },
       signal,
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -222,7 +250,7 @@ describe('executeExternalAction', () => {
       executor,
     });
 
-    expect(response).toEqual({
+    expect(response).toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -257,7 +285,7 @@ describe('executeExternalAction', () => {
       currentMachineId: 'machine-1',
       resolveTarget,
       executor: { execute },
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -293,7 +321,7 @@ describe('executeExternalAction', () => {
       currentMachineId: 'machine-1',
       resolveTarget,
       executor: { execute },
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -337,7 +365,7 @@ describe('executeExternalAction', () => {
       currentMachineId: 'machine-1',
       resolveTarget,
       executor: { execute },
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -382,7 +410,7 @@ describe('executeExternalAction', () => {
       currentMachineId: 'machine-1',
       resolveTarget,
       executor: { execute },
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,
@@ -419,7 +447,7 @@ describe('executeExternalAction', () => {
       currentMachineId: 'machine-1',
       resolveTarget,
       executor: { execute },
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       kind: 'response',
       response: {
         v: 1,

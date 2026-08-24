@@ -35,9 +35,11 @@ export {
   type ExternalActionHttpErrorV1,
   type ExternalActionRequestEnvelopeV1,
   type ExternalActionResponseEnvelopeV1,
+  type PreparedExternalActionResponseEnvelopeV1,
   type ExternalActionServerPrincipalV1,
   type ExternalActionTargetV1,
   projectExternalActionHttpErrorV1,
+  prepareExternalActionResponseEnvelopeV1,
 } from './externalActionApi.js';
 export * from './operations/index.js';
 export { ACTION_UI_PLACEMENTS, ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';

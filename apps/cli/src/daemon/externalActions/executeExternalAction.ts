@@ -1,12 +1,13 @@
 import {
-  enforceExternalActionResponseEnvelopeLimitV1,
-  type ExternalActionDaemonDispatchResultV1,
+  prepareExternalActionResponseEnvelopeV1,
   ExternalActionRequestEnvelopeV1Schema,
   PublicActionIdSchema,
   projectExternalActionExecutionResultV1,
   type ActionExecuteResult,
   type ActionExecutorContext,
+  type ExternalActionResponseEnvelopeV1,
   type ExternalActionTargetV1,
+  type PreparedExternalActionResponseEnvelopeV1,
   type PublicActionId,
 } from '@happier-dev/protocol/actions';
 
@@ -38,7 +39,19 @@ export type ResolveExternalActionTarget = (input: Readonly<{
   signal?: AbortSignal;
 }>) => Promise<ExternalActionTargetV1 | null>;
 
-export type ExecuteExternalActionResult = ExternalActionDaemonDispatchResultV1;
+export type ExecuteExternalActionResult = Readonly<
+  | {
+    kind: 'invalid_request';
+    errorCode: 'invalid_action' | 'invalid_envelope';
+  }
+  | {
+    kind: 'response';
+    /** Strict relay payload; server-origin dispatch reserializes after IPC. */
+    response: ExternalActionResponseEnvelopeV1;
+    /** Direct daemon HTTP consumes this same-process serialized projection. */
+    prepared: PreparedExternalActionResponseEnvelopeV1;
+  }
+>;
 
 /**
  * Transport-neutral external Action admission. Authentication and target
@@ -73,15 +86,12 @@ export async function executeExternalAction(input: Readonly<{
     currentMachineId: input.currentMachineId,
   });
   if (reconciliation.kind === 'rejected') {
-    return {
-      kind: 'response',
-      response: {
-        v: 1,
-        actionId: actionId.data,
-        ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
-        execution: reconciliation.execution,
-      },
-    };
+    return preparedResponse({
+      v: 1,
+      actionId: actionId.data,
+      ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
+      execution: reconciliation.execution,
+    });
   }
 
   // The final target resolver is deliberately after parsed-input reconciliation
@@ -94,15 +104,12 @@ export async function executeExternalAction(input: Readonly<{
     ...(input.signal ? { signal: input.signal } : {}),
   });
   if (!target) {
-    return {
-      kind: 'response',
-      response: {
-        v: 1,
-        actionId: actionId.data,
-        ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
-        execution: targetNotLocal(),
-      },
-    };
+    return preparedResponse({
+      v: 1,
+      actionId: actionId.data,
+      ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
+      execution: targetNotLocal(),
+    });
   }
 
   const context: ActionExecutorContext = {
@@ -130,14 +137,22 @@ export async function executeExternalAction(input: Readonly<{
     error: 'invalid_action_output',
   };
 
+  return preparedResponse({
+    v: 1,
+    actionId: actionId.data,
+    ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
+    execution,
+  });
+}
+
+function preparedResponse(
+  response: ExternalActionResponseEnvelopeV1,
+): ExecuteExternalActionResult {
+  const prepared = prepareExternalActionResponseEnvelopeV1(response);
   return {
     kind: 'response',
-    response: enforceExternalActionResponseEnvelopeLimitV1({
-      v: 1,
-      actionId: actionId.data,
-      ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
-      execution,
-    }),
+    response: prepared.response,
+    prepared,
   };
 }
 

@@ -3,6 +3,19 @@ import { Buffer } from 'node:buffer';
 import fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 
+const protocolSerializerSpy = vi.hoisted(() => vi.fn());
+
+vi.mock('@happier-dev/protocol/actions', async (importOriginal) => {
+  const protocol = await importOriginal<typeof import('@happier-dev/protocol/actions')>();
+  return {
+    ...protocol,
+    serializeExternalActionResponseEnvelopeV1: (value: unknown) => {
+      protocolSerializerSpy(value);
+      return protocol.serializeExternalActionResponseEnvelopeV1(value);
+    },
+  };
+});
+
 import {
   EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
@@ -88,6 +101,24 @@ async function createApp(overrides: Partial<Parameters<typeof registerDaemonExte
 }
 
 describe('registerDaemonExternalActionRoute', () => {
+  it('sends the ingress owner\'s prepared response without serializing it again', async () => {
+    protocolSerializerSpy.mockClear();
+    const app = await createApp();
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/actions/session.spawn_new',
+        headers: { authorization: 'Bearer pat-secret' },
+        payload: { v: 1, input: {} },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(protocolSerializerSpy).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('accepts only a verified PAT, stamps its provenance through the canonical executor, and sends a finite no-store response', async () => {
     const verifyPat = verifier();
     const execute = vi.fn(async () => ({ ok: true as const, result: { sessionId: 'session-1' } }));
