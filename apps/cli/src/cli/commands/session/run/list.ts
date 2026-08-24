@@ -13,8 +13,11 @@ import { parseProtocolEnumFlag } from '@/cli/commands/shared/parseProtocolEnumFl
 import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
 import { assertSessionCommandArguments } from '@/cli/commands/session/shared/assertSessionCommandArguments';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { listExecutionRuns } from '@/session/services/executionRuns';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import {
+  normalizeActionExecuteResult,
+  unwrapCliActionSuccessPayload,
+} from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export async function cmdSessionRunList(
   argv: string[],
@@ -67,56 +70,45 @@ export async function cmdSessionRunList(
     ...(typeof limit === 'number' ? { limit } : {}),
   });
 
-  const transport = await resolveSessionTransportContext({ credentials, idOrPrefix });
-  if (!transport.ok) {
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
+  if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_run_list',
         error: {
-          code: transport.code,
-          ...(transport.sessionId ? { sessionId: transport.sessionId } : {}),
-          ...(transport.candidates ? { candidates: transport.candidates } : {}),
+          code: sessionTarget.code,
+          ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
         },
       });
       return;
     }
-    throw new Error(transport.code);
+    throw new Error(sessionTarget.code);
   }
+  const { sessionId } = sessionTarget;
 
-  const result = transport.mode === 'plain'
-    ? await listExecutionRuns({
-        token: credentials.token,
-        sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
-        request,
-        skipLiveRpc: transport.rawSession.active === false,
-      })
-    : await listExecutionRuns({
-        token: credentials.token,
-        sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
-        request,
-        skipLiveRpc: transport.rawSession.active === false,
-      });
-  if (!result.ok) {
+  const normalized = normalizeActionExecuteResult(await executor.execute(
+    'execution.run.list',
+    request,
+    { surface: 'cli', defaultSessionId: sessionId },
+  ));
+  if (!normalized.ok) {
     if (json) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_run_list',
-        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+        error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(result.message ?? result.code);
+    throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
 
-  const runPayload = ExecutionRunListResponseSchema.parse(result.data);
+  const runPayload = ExecutionRunListResponseSchema.parse(unwrapCliActionSuccessPayload(normalized.data));
 
   if (json) {
-    await printJsonEnvelope({ ok: true, kind: 'session_run_list', data: { sessionId: transport.sessionId, ...runPayload } });
+    await printJsonEnvelope({ ok: true, kind: 'session_run_list', data: { sessionId, ...runPayload } });
     return;
   }
 

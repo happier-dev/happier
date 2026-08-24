@@ -34,7 +34,7 @@ describe('happier session run start (plaintext integration)', () => {
         seq: 1,
         createdAt: 1,
         updatedAt: 2,
-        active: false,
+        active: true,
         activeAt: 0,
         encryptionMode: 'plain',
         metadata: metadataPlain,
@@ -47,6 +47,27 @@ describe('happier session run start (plaintext integration)', () => {
         share: null,
       };
 
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          version: 1,
+          content: { t: 'plain', v: { schemaVersion: 2, actionsSettingsV1: { v: 1, actions: {} } } },
+        }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'plain',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 1,
+        }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -129,6 +150,7 @@ describe('happier session run start (plaintext integration)', () => {
       );
 
       const parsed = output.json();
+      expect(parsed.error).toBeUndefined();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_plain_123');

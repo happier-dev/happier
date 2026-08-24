@@ -8,7 +8,6 @@ import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function cmdSessionRunStop(
   argv: string[],
@@ -32,7 +31,8 @@ export async function cmdSessionRunStop(
   }
 
   const request = ExecutionRunStopRequestSchema.parse({ runId });
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({ ok: false, kind: 'session_run_stop', error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) } });
@@ -42,7 +42,6 @@ export async function cmdSessionRunStop(
   }
   const sessionId = sessionTarget.sessionId;
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'execution.run.stop',
     { sessionId, ...request },

@@ -1,12 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 const execute = vi.fn();
 const createCliActionExecutor = vi.fn(() => ({ execute }));
+const resolveSessionTarget = vi.fn(async () => ({ ok: true as const, sessionId: 'sess-1' }));
+const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute, resolveSessionTarget }));
 
 vi.mock('@/session/actions/createCliActionExecutor', () => ({
   createCliActionExecutor,
+}));
+vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
+  createCliActionExecutorFromCredentials,
 }));
 
 const resolveSessionTransportContext = vi.fn(async () => ({
@@ -26,6 +31,11 @@ vi.mock('@/session/actions/ensureCliActionPolicySettings', () => ({
 }));
 
 describe('happier session run start (action executor)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveSessionTarget.mockResolvedValue({ ok: true, sessionId: 'sess-1' });
+  });
+
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
@@ -63,7 +73,11 @@ describe('happier session run start (action executor)', () => {
         },
       );
 
-      expect(createCliActionExecutor).toHaveBeenCalledTimes(1);
+      expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
+      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-1');
+      expect(createCliActionExecutor).not.toHaveBeenCalled();
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+      expect(ensureCliActionPolicySettings).not.toHaveBeenCalled();
       expect(execute).toHaveBeenCalledWith(
         'execution.run.start',
         {
@@ -86,6 +100,33 @@ describe('happier session run start (action executor)', () => {
           runId: 'run-1',
         }),
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('selects the public Action transport before legacy Session bootstrap for API tokens', async () => {
+    execute.mockResolvedValueOnce({ ok: true, result: { ok: true, runId: 'run-1' } });
+
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['run', 'start', 'sess-1', '--intent', 'review', '--agent', 'agent:claude', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'hap_v1_token_secret',
+            encryption: null,
+            credentialProvenance: 'api_token' as const,
+          }),
+        },
+      );
+
+      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-1');
+      expect(createCliActionExecutor).not.toHaveBeenCalled();
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+      expect(ensureCliActionPolicySettings).not.toHaveBeenCalled();
+      expect(output.json()).toEqual(expect.objectContaining({ ok: true, kind: 'session_run_start' }));
     } finally {
       output.restore();
     }

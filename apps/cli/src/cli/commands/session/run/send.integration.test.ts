@@ -48,6 +48,27 @@ describe('happier session run send (integration)', () => {
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          version: 1,
+          content: { t: 'plain', v: { schemaVersion: 2, actionsSettingsV1: { v: 1, actions: {} } } },
+        }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 1,
+        }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -159,11 +180,16 @@ describe('happier session run send (integration)', () => {
       });
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
-      expect(parsed.kind).toBe('session_run_send');
-      expect(parsed.data?.sessionId).toBe('sess_integration_run_send_123');
-      expect(parsed.data?.runId).toBe('run_1');
-      expect(parsed.data?.sent).toBe(true);
+      expect(parsed.error).toBeUndefined();
+      expect(parsed).toMatchObject({
+        ok: true,
+        kind: 'session_run_send',
+        data: {
+          sessionId: 'sess_integration_run_send_123',
+          runId: 'run_1',
+          sent: true,
+        },
+      });
       expect(sentRequest).toMatchObject({
         runId: 'run_1',
         message: 'hello run',

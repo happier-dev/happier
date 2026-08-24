@@ -5,9 +5,9 @@ import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommand
 
 const resolveSessionTransportContext = vi.fn();
 const listExecutionRuns = vi.fn();
-const createCliActionExecutorFromCredentials = vi.fn(() => {
-  throw new Error('session run list should not use the action executor');
-});
+const execute = vi.fn();
+const resolveSessionTarget = vi.fn();
+const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute, resolveSessionTarget }));
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
   createCliActionExecutorFromCredentials,
@@ -26,7 +26,7 @@ describe('happier session run list', () => {
     vi.clearAllMocks();
   });
 
-  it('routes read-only list requests directly through the session read service', async () => {
+  it('routes list requests through the credential-aware Action executor', async () => {
     resolveSessionTransportContext.mockResolvedValueOnce({
       ok: true,
       sessionId: 'sess-1',
@@ -41,6 +41,28 @@ describe('happier session run list', () => {
     listExecutionRuns.mockResolvedValueOnce({
       ok: true,
       data: {
+        runs: [
+          {
+            runId: 'run-1',
+            callId: 'call-1',
+            sidechainId: 'call-1',
+            intent: 'review',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            permissionMode: 'read_only',
+            retentionPolicy: 'ephemeral',
+            runClass: 'bounded',
+            ioMode: 'request_response',
+            status: 'running',
+            startedAtMs: 1,
+          },
+        ],
+      },
+    });
+    resolveSessionTarget.mockResolvedValueOnce({ ok: true, sessionId: 'sess-1' });
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        ok: true,
         runs: [
           {
             runId: 'run-1',
@@ -73,26 +95,18 @@ describe('happier session run list', () => {
         },
       );
 
-      expect(resolveSessionTransportContext).toHaveBeenCalledWith({
-        credentials: {
-          token: 'token_test',
-          encryption: { type: 'legacy', secret: expect.any(Uint8Array) },
-        },
-        idOrPrefix: 'sess-1',
-      });
-      expect(listExecutionRuns).toHaveBeenCalledWith({
-        token: 'token_test',
-        sessionId: 'sess-1',
-        mode: 'plain',
-        ctx: null,
-        request: {
+      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-1');
+      expect(execute).toHaveBeenCalledWith(
+        'execution.run.list',
+        {
           backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           status: 'running',
           limit: 5,
         },
-        skipLiveRpc: true,
-      });
-      expect(createCliActionExecutorFromCredentials).not.toHaveBeenCalled();
+        { surface: 'cli', defaultSessionId: 'sess-1' },
+      );
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+      expect(listExecutionRuns).not.toHaveBeenCalled();
 
       expect(output.json()).toEqual(expect.objectContaining({
         ok: true,
@@ -102,6 +116,26 @@ describe('happier session run list', () => {
           runs: [expect.objectContaining({ runId: 'run-1' })],
         }),
       }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('does not resolve an API-token Session through the generic transport', async () => {
+    resolveSessionTarget.mockResolvedValueOnce({ ok: true, sessionId: 'sess-1' });
+    execute.mockResolvedValueOnce({ ok: true, result: { ok: true, runs: [] } });
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['run', 'list', 'sess-1', '--json'],
+        { readCredentialsFn: async () => ({ token: 'hap_v1_token_secret', encryption: null, credentialProvenance: 'api_token' as const }) },
+      );
+
+      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-1');
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+      expect(listExecutionRuns).not.toHaveBeenCalled();
+      expect(output.json()).toEqual(expect.objectContaining({ ok: true, kind: 'session_run_list' }));
     } finally {
       output.restore();
     }

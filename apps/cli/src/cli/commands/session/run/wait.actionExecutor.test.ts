@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 const execute = vi.fn();
-const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const resolveSessionTarget = vi.fn(async () => ({ ok: true as const, sessionId: 'sess-canonical' }));
+const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute, resolveSessionTarget }));
 const resolveSessionTransportContext = vi.fn(async () => ({ ok: true, sessionId: 'sess-canonical' }));
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
@@ -15,6 +16,7 @@ describe('happier session run wait (action executor)', () => {
   beforeEach(() => {
     execute.mockReset();
     createCliActionExecutorFromCredentials.mockClear();
+    resolveSessionTarget.mockClear();
     resolveSessionTransportContext.mockClear();
   });
 
@@ -40,6 +42,8 @@ describe('happier session run wait (action executor)', () => {
         { sessionId: 'sess-canonical', runId: 'run-1' },
         { surface: 'cli', defaultSessionId: null },
       );
+      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-1');
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
     } finally {
       output.restore();
     }
@@ -63,6 +67,8 @@ describe('happier session run wait (action executor)', () => {
       });
 
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
+      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-1');
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
       expect(execute).toHaveBeenCalledWith(
         'execution.run.wait',
         { sessionId: 'sess-canonical', runId: 'run-1', timeoutSeconds: 42 },
@@ -90,5 +96,23 @@ describe('happier session run wait (action executor)', () => {
 
     expect(readCredentialsFn).not.toHaveBeenCalled();
     expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+  });
+
+  it('does not resolve an API-token Session through the generic transport', async () => {
+    execute.mockResolvedValueOnce({ ok: true, result: { ok: true, status: 'succeeded', result: {} } });
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['run', 'wait', 'sess-1', 'run-1', '--json'],
+        { readCredentialsFn: async () => ({ token: 'hap_v1_token_secret', encryption: null, credentialProvenance: 'api_token' as const }) },
+      );
+
+      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-1');
+      expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+      expect(output.json()).toEqual(expect.objectContaining({ ok: true, kind: 'session_run_wait' }));
+    } finally {
+      output.restore();
+    }
   });
 });

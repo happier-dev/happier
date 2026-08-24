@@ -37,6 +37,27 @@ describe('happier session run stop (integration)', () => {
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          version: 1,
+          content: { t: 'plain', v: { schemaVersion: 2, actionsSettingsV1: { v: 1, actions: {} } } },
+        }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 1,
+        }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');

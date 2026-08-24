@@ -8,7 +8,6 @@ import { hasFlag, readCommandPositionals } from '@/cli/commands/shared/argvFlags
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function cmdSessionRunSend(
   argv: string[],
@@ -38,7 +37,8 @@ export async function cmdSessionRunSend(
     delivery: 'steer_if_supported',
     ...(resume ? { resume: true } : {}),
   });
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({ ok: false, kind: 'session_run_send', error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) } });
@@ -48,7 +48,6 @@ export async function cmdSessionRunSend(
   }
   const sessionId = sessionTarget.sessionId;
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'execution.run.send',
     { sessionId, ...request },

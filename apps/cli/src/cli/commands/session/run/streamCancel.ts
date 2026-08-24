@@ -6,8 +6,8 @@ import { ExecutionRunTurnStreamCancelRequestSchema } from '@happier-dev/protocol
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
-import { cancelExecutionRunStream } from '@/session/services/executionRuns';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export async function cmdSessionRunStreamCancel(
   argv: string[],
@@ -30,7 +30,8 @@ export async function cmdSessionRunStreamCancel(
     process.exit(1);
   }
 
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({
@@ -44,32 +45,26 @@ export async function cmdSessionRunStreamCancel(
   }
   const { sessionId } = sessionTarget;
   const request = ExecutionRunTurnStreamCancelRequestSchema.parse({ runId, streamId });
-  const result = sessionTarget.mode === 'plain'
-    ? await cancelExecutionRunStream({
-        token: credentials.token,
-        sessionId,
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-        request,
-      })
-    : await cancelExecutionRunStream({
-        token: credentials.token,
-        sessionId,
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-        request,
-      });
+  const actionResult = await executor.execute(
+    'execution.run.stream.cancel',
+    { sessionId, ...request },
+    {
+      surface: credentials.credentialProvenance === 'api_token' ? 'cli' : 'rpc',
+      defaultSessionId: sessionId,
+    },
+  );
+  const result = normalizeActionExecuteResult(actionResult);
 
   if (!result.ok) {
     if (json) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_cancel',
-        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+        error: { code: result.errorCode, ...(result.errorMessage ? { message: result.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(result.message ?? result.code);
+    throw new Error(result.errorMessage ?? result.errorCode);
   }
 
   if (json) {

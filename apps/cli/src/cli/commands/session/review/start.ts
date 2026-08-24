@@ -1,12 +1,10 @@
 import chalk from 'chalk';
 
 import type { StoredCredentials } from '@/persistence';
-import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
 import { normalizeSessionStartActionResults } from '../shared/sessionStartActionResults';
 
@@ -68,9 +66,8 @@ export async function cmdSessionReviewStart(
     process.exit(1);
   }
 
-  await ensureCliActionPolicySettings(credentials);
-
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({
@@ -84,21 +81,6 @@ export async function cmdSessionReviewStart(
   }
   const { sessionId } = sessionTarget;
 
-  const executor = sessionTarget.mode === 'plain'
-    ? createCliActionExecutor({
-        token: credentials.token,
-        credentials,
-        sessionId,
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-      })
-    : createCliActionExecutor({
-        token: credentials.token,
-        credentials,
-        sessionId,
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-      });
   const started = await executor.execute('review.start', input, { defaultSessionId: sessionId });
   const normalized = normalizeSessionStartActionResults(started);
 

@@ -22,13 +22,11 @@ import {
 } from '@/session/services/executionRunStartDefaults';
 import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import {
   normalizeActionExecuteResult,
   unwrapCliActionSuccessPayload,
 } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 
 export async function cmdSessionRunStart(
   argv: string[],
@@ -106,9 +104,8 @@ export async function cmdSessionRunStart(
     process.exit(1);
   }
 
-  await ensureCliActionPolicySettings(credentials);
-
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({
@@ -134,21 +131,6 @@ export async function cmdSessionRunStart(
     ioMode,
   });
 
-  const executor = sessionTarget.mode === 'plain'
-    ? createCliActionExecutor({
-        token: credentials.token,
-        credentials,
-        sessionId,
-        ctx: sessionTarget.ctx,
-        mode: sessionTarget.mode,
-      })
-    : createCliActionExecutor({
-        token: credentials.token,
-        credentials,
-        sessionId,
-        ctx: sessionTarget.ctx,
-        mode: sessionTarget.mode,
-      });
   const actionRes = await executor.execute(
     'execution.run.start',
     { sessionId, ...request },

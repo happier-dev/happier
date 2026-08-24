@@ -11,7 +11,6 @@ import {
   normalizeActionExecuteResult,
   unwrapCliActionSuccessPayload,
 } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
 export async function cmdSessionRunGet(
   argv: string[],
@@ -39,7 +38,8 @@ export async function cmdSessionRunGet(
     runId,
     ...(includeStructured ? { includeStructured: true } : {}),
   });
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({ ok: false, kind: 'session_run_get', error: { code: sessionTarget.code, ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}) } });
@@ -49,7 +49,6 @@ export async function cmdSessionRunGet(
   }
   const sessionId = sessionTarget.sessionId;
 
-  const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
     'execution.run.get',
     { sessionId, ...request },

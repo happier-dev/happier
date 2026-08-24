@@ -6,8 +6,11 @@ import { ExecutionRunTurnStreamReadRequestSchema } from '@happier-dev/protocol';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
-import { readExecutionRunStream } from '@/session/services/executionRuns';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import {
+  normalizeActionExecuteResult,
+  unwrapCliActionSuccessPayload,
+} from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export async function cmdSessionRunStreamRead(
   argv: string[],
@@ -36,7 +39,8 @@ export async function cmdSessionRunStreamRead(
     process.exit(1);
   }
 
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({
@@ -55,39 +59,34 @@ export async function cmdSessionRunStreamRead(
     cursor,
     ...(typeof maxEvents === 'number' && Number.isFinite(maxEvents) && maxEvents > 0 ? { maxEvents } : {}),
   });
-  const result = sessionTarget.mode === 'plain'
-    ? await readExecutionRunStream({
-        token: credentials.token,
-        sessionId,
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-        request,
-      })
-    : await readExecutionRunStream({
-        token: credentials.token,
-        sessionId,
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-        request,
-      });
+  const actionResult = await executor.execute(
+    'execution.run.stream.read',
+    { sessionId, ...request },
+    {
+      surface: credentials.credentialProvenance === 'api_token' ? 'cli' : 'rpc',
+      defaultSessionId: sessionId,
+    },
+  );
+  const result = normalizeActionExecuteResult(actionResult);
 
   if (!result.ok) {
     if (json) {
       await printJsonEnvelope({
         ok: false,
         kind: 'session_run_stream_read',
-        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+        error: { code: result.errorCode, ...(result.errorMessage ? { message: result.errorMessage } : {}) },
       });
       return;
     }
-    throw new Error(result.message ?? result.code);
+    throw new Error(result.errorMessage ?? result.errorCode);
   }
 
+  const payload = unwrapCliActionSuccessPayload(result.data);
   if (json) {
-    await printJsonEnvelope({ ok: true, kind: 'session_run_stream_read', data: { sessionId, runId, ...(result.data as any) } });
+    await printJsonEnvelope({ ok: true, kind: 'session_run_stream_read', data: { sessionId, runId, ...(payload as any) } });
     return;
   }
 
   console.log(chalk.green('✓'), 'run stream read');
-  await writeJsonStdout(result.data, { pretty: true });
+  await writeJsonStdout(payload, { pretty: true });
 }
