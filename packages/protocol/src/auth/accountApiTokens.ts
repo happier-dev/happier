@@ -75,6 +75,39 @@ export const ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1 = '/v1/auth/api-tokens/creat
 export const ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 = '/v1/auth/api-tokens/list';
 export const ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1 = '/v1/auth/api-tokens/revoke';
 export const ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1 = '/v1/auth/api-tokens/revoke-all';
+export const ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1 = '/v1/auth/api-tokens/introspect';
+
+/** The PAT is a subject credential; the authenticated daemon Account is transport provenance. */
+export const AccountApiTokenIntrospectionRequestV1Schema = z.object({
+  token: z.string(),
+}).strict();
+export type AccountApiTokenIntrospectionRequestV1 = z.infer<typeof AccountApiTokenIntrospectionRequestV1Schema>;
+
+/** Minimal PAT principal returned only after authenticated Account-bound introspection. */
+export const AccountApiTokenIntrospectionSuccessV1Schema = z.object({
+  accountId: z.string().min(1),
+  principalId: z.string().min(1),
+  credentialId: AccountApiTokenIdV1Schema,
+  expiresAt: AccountApiTokenInstantV1Schema.nullable(),
+  authority: z.literal('account_automation'),
+}).strict().superRefine((value, context) => {
+  if (value.principalId !== value.accountId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['principalId'],
+      message: 'The introspected principal must be bound to its Account.',
+    });
+  }
+});
+export type AccountApiTokenIntrospectionSuccessV1 = z.infer<typeof AccountApiTokenIntrospectionSuccessV1Schema>;
+
+/** Opaque PAT-subject rejection emitted only after the daemon connection is authenticated. */
+export const AccountApiTokenIntrospectionSubjectFailureV1Schema = z.object({
+  error: z.literal('invalid_token'),
+}).strict();
+export type AccountApiTokenIntrospectionSubjectFailureV1 = z.infer<
+  typeof AccountApiTokenIntrospectionSubjectFailureV1Schema
+>;
 
 export const AccountApiTokensServerErrorV1Schema = z.object({
   error: z.enum(['invalid_request', 'present_user_required']),
