@@ -42,6 +42,7 @@ import type {
     ManagedProviderRuntime,
     ProviderCatalogParser,
 } from './managed-services/contract.js';
+import type { ProviderContribution } from './providers/projections.js';
 import type {
     McpDiscoverySourceContribution,
     McpServerContribution,
@@ -397,7 +398,7 @@ type RuntimeContributionDefinition<
     declaration: TDeclaration;
 }> & Readonly<Record<TRuntimeField, TRuntime>>;
 
-type PluginProviderDeclaration = DistributiveOmit<ContributionRow<'providers'>, 'id'>;
+type PluginProviderDeclaration = DistributiveOmit<ProviderContribution, 'id'>;
 type PluginManagedProviderDeclaration = Readonly<
     Omit<PluginProviderDeclaration, 'managedRuntime'>
     & {
@@ -959,22 +960,16 @@ export type DefinePluginInput<
         }>;
         providers?: Readonly<Record<PluginContributionLocalId,
             | Readonly<{
-                declaration: Omit<
-                    NonNullable<NonNullable<PluginManifest['contributes']>['providers']>[number],
-                    'id' | 'managedRuntime'
-                > & Readonly<{
-                    managedRuntime: NonNullable<
-                        NonNullable<NonNullable<PluginManifest['contributes']>['providers']>[number]['managedRuntime']
-                    >;
+                declaration: Omit<ProviderContribution, 'id' | 'managedRuntime'> & Readonly<{
+                    managedRuntime: NonNullable<ProviderContribution['managedRuntime']>;
                 }>;
                 runtime: ManagedProviderRuntime;
                 catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
             }>
             | Readonly<{
-                declaration: Omit<
-                    NonNullable<NonNullable<PluginManifest['contributes']>['providers']>[number],
-                    'id' | 'managedRuntime'
-                > & Readonly<{ managedRuntime?: never }>;
+                declaration: Omit<ProviderContribution, 'id' | 'managedRuntime'> & Readonly<{
+                    managedRuntime?: never;
+                }>;
                 runtime?: never;
                 catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
             }>

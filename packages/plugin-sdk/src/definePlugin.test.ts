@@ -128,6 +128,8 @@ void undefined; /* @sdk-negative-type-case-end */
 void undefined; /* @sdk-negative-type-case-end */
 /* @sdk-negative-type-case:src-definePlugin-test-ts-action-availability:QWN0aW9uIGF2YWlsYWJpbGl0eSByZXRhaW5zIHRoZSBQcm90b2NvbCBBY3Rpb24gZGVjbGFyYXRpb24gc2hhcGUu:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmFjdGlvbi1pbnZhbGlkLWF2YWlsYWJpbGl0eScsIHZlcnNpb246ICcwLjEuMCcsIGFjdGlvbnM6IHsgaW52YWxpZDogeyB0aXRsZTogJ0ludmFsaWQnLCBleGVjdXRpb246IHsgdGFyZ2V0OiAnZGFlbW9uJyB9LCBzdXJmYWNlczogWydwbHVnaW4nXSwgYXZhaWxhYmlsaXR5OiB7IGV4cGVyaW1lbnRhbDogdHJ1ZSB9LCBhc3luYyBydW4oKSB7IHJldHVybiB7fTsgfSB9IH0gfSk7 */
 void undefined; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-definePlugin-test-ts-provider-canonical-declaration:UHJvdmlkZXIgZGVmaW5lUGx1Z2luIGRlY2xhcmF0aW9ucyBtdXN0IHNhdGlzZnkgdGhlIGNhbm9uaWNhbCBQcm92aWRlckNvbnRyaWJ1dGlvbiBzaGFwZS4=:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmludmFsaWQtcHJvdmlkZXItc2hhcGUnLCB2ZXJzaW9uOiAnMC4xLjAnLCBwcm92aWRlcnM6IHsgbWFsZm9ybWVkOiB7IGRlY2xhcmF0aW9uOiB7IHY6IDEsIG5hbWU6ICdNYWxmb3JtZWQnLCBraW5kOiAndW5zdXBwb3J0ZWQnLCBlbmRwb2ludFRlbXBsYXRlczogW3sgaWQ6ICdyZXNwb25zZXMnLCBwcm90b2NvbDogJ29wZW5haS1yZXNwb25zZXMnLCBiYXNlVXJsOiAnaHR0cHM6Ly9tb2RlbHMuZXhhbXBsZS5jb20vdjEnLCBjYXBhYmlsaXRpZXM6IHsgc3RyZWFtaW5nOiAnc3VwcG9ydGVkJywgdG9vbFJvdW5kVHJpcHM6ICd1bmtub3duJywgc3RhdGVmdWxSZXNwb25zZXM6ICd1bmtub3duJywgcmVhc29uaW5nQ29udHJvbHM6ICd1bmtub3duJyB9IH1dLCBjYXRhbG9nOiB7IHNvdXJjZTogJ21hbnVhbCcsIG1hbnVhbE1vZGVsUG9saWN5OiAnYWxsb3dlZCcgfSB9IH0gfSB9KTs= */
+void undefined; /* @sdk-negative-type-case-end */
 /* @sdk-negative-type-case:src-definePlugin-test-ts-connected-account-canonical-declaration:Q29ubmVjdGVkIEFjY291bnQgZGVmaW5lUGx1Z2luIGRlY2xhcmF0aW9ucyBtdXN0IHNhdGlzZnkgdGhlIGNhbm9uaWNhbCBkZWNsYXJhdGlvbiB1bmlvbi4=:ZGVmaW5lUGx1Z2luKHsgaWQ6ICdleGFtcGxlLmludmFsaWQtY29ubmVjdGVkLWFjY291bnQtc2hhcGUnLCB2ZXJzaW9uOiAnMC4xLjAnLCBjb25uZWN0ZWRBY2NvdW50RGVzY3JpcHRvcnM6IHsgbWFsZm9ybWVkOiB7IGRlY2xhcmF0aW9uOiB7IHRpdGxlOiAnTWFsZm9ybWVkJywgYXV0aGVudGljYXRpb246IHsgZGVmYXVsdE1vZGVJZDogJ21hbnVhbCcsIG1vZGVzOiBbeyBpZDogJ21hbnVhbCcsIGtpbmQ6ICdtYW51YWwnLCBvdXRjb21lUmVjb25jaWxpYXRpb246ICdub25lJywgZmllbGRzOiBbeyBpZDogJ29yaWdpbicsIHRpdGxlOiAnT3JpZ2luJywgc2VjcmV0OiB0cnVlLCBzZW1hbnRpYzogJ2Nvbm5lY3RlZEFjY291bnRPcmlnaW4nLCByZXF1aXJlZDogdHJ1ZSwgc2NoZW1hOiB7IHR5cGU6ICdzdHJpbmcnLCBtaW5MZW5ndGg6IDEgfSB9XSB9XSB9IH0sIHJ1bnRpbWU6IHt9IGFzIFBsdWdpbkNvbm5lY3RlZEFjY291bnRSdW50aW1lIH0gfSB9KTs= */
 void undefined; /* @sdk-negative-type-case-end */
 
@@ -166,6 +168,49 @@ describe('definePlugin', () => {
                 operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
             }),
         ]);
+    });
+
+    it('projects canonical Provider declarations at the author call', () => {
+        const plugin = definePlugin({
+            id: 'example.canonical-provider-declaration',
+            version: '0.1.0',
+            providers: {
+                models: {
+                    declaration: {
+                        v: 1,
+                        name: 'Example Models',
+                        kind: 'aggregator',
+                        endpointTemplates: [{
+                            id: 'responses',
+                            protocol: 'openai-responses',
+                            baseUrl: 'https://models.example.com/v1',
+                            capabilities: {
+                                streaming: 'supported',
+                                toolRoundTrips: 'unknown',
+                                statefulResponses: 'unknown',
+                                reasoningControls: 'unknown',
+                            },
+                        }],
+                        catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+                    },
+                },
+            },
+        });
+
+        expect(plugin.manifest.contributes.providers?.[0]?.id).toBe('models');
+    });
+
+    it('uses the canonical Provider declaration projection at the definePlugin boundary', () => {
+        const sourceText = readFileSync(new URL('./definePlugin.ts', import.meta.url), 'utf8');
+
+        expect(sourceText).toContain(
+            "import type { ProviderContribution } from './providers/projections.js';",
+        );
+        expect(sourceText).toContain(
+            "type PluginProviderDeclaration = DistributiveOmit<ProviderContribution, 'id'>;",
+        );
+        expect(sourceText).toContain("declaration: Omit<ProviderContribution, 'id' | 'managedRuntime'>");
+        expect(sourceText).not.toContain("ContributionRow<'providers'>");
     });
 
     it('projects canonical Connected Account declarations at the author call', () => {
