@@ -15,6 +15,7 @@ import {
     TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageEntryLocatorV1Schema,
+    TriageEntryRepositoryRefV1Schema,
     TriageEntryRefV1Schema,
     TriageSourceEntrySnapshotV1Schema,
     TriageSourceFailureV1Schema,
@@ -226,6 +227,13 @@ const TriageProjectedObservationV1Schema = defineProtocolObject({
             snapshot: TriageSourceEntrySnapshotV1Schema,
             viewer: TriageSourceViewerFactsV1Schema,
             sourceUpdatedAtMs: defineProtocolNumber({ integer: true }).optional(),
+            // The forge repository this entry belongs to, carried because the
+            // mounted surface resolves launch placement from the row it is
+            // looking at: the detail Action carries no observation, so a press
+            // that had to fetch this separately would resolve placement from a
+            // second read of the same entry. `nativeRevision` stays off this
+            // wire for the opposite reason — nothing on a list row reads it.
+            repository: TriageEntryRepositoryRefV1Schema.optional(),
         }, { policy: 'closed' }),
         defineProtocolObject({
             kind: defineProtocolLiteral('absent'),

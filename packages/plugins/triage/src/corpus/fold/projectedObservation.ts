@@ -1,6 +1,7 @@
 import type {
     TriageEntryLocatorV1,
     TriageEntryRefV1,
+    TriageEntryRepositoryRefV1,
     TriageSourceEntrySnapshotV1,
     TriageSourceFailureV1,
     TriageSourceViewerFactsV1,
@@ -32,6 +33,14 @@ export type ProjectedObservationV1 = Readonly<{
             snapshot: TriageSourceEntrySnapshotV1;
             viewer: TriageSourceViewerFactsV1;
             sourceUpdatedAtMs?: number;
+            /**
+             * The forge repository this entry belongs to, when its source
+             * declared one. It is the left half of the launch-placement join
+             * (`sessions/launchPlacement.ts`) and is carried on the observation
+             * because that is where the source said it — the aggregate never
+             * derives a repository from a locator, a scope label or a URL.
+             */
+            repository?: TriageEntryRepositoryRefV1;
         }>
         /**
          * Absence carries no basis of its own. `CONTRACT.md` §4 fixes the

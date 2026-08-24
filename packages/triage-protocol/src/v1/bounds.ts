@@ -106,6 +106,23 @@ export const MAX_TRIAGE_LOCATION_UTF8_BYTES_V1 = 384;
  */
 export const MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1 = 128;
 /**
+ * A forge's canonical repository path (`ScmHostingProviderRef.nameWithOwner`).
+ *
+ * This is not a generic provider identifier. Its ceiling is the largest real
+ * path admitted by the four V1 forges, measured in their path alphabets:
+ * GitHub `owner/name` is `39 + 1 + 100 = 140` bytes; GitLab's complete routed
+ * project path is 255 bytes; Bitbucket Cloud `workspace/repository-slug` is
+ * `62 + 1 + 62 = 125` bytes; and Azure DevOps
+ * `organization/project/repository` is `64 + 1 + 64 + 1 + 64 = 194` bytes.
+ * The maximum of those contracts is therefore 255 bytes.
+ *
+ * A source still omits an over-bound repository identity rather than
+ * truncating it or rejecting the entry: a shortened repository path names a
+ * different checkout. The dedicated bound prevents that honest degradation
+ * from silently removing placement for a path its forge legitimately admits.
+ */
+export const MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1 = 255;
+/**
  * The source-owned composite entry-scope key.
  *
  * It is wider than a plain identifier because a real entry scope carries a

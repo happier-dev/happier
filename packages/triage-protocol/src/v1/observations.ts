@@ -11,6 +11,7 @@ import {
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     MAX_TRIAGE_ROW_FACTS_V1,
     MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
+    MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
     MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
     TRIAGE_ENTRY_PRESENTATION_STATES_V1,
     TRIAGE_ROW_FACT_IMPORTANCES_V1,
@@ -33,6 +34,9 @@ const triageRowFactTextV1 = defineTriageSingleLineStringV1(
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
 );
 const triageProtocolTrue = defineProtocolLiteral(true);
+const triageRepositoryPathV1 = defineTriageSingleLineStringV1(
+    MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
+);
 
 /**
  * The six closed V1 row-fact value arms.
@@ -195,6 +199,63 @@ export type TriageSourceViewerFactsV1 = ReturnType<
     typeof TriageSourceViewerFactsV1Schema.parse
 >;
 
+/**
+ * The forge repository one entry belongs to, spelled exactly as the SCM working
+ * snapshot already resolves it.
+ *
+ * This is the ONE fact that makes launch placement answerable without inventing
+ * an index. A project's working snapshot
+ * (`packages/protocol/src/scm/workingSnapshot.ts`) already carries a RESOLVED
+ * `hostingProvider` ref. The canonical SCM identity owner turns its provider
+ * kind, base URL, and provider-owned repository name into the same three values
+ * every forge source publishes here, including provider-specific casing. The
+ * aggregate then joins the already-normalized records by exact equality.
+ *
+ * It is deliberately NOT a URL, a clone address, a remote name, or a repository
+ * id. Matching a Triage entry to a checkout by normalizing remote URLs across
+ * machines was the withdrawn design: it makes every source re-implement a URL
+ * grammar, and it is wrong the moment two machines spell one remote differently.
+ * Declaring the resolved identity is smaller and exact.
+ *
+ * It is optional because most sources have no forge repository at all — a Sentry
+ * issue and a PostHog error belong to a project, not to a checkout. An entry
+ * without one resolves no launch candidate, which is the honest answer rather
+ * than a guessed directory.
+ */
+export const TriageEntryRepositoryRefV1Schema = defineProtocolObject({
+    /** The SCM hosting kind whose canonicalizer produced this identity. */
+    kind: defineProtocolUnion([
+        defineProtocolLiteral('github'),
+        defineProtocolLiteral('gitlab'),
+        defineProtocolLiteral('bitbucket'),
+        defineProtocolLiteral('azure-devops'),
+    ]),
+    /**
+     * The forge DEPLOYMENT this repository lives on, spelled as the source's own
+     * configured-origin owner already canonicalizes it: scheme and host
+     * lowercased, default port dropped, base path preserved verbatim and without
+     * a trailing slash. It is the same string
+     * `readScmHostingRepositoryIdentity` derives from a resolved
+     * `ScmHostingProviderRef.baseUrl`
+     * (`packages/protocol/src/scm/hostingRepositoryIdentity.ts`).
+     *
+     * It is REQUIRED because one provider kind covers many deployments. For
+     * Azure DevOps the organization lives in the base path, so `api/web` on two
+     * organizations is two repositories. Without this component the join matches a repository to a
+     * checkout of a DIFFERENT repository and puts an agent to work in it.
+     *
+     * The base path remains case-significant while URL host canonicalization is
+     * owned by `normalizeScmHostingRepositoryIdentity`; downstream comparison
+     * is exact.
+     */
+    deployment: TriageIdentifierV1ProtocolSchema,
+    /** The provider-canonical repository identity. */
+    repository: triageRepositoryPathV1,
+}, { policy: 'closed' });
+export type TriageEntryRepositoryRefV1 = ReturnType<
+    typeof TriageEntryRepositoryRefV1Schema.parse
+>;
+
 /** @internal Relative-only fields of one authoritative present observation. */
 export const TriageSourcePresentObservationV1Fields = {
     kind: defineProtocolLiteral('present'),
@@ -205,6 +266,13 @@ export const TriageSourcePresentObservationV1Fields = {
     /** The provider's clock. Display and presentation ordinal only; it decides nothing. */
     sourceUpdatedAtMs: defineProtocolNumber({ integer: true }).optional(),
     nativeRevision: TriageIdentifierV1ProtocolSchema.optional(),
+    /**
+     * The forge repository this entry belongs to, when it belongs to one. It is
+     * the left half of the launch-placement join
+     * (`packages/plugins/triage/src/sessions/launchPlacement.ts`); absent means
+     * this source has no checkout to name, never that placement failed.
+     */
+    repository: TriageEntryRepositoryRefV1Schema.optional(),
 } as const;
 
 /** @internal Relative-only present arm shared by scan and authoritative get. */

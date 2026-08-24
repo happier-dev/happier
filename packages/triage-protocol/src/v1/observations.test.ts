@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createTriageSourceV1Fixture } from '../testing/v1/fixtures.js';
 import {
+    TriageEntryRepositoryRefV1Schema,
     TriageRowFactV1Schema,
     TriageSourceEntrySnapshotV1Schema,
     TriageSourceObservationV1Schema,
@@ -13,6 +14,46 @@ import {
 const fixture = createTriageSourceV1Fixture();
 const present = fixture.getResult;
 const localRef = { kindId: 'pull-request', collisionScope: 'example:41231', entryId: '17' };
+
+describe('Triage entry repository identity', () => {
+    it('admits the longest repository path each shipped forge can produce', () => {
+        const longestByForge = {
+            github: `${'o'.repeat(39)}/${'r'.repeat(100)}`,
+            gitlab: `${'g'.repeat(154)}/${'r'.repeat(100)}`,
+            bitbucket: `${'w'.repeat(62)}/${'r'.repeat(62)}`,
+            azureDevOps: `${'o'.repeat(64)}/${'p'.repeat(64)}/${'r'.repeat(64)}`,
+        } as const;
+
+        expect(Object.fromEntries(Object.entries(longestByForge).map(([forge, nameWithOwner]) => [
+            forge,
+            {
+                bytes: new TextEncoder().encode(nameWithOwner).byteLength,
+                admitted: TriageEntryRepositoryRefV1Schema.safeParse({
+                    kind: forge === 'azureDevOps' ? 'azure-devops' : forge,
+                    deployment: 'https://example.test',
+                    repository: nameWithOwner,
+                }).success,
+            },
+        ]))).toEqual({
+            github: { bytes: 140, admitted: true },
+            gitlab: { bytes: 255, admitted: true },
+            bitbucket: { bytes: 125, admitted: true },
+            azureDevOps: { bytes: 194, admitted: true },
+        });
+
+        expect(TriageEntryRepositoryRefV1Schema.safeParse({
+            kind: 'github',
+            deployment: 'https://example.test',
+            repository: 'r'.repeat(256),
+        }).success).toBe(false);
+
+        expect(TriageEntryRepositoryRefV1Schema.safeParse({
+            hostingProviderId: 'happier.scm.forge.github/github',
+            deployment: 'https://github.com',
+            nameWithOwner: 'acme/app',
+        }).success).toBe(false);
+    });
+});
 
 describe('Triage source observation union', () => {
     it('serializes absence as exactly kind and localRef', () => {

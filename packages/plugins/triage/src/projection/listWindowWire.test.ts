@@ -4,13 +4,17 @@ import { describe, expect, it } from 'vitest';
 import { MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1 } from '../actions/listEntriesProtocol.js';
 import type { TriageListEntriesResultV1 } from '../actions/listEntriesProtocol.js';
 import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
+import { qualifySourceObservation } from '../corpus/fold/qualify.js';
 import {
+    testkitLocator,
     TESTKIT_SOURCE_INSTANCE_ID,
     testkitEntryRef,
     testkitPresentOutcome,
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
+import { resolveTriageActionPlacementV1 } from '../sessions/actionLaunch.js';
+import { readTriageSelectedObservationV1 } from '../ui/window/selectedObservation.js';
 import {
     TRIAGE_LIST_DEFAULT_LENS_V1,
     foldTriageListWindow,
@@ -93,6 +97,66 @@ function resultFor(window: TriageListWindowV1): TriageListEntriesResultV1 {
 }
 
 describe('the list window on the wire', () => {
+    it('carries a source repository identity through qualification and the wire to placement', () => {
+        const repository = {
+            kind: 'github',
+            deployment: 'https://github.com',
+            repository: 'acme/widgets',
+        } as const;
+        const qualified = qualifySourceObservation({
+            source: ENTRY_REF.source,
+            declaredKindIds: [ENTRY_REF.kindId],
+            sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+            observedAtMs: 1_000,
+            observation: {
+                kind: 'present',
+                localRef: {
+                    kindId: ENTRY_REF.kindId,
+                    collisionScope: ENTRY_REF.collisionScope,
+                    entryId: ENTRY_REF.entryId,
+                },
+                locator: testkitLocator(),
+                snapshot: testkitSnapshot(),
+                viewer: testkitViewer(),
+                repository,
+            },
+        });
+        expect(qualified.status).toBe('qualified');
+        if (qualified.status !== 'qualified') return;
+        expect(qualified.observation.outcome).toMatchObject({ kind: 'present', repository });
+
+        const onWire = resultFor(fold([qualified.observation]));
+        expect(onWire.window.rows[0]?.observation.outcome)
+            .toMatchObject({ kind: 'present', repository });
+        const rehydrated = laneObservationsFromWire(onWire, TESTKIT_SOURCE_INSTANCE_ID);
+        expect(rehydrated[0]?.outcome).toMatchObject({ kind: 'present', repository });
+        const row = fold(rehydrated).rows[0];
+        expect(row?.selected).toMatchObject({ kind: 'selected' });
+        const selected = row === undefined ? null : readTriageSelectedObservationV1(row);
+        expect(selected?.repository).toEqual(repository);
+
+        const placement = resolveTriageActionPlacementV1({
+            workspaceMode: 'repository',
+            ...(selected?.repository === undefined
+                ? {}
+                : { forge: selected.repository }),
+            projects: [{
+                projectKey: { id: 'workspace-1' },
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                rootPath: '/work/acme/widgets',
+                forge: repository,
+                worktrees: [],
+                reachable: true,
+            }],
+            registryComplete: true,
+        });
+        expect(placement).toMatchObject({
+            kind: 'launch',
+            candidate: { projectKey: { id: 'workspace-1' } },
+        });
+    });
+
     it('keeps one entry observed through two connections one row that names both', () => {
         const rows = toTriageListWireRows(fold([
             observation({ sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID }),

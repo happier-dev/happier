@@ -117,6 +117,7 @@ export type {
 } from './configuredInstances.js';
 
 export {
+    TriageEntryRepositoryRefV1Schema,
     TriageRowFactV1Schema,
     TriageRowFactValueV1Schema,
     TriageScanContinuationV1Schema,
@@ -127,6 +128,7 @@ export {
     TriageSourceViewerFactsV1Schema,
 } from './observations.js';
 export type {
+    TriageEntryRepositoryRefV1,
     TriageRowFactV1,
     TriageRowFactValueV1,
     TriageScanContinuationV1,
