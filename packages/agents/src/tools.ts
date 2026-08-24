@@ -16,6 +16,10 @@ export function usesNativeMcpTools(agentId: AgentId): boolean {
   return getAgentToolsCapability(agentId)?.delivery === 'native_mcp';
 }
 
+export function usesNativeExtensionTools(agentId: AgentId): boolean {
+  return getAgentToolsCapability(agentId)?.delivery === 'native_extension';
+}
+
 export function usesShellBridgeTools(agentId: AgentId): boolean {
   return getAgentToolsCapability(agentId)?.delivery === 'shell_bridge';
 }

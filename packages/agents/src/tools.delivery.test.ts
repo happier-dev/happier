@@ -5,6 +5,7 @@ import { AGENTS_CORE } from './manifest';
 import {
   getAgentToolsCapability,
   isAgentToolsUnsupported,
+  usesNativeExtensionTools,
   usesNativeMcpTools,
   usesShellBridgeTools,
 } from './tools';
@@ -13,9 +14,16 @@ describe('agent tools delivery capability', () => {
   it('defines tools delivery metadata for every agent', () => {
     for (const agentId of AGENT_IDS) {
       expect(AGENTS_CORE[agentId].tools).toBeDefined();
-      expect(AGENTS_CORE[agentId].tools.delivery).toMatch(/^(native_mcp|shell_bridge|unsupported)$/);
+      expect(AGENTS_CORE[agentId].tools.delivery).toMatch(/^(native_mcp|native_extension|shell_bridge|unsupported)$/);
       expect(AGENTS_CORE[agentId].tools.support).toMatch(/^(supported|experimental|unsupported)$/);
     }
+  });
+
+  it('classifies Pi native extension delivery separately from its agent caller surface', () => {
+    expect(getAgentToolsCapability('pi')).toEqual({ delivery: 'native_extension', support: 'experimental' });
+    expect(usesNativeExtensionTools('pi')).toBe(true);
+    expect(usesNativeMcpTools('pi')).toBe(false);
+    expect(usesShellBridgeTools('pi')).toBe(false);
   });
 
   it('classifies native MCP providers through helper APIs', () => {

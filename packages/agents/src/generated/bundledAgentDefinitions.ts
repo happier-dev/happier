@@ -3278,7 +3278,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "persisted": true
     },
     "tools": {
-      "delivery": "shell_bridge",
+      "delivery": "native_extension",
       "support": "experimental"
     }
   },

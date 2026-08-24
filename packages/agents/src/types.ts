@@ -53,7 +53,7 @@ export type PermissionIntent = (typeof PERMISSION_INTENTS)[number];
 
 export type VendorResumeSupportLevel = 'supported' | 'unsupported' | 'experimental';
 export type VendorHandoffSupportLevel = 'supported' | 'unsupported' | 'experimental';
-export type AgentToolsDelivery = 'native_mcp' | 'shell_bridge' | 'unsupported';
+export type AgentToolsDelivery = 'native_mcp' | 'native_extension' | 'shell_bridge' | 'unsupported';
 export type AgentToolsSupportLevel = 'supported' | 'experimental' | 'unsupported';
 export type AgentLocalControlTopology = 'exclusive' | 'shared';
 export type AgentLocalControlAttachStrategy = 'terminal_host' | 'provider_attach' | 'unsupported';
