@@ -12,6 +12,7 @@ export type SlimProfileEditableDraft = Readonly<{
     defaultPersistenceModeByTargetKey?: LaunchProfileV2['defaultPersistenceModeByTargetKey'];
     preferredAgentTargetKey?: LaunchProfileV2['preferredAgentTargetKey'];
     preferredModelSelection?: LaunchProfileV2['preferredModelSelection'];
+    codingPromptBehaviorOverrides?: LaunchProfileV2['codingPromptBehaviorOverrides'];
 }>;
 
 export type SlimProfileSaveResult =
@@ -53,6 +54,7 @@ export function buildSlimProfileSave(
         ...(draft.preferredModelSelection
             ? { preferredModelSelection: draft.preferredModelSelection }
             : { preferredModelSelection: undefined }),
+        codingPromptBehaviorOverrides: draft.codingPromptBehaviorOverrides,
         updatedAt: now(),
     });
     if (parsed.success) {

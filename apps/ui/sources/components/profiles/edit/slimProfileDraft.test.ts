@@ -11,6 +11,44 @@ const base = {
 };
 
 describe('buildSlimProfileSave', () => {
+    it('persists sparse coding prompt behavior overrides without copying account defaults', () => {
+        expect(buildSlimProfileSave(base, {
+            name: 'Profile A',
+            description: '',
+            extraEnvironmentVariables: [],
+            codingPromptBehaviorOverrides: {
+                sessionTitleUpdates: 'initial',
+                responseOptions: 'disabled',
+            },
+        })).toMatchObject({
+            status: 'success',
+            profile: {
+                codingPromptBehaviorOverrides: {
+                    sessionTitleUpdates: 'initial',
+                    responseOptions: 'disabled',
+                },
+            },
+        });
+    });
+
+    it('clears inherited coding prompt behavior overrides instead of retaining stored values', () => {
+        const saved = buildSlimProfileSave({
+            ...base,
+            codingPromptBehaviorOverrides: {
+                sessionTitleUpdates: 'ongoing' as const,
+                responseOptions: 'agent' as const,
+            },
+        }, {
+            name: 'Profile A',
+            description: '',
+            extraEnvironmentVariables: [],
+            codingPromptBehaviorOverrides: undefined,
+        });
+
+        expect(saved.status).toBe('success');
+        expect(saved.status === 'success' ? saved.profile.codingPromptBehaviorOverrides : 'error').toBeUndefined();
+    });
+
     it('returns a strict slim profile with trimmed identity and safe launch environment', () => {
         expect(buildSlimProfileSave(base, {
             name: '  Focused  ', description: '  Daily setup  ',

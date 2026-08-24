@@ -14,6 +14,7 @@ import { t } from '@/text';
 
 import { buildSlimProfileSave, isSlimProfileReservedEnvironmentAuthorityReady } from './slimProfileDraft';
 import { getAllAgentProviderOwnedEnvironmentKeys } from '@/agents/catalog/catalog';
+import { SlimProfilePromptBehaviorFields } from './SlimProfilePromptBehaviorFields';
 import { SlimProfileRoutingFields } from './SlimProfileRoutingFields';
 import { useSlimProfileAgentEntries } from './useSlimProfileAgentEntries';
 
@@ -43,6 +44,9 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
     });
     const [preferredAgentTargetKey, setPreferredAgentTargetKey] = React.useState(props.profile.preferredAgentTargetKey);
     const [preferredModelSelection, setPreferredModelSelection] = React.useState(props.profile.preferredModelSelection);
+    const [codingPromptBehaviorOverrides, setCodingPromptBehaviorOverrides] = React.useState(
+        props.profile.codingPromptBehaviorOverrides,
+    );
     const initialSnapshot = React.useRef(JSON.stringify({
         name: props.profile.name,
         description: props.profile.description ?? '',
@@ -51,6 +55,7 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
         defaultPersistenceModeByTargetKey: props.profile.defaultPersistenceModeByTargetKey,
         preferredAgentTargetKey: props.profile.preferredAgentTargetKey,
         preferredModelSelection: props.profile.preferredModelSelection,
+        codingPromptBehaviorOverrides: props.profile.codingPromptBehaviorOverrides,
     }));
     const { entries, projection: daemonProjection, serverId } = useSlimProfileAgentEntries(
         props.machineId,
@@ -76,8 +81,10 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
             defaultPersistenceModeByTargetKey,
             preferredAgentTargetKey,
             preferredModelSelection,
+            codingPromptBehaviorOverrides,
         }) !== initialSnapshot.current);
     }, [
+        codingPromptBehaviorOverrides,
         defaultPermissionModeByTargetKey,
         defaultPersistenceModeByTargetKey,
         description,
@@ -99,6 +106,7 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
                 defaultPersistenceModeByTargetKey,
                 preferredAgentTargetKey,
                 preferredModelSelection,
+                codingPromptBehaviorOverrides,
             },
             Date.now,
             reservedEnvironmentVariableNames,
@@ -117,6 +125,7 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
         }
         return props.onSave(result.profile);
     }, [
+        codingPromptBehaviorOverrides,
         defaultPermissionModeByTargetKey,
         defaultPersistenceModeByTargetKey,
         description,
@@ -184,6 +193,11 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
                 onPersistenceDefaultsChange={setDefaultPersistenceModeByTargetKey}
                 onPreferredAgentChange={setPreferredAgentTargetKey}
                 onPreferredModelChange={setPreferredModelSelection}
+            />
+
+            <SlimProfilePromptBehaviorFields
+                value={codingPromptBehaviorOverrides}
+                onChange={setCodingPromptBehaviorOverrides}
             />
 
             <View style={{ paddingHorizontal: Platform.select({ ios: 16, default: 12 }), paddingTop: 12 }}>
