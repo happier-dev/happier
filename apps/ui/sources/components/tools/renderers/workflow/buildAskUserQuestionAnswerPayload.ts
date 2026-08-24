@@ -74,6 +74,17 @@ export function buildAskUserQuestionAnswerPayload(params: Readonly<{
             ? question.header
             : null;
         const key = question.responseKey ?? exactQuestion ?? exactHeader ?? '';
+        const selected = params.selections.get(questionIndex);
+        const options = Array.isArray(question.options) ? question.options : [];
+        const selectedAnswers = selected
+            ? [...selected]
+                .map((optionIndex) => resolveStructuredQuestionOptionAnswerValue(options[optionIndex]))
+                .filter((value): value is string => value !== null)
+            : [];
+        if (selectedAnswers.length > 0) {
+            rawAnswers[key] = selectedAnswers;
+            continue;
+        }
         const typed = params.freeformAnswers.get(questionIndex);
         if (
             typeof typed === 'string'
@@ -85,18 +96,7 @@ export function buildAskUserQuestionAnswerPayload(params: Readonly<{
             rawAnswers[key] = [typed];
             continue;
         }
-        const selected = params.selections.get(questionIndex);
-        const options = Array.isArray(question.options) ? question.options : [];
-        const selectedAnswers = selected
-            ? [...selected]
-                .map((optionIndex) => resolveStructuredQuestionOptionAnswerValue(options[optionIndex]))
-                .filter((value): value is string => value !== null)
-            : [];
-        rawAnswers[key] = selectedAnswers.length > 0
-            ? selectedAnswers
-            : question.freeform?.allowEmpty === true
-                ? ['']
-                : [];
+        rawAnswers[key] = question.freeform?.allowEmpty === true ? [''] : [];
     }
 
     const structuredAnswersV1 = StructuredQuestionAnswersV1Schema.parse(rawAnswers);
