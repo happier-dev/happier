@@ -1,6 +1,7 @@
-import { mkdir, readdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { writeGeneratedTextAtomicallyIfChanged } from '@/utils/fs/writeGeneratedTextAtomicallyIfChanged';
 import { buildPiBridgeExtensionSource, type PiBridgeExtensionSourceParams } from './piBridgeExtensionSource';
 
 /**
@@ -66,12 +67,6 @@ async function retireStalePiBridgeExtensionAssets(extensionRoot: string, extensi
   await Promise.all(retirements);
 }
 
-async function writeFileIfChanged(path: string, content: string): Promise<void> {
-  const existing = await readFile(path, 'utf8').catch(() => null);
-  if (existing === content) return;
-  await writeFile(path, content, { mode: 0o600 });
-}
-
 /**
  * Idempotently write the Pi tools-bridge extension under the agent dir `extensions/`
  * subtree. Safe to call repeatedly (write-if-changed). Called by the Pi runtime's
@@ -88,6 +83,10 @@ export async function ensurePiBridgeExtensionAsset(
   await mkdir(extensionDir, { recursive: true });
   await retireStalePiBridgeExtensionAssets(extensionRoot, extensionDir);
   const path = resolvePiBridgeExtensionPath(agentDir);
-  await writeFileIfChanged(path, buildPiBridgeExtensionSource(params));
+  await writeGeneratedTextAtomicallyIfChanged({
+    path,
+    contents: buildPiBridgeExtensionSource(params),
+    mode: 0o600,
+  });
   return path;
 }
