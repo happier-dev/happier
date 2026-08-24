@@ -100,7 +100,7 @@ export const AIBackendProfileSchema = z.object({
   // Per-profile coding prompt behavior overrides (partial, with .catch({}) to drop malformed)
   codingPromptBehaviorV1: CodingPromptBehaviorOverrideV1Schema.optional(),
 })
-  // NOTE: Zod v4 marks `superRefine` as deprecated in favor of `.check(...)`. 
+  // NOTE: Zod v4 marks `superRefine` as deprecated in favor of `.check(...)`.
   // We use chained `.refine(...)` here to preserve per-field error paths/messages.
   .refine((profile) => {
     return !(profile.requiresMachineLoginTargetKey && profile.authMode !== 'machineLogin');

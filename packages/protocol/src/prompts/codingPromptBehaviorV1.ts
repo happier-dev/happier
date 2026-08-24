@@ -62,14 +62,14 @@ export function resolveCodingPromptBehaviorV1WithOverride(params: {
   override?: CodingPromptBehaviorOverrideV1 | null;
 }): CodingPromptBehaviorV1 {
   const global = resolveCodingPromptBehaviorV1(params.settingsLike);
-  
+
   if (!params.override) {
     return global;
   }
 
   // Override is an object (could be minimal from .catch({ v: 1 }))
   const overrideObj = params.override as Record<string, unknown> | null;
-  
+
   // Build merged result: v always from global, other fields use override if set
   return {
     v: global.v,
