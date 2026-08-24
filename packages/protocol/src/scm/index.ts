@@ -111,6 +111,12 @@ export {
 } from './pullRequests.js';
 export { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from './worktrees.js';
 export {
+  ScmReviewWorkspaceMaterializePreparedRequestSchema,
+  ScmReviewWorkspaceMaterializePreparedResponseSchema,
+  type ScmReviewWorkspaceMaterializePreparedRequest,
+  type ScmReviewWorkspaceMaterializePreparedResponse,
+} from './reviewWorkspace.js';
+export {
   ScmBackendContributionSchema,
   type ScmBackendContribution,
 } from '../plugins/contributions/scmBackends.js';

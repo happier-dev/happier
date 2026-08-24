@@ -472,6 +472,7 @@ describe('ActionIdSchema', () => {
         'scm.pullRequest.openCompose',
         'scm.pullRequest.checkout',
         'scm.pullRequest.prepareWorktree',
+        'scm.reviewWorkspace.materializePrepared',
         'scm.pullRequest.runStacked',
       ],
       scm_repository: [
@@ -801,6 +802,7 @@ describe('ActionIdSchema', () => {
       'scm.pullRequest.openCompose',
       'scm.pullRequest.checkout',
       'scm.pullRequest.prepareWorktree',
+      'scm.reviewWorkspace.materializePrepared',
       'scm.pullRequest.runStacked',
       'scm.repository.clone',
       'scm.repository.init',

@@ -260,6 +260,10 @@ import {
   ScmPullRequestRunStackedResponseSchema,
 } from '../scm/pullRequests.js';
 import {
+  ScmReviewWorkspaceMaterializePreparedRequestSchema,
+  ScmReviewWorkspaceMaterializePreparedResponseSchema,
+} from '../scm/reviewWorkspace.js';
+import {
   ScmRepositoryCloneInputSchema,
   ScmRepositoryCloneOutputSchema,
   SourceControlCloneProtocolSchema,
@@ -2249,6 +2253,7 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'scm.pullRequest.openOrReuse',
   'scm.pullRequest.checkout',
   'scm.pullRequest.prepareWorktree',
+  'scm.reviewWorkspace.materializePrepared',
   'scm.pullRequest.runStacked',
   'scm.repository.clone',
   'scm.repository.init',
@@ -8020,6 +8025,39 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     },
   },
   {
+    id: 'scm.reviewWorkspace.materializePrepared',
+    title: 'Materialize prepared review workspace',
+    description: 'Materialize prepared checkout facts in one exact selected workspace.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      sdkMethod: 'scm.reviewWorkspace.materializePrepared',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: ScmReviewWorkspaceMaterializePreparedResponseSchema,
+    inputSchema: ScmReviewWorkspaceMaterializePreparedRequestSchema,
+    inputHints: {
+      title: 'Materialize prepared review workspace',
+      fields: [
+        { path: 'cwd', title: 'Selected workspace root', widget: 'text', required: true },
+        { path: 'displayName', title: 'Branch name', widget: 'text', required: true },
+        { path: 'baseRef', title: 'Prepared base ref', widget: 'text' },
+        { path: 'branchMode', title: 'Branch mode', widget: 'select', required: true, options: [
+          { value: 'new', label: 'New branch' },
+          { value: 'existing', label: 'Existing branch' },
+        ] },
+      ],
+    },
+  },
+  {
     id: 'scm.pullRequest.runStacked',
     title: 'Run stacked pull-request workflow',
     description: 'Run a structured branch, commit, push, and pull-request workflow.',
@@ -8402,6 +8440,7 @@ export const PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS = Object.freeze({
   'session.permission.remote.respond': 'The remote-permission mediator identity comes only from the host-stamped plugin caller.',
   'plugins.permissions.grants.revoke': 'Plugin self-revocation resolves the grant owner from the host-stamped plugin caller.',
   'sessions.external.materialize.start': 'External-session materialization persists plugin-authored intent from the host-stamped caller.',
+  'scm.reviewWorkspace.materializePrepared': 'Prepared review-workspace materialization is invoked only by the host-stamped source plugin.',
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
 
 export type PluginProvenanceOnlyActionId = keyof typeof PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_REASONS;
@@ -9257,6 +9296,7 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'scm.pullRequest.openOrReuse': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'scm.pullRequest.checkout': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'scm.pullRequest.prepareWorktree': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'scm.reviewWorkspace.materializePrepared': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'scm.pullRequest.runStacked': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'scm.repository.clone': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'scm.repository.init': HOST_DOMAIN_PLUGIN_CALLER_POLICY,

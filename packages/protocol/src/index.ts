@@ -4293,6 +4293,8 @@ export {
   type ScmStatusSnapshotRequest,
   type ScmStatusSnapshotResponse,
   type ScmHostingRepositoryIdentityV1,
+  type ScmReviewWorkspaceMaterializePreparedRequest,
+  type ScmReviewWorkspaceMaterializePreparedResponse,
   type ScmWorktree,
   type ScmWorktreeEnrichmentEntry,
   type ScmWorktreesEnrichmentRequest,
@@ -4365,6 +4367,10 @@ export {
   type ScmPullRequestStatusProjection,
   type ScmPullRequestSummary,
 } from './scm/pullRequests.js';
+export {
+  ScmReviewWorkspaceMaterializePreparedRequestSchema,
+  ScmReviewWorkspaceMaterializePreparedResponseSchema,
+} from './scm/reviewWorkspace.js';
 export {
   SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
   ScmDiffSummaryCacheEntrySchema,

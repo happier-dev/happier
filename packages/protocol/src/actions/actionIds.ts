@@ -408,6 +408,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'scm.pullRequest.openCompose',
     'scm.pullRequest.checkout',
     'scm.pullRequest.prepareWorktree',
+    'scm.reviewWorkspace.materializePrepared',
     'scm.pullRequest.runStacked',
   ],
   scm_repository: [

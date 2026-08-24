@@ -346,6 +346,7 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'scm.pullRequest.openOrReuse',
   'scm.pullRequest.checkout',
   'scm.pullRequest.prepareWorktree',
+  'scm.reviewWorkspace.materializePrepared',
   'scm.pullRequest.runStacked',
   'scm.repository.clone',
   'scm.repository.init',
@@ -2694,6 +2695,16 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('scm.pullRequest.list').safety).toBe('safe');
     expect(getActionSpec('scm.pullRequest.openOrReuse').safety).toBe('danger');
     expect(getActionSpec('scm.pullRequest.runStacked').safety).toBe('danger');
+  });
+
+  it('keeps prepared review-workspace materialization plugin-only', () => {
+    const spec = getActionSpec('scm.reviewWorkspace.materializePrepared');
+
+    expect(spec.bindings?.sdkMethod).toBe(spec.id);
+    expect(spec.surfaces.plugin).toBe(true);
+    expect(spec.surfaces.api).toBe(false);
+    expect(spec.surfaces.rpc).toBe(false);
+    expect(isPluginProvenanceOnlyActionId(spec.id)).toBe(true);
   });
 
   it('projects SCM repository provisioning actions through RPC and SDK surfaces only', () => {
