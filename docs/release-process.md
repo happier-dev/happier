@@ -137,7 +137,7 @@ When a hosted run fails, use native failed-job rerun if workflow code and
 candidate bytes are unchanged. If workflow control changed, resume the failed
 operation through `hmaint release resume`; a new attempt may reuse only
 individually verified immutable candidates from the exact prior run. Any
-candidate-reachable source change requires a new candidate.
+release-output-affecting source change requires new release outputs.
 
 For CLI, stack, server-runtime, and UI-web binary releases:
 
@@ -221,7 +221,7 @@ Repository variables used for exact hosted-server completion proof:
 
 Each value must be the public `https://.../v1/version` endpoint for that
 environment. A selected server deployment fails release verification unless
-the endpoint reports the exact candidate `source_sha`; webhook acceptance alone
+the endpoint reports the approved release `source_sha`; webhook acceptance alone
 is not deployment completion.
 
 The `HAPPIER_*_DEPLOY_WEBHOOKS` values can be either:
