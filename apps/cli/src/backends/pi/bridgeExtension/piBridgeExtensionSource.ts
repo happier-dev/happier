@@ -165,8 +165,8 @@ function readDisabledActionIds(pi) {
   if (!raw) return new Set();
   try {
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    return new Set(parsed.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()));
+    if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string" && value.trim())) return null;
+    return new Set(parsed.map((value) => value.trim()));
   } catch {
     return null;
   }

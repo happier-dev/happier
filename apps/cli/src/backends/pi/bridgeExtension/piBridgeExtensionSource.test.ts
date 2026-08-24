@@ -328,13 +328,19 @@ describe('pi bridge extension behavior (generated artifact, exercised live)', ()
     });
   });
 
-  it('fails closed on malformed disabled-action flag values', async () => {
-    const on = await driveExtension({
+  it('fails closed on malformed disabled-action flag values and entries', async () => {
+    const malformed = await driveExtension({
       [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
       [PI_BRIDGE_SESSION_TOOLS_FLAG]: true,
       [PI_BRIDGE_DISABLED_ACTION_IDS_FLAG]: 'not-json',
     });
-    expect(on.harness.tools.map((tool) => tool.name)).toEqual([]);
+    const mixedEntries = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_SESSION_TOOLS_FLAG]: true,
+      [PI_BRIDGE_DISABLED_ACTION_IDS_FLAG]: JSON.stringify(['session.list', 123]),
+    });
+    expect(malformed.harness.tools.map((tool) => tool.name)).toEqual([]);
+    expect(mixedEntries.harness.tools.map((tool) => tool.name)).toEqual([]);
   });
 
   it('converts inlined JSON Schema parameters to typebox-compatible shapes', async () => {
