@@ -130,6 +130,9 @@ describe('quota normalization helpers', () => {
     expect(helpers.classifyProviderLimitEvidence({ message: 'model capacity exhausted' })).toBe('capacity');
     expect(helpers.classifyProviderLimitEvidence({ code: 'server_is_overloaded' })).toBe('capacity');
     expect(helpers.classifyProviderLimitEvidence({ message: 'server_is_overloaded' })).toBe('capacity');
+    expect(helpers.classifyProviderLimitEvidence({ message: "We're currently experiencing high demand. Please try again shortly." })).toBe('capacity');
+    expect(helpers.classifyProviderLimitEvidence({ message: 'High demand report for this workspace' })).toBe('unknown');
+    expect(helpers.classifyProviderLimitEvidence({ message: 'stream disconnected before completion: Internal Server Error' })).toBe('unknown');
     expect(helpers.classifyProviderLimitEvidence({ status: 401, message: 'invalid api key' })).toBe('auth_invalid');
     expect(helpers.classifyProviderLimitEvidence({ status: 402, message: 'upgrade your plan' })).toBe('plan_invalid');
     expect(helpers.classifyProviderLimitEvidence({ message: 'plan unavailable for this account' })).toBe('plan_invalid');
