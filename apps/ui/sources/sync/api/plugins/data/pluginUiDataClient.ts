@@ -24,6 +24,7 @@ import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/ava
 import {
     createActivePluginAccountKvClient,
 } from './activePluginAccountKvClient';
+import { createActivePluginAccountSettingsClient } from './activePluginAccountSettingsClient';
 import {
     createActivePluginCollectionClientForContractRef,
     type ActivePluginCollectionClientForContractRefOutcomeV1,
@@ -383,6 +384,16 @@ export function createPluginUiDataClient(input: Readonly<{
         accountKv: createActivePluginAccountKvClient({
             pluginId: input.pluginId,
             accountLifetime: input.accountLifetime,
+        }),
+        // The plugin's own Account Settings record, through the one host
+        // Settings owner. Its declaration comes from the same Account
+        // availability projection this client already reads for Collections, so
+        // a surface reads and writes its durable user state with no daemon in
+        // the path.
+        accountSettings: createActivePluginAccountSettingsClient({
+            pluginId: input.pluginId,
+            accountLifetime: input.accountLifetime,
+            availabilityReader: input.availabilityReader,
         }),
     });
 }
