@@ -26,17 +26,14 @@ async function createAccountWithoutDaemon(params: Readonly<{
 }
 
 async function createAccountIfNeeded(page: Page): Promise<void> {
-  const welcomeCreateAccount = page.getByTestId('welcome-create-account');
-  if (await welcomeCreateAccount.count()) {
-    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-    return;
-  }
-
   const welcomeSignupProvider = page.getByTestId('welcome-signup-provider');
   if (await welcomeSignupProvider.count()) {
     await welcomeSignupProvider.click({ timeout: 60_000, force: true });
     await ensureAccountReadyForConnect({ page, timeoutMs: 120_000, clickCreateAccount: false });
+    return;
   }
+
+  await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 }
 
 function deriveServerIdFromUrl(serverUrl: string): string {

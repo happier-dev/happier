@@ -4,7 +4,10 @@ import { resolveSignalExitCode } from './process/managedChildLifecycle.mjs';
  * A crashed or non-zero shard is recorded so later shards still run. Only an operator
  * interrupt stops the remaining work, which would otherwise be spawned into the same signal.
  */
-export function classifyVitestShardTermination({ code, signal }) {
+export function classifyVitestShardTermination({ code, signal, timedOut = false }) {
+  if (timedOut === true) {
+    return { outcome: 'failed', exitCode: 124, signal: signal ?? null, timedOut: true };
+  }
   if (signal) {
     const interrupted = signal === 'SIGINT' || signal === 'SIGTERM' || signal === 'SIGHUP';
     return {
@@ -48,7 +51,7 @@ export function summarizeVitestShardOutcomes({ shardCount, outcomes, unitLabel =
   for (const entry of failedShards) {
     lines.push(
       `[vitest]   ${unitLabel} ${entry.shard}/${shardCount} FAILED`
-      + (entry.signal ? ` (signal ${entry.signal})` : ` (exit ${entry.exitCode})`)
+      + (entry.timedOut ? ' (timed out)' : entry.signal ? ` (signal ${entry.signal})` : ` (exit ${entry.exitCode})`)
       + ` — ${entry.fileCount} file(s)`,
     );
   }

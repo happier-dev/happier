@@ -26,6 +26,21 @@ export function resolveVitestShardCount(env) {
   return override ?? 24;
 }
 
+export function resolveVitestShardRange(env, shardCount) {
+  const part = parsePositiveInt(env?.HAPPIER_UI_VITEST_PART);
+  const parts = parsePositiveInt(env?.HAPPIER_UI_VITEST_PARTS);
+  if (part === null || parts === null || part > parts || parts > shardCount) {
+    return { start: 1, end: shardCount, part: 1, parts: 1 };
+  }
+  const start = Math.floor(((part - 1) * shardCount) / parts) + 1;
+  const end = Math.floor((part * shardCount) / parts);
+  return { start, end, part, parts };
+}
+
+export function resolveVitestShardTimeoutMs(env) {
+  return parsePositiveInt(env?.HAPPIER_UI_VITEST_SHARD_TIMEOUT_MS) ?? 900_000;
+}
+
 export function resolveVitestConfigPath(argv) {
   const idx = argv.indexOf('--config');
   if (idx === -1) return null;
@@ -93,13 +108,17 @@ export function buildVitestShardRunArgs({ configPath, passthroughArgs, positiona
   ];
 }
 
-export async function runVitestShardRuns({ shardFiles, runShard }) {
+export async function runVitestShardRuns({
+  shardFiles,
+  startShard = 1,
+  endShard = shardFiles.length,
+  runShard,
+}) {
   const outcomes = [];
   let aborted = false;
 
-  for (let index = 0; index < shardFiles.length; index += 1) {
-    const shard = index + 1;
-    const files = shardFiles[index] ?? [];
+  for (let shard = startShard; shard <= endShard; shard += 1) {
+    const files = shardFiles[shard - 1] ?? [];
     if (files.length === 0) {
       outcomes.push({ outcome: 'empty', shard, fileCount: 0, exitCode: 0, signal: null });
       continue;
@@ -188,7 +207,7 @@ async function resolveVitestTestFiles({ configPath, nodeOptions, passthroughArgs
   }
 }
 
-function spawnVitestRun({ configPath, nodeOptions, passthroughArgs, positionalFilters, files }) {
+function spawnVitestRun({ configPath, nodeOptions, passthroughArgs, positionalFilters, files, timeoutMs }) {
   return runManagedChildCommand({
     command: 'vitest',
     args: buildVitestShardRunArgs({ configPath, passthroughArgs, positionalFilters, files }),
@@ -204,6 +223,8 @@ function spawnVitestRun({ configPath, nodeOptions, passthroughArgs, positionalFi
     signalCleanupGraceMs: 0,
     exitCleanupGraceMs: 1_000,
     parentWatchdogPollMs: Number.parseInt(process.env.HAPPIER_TEST_PARENT_WATCHDOG_MS ?? '1000', 10),
+    timeoutMs,
+    timeoutCleanupGraceMs: 5_000,
   });
 }
 
@@ -216,6 +237,8 @@ async function main(argv) {
   }
 
   const shardCount = resolveVitestShardCount(process.env);
+  const shardRange = resolveVitestShardRange(process.env, shardCount);
+  const shardTimeoutMs = resolveVitestShardTimeoutMs(process.env);
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
   const passthroughArgs = resolveVitestPassthroughArgs(argv);
@@ -235,10 +258,12 @@ async function main(argv) {
 
   const outcomes = await runVitestShardRuns({
     shardFiles,
+    startShard: shardRange.start,
+    endShard: shardRange.end,
     runShard: async ({ shard, files }) => {
       // eslint-disable-next-line no-console
       console.log(`[vitest] shard ${shard}/${shardCount}`);
-      return spawnVitestRun({ configPath, nodeOptions, passthroughArgs, positionalFilters, files });
+      return spawnVitestRun({ configPath, nodeOptions, passthroughArgs, positionalFilters, files, timeoutMs: shardTimeoutMs });
     },
   });
 

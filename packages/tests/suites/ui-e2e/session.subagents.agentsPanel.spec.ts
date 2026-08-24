@@ -4,16 +4,14 @@ import { join, resolve } from 'node:path';
 
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createRunDirs } from '../../src/testkit/runDir';
-import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
-import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
-import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -75,7 +73,7 @@ test.describe('ui e2e: session subagents agents panel', () => {
       testDir: suiteDir,
       dbProvider: 'sqlite',
       extraEnv: {
-        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
+        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys,providers.claude.unifiedTerminal',
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
       },
     });
@@ -108,42 +106,29 @@ test.describe('ui e2e: session subagents agents panel', () => {
     const browserDiagnostics = collectBrowserDiagnostics({ page });
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await gotoDomContentLoadedWithRetries(page, uiBaseUrl, 420_000);
-    await waitForInitialAppUi({ page, browserDiagnostics });
-
-    const createAccountByTestId = page.getByTestId('welcome-create-account');
-    const createAccountByRole = page.getByRole('button', { name: 'Create account' });
-    const createAccount =
-      (await createAccountByTestId.count()) ? createAccountByTestId
-        : (await createAccountByRole.count()) ? createAccountByRole
-          : null;
-    if (createAccount) {
-      await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-    }
-
     const testDir = resolve(join(suiteDir, 't1-agents-panel'));
     await mkdir(testDir, { recursive: true });
-
-    const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
+    const fakeClaudePath = fakeClaudeFixturePath();
+    const fakeClaudeLog = resolve(join(testDir, 'fake-claude.jsonl'));
+    daemon = await authenticateAndStartDaemon({
+      page,
       testDir,
       cliHomeDir,
       serverUrl: server.baseUrl,
-      webappUrl: uiBaseUrl,
-      env: {
+      uiBaseUrl,
+      initialUiGotoTimeoutMs: 420_000,
+      initialUiReadyTimeoutMs: 420_000,
+      daemonStartupTimeoutMs: 180_000,
+      extraEnv: {
         ...process.env,
         HOME: cliHomeDir,
-        CI: '1',
-        HAPPIER_DISABLE_CAFFEINATE: '1',
-        HAPPIER_VARIANT: 'dev',
+        HAPPIER_CLAUDE_PATH: fakeClaudePath,
+        HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
+        HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'plan-json',
+        HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
+        HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
       },
     });
-
-    await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('terminal-connect-approve').click();
-    await cliLogin.waitForSuccess();
-    await acknowledgeTerminalConnectSuccessIfPresent(page);
-    await cliLogin.stop().catch(() => {});
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/`, 180_000);
     await waitForInitialAppUi({ page, browserDiagnostics });
     await setUiFeatureToggle({
@@ -153,28 +138,6 @@ test.describe('ui e2e: session subagents agents panel', () => {
       enabled: true,
     });
     await waitForInitialAppUi({ page, browserDiagnostics });
-
-    const fakeClaudePath = fakeClaudeFixturePath();
-    const fakeClaudeLog = resolve(join(testDir, 'fake-claude.jsonl'));
-    daemon = await startTestDaemon({
-      testDir,
-      happyHomeDir: cliHomeDir,
-      env: {
-        ...process.env,
-        HOME: cliHomeDir,
-        CI: '1',
-        HAPPIER_HOME_DIR: cliHomeDir,
-        HAPPIER_SERVER_URL: server.baseUrl,
-        HAPPIER_WEBAPP_URL: uiBaseUrl,
-        HAPPIER_DISABLE_CAFFEINATE: '1',
-        HAPPIER_VARIANT: 'dev',
-        HAPPIER_CLAUDE_PATH: fakeClaudePath,
-        HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLog,
-        HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'plan-json',
-        HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
-        HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
-      },
-    });
 
     const sessionWorkspaceDir = resolve(join(testDir, 'session-workspace'));
     await mkdir(sessionWorkspaceDir, { recursive: true });

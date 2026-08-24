@@ -20,6 +20,17 @@ export function resolveVitestShardCount(env, configPath = null) {
   return typeof configPath === 'string' && basename(configPath) === 'vitest.config.ts' ? 64 : 8;
 }
 
+export function resolveVitestShardRange(env, shardCount) {
+  const part = parsePositiveInt(env?.HAPPIER_CLI_VITEST_PART);
+  const parts = parsePositiveInt(env?.HAPPIER_CLI_VITEST_PARTS);
+  if (part === null || parts === null || part > parts || parts > shardCount) {
+    return { start: 1, end: shardCount, part: 1, parts: 1 };
+  }
+  const start = Math.floor(((part - 1) * shardCount) / parts) + 1;
+  const end = Math.floor((part * shardCount) / parts);
+  return { start, end, part, parts };
+}
+
 export function resolveVitestIsolationPlan(configPath) {
   if (typeof configPath !== 'string' || basename(configPath) !== 'vitest.config.ts') {
     return { shardExcludes: [], runs: [] };
@@ -61,11 +72,11 @@ function spawnVitest({ args, nodeOptions }) {
   });
 }
 
-export async function runCliVitestShardRuns({ shardCount, runShard }) {
+export async function runCliVitestShardRuns({ shardCount, startShard = 1, endShard = shardCount, runShard }) {
   const outcomes = [];
   let aborted = false;
 
-  for (let shard = 1; shard <= shardCount; shard += 1) {
+  for (let shard = startShard; shard <= endShard; shard += 1) {
     if (aborted) {
       outcomes.push({ outcome: 'unexecuted', shard, fileCount: 1, exitCode: null, signal: null });
       continue;
@@ -90,12 +101,17 @@ async function main(argv) {
   }
 
   const shardCount = resolveVitestShardCount(process.env, configPath);
-  const isolationPlan = resolveVitestIsolationPlan(configPath);
+  const shardRange = resolveVitestShardRange(process.env, shardCount);
+  const isolationPlan = shardRange.part === 1
+    ? resolveVitestIsolationPlan(configPath)
+    : { shardExcludes: resolveVitestIsolationPlan(configPath).shardExcludes, runs: [] };
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
 
   const shardOutcomes = await runCliVitestShardRuns({
     shardCount,
+    startShard: shardRange.start,
+    endShard: shardRange.end,
     runShard: ({ shard }) => {
       // eslint-disable-next-line no-console
       console.log(`[vitest] shard ${shard}/${shardCount}`);

@@ -232,7 +232,7 @@ describe('AcpBackend permission deny cleanup', () => {
     });
   });
 
-  it('keeps an uncorrelated permission request ambiguous before denial cancels a pending prompt response', async () => {
+  it('treats transport custody as accepted before denial cancels a pending prompt response', async () => {
     await withTempDir('happier-acp-perm-deny-provider-effect-', async (dir) => {
       const scriptPath = writeFakePermissionAgentScript({
         dir,
@@ -261,11 +261,9 @@ describe('AcpBackend permission deny cleanup', () => {
           started.sessionId,
           'please run bash with permission',
         );
-        expect(evidence.kind).toBe('effect_may_have_occurred');
-        if (evidence.kind !== 'effect_may_have_occurred') return;
+        expect(evidence.kind).toBe('accepted_without_exact_final_response');
 
         await expect(backend.waitForResponseComplete(250)).rejects.toMatchObject({ name: 'AbortError' });
-        expect(await readPromiseState(evidence.finalResponseEvidence)).toBe('pending');
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
       }

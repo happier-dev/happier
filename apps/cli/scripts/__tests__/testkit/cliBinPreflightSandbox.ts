@@ -44,6 +44,30 @@ export function copyCliBinRuntimeFiles(options: {
   for (const file of runtimeScriptFiles) {
     cpSync(resolve(runtimeScriptsDir, file), join(targetScriptsDir, file));
   }
+
+  // The copied runtime script imports this bundled package boundary. Keep the
+  // sandbox focused on the preflight behavior under test instead of relying on
+  // whichever workspace node_modules happens to surround the temporary tree.
+  writeSandboxPackage({
+    packageDir: resolve(options.binDir, '..', 'node_modules', '@happier-dev', 'cli-common'),
+    manifest: {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      exports: {
+        './workspaceBundleLock': './workspaceBundleLock.mjs',
+      },
+    },
+    files: {
+      'workspaceBundleLock.mjs': [
+        "import { resolve } from 'node:path';",
+        "export const resolveWorkspaceBundleLockPath = (repoRoot) => resolve(repoRoot, '.happier-workspace-bundle.lock');",
+        'export const withWorkspaceBundleLock = async (fn) => await fn();',
+        'export const withWorkspaceBundleLockSync = (fn) => fn();',
+        '',
+      ].join('\n'),
+    },
+  });
 }
 
 export function runHappierBin(options: {

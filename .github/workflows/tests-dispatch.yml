@@ -17,6 +17,11 @@ on:
         required: true
         default: ""
         type: string
+      ui_e2e_specs:
+        description: "UI E2E — Optional comma-separated repo-relative *.spec.ts paths; blank runs all shards"
+        required: false
+        default: ""
+        type: string
       installers_channel:
         description: "Installers — Channel for installer smoke tests"
         required: true
@@ -55,6 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run_ui_e2e: ${{ steps.flags.outputs.run_ui_e2e }}
+      ui_e2e_specs: ${{ steps.flags.outputs.ui_e2e_specs }}
       run_wsrepl_lima: ${{ steps.flags.outputs.run_wsrepl_lima }}
       run_mobile_e2e_android: ${{ steps.flags.outputs.run_mobile_e2e_android }}
       run_mobile_e2e_ios: ${{ steps.flags.outputs.run_mobile_e2e_ios }}
@@ -82,10 +88,12 @@ jobs:
         env:
           PROFILE: ${{ inputs.profile }}
           CUSTOM: ${{ inputs.custom_checks }}
+          UI_E2E_SPECS: ${{ inputs.ui_e2e_specs }}
         run: |
           set -euo pipefail
           profile="${PROFILE}"
           custom="${CUSTOM}"
+          ui_e2e_specs="${UI_E2E_SPECS}"
 
           has() {
             local key="$1"
@@ -96,6 +104,17 @@ jobs:
             echo "::error::profile=custom requires custom_checks" >&2
             exit 1
           fi
+          if [ -n "${ui_e2e_specs}" ] && [ "${profile}" != "custom" ]; then
+            echo "::error::profile=custom is required when ui_e2e_specs is set" >&2
+            exit 1
+          fi
+          if [ -n "${ui_e2e_specs}" ] && ! has ui_e2e; then
+            echo "::error::custom_checks must include ui_e2e when ui_e2e_specs is set" >&2
+            exit 1
+          fi
+          case "${ui_e2e_specs}" in
+            *$'\n'*|*$'\r'*) echo "::error::ui_e2e_specs must be a single comma-separated line" >&2; exit 1 ;;
+          esac
 
           if [ "${profile}" = "full" ]; then
             run_ui_e2e=true
@@ -193,6 +212,7 @@ jobs:
 
           {
             echo "run_ui_e2e=${run_ui_e2e}"
+            echo "ui_e2e_specs=${ui_e2e_specs}"
             echo "run_wsrepl_lima=${run_wsrepl_lima}"
             echo "run_mobile_e2e_android=${run_mobile_e2e_android}"
             echo "run_mobile_e2e_ios=${run_mobile_e2e_ios}"
@@ -263,6 +283,7 @@ jobs:
     with:
       select_jobs_explicitly: true
       run_ui_e2e: ${{ needs.resolve.outputs.run_ui_e2e == 'true' }}
+      ui_e2e_specs: ${{ needs.resolve.outputs.ui_e2e_specs }}
       run_wsrepl_lima: ${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}
       run_mobile_e2e_android: ${{ needs.resolve.outputs.run_mobile_e2e_android == 'true' }}
       run_mobile_e2e_ios: ${{ needs.resolve.outputs.run_mobile_e2e_ios == 'true' }}

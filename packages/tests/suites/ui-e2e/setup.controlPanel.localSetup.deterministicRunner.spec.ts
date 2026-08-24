@@ -107,7 +107,6 @@ test.describe('ui e2e: setup control panel flow (deterministic runner)', () => {
         await expect(page.getByTestId('setup.continueToAuth')).toHaveCount(1, { timeout: 120_000 });
         await page.getByTestId('setup.continueToAuth').click();
 
-        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 180_000 });
         await ensureAccountReadyForConnect({ page, timeoutMs: 180_000 });
         await navigateSpa(page, '/setup?happier_hmr=0');
 

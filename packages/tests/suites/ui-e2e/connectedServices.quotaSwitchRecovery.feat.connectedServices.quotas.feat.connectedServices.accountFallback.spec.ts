@@ -368,6 +368,19 @@ async function createConnectedServiceProfile(params: Readonly<{
     );
     expect(response.status).toBe(200);
     expect(response.data?.success).toBe(true);
+
+    await patchConnectedServiceCredentialHealth({
+        baseUrl: params.baseUrl,
+        token: params.token,
+        serviceId: params.serviceId,
+        profileId: params.profileId,
+        health: {
+            v: 1,
+            status: 'connected',
+            reconnectRequired: false,
+            lastRefreshSuccessAt: now,
+        },
+    });
 }
 
 async function patchConnectedServiceCredentialHealth(params: Readonly<{

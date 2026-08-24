@@ -193,6 +193,9 @@ async function openPathBrowserFromNewSession(page: Page): Promise<void> {
     const modernPathChip = page.getByTestId('agent-input-path-chip').first();
     if (await modernPathChip.count()) {
         await modernPathChip.click();
+        const treeBrowserButton = page.getByTestId('path-selection-list:open-tree-browser').first();
+        await expect(treeBrowserButton).toHaveCount(1, { timeout: 60_000 });
+        await treeBrowserButton.click();
         return;
     }
 

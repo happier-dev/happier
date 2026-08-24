@@ -1,22 +1,18 @@
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
-
 import { createRunDirs } from '../../src/testkit/runDir';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import {
   gotoDomContentLoadedWithPathFallback,
   gotoDomContentLoadedWithRetries,
   normalizeLoopbackBaseUrl,
 } from '../../src/testkit/uiE2e/pageNavigation';
-import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
-import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
-import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { fetchJson } from '../../src/testkit/http';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -196,44 +192,17 @@ test.describe('ui e2e: plaintext mode + public share', () => {
 
     const diagnostics = collectBrowserDiagnostics({ page });
 
-    let cliLogin: StartedCliTerminalConnect | null = null;
     let daemon: StartedDaemon | null = null;
     let thrown: unknown = null;
     try {
-      await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-      await waitForInitialAppUi({ page, timeoutMs: 120_000 });
-      await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-
-      cliLogin = await startCliAuthLoginForTerminalConnect({
+      daemon = await authenticateAndStartDaemon({
+        page,
         testDir,
         cliHomeDir,
         serverUrl: server.baseUrl,
-        webappUrl: uiBaseUrl,
-        env: {
-          ...process.env,
-          CI: '1',
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-          HAPPIER_VARIANT: 'dev',
-        },
-      });
-
-      await gotoDomContentLoadedWithPathFallback(page, cliLogin.connectUrl, '/terminal/connect', 90_000);
-      await approveTerminalConnect({ page });
-      await cliLogin.waitForSuccess();
-      await acknowledgeTerminalConnectSuccessIfPresent(page);
-
-      daemon = await startTestDaemon({
-        testDir,
-        happyHomeDir: cliHomeDir,
-        env: {
-          ...process.env,
-          CI: '1',
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-          HAPPIER_SERVER_URL: server.baseUrl,
-          HAPPIER_WEBAPP_URL: uiBaseUrl,
-          HAPPIER_VARIANT: 'dev',
+        uiBaseUrl,
+        extraEnv: {
+          HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
         },
       });
 
@@ -343,7 +312,6 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       throw error;
     } finally {
       await daemon?.stop().catch(() => {});
-      await cliLogin?.stop().catch(() => {});
       if (thrown) {
         await testInfo.attach('browser-diagnostics.md', { body: diagnostics(), contentType: 'text/markdown' });
       }

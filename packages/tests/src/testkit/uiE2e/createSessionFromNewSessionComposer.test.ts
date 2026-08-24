@@ -23,10 +23,10 @@ type CountableLocator = Readonly<{
   click: () => Promise<void>;
 }>;
 
-const MACHINE_OPTION_SELECTOR = '[data-testid^="new-session-machine:"], [data-testid^="new-session-machine-option:"]';
+const MACHINE_OPTION_SELECTOR = '[data-testid^="new-session-machine:"]:visible, [data-testid^="new-session-machine-option:"]:visible';
 
 function exactMachineSelector(machineId: string): string {
-  return `[data-testid="new-session-machine:${machineId}"], [data-testid="new-session-machine-option:${machineId}"]`;
+  return `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`;
 }
 
 function createCountableLocator(params: Readonly<{

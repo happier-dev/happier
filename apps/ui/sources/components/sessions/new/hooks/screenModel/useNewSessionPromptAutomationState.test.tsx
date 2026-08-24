@@ -4,6 +4,32 @@ import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 
 describe('useNewSessionPromptAutomationState', () => {
+    it('keeps a forced automation route enabled when Expo supplies empty seed params', async () => {
+        const { useNewSessionPromptAutomationState } = await import('./useNewSessionPromptAutomationState');
+
+        const hook = await renderHook(() => useNewSessionPromptAutomationState({
+            prompt: undefined,
+            dataId: undefined,
+            automationParam: '1',
+            automationEnabledParam: '',
+            automationNameParam: '',
+            automationDescriptionParam: undefined,
+            automationScheduleKindParam: undefined,
+            automationEveryMinutesParam: undefined,
+            automationCronExprParam: undefined,
+            automationTimezoneParam: undefined,
+            automationEditIdParam: undefined,
+            automationFeatureEnabled: true,
+            persistedDraftEntryIntent: null,
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: null,
+        }));
+
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        expect(hook.getCurrent().automationDraft.enabled).toBe(true);
+    });
+
     it('does not treat empty automation seed params as explicit seeds (does not override user toggles)', async () => {
         const { useNewSessionPromptAutomationState } = await import('./useNewSessionPromptAutomationState');
 

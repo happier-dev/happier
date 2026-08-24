@@ -110,16 +110,9 @@ async function ensureSessionFolderViewMode(params: Readonly<{
   if (!firstFolderId) return;
 
   const firstFolderHeader = params.page.getByTestId(`session-folder-header-${firstFolderId}`);
-  const alreadyTree = await firstFolderHeader.waitFor({ state: 'attached', timeout: 2_000 }).then(
-    () => true,
-    () => false,
-  );
-  if (alreadyTree) return;
-
-  await params.page.getByTestId('session-list-ordering-menu-trigger').first().click();
-  const folderViewToggle = params.page.getByTestId('session-folder-view-toggle');
-  await expect(folderViewToggle).toHaveCount(1, { timeout: 60_000 });
-  await folderViewToggle.click();
+  // The scoped setting was persisted before navigation. Header absence here means the
+  // organization snapshot has not rendered yet; toggling would turn the requested
+  // tree mode back off and make a slow runner fail deterministically.
   await expect(firstFolderHeader).toHaveCount(1, { timeout: 120_000 });
 }
 
@@ -168,6 +161,8 @@ export async function setSessionFolderDragSettings(params: Readonly<{
     page: params.page,
     settingsPatch: {
       sessionFolderViewModeV1: params.folderViewMode ?? 'tree',
+      sessionListActiveGroupingV1: 'project',
+      sessionListInactiveGroupingV1: 'project',
       sessionListOrderingModeV1: 'custom',
     },
   });

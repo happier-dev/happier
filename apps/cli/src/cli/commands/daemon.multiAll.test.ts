@@ -14,7 +14,7 @@ import {
 import { handleDaemonCliCommand } from './daemon';
 
 describe('happier daemon --all', () => {
-  it('stops daemons for all saved servers', async () => {
+  it('stops daemons for all saved servers without taking over lifecycle-owned publication cleanup', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as any);
@@ -46,7 +46,7 @@ describe('happier daemon --all', () => {
             ).rejects.toThrow('process.exit(0)');
 
             expect(await waitForProcessExit(daemon.pid, { timeoutMs: 3_000 })).toBe(true);
-            expect(existsSync(statePath)).toBe(false);
+            expect(existsSync(statePath)).toBe(true);
           } finally {
             await daemon.kill();
           }

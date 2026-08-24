@@ -26,14 +26,17 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
     /name:\s*UI E2E \(Playwright\)[\s\S]*?timeout-minutes:\s*120\b/,
     'UI E2E job should reserve enough time to finish the slow multi-session Playwright scenarios on GitHub-hosted runners',
   );
-  assert.match(uiE2eJob, /shard:\s*\[1, 2, 3, 4, 5, 6, 7, 8, 9\]/);
+  assert.match(uiE2eJob, /shard:\s*\$\{\{ fromJSON\(inputs\.ui_e2e_specs != ''/);
   assert.match(uiE2eJob, /--shard=\$\{\{ matrix\.shard \}\}\/9/);
 
   assert.match(
     uiUnitJob,
-    /name:\s*UI Unit Tests[\s\S]*?timeout-minutes:\s*240\b/,
-    'UI unit tests should reserve enough time for all 24 sequential heap-bounded shards',
+    /name:\s*UI Unit Tests[\s\S]*?timeout-minutes:\s*120\b/,
+    'each UI unit partition should reserve enough time for six heap-bounded shards',
   );
+  assert.match(uiUnitJob, /part:\s*\[1, 2, 3, 4\]/);
+  assert.match(uiUnitJob, /HAPPIER_UI_VITEST_PART:\s*\$\{\{ matrix\.part \}\}/);
+  assert.match(uiUnitJob, /HAPPIER_UI_VITEST_PARTS:\s*["']4["']/);
   assert.match(uiIntegrationJob, /name:\s*UI Integration Tests[\s\S]*?timeout-minutes:\s*240\b/);
 
   assert.match(

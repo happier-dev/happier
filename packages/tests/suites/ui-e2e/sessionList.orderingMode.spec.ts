@@ -246,6 +246,13 @@ test.describe('ui e2e: session list ordering mode', () => {
     await expect(page.getByTestId(`session-list-item-${oldestSessionId}`)).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-list-item-${middleSessionId}`)).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-list-item-${newestSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+
+    await page.getByTestId('session-list-ordering-menu-trigger').first().click();
+    const folderViewToggle = page.getByTestId('session-folder-view-toggle');
+    await expect(folderViewToggle).toHaveCount(1, { timeout: 60_000 });
+    await folderViewToggle.click();
+    await expect(page.locator('[data-testid^="session-list-project-header:"]').first()).toHaveCount(1, { timeout: 120_000 });
+
     const baselineDateOrder = await waitForVisibleSessionOrder(page, [
       oldestSessionId,
       middleSessionId,

@@ -162,9 +162,15 @@ describe('PiRpcBackend prompt admission', () => {
     const admission = await submission.admission;
     expect(admission).toMatchObject({
       status: 'rejected_before_effect',
-      error: { message: 'prompt rejected while busy' },
+      error: {
+        name: 'PiRpcPromptRejectedBeforeEffectError',
+        piProviderFailure: {
+          classification: 'pi_provider_failure',
+          code: 'pi_provider_session_error',
+        },
+      },
     });
-    await expect(submission.completion).rejects.toThrow('prompt rejected while busy');
+    await expect(submission.completion).rejects.toThrow(/prompt rejected while busy/u);
     await new Promise((resolve) => setTimeout(resolve, 50));
     await expect(submission.admission).resolves.toBe(admission);
   });

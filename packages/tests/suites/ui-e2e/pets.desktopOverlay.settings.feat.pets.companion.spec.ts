@@ -11,6 +11,10 @@ import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { setSingleAccountPetsEnabled, setSingleAccountUiFeatureToggle } from '../../src/testkit/pets/uiPetsFeatureToggle';
+import {
+  createDesktopPetOverlayWindowState,
+  installDesktopPetOverlayBridgeProbe,
+} from '../../src/testkit/pets/desktopPetOverlayBridgeProbe';
 import { repoRootDir } from '../../src/testkit/paths';
 
 const execFileAsync = promisify(execFile);
@@ -89,12 +93,7 @@ test.describe('ui e2e: pets desktop overlay settings', () => {
       enabled: true,
     });
 
-    await page.addInitScript(() => {
-      Object.defineProperty(window, '__TAURI_INTERNALS__', {
-        configurable: true,
-        value: { invoke: () => Promise.resolve(null) },
-      });
-    });
+    await installDesktopPetOverlayBridgeProbe(page, { windowState: createDesktopPetOverlayWindowState() });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/pets?happier_hmr=0`, 180_000);
     await expect(page.getByTestId('settings-pets-desktop-overlay-enabled')).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId('settings-pets-desktop-overlay-enabled').click();

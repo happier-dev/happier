@@ -127,7 +127,26 @@ export async function runManagedChildCommand(params) {
   });
 
   return await new Promise((resolve) => {
+    let timedOut = false;
+    const timeoutMs = Number.isFinite(params.timeoutMs) && params.timeoutMs > 0
+      ? Math.floor(params.timeoutMs)
+      : null;
+    const timeout = timeoutMs === null
+      ? null
+      : setTimeout(() => {
+        timedOut = true;
+        void lifecycle.cleanupChild('SIGTERM', {
+          graceMs: params.timeoutCleanupGraceMs,
+          pollMs: params.cleanupPollMs,
+        });
+      }, timeoutMs);
+
+    const clearDeadline = () => {
+      if (timeout !== null) clearTimeout(timeout);
+    };
+
     child.once('error', (error) => {
+      clearDeadline();
       lifecycle.dispose();
       resolve({
         child,
@@ -137,6 +156,7 @@ export async function runManagedChildCommand(params) {
     });
 
     child.once('exit', async (code, signal) => {
+      clearDeadline();
       await lifecycle.finalizeChildExit({
         graceMs: params.exitCleanupGraceMs,
         pollMs: params.cleanupPollMs,
@@ -147,6 +167,7 @@ export async function runManagedChildCommand(params) {
         ok: true,
         code,
         signal,
+        timedOut,
       });
     });
   });

@@ -8,6 +8,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -109,20 +110,12 @@ async function openSession(params: Readonly<{
     uiBaseUrl: string;
     session: SeededSession;
 }>): Promise<ReturnType<Page['locator']>> {
+    await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/?happier_hmr=0`, 180_000);
+    await waitForInitialAppUi({ page: params.page, timeoutMs: 180_000 });
+
     const sessionUrl = `${params.uiBaseUrl}/session/${params.session.id}?happier_hmr=0`;
     await gotoDomContentLoadedWithRetries(params.page, sessionUrl, 180_000);
     const composer = params.page.locator('textarea[data-testid="session-composer-input"]:visible').first();
-    if ((await composer.count()) === 0) {
-        // The first navigation can be consumed by mTLS auto-login. Re-apply the intended session URL
-        // after the account has been provisioned so this helper stays independent of visible session titles.
-        await gotoDomContentLoadedWithRetries(params.page, sessionUrl, 180_000);
-    }
-    if ((await composer.count()) === 0) {
-        const sessionListItem = params.page.getByText(params.session.title, { exact: true }).first();
-        if ((await sessionListItem.count()) > 0) {
-            await sessionListItem.click();
-        }
-    }
     await expect(composer).toHaveCount(1, { timeout: 120_000 });
     await expect(composer).toBeVisible({ timeout: 120_000 });
     return composer;

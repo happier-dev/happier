@@ -86,7 +86,7 @@ test.describe('ui e2e: session fork from header action menu', () => {
       testDir: suiteDir,
       dbProvider: 'sqlite',
       extraEnv: {
-        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
+        HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys,providers.claude.unifiedTerminal',
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
       },
     });
