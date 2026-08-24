@@ -3,4 +3,5 @@ export type { TargetedContributionPointSemanticOperation } from '../../targetedC
 export type { TargetedContributionPointSemanticProjection } from '../../targetedContributionAuthoring.js';
 export type { TargetedContributionPointSemanticSurface } from '../../targetedContributionAuthoring.js';
 export { decodeTargetedContributionPointSemantics } from '../../targetedContributionAuthoring.js';
+export { projectDefinedTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';
 export { readTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';

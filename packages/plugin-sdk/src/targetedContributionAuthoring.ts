@@ -1361,6 +1361,41 @@ export function projectDefinedTargetedContributionPoints<
 }
 
 /**
+ * @realm daemon
+ *
+ * Projects the exact executable target-point refs as one flat host-routing
+ * collection. Multi-epoch points retain one ref per protocol epoch.
+ */
+export function projectDefinedTargetedContributionPointSemanticRefs<
+    TPluginId extends string,
+    TPoints extends Readonly<Record<string, ContributionPointAuthorDefinition>>,
+>(
+    pluginId: TPluginId,
+    points: TPoints | undefined,
+): readonly TargetedContributionPointRef<unknown>[] {
+    return flattenDefinedTargetedContributionPointSemanticRefs(
+        projectDefinedTargetedContributionPoints(pluginId, points),
+    );
+}
+
+/** Internal identity-preserving flattening for refs already projected by `definePlugin`. */
+export function flattenDefinedTargetedContributionPointSemanticRefs<
+    TProjectedPoints extends Readonly<Record<string, unknown>>,
+>(
+    projectedPoints: TProjectedPoints,
+): readonly TargetedContributionPointRef<unknown>[] {
+    // `DefinedContributionPoints` preserves its public tuple inference through
+    // a mapped type, while host routing only needs this runtime projection.
+    const pointRefs = Object.values(projectedPoints) as unknown as readonly (
+        | TargetedContributionPointRef<unknown>
+        | Readonly<{ protocols: readonly TargetedContributionPointRef<unknown>[] }>
+    )[];
+    return Object.freeze(pointRefs.flatMap((point) => (
+        'protocols' in point ? point.protocols : [point]
+    )));
+}
+
+/**
  * Retains exact target point refs alongside the parsed contribution-point
  * collection. The named property is non-enumerable because executable target
  * schemas are host-only rather than canonical manifest JSON.

@@ -263,6 +263,7 @@ describe('targeted contribution point semantics', () => {
         const decoder = targetedContributionsHost.decodeTargetedContributionPointSemantics;
         expect(Object.keys(targetedContributionsHost)).toEqual([
             'decodeTargetedContributionPointSemantics',
+            'projectDefinedTargetedContributionPointSemanticRefs',
             'readTargetedContributionPointSemanticRefs',
         ]);
 
@@ -271,6 +272,17 @@ describe('targeted contribution point semantics', () => {
             .readTargetedContributionPointSemanticRefs(target.manifest);
         expect(semanticPointRefs).toHaveLength(1);
         expect(semanticPointRefs[0]).toBe(point);
+        const projectedSemanticPointRefs = targetedContributionsHost
+            .projectDefinedTargetedContributionPointSemanticRefs(
+                'happier.triage',
+                { sources: protocol.point() },
+            );
+        expect(projectedSemanticPointRefs).toEqual([expect.objectContaining({
+            targetPluginId: 'happier.triage',
+            id: 'sources',
+        })]);
+        const projectedSemanticPoint = projectedSemanticPointRefs[0];
+        if (!projectedSemanticPoint) throw new TypeError('Expected projected semantic point');
         const targetPointCollection = target.manifest.contributes.pluginContributionPoints as typeof target.manifest.contributes.pluginContributionPoints & Readonly<{
             semanticPointRefs?: readonly unknown[];
         }>;
@@ -278,8 +290,8 @@ describe('targeted contribution point semantics', () => {
         expect(Object.getOwnPropertySymbols(targetPointCollection)).toEqual([]);
         expect(targetPointCollection[0]).not.toHaveProperty('semanticCarrier');
         expect(JSON.stringify(targetPointCollection)).toBe(JSON.stringify([...targetPointCollection]));
-        const result = decoder(point, {
-            protocol: point.protocol,
+        const result = decoder(projectedSemanticPoint, {
+            protocol: projectedSemanticPoint.protocol,
             descriptor: { providerId: 'github' },
             operations: [{ role: 'inspect' }],
             surfaces: [
@@ -572,14 +584,18 @@ describe('targeted contribution point semantics', () => {
                 preview: { required: true, inputSchema: surface, presentation: 'fill' },
             },
         });
-        const target = definePlugin({
-            id: 'happier.triage',
-            version: '0.1.0',
-            contributionPoints: {
-                sources: defineContributionPoint([v1, v2]),
-            },
-        });
-        const v2Point = target.contributionPoints.sources.protocols[1];
+        const pointDefinition = defineContributionPoint([v1, v2]);
+        const projectedSemanticPointRefs = targetedContributionsHost
+            .projectDefinedTargetedContributionPointSemanticRefs(
+                'happier.triage',
+                { sources: pointDefinition },
+            );
+        expect(projectedSemanticPointRefs.map((point) => point.protocol)).toEqual([
+            { id: 'triage-source', version: 1 },
+            { id: 'triage-source', version: 2 },
+        ]);
+        const v2Point = projectedSemanticPointRefs[1];
+        if (!v2Point) throw new TypeError('Expected V2 projected semantic point');
 
         expect(targetedContributionsHost.decodeTargetedContributionPointSemantics(v2Point, {
             protocol: v2Point.protocol,

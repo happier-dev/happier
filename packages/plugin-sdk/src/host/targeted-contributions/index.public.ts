@@ -1,5 +1,6 @@
 export {
     decodeTargetedContributionPointSemantics,
+    projectDefinedTargetedContributionPointSemanticRefs,
     readTargetedContributionPointSemanticRefs,
 } from '../../targetedContributionAuthoring.js';
 export type {

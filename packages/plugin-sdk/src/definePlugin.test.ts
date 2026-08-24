@@ -3761,6 +3761,11 @@ void 0; /* @sdk-negative-type-case-end */
                 },
             ],
         });
+        const semanticPointRefs = contributionAuthoring
+            .readTargetedContributionPointSemanticRefs(target.manifest);
+        expect(semanticPointRefs).toEqual(target.contributionPoints.providers.protocols);
+        expect(semanticPointRefs[0]).toBe(target.contributionPoints.providers.protocols[0]);
+        expect(semanticPointRefs[1]).toBe(target.contributionPoints.providers.protocols[1]);
         type V1Contribution = typeof target.contributionPoints.providers.protocols[0] extends TargetedContributionPointRef<
             infer TContribution
         > ? TContribution : never;

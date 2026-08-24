@@ -69,9 +69,9 @@ import type {
     DefinedContributionPointProtocolMap,
     DefinedContributionPoints,
 } from './targetedContributionAuthoring.js';
-import type { TargetedContributionPointRef } from './services/targetedContributions.js';
 import {
     attachTargetedContributionPointSemanticRefs,
+    flattenDefinedTargetedContributionPointSemanticRefs,
     projectDefinedTargetedContributionPoints,
 } from './targetedContributionAuthoring.js';
 import type { AgentExternalSessionsContribution } from './externalSessions.js';
@@ -2641,23 +2641,9 @@ function definePluginImplementation<
         input.id,
         input.contributionPoints,
     );
-    const semanticPointRefs: TargetedContributionPointRef<unknown>[] = [];
-    // The mapped generic retains its tuple lengths through Object.values,
-    // while this boundary needs only the runtime single-vs-epoch-group shape
-    // guaranteed by projectDefinedTargetedContributionPoints above.
-    for (const point of Object.values(contributionPoints) as unknown as readonly (
-        TargetedContributionPointRef<unknown>
-        | Readonly<{ protocols: readonly TargetedContributionPointRef<unknown>[] }>
-    )[]) {
-        if ('protocols' in point) {
-            semanticPointRefs.push(...point.protocols);
-        } else {
-            semanticPointRefs.push(point);
-        }
-    }
     attachTargetedContributionPointSemanticRefs(
         manifest.contributes.pluginContributionPoints ?? [],
-        semanticPointRefs,
+        flattenDefinedTargetedContributionPointSemanticRefs(contributionPoints),
     );
 
     const activate: PluginActivationModule['activate'] = async (api) => {
