@@ -249,7 +249,7 @@ vi.mock('@/hooks/session/useDraft', () => ({
                     address,
                 }),
             }),
-            clearDraftCurrentness: (snapshot: Readonly<{ currentness?: any }>) => {
+            clearDraftCurrentness: (snapshot: Readonly<{ text: string; currentness?: any }>) => {
                 if (!snapshot.currentness) return false;
                 const currentText = draftHookState.valuesBySessionId.get(_sessionId) ?? '';
                 if (currentText !== snapshot.text) {
@@ -1519,7 +1519,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     | undefined;
                 options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
                 resolveStarted();
-                return { localId: 'attachment-local-id' };
             };
             sendMessageSpy.mockImplementationOnce(submit);
         });

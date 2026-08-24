@@ -540,7 +540,7 @@ vi.mock('@/hooks/session/useDraft', () => ({
         address,
       }),
     }),
-    clearDraftCurrentness: (snapshot: Readonly<{ currentness?: any }>) => {
+    clearDraftCurrentness: (snapshot: Readonly<{ text: string; currentness?: any }>) => {
       if (!snapshot.currentness) return false;
       const currentText = draftHookState.valuesBySessionId.get(_sessionId) ?? '';
       if (currentText !== snapshot.text) {
