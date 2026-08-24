@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
+import { ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1 } from "@happier-dev/protocol";
 
 import { auth } from "@/app/auth/auth";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
@@ -8,8 +9,6 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { authRoutes } from "./authRoutes";
-
-const INTROSPECTION_PATH = "/v1/auth/api-tokens/introspect";
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -62,7 +61,7 @@ describe("authRoutes (API token introspection) (integration)", () => {
         try {
             const response = await app.inject({
                 method: "POST",
-                url: INTROSPECTION_PATH,
+                url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
                 headers: { authorization: `Bearer ${daemonConnectionToken}` },
                 payload: { token: pat.token },
             });
@@ -99,7 +98,7 @@ describe("authRoutes (API token introspection) (integration)", () => {
         try {
             const response = await app.inject({
                 method: "POST",
-                url: INTROSPECTION_PATH,
+                url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
                 headers: { authorization: `Bearer ${otherDaemonConnectionToken}` },
                 payload: { token: pat.token },
             });
@@ -124,14 +123,23 @@ describe("authRoutes (API token introspection) (integration)", () => {
         await app.ready();
 
         try {
-            const response = await app.inject({
-                method: "POST",
-                url: INTROSPECTION_PATH,
-                headers: { authorization: `Bearer ${daemonConnectionToken}` },
-                payload: { token: pat.token, accountId: "caller-claimed-account" },
-            });
+            const [extraFieldResponse, nonStringResponse] = await Promise.all([
+                app.inject({
+                    method: "POST",
+                    url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+                    headers: { authorization: `Bearer ${daemonConnectionToken}` },
+                    payload: { token: pat.token, accountId: "caller-claimed-account" },
+                }),
+                app.inject({
+                    method: "POST",
+                    url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+                    headers: { authorization: `Bearer ${daemonConnectionToken}` },
+                    payload: { token: 42 },
+                }),
+            ]);
 
-            expect(response.statusCode).toBe(400);
+            expect(extraFieldResponse.statusCode).toBe(400);
+            expect(nonStringResponse.statusCode).toBe(400);
         } finally {
             await app.close();
         }
@@ -153,30 +161,49 @@ describe("authRoutes (API token introspection) (integration)", () => {
             const [patCaller, signedTokenBody, controlHeaderCaller] = await Promise.all([
                 app.inject({
                     method: "POST",
-                    url: INTROSPECTION_PATH,
+                    url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
                     headers: { authorization: `Bearer ${pat.token}` },
                     payload: { token: pat.token },
                 }),
                 app.inject({
                     method: "POST",
-                    url: INTROSPECTION_PATH,
+                    url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
                     headers: { authorization: `Bearer ${daemonConnectionToken}` },
                     payload: { token: daemonConnectionToken },
                 }),
                 app.inject({
                     method: "POST",
-                    url: INTROSPECTION_PATH,
+                    url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
                     headers: { "x-happier-daemon-token": "local-control-token" },
                     payload: { token: pat.token },
                 }),
             ]);
 
-            for (const response of [patCaller, signedTokenBody]) {
-                expect(response.statusCode).toBe(401);
-                expect(response.json()).toEqual({ error: "invalid_token" });
-            }
+            expect(patCaller.statusCode).toBe(403);
+            expect(patCaller.json()).toEqual({ error: "present_user_required" });
+            expect(signedTokenBody.statusCode).toBe(401);
+            expect(signedTokenBody.json()).toEqual({ error: "invalid_token" });
             expect(controlHeaderCaller.statusCode).toBe(401);
             expect(controlHeaderCaller.json()).toEqual({ error: "Missing authorization header" });
+        } finally {
+            await app.close();
+        }
+    });
+
+    it("keeps rejected daemon connection authentication distinct from an authenticated invalid PAT", async () => {
+        const app = createTestApp();
+        await app.ready();
+
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+                headers: { authorization: "Bearer rejected-daemon-connection-token" },
+                payload: { token: "invalid-subject-pat" },
+            });
+
+            expect(response.statusCode).toBe(401);
+            expect(response.json()).toEqual({ error: "authentication_failed" });
         } finally {
             await app.close();
         }
@@ -196,7 +223,7 @@ describe("authRoutes (API token introspection) (integration)", () => {
         try {
             const response = await app.inject({
                 method: "POST",
-                url: INTROSPECTION_PATH,
+                url: ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
                 headers: { authorization: `Bearer ${daemonConnectionToken}` },
                 payload: { token: pat.token },
             });

@@ -5,6 +5,7 @@ import type { PeerTcpTunnelRelayTransportFactory } from "@/app/local/services/pr
 import type { PeerMediationObservabilityEmitter } from "@/app/api/socket/peer/mediation/observability/events";
 import type { PeerMediationViewerSocketOwnershipVerifier } from "@/app/api/socket/viewerSocketOwnership";
 import type { ExternalActionDaemonDispatcher } from "@/app/api/socket/externalActionDispatcher";
+import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
 import type { AccountStoredContentCompatibilityEvaluation } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import type {
     AutomationReplyHandoffDispatchResultV1,
@@ -23,6 +24,8 @@ declare module 'fastify' {
     interface FastifyContextConfig {
         /** API tokens are denied unless an HTTP route explicitly opts in. */
         allowApiToken?: true;
+        /** Keeps connection authentication rejection distinct from an authenticated subject failure. */
+        connectionAuthFailureError?: "authentication_failed" | "invalid_token";
         /** Public bearer-only routes can opt out of the global CORS hook. */
         cors?: false;
     }
@@ -32,6 +35,8 @@ declare module 'fastify' {
         authTokenKind?: "account" | "terminal" | "api_token";
         /** Server-stamped authority for Action ingress; never caller-provided input. */
         authAuthority?: "present_user" | "account_automation";
+        /** Request-local verified provenance for an admitted PAT; never a raw bearer. */
+        apiTokenPrincipal?: VerifiedApiTokenPrincipal;
         startTime?: number;
         accountStoredContentCompatibility?: AccountStoredContentCompatibilityEvaluation;
     }
@@ -54,6 +59,7 @@ declare module 'fastify' {
             options?: Readonly<{ signal?: AbortSignal }>,
         ) => Promise<SessionServerStartDispatchResultV1>;
         forwardExternalActionToMachine: ExternalActionDaemonDispatcher;
+        disconnectAccountSockets: (accountId: string) => void;
         createPeerTcpTunnelRelayTransport?: PeerTcpTunnelRelayTransportFactory;
         peerMediationObservability?: PeerMediationObservabilityEmitter;
         verifyPeerMediationViewerSocketOwnership?: PeerMediationViewerSocketOwnershipVerifier;

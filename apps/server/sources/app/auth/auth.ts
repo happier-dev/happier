@@ -54,6 +54,19 @@ type DecodedAuthToken = Readonly<{
 export type AuthTokenKind = "account" | "terminal" | "api_token";
 export type AuthAuthority = "present_user" | "account_automation";
 
+/**
+ * Server-verified PAT facts that may be projected only for the lifetime of
+ * the request that authenticated the bearer. The plaintext PAT never leaves
+ * the authorization header boundary.
+ */
+export type VerifiedApiTokenPrincipal = Readonly<{
+    accountId: string;
+    principalId: string;
+    credentialId: string;
+    authority: "account_automation";
+    expiresAt: Date | null;
+}>;
+
 export type VerifiedAuthToken = Readonly<{
     userId: string;
     extras?: unknown;
@@ -64,6 +77,7 @@ export type VerifiedAuthToken = Readonly<{
      */
     authTokenKind?: AuthTokenKind;
     authority?: AuthAuthority;
+    apiTokenPrincipal?: VerifiedApiTokenPrincipal;
 }>;
 
 export type CreatedApiToken = Readonly<{
@@ -455,6 +469,13 @@ class AuthModule {
                 userId: verifiedPat.principalId,
                 authTokenKind: "api_token",
                 authority: verifiedPat.authority,
+                apiTokenPrincipal: {
+                    accountId: verifiedPat.accountId,
+                    principalId: verifiedPat.principalId,
+                    credentialId: verifiedPat.credentialId,
+                    authority: verifiedPat.authority,
+                    expiresAt: verifiedPat.expiresAt,
+                },
             };
         }
 

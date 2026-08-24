@@ -102,6 +102,7 @@ describe("auth (API tokens)", () => {
         }, async (request: any) => ({
             authority: request.authAuthority,
             tokenKind: request.authTokenKind,
+            apiTokenPrincipal: request.apiTokenPrincipal,
         }));
         await app.ready();
         try {
@@ -150,6 +151,13 @@ describe("auth (API tokens)", () => {
             userId: account.id,
             authority: "account_automation",
             authTokenKind: "api_token",
+            apiTokenPrincipal: {
+                accountId: account.id,
+                principalId: account.id,
+                credentialId: minted.tokenId,
+                authority: "account_automation",
+                expiresAt: null,
+            },
         });
 
         await withAuthenticatedApp(async (app) => {
@@ -162,6 +170,13 @@ describe("auth (API tokens)", () => {
             expect(response.json()).toEqual({
                 authority: "account_automation",
                 tokenKind: "api_token",
+                apiTokenPrincipal: {
+                    accountId: account.id,
+                    principalId: account.id,
+                    credentialId: minted.tokenId,
+                    authority: "account_automation",
+                    expiresAt: null,
+                },
             });
         });
 

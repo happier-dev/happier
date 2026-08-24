@@ -1,20 +1,17 @@
 import { z } from "zod";
+import {
+    ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+    AccountApiTokenIntrospectionRequestV1Schema,
+    AccountApiTokenIntrospectionSubjectFailureV1Schema,
+    AccountApiTokenIntrospectionSuccessV1Schema,
+} from "@happier-dev/protocol";
 
 import { auth } from "@/app/auth/auth";
 
 import { type Fastify } from "../../types";
 
-// `app.authenticate` owns connection-credential failures and can return its
-// existing 401 envelope before this handler runs. PAT-subject failures below
-// remain the exact opaque `invalid_token` value.
-const authenticationFailureResponseSchema = z.object({ error: z.string() }).strict();
-
-const apiTokenIntrospectionResponseSchema = z.object({
-    accountId: z.string(),
-    principalId: z.string(),
-    credentialId: z.string(),
-    expiresAt: z.string().datetime({ offset: true }).nullable(),
-    authority: z.literal("account_automation"),
+const connectionAuthenticationFailureResponseSchema = z.object({
+    error: z.enum(["Missing authorization header", "authentication_failed", "Authentication failed"]),
 }).strict();
 
 /**
@@ -24,28 +21,22 @@ const apiTokenIntrospectionResponseSchema = z.object({
  */
 export function registerApiTokenIntrospectionRoute(app: Fastify): void {
     app.post(
-        "/v1/auth/api-tokens/introspect",
+        ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
         {
             preHandler: app.authenticate,
-            // Permit the handler to return its opaque rejection when a PAT is
-            // misused as the daemon connection credential; it never grants
-            // that credential connection authority.
-            config: { allowApiToken: true },
+            config: { connectionAuthFailureError: "authentication_failed" },
             schema: {
-                body: z.object({ token: z.unknown() }).strict(),
+                body: AccountApiTokenIntrospectionRequestV1Schema,
                 response: {
-                    200: apiTokenIntrospectionResponseSchema,
-                    401: authenticationFailureResponseSchema,
+                    200: AccountApiTokenIntrospectionSuccessV1Schema,
+                    401: z.union([
+                        AccountApiTokenIntrospectionSubjectFailureV1Schema,
+                        connectionAuthenticationFailureResponseSchema,
+                    ]),
                 },
             },
         },
         async (request, reply) => {
-            // A PAT is only the subject of this request. The authenticated
-            // connection must remain an existing signed Account/terminal token.
-            if (request.authTokenKind === "api_token" || typeof request.body.token !== "string") {
-                return reply.code(401).send({ error: "invalid_token" });
-            }
-
             const verified = await auth.verifyPat(request.body.token);
             if (!verified.ok || verified.accountId !== request.userId) {
                 return reply.code(401).send({ error: "invalid_token" });

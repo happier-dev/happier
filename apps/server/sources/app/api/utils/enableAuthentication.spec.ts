@@ -90,6 +90,80 @@ describe("enableAuthentication (defensive error handling)", () => {
         await app.close();
     });
 
+    it("keeps route-specific connection failures distinct from an authenticated subject rejection", async () => {
+        verifyToken.mockResolvedValueOnce(null);
+        verifyToken.mockRejectedValueOnce(new Error("verification unavailable"));
+
+        const { enableAuthentication } = await import("./enableAuthentication");
+        const app = Fastify({ logger: false }) as any;
+        enableAuthentication(app);
+        app.get(
+            "/subject-auth",
+            {
+                config: { connectionAuthFailureError: "authentication_failed" },
+                preHandler: app.authenticate,
+            },
+            async () => ({ ok: true }),
+        );
+        await app.ready();
+
+        const invalidCredential = await app.inject({
+            method: "GET",
+            url: "/subject-auth",
+            headers: { authorization: "Bearer invalid-connection-token" },
+        });
+        const unavailableVerifier = await app.inject({
+            method: "GET",
+            url: "/subject-auth",
+            headers: { authorization: "Bearer unavailable-verifier-token" },
+        });
+        const missingCredential = await app.inject({
+            method: "GET",
+            url: "/subject-auth",
+        });
+
+        expect(invalidCredential.statusCode).toBe(401);
+        expect(invalidCredential.json()).toEqual({ error: "authentication_failed" });
+        expect(unavailableVerifier.statusCode).toBe(401);
+        expect(unavailableVerifier.json()).toEqual({ error: "authentication_failed" });
+        expect(missingCredential.statusCode).toBe(401);
+        expect(missingCredential.json()).toEqual({ error: "Missing authorization header" });
+
+        await app.close();
+    });
+
+    it("lets a bearer-only route hide missing and malformed connection credentials behind invalid_token", async () => {
+        const { enableAuthentication } = await import("./enableAuthentication");
+        const app = Fastify({ logger: false }) as any;
+        enableAuthentication(app);
+        app.get(
+            "/public-action",
+            {
+                config: { connectionAuthFailureError: "invalid_token" },
+                preHandler: app.authenticate,
+            },
+            async () => ({ ok: true }),
+        );
+        await app.ready();
+
+        const [missingCredential, malformedCredential] = await Promise.all([
+            app.inject({ method: "GET", url: "/public-action" }),
+            app.inject({
+                method: "GET",
+                url: "/public-action",
+                headers: { authorization: "Basic not-a-bearer" },
+            }),
+        ]);
+
+        expect(missingCredential.statusCode).toBe(401);
+        expect(missingCredential.json()).toEqual({ error: "invalid_token" });
+        expect(malformedCredential.statusCode).toBe(401);
+        expect(malformedCredential.json()).toEqual({ error: "invalid_token" });
+        expect(verifyToken).not.toHaveBeenCalled();
+
+        await app.close();
+    });
+
     it("returns opaque invalid_token when a token's account cannot be found", async () => {
         verifyToken.mockResolvedValueOnce({ userId: "missing-account" });
         enforceLoginEligibility.mockResolvedValueOnce({ ok: false, statusCode: 401, error: "invalid-token" } as any);

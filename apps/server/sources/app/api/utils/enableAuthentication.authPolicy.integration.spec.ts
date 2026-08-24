@@ -144,6 +144,58 @@ describe("enableAuthentication (auth policy) (integration)", () => {
         }
     });
 
+    it("retains verified PAT expiry in request-local authentication provenance", async () => {
+        const account = await db.account.create({ data: { publicKey: "pk_pat_provenance_expiry" } });
+        const expiresAt = new Date("2030-08-22T12:01:00.000Z");
+        const pat = await auth.createApiToken({
+            accountId: account.id,
+            label: "Request-local expiry provenance",
+            expiresAt,
+        });
+
+        const app = Fastify({ logger: false }) as any;
+        enableAuthentication(app);
+        app.get("/pat-provenance", {
+            config: { allowApiToken: true },
+            preHandler: app.authenticate,
+        }, async (request: any) => ({
+            credentialKind: request.authTokenKind,
+            authority: request.authAuthority,
+            principal: request.apiTokenPrincipal
+                ? {
+                    accountId: request.apiTokenPrincipal.accountId,
+                    principalId: request.apiTokenPrincipal.principalId,
+                    credentialId: request.apiTokenPrincipal.credentialId,
+                    authority: request.apiTokenPrincipal.authority,
+                    expiresAt: request.apiTokenPrincipal.expiresAt?.toISOString() ?? null,
+                }
+                : null,
+        }));
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: "GET",
+                url: "/pat-provenance",
+                headers: { authorization: `Bearer ${pat.token}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({
+                credentialKind: "api_token",
+                authority: "account_automation",
+                principal: {
+                    accountId: account.id,
+                    principalId: account.id,
+                    credentialId: pat.tokenId,
+                    authority: "account_automation",
+                    expiresAt: expiresAt.toISOString(),
+                },
+            });
+        } finally {
+            await app.close();
+        }
+    });
+
     it("blocks authenticated requests when GitHub allowlist does not include the linked user", async () => {
         harness.resetEnv({
             AUTH_REQUIRED_LOGIN_PROVIDERS: "github",
