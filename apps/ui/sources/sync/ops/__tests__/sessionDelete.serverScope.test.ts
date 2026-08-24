@@ -87,15 +87,13 @@ describe('sessionDeleteWithServerScope', () => {
 
     const res = await sessionDeleteWithServerScope('sid-2', { serverId: 'server-b' });
     expect(res).toEqual({ success: true });
-    expect(mockRuntimeFetch).toHaveBeenCalledWith(
-      'https://scoped.example/v1/sessions/sid-2',
-      expect.objectContaining({
-        method: 'DELETE',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer tok_scoped',
-        }),
-      }),
-    );
+    const deleteCall = mockRuntimeFetch.mock.calls.find(([url, init]) => (
+      url === 'https://scoped.example/v1/sessions/sid-2'
+      && (init as RequestInit | undefined)?.method === 'DELETE'
+    ));
+    expect(deleteCall).toBeTruthy();
+    expect(new Headers((deleteCall?.[1] as RequestInit | undefined)?.headers).get('Authorization'))
+      .toBe('Bearer tok_scoped');
     expect(mockRequest).not.toHaveBeenCalled();
   });
 

@@ -14,7 +14,8 @@ function extractJobBlock(raw, jobName) {
 test('tests workflow keeps slow CI jobs above the observed timeout floor', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
   const uiE2eJob = extractJobBlock(raw, 'ui-e2e');
-  const uiJob = extractJobBlock(raw, 'ui');
+  const uiUnitJob = extractJobBlock(raw, 'ui-unit');
+  const uiIntegrationJob = extractJobBlock(raw, 'ui-integration');
   const serverJob = extractJobBlock(raw, 'server');
   const cliJob = extractJobBlock(raw, 'cli');
   const stackJob = extractJobBlock(raw, 'stack');
@@ -22,17 +23,18 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
 
   assert.match(
     uiE2eJob,
-    /name:\s*UI E2E \(Playwright\)[\s\S]*?timeout-minutes:\s*75\b/,
+    /name:\s*UI E2E \(Playwright\)[\s\S]*?timeout-minutes:\s*120\b/,
     'UI E2E job should reserve enough time to finish the slow multi-session Playwright scenarios on GitHub-hosted runners',
   );
   assert.match(uiE2eJob, /shard:\s*\[1, 2, 3, 4, 5, 6, 7, 8, 9\]/);
   assert.match(uiE2eJob, /--shard=\$\{\{ matrix\.shard \}\}\/9/);
 
   assert.match(
-    uiJob,
-    /name:\s*UI Tests \(unit \+ integration\)[\s\S]*?timeout-minutes:\s*240\b/,
-    'UI Tests should reserve enough time for all 24 sequential heap-bounded shards',
+    uiUnitJob,
+    /name:\s*UI Unit Tests[\s\S]*?timeout-minutes:\s*240\b/,
+    'UI unit tests should reserve enough time for all 24 sequential heap-bounded shards',
   );
+  assert.match(uiIntegrationJob, /name:\s*UI Integration Tests[\s\S]*?timeout-minutes:\s*240\b/);
 
   assert.match(
     serverJob,
@@ -59,17 +61,22 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
   );
 });
 
-test('UI tests collect protocol, unit, and integration outcomes before failing the job', async () => {
+test('UI unit and integration suites run independently before the stable aggregate check', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
+  const uiUnitJob = extractJobBlock(raw, 'ui-unit');
+  const uiIntegrationJob = extractJobBlock(raw, 'ui-integration');
   const uiJob = extractJobBlock(raw, 'ui');
 
-  for (const id of ['protocol-tests', 'unit-tests', 'integration-tests']) {
-    assert.match(uiJob, new RegExp(`id:\\s*${id}[\\s\\S]*?continue-on-error:\\s*true`));
-  }
-  assert.match(uiJob, /name:\s*Require all UI test lanes[\s\S]*?if:\s*always\(\)/);
-  assert.match(uiJob, /steps\.protocol-tests\.outcome/);
-  assert.match(uiJob, /steps\.unit-tests\.outcome/);
-  assert.match(uiJob, /steps\.integration-tests\.outcome/);
+  assert.match(uiUnitJob, /yarn workspace @happier-dev\/protocol test/);
+  assert.match(uiUnitJob, /yarn workspace @happier-dev\/app test:unit/);
+  assert.doesNotMatch(uiUnitJob, /test:integration/);
+  assert.match(uiIntegrationJob, /yarn workspace @happier-dev\/app test:integration/);
+
+  assert.match(uiJob, /name:\s*UI Tests \(unit \+ integration\)/);
+  assert.match(uiJob, /needs:\s*\[ui-unit, ui-integration\]/);
+  assert.match(uiJob, /if:\s*\$\{\{ always\(\)/);
+  assert.match(uiJob, /needs\.ui-unit\.result/);
+  assert.match(uiJob, /needs\.ui-integration\.result/);
 });
 
 test('combined package jobs collect unit and integration outcomes before failing', async () => {
@@ -84,6 +91,20 @@ test('combined package jobs collect unit and integration outcomes before failing
     assert.match(job, /steps\.unit-tests\.outcome/);
     assert.match(job, /steps\.integration-tests\.outcome/);
   }
+});
+
+test('UI E2E failure artifacts exclude whole fixture trees while retaining diagnostics', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
+  const uiE2eJob = extractJobBlock(raw, 'ui-e2e');
+
+  assert.match(uiE2eJob, /packages\/tests\/\.project\/logs\/e2e\/ui-playwright/);
+  assert.match(uiE2eJob, /\.project\/logs\/e2e\/\*ui-e2e\*\/\*\*\/\*\.log/);
+  assert.match(uiE2eJob, /\.project\/logs\/e2e\/\*ui-e2e\*\/\*\*\/\*\.jsonl/);
+  assert.doesNotMatch(
+    uiE2eJob,
+    /^\s*\.project\/logs\/e2e\/\*ui-e2e\*\s*$/m,
+    'whole UI E2E run roots include disposable package snapshots, databases, and credentials and can exceed the artifact uploader heap',
+  );
 });
 
 test('typecheck enforces clean governance checks without running the known-red migration report', async () => {

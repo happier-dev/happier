@@ -193,7 +193,7 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
     runs-on: ubuntu-22.04
-    timeout-minutes: 75
+    timeout-minutes: 120
     env:
       # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
@@ -277,7 +277,8 @@ jobs:
           name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-9
           path: |
             packages/tests/.project/logs/e2e/ui-playwright
-            .project/logs/e2e/*ui-e2e*
+            .project/logs/e2e/*ui-e2e*/**/*.log
+            .project/logs/e2e/*ui-e2e*/**/*.jsonl
           if-no-files-found: ignore
 
   ui-e2e-wsrepl-lima:
@@ -426,9 +427,9 @@ jobs:
             packages/tests/.project/logs/e2e/mobile-maestro
           if-no-files-found: ignore
 
-  ui:
+  ui-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
-    name: UI Tests (unit + integration)
+    name: UI Unit Tests
     runs-on: ubuntu-22.04
     timeout-minutes: 240
     steps:
@@ -477,20 +478,74 @@ jobs:
         continue-on-error: true
         run: yarn workspace @happier-dev/app test:unit
 
-      - name: Run integration tests
-        id: integration-tests
-        continue-on-error: true
-        run: yarn workspace @happier-dev/app test:integration
-
-      - name: Require all UI test lanes
+      - name: Require all UI unit test lanes
         if: always()
         env:
           PROTOCOL_TESTS_OUTCOME: ${{ steps.protocol-tests.outcome }}
           UNIT_TESTS_OUTCOME: ${{ steps.unit-tests.outcome }}
-          INTEGRATION_TESTS_OUTCOME: ${{ steps.integration-tests.outcome }}
         run: |
-          if [ "$PROTOCOL_TESTS_OUTCOME" != "success" ] || [ "$UNIT_TESTS_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ]; then
-            echo "One or more UI test lanes failed: protocol=$PROTOCOL_TESTS_OUTCOME unit=$UNIT_TESTS_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME" >&2
+          if [ "$PROTOCOL_TESTS_OUTCOME" != "success" ] || [ "$UNIT_TESTS_OUTCOME" != "success" ]; then
+            echo "One or more UI unit test lanes failed: protocol=$PROTOCOL_TESTS_OUTCOME unit=$UNIT_TESTS_OUTCOME" >&2
+            exit 1
+          fi
+
+  ui-integration:
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    name: UI Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Enable Corepack
+        uses: ./.github/actions/enable-corepack-yarn
+
+      - name: Install Sapling
+        run: |
+          bash scripts/ci/install_sapling_ubuntu22.sh
+
+      - name: Verify Sapling CLI
+        run: sl --version
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile
+
+      - name: Run integration tests
+        run: yarn workspace @happier-dev/app test:integration
+
+  ui:
+    if: ${{ always() && (!inputs.select_jobs_explicitly || inputs.run_ui) }}
+    needs: [ui-unit, ui-integration]
+    name: UI Tests (unit + integration)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require all UI test lanes
+        env:
+          UNIT_TESTS_OUTCOME: ${{ needs.ui-unit.result }}
+          INTEGRATION_TESTS_OUTCOME: ${{ needs.ui-integration.result }}
+        run: |
+          if [ "$UNIT_TESTS_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ]; then
+            echo "One or more UI test lanes failed: unit=$UNIT_TESTS_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME" >&2
             exit 1
           fi
 

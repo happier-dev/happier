@@ -1,4 +1,5 @@
 import type { StartedDaemon } from '../daemon/daemon';
+import { daemonControlPostJson } from '../daemon/controlServerClient';
 
 type SpawnSessionSuccessResponse = Readonly<{
   success: true;
@@ -24,22 +25,19 @@ export async function spawnSessionFromDaemon(params: Readonly<{
   const token = params.daemon.state.controlToken;
   if (!token) throw new Error('daemon control token missing');
 
-  const res = await fetch(`http://127.0.0.1:${params.daemon.state.httpPort}/spawn-session`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-happier-daemon-token': token,
-    },
-    body: JSON.stringify({
+  const response = await daemonControlPostJson<unknown>({
+    port: params.daemon.state.httpPort,
+    path: '/spawn-session',
+    controlToken: token,
+    body: {
       directory: params.directory,
       ...(params.agent
         ? { backendTarget: { kind: 'builtInAgent', agentId: params.agent } }
         : {}),
-    }),
+    },
   });
-  const json: unknown = await res.json().catch(() => null);
-  if (!res.ok || !isSpawnSessionSuccessResponse(json)) {
-    throw new Error(`Failed to spawn session (status=${res.status}): ${JSON.stringify(json)}`);
+  if (response.status < 200 || response.status >= 300 || !isSpawnSessionSuccessResponse(response.data)) {
+    throw new Error(`Failed to spawn session (status=${response.status}): ${JSON.stringify(response.data)}`);
   }
-  return json.sessionId;
+  return response.data.sessionId;
 }

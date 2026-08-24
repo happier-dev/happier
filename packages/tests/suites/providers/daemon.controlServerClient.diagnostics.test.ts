@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
+import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -102,6 +103,40 @@ describe('daemonControlPostJson diagnostics', () => {
         spawnNonce: 'spawn-nonce-1',
       }),
     });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('settles accepted asynchronous spawns for UI E2E callers through the canonical control client', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/spawn-session')) {
+        return new Response(JSON.stringify({
+          success: true,
+          status: 'pending',
+          sessionIdStatus: 'pending',
+          spawnNonce: 'ui-spawn-nonce-1',
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.endsWith('/spawn-session/resolve')) {
+        return new Response(JSON.stringify({
+          success: true,
+          status: 'success',
+          sessionId: 'ui-session-1',
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(spawnSessionFromDaemon({
+      daemon: {
+        state: {
+          httpPort: 47004,
+          controlToken: 'control-token',
+        },
+      } as Parameters<typeof spawnSessionFromDaemon>[0]['daemon'],
+      directory: '/tmp/project',
+    })).resolves.toBe('ui-session-1');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
