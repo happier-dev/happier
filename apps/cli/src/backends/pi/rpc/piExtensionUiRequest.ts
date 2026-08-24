@@ -87,7 +87,7 @@ export function buildPiExtensionAskUserQuestionInput(request: PiBlockingExtensio
       options: [],
       freeform: {
         ...(request.method === 'input' && request.placeholder ? { placeholder: request.placeholder } : {}),
-        ...(request.method === 'editor' && request.prefill ? { placeholder: request.prefill } : {}),
+        ...(request.method === 'editor' && request.prefill ? { initialValue: request.prefill } : {}),
       },
     }],
   };

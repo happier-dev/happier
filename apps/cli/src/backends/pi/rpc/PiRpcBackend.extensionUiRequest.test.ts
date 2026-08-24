@@ -133,6 +133,50 @@ describe('PiRpcBackend extension UI requests', () => {
     });
   });
 
+  it('preserves editor prefill as the editable initial answer rather than placeholder text', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-pi-extension-ui-editor-'));
+    tempDirs.push(dir);
+    const handleToolCall = vi.fn<AcpPermissionHandler['handleToolCall']>(async () => ({
+      decision: 'approved',
+      answers: { 'Edit release notes': ['Updated notes'] },
+    }));
+    const scriptPath = writeFakePiExtensionUiScript(dir);
+    const source = readFileSync(scriptPath, 'utf8').replace(
+      "method: 'select',\n        title: 'Choose scope',\n        options: ['Repository', 'Workspace']",
+      "method: 'editor',\n        title: 'Edit release notes',\n        prefill: 'Existing notes'",
+    );
+    writeFileSync(scriptPath, source, 'utf8');
+    const backend = new PiRpcBackend({
+      cwd: dir,
+      command: process.execPath,
+      args: [scriptPath],
+      permissionHandler: { handleToolCall },
+      env: {
+        HAPPIER_PI_RPC_AGENT_END_SETTLE_MS: '1',
+        PI_EXTENSION_RESPONSE_FILE: join(dir, 'extension-response.json'),
+      },
+    });
+    backends.push(backend);
+
+    const session = await backend.startSession();
+    await backend.sendPrompt(session.sessionId, 'edit it');
+
+    expect(handleToolCall).toHaveBeenCalledWith(
+      'pi-dialog-1',
+      'AskUserQuestion',
+      {
+        questions: [{
+          id: 'pi-dialog-1',
+          question: 'Edit release notes',
+          header: 'Pi',
+          multiSelect: false,
+          options: [],
+          freeform: { initialValue: 'Existing notes' },
+        }],
+      },
+    );
+  });
+
   it('cancels the visible Pi dialog before aborting and waits for Pi to end the turn', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-extension-ui-cancel-'));
     tempDirs.push(dir);
