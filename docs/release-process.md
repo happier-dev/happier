@@ -103,6 +103,7 @@ script-owned diff classifier against the exact proposed source range:
 ```bash
 node scripts/pipeline/run.mjs release-analyze \
   --base <released-baseline> --head <proposed-source> \
+  --channel <dev|preview|stable> \
   --profile integrated \
   --has-cli-candidate <true|false> \
   --has-server-candidate <true|false> \

@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildReleaseChangeAnalysis } from './analyze-release-change.mjs';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { analyzeReleasePublicApiComparisons, buildReleaseChangeAnalysis } from './analyze-release-change.mjs';
 import { renderReleaseChangeAnalysisGitHubOutput } from './analyze-release-change.mjs';
 
 test('release change analysis separates fast admission from seam-selected heavy validation', () => {
@@ -13,6 +17,7 @@ test('release change analysis separates fast admission from seam-selected heavy 
     hasCliCandidate: false,
     hasServerCandidate: true,
     hasPublishedRelayPredecessor: true,
+    releaseChannel: 'preview',
   });
 
   assert.equal(analysis.kind, 'happier.release-change-analysis.v1');
@@ -31,6 +36,7 @@ test('release change analysis does not charge a UI-only release for relay upgrad
     hasCliCandidate: false,
     hasServerCandidate: true,
     hasPublishedRelayPredecessor: true,
+    releaseChannel: 'stable',
   });
 
   assert.equal(analysis.compatibilityAnalysisRequired, false);
@@ -48,9 +54,78 @@ test('release change analysis projects workflow risk outputs from the canonical 
     hasCliCandidate: true,
     hasServerCandidate: false,
     hasPublishedRelayPredecessor: false,
+    releaseChannel: 'preview',
   });
   const output = renderReleaseChangeAnalysisGitHubOutput(analysis);
   assert.match(output, /risk_cli_upgrade=true/);
   assert.match(output, /risk_session_continuity=false/);
   assert.match(output, /compatibility_analysis_required=true/);
+});
+
+test('release change analysis carries owner-produced public API comparison facts for editorial classification', () => {
+  const publicApiComparisons = [{
+    component: 'plugin_sdk',
+    packageName: '@happier-dev/plugin-sdk',
+    sourceVersion: '0.0.0',
+    comparison: {
+      status: 'comparison',
+      disposition: { humanReviewRequired: true },
+    },
+  }];
+  const analysis = buildReleaseChangeAnalysis({
+    base: 'base',
+    head: 'head',
+    paths: ['packages/plugin-sdk/src/index.ts'],
+    profileId: 'integrated',
+    hasCliCandidate: false,
+    hasServerCandidate: false,
+    hasPublishedRelayPredecessor: false,
+    releaseChannel: 'preview',
+    publicApiComparisons,
+  });
+
+  assert.deepEqual(analysis.publicApiComparisons, publicApiComparisons);
+  assert.equal(analysis.publicApiHumanReviewRequired, true);
+  assert.match(renderReleaseChangeAnalysisGitHubOutput(analysis), /public_api_human_review_required=true/);
+});
+
+test('release analysis prepares comparisons for every public package whose candidate bytes are affected', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'release-analysis-public-api-'));
+  try {
+    for (const [directory, manifest] of [
+      ['packages/plugin-sdk', { name: '@happier-dev/plugin-sdk', version: '0.0.0' }],
+      ['packages/plugin-ui', { name: '@happier-dev/plugin-ui', version: '0.0.0' }],
+      ['packages/sdk', { name: '@happier-dev/sdk', version: '0.0.0' }],
+    ]) {
+      await mkdir(join(root, directory), { recursive: true });
+      await writeFile(join(root, directory, 'package.json'), JSON.stringify(manifest));
+    }
+    const observed = [];
+    const comparisons = await analyzeReleasePublicApiComparisons({
+      paths: ['packages/cli-common/src/firstPartyRuntime/installVersionedPayload.ts'],
+      repositoryRoot: root,
+      releaseChannel: 'preview',
+      analyzeCurrentPublicApiForEditorialImpl: async (input) => {
+        observed.push(input);
+        return {
+          sourceVersion: input.sourceVersion,
+          releaseChannel: input.releaseChannel,
+          comparison: {
+            status: 'comparison',
+            disposition: { humanReviewRequired: input.profileId === 'plugin-sdk' },
+          },
+        };
+      },
+    });
+
+    assert.deepEqual(observed.map((input) => input.profileId), ['plugin-sdk', 'plugin-ui']);
+    assert.deepEqual(observed.map((input) => input.releaseChannel), ['preview', 'preview']);
+    assert.deepEqual(comparisons.map((comparison) => comparison.packageName), [
+      '@happier-dev/plugin-sdk',
+      '@happier-dev/plugin-ui',
+    ]);
+    assert.deepEqual(comparisons.map((comparison) => comparison.humanReviewRequired), [true, false]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

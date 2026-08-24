@@ -100,6 +100,7 @@ test('nightly resume pins the prior source, reuses completed immutable candidate
   const riskStep = parsed.jobs.resolve_validation_risk.steps.find((step) => step.id === 'risk');
   assert.equal(riskStep['working-directory'], 'release-source');
   assert.match(riskStep.run, /node \.\.\/scripts\/pipeline\/release\/analyze-release-change\.mjs/);
+  assert.match(riskStep.run, /--channel dev/);
   assert.doesNotMatch(riskStep.run, /node scripts\//, 'nightly candidate source must remain inert during risk selection');
   const statusSource = parsed.jobs.release_status.steps.map((step) => step.run ?? '').join('\n');
   assert.match(statusSource, /project-release-status\.mjs[\s\S]*--mode nightly/);

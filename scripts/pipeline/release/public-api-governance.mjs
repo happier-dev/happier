@@ -9,6 +9,11 @@ import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/a
 import { summarizeDeclarationDiff } from '../../api-governance/declarationDiff.mjs';
 import { resolveWindowsCommandInvocation } from '../lib/windows/resolveWindowsCommandInvocation.mjs';
 import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
+import {
+  listPublicReleaseChannelInputLabels,
+  normalizePublicReleaseChannel,
+  resolveRollingReleaseTagSuffix,
+} from './lib/public-release-rings.mjs';
 
 const INVENTORY_PATH = 'api-surface.json';
 const DECLARATION_PATH = 'api-declarations.md';
@@ -249,11 +254,42 @@ async function queryPublicationTimes({ packageName, repositoryRoot, env }) {
   }
 }
 
-function selectPreviousPublishedVersion(publicationTimes, candidateVersion) {
+function normalizeReleaseChannel(value) {
+  const releaseChannel = normalizePublicReleaseChannel(value);
+  if (!releaseChannel) {
+    throw new Error('Public API release channel must be stable, preview, or dev');
+  }
+  return releaseChannel;
+}
+
+function versionBelongsToReleaseChannel(version, releaseChannel) {
+  if (releaseChannel === 'stable') {
+    return !version.includes('-') && !version.includes('+');
+  }
+  const suffix = resolveRollingReleaseTagSuffix(releaseChannel).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`^[0-9]+\\.[0-9]+\\.[0-9]+-${suffix}\\.[1-9][0-9]*(?:\\.[1-9][0-9]*)?$`, 'u').test(version);
+}
+
+function resolveCandidateReleaseChannel(candidateVersion, requestedReleaseChannel) {
+  if (requestedReleaseChannel !== undefined) return normalizeReleaseChannel(requestedReleaseChannel);
+  for (const channelLabel of listPublicReleaseChannelInputLabels()) {
+    const releaseChannel = normalizePublicReleaseChannel(channelLabel);
+    if (releaseChannel && versionBelongsToReleaseChannel(candidateVersion, releaseChannel)) {
+      return releaseChannel;
+    }
+  }
+  throw new Error(`Candidate version does not identify a public release channel: ${candidateVersion}`);
+}
+
+function selectPreviousPublishedVersion(publicationTimes, candidateVersion, releaseChannel) {
   if (!isRecord(publicationTimes)) throw new Error('npm publication times must be an object');
   const candidates = [];
   for (const [version, publishedAt] of Object.entries(publicationTimes)) {
-    if (version === candidateVersion || !NPM_SEMVER.test(version)) continue;
+    if (
+      version === candidateVersion
+      || !NPM_SEMVER.test(version)
+      || !versionBelongsToReleaseChannel(version, releaseChannel)
+    ) continue;
     const time = Date.parse(String(publishedAt ?? ''));
     if (!Number.isFinite(time)) {
       throw new Error(`npm publication time for ${version} is invalid`);
@@ -315,6 +351,7 @@ async function runRepositoryApiGovernance({ repositoryRoot, options }) {
 export async function resolvePreviousPublishedApiInventory({
   packageName: packageNameInput,
   candidateVersion: candidateVersionInput,
+  releaseChannel: releaseChannelInput,
   repositoryRoot,
   env = process.env,
   queryPublicationTimesImpl = queryPublicationTimes,
@@ -322,14 +359,17 @@ export async function resolvePreviousPublishedApiInventory({
   extractArchivePayloadToDirectoryImpl = extractArchivePayloadToDirectory,
 }) {
   const packageName = normalizePackageName(packageNameInput);
-  const candidateVersion = normalizePublishedVersion(candidateVersionInput, 'Candidate version');
+  const candidateVersion = candidateVersionInput === null
+    ? null
+    : normalizePublishedVersion(candidateVersionInput, 'Candidate version');
+  const releaseChannel = normalizeReleaseChannel(releaseChannelInput);
   const resolvedRepositoryRoot = resolve(repositoryRoot);
   const publicationTimes = await queryPublicationTimesImpl({
     packageName,
     repositoryRoot: resolvedRepositoryRoot,
     env,
   });
-  const previousVersion = selectPreviousPublishedVersion(publicationTimes, candidateVersion);
+  const previousVersion = selectPreviousPublishedVersion(publicationTimes, candidateVersion, releaseChannel);
   if (previousVersion === null) {
     return Object.freeze({
       previousVersion: null,
@@ -381,6 +421,77 @@ export async function resolvePreviousPublishedApiInventory({
 }
 
 /**
+ * Produces the mechanical API comparison used to inform editorial/version
+ * approval. It deliberately verifies already-generated source records rather
+ * than inventing a proposed release version or rewriting the shared worktree.
+ */
+export async function analyzeCurrentPublicApiForEditorial({
+  profileId,
+  packageName: packageNameInput,
+  packageRoot,
+  sourceVersion: sourceVersionInput,
+  releaseChannel: releaseChannelInput,
+  repositoryRoot = packageRoot,
+  env = process.env,
+  resolvePreviousPublishedInventoryImpl = resolvePreviousPublishedApiInventory,
+  runApiGovernanceImpl,
+}) {
+  const packageName = normalizePackageName(packageNameInput);
+  const sourceVersion = normalizePublishedVersion(sourceVersionInput, 'Source package version');
+  const releaseChannel = normalizeReleaseChannel(releaseChannelInput);
+  const resolvedPackageRoot = resolve(packageRoot);
+  const governanceInput = {
+    profileId: String(profileId ?? '').trim(),
+    packageRoot: resolvedPackageRoot,
+    packageRootKind: 'source-complete-publication-sandbox',
+    check: true,
+  };
+  if (!governanceInput.profileId) throw new Error('Public API governance profile id is required');
+  const governanceReport = runApiGovernanceImpl
+    ? await runApiGovernanceImpl(governanceInput)
+    : await runRepositoryApiGovernance({ repositoryRoot, options: governanceInput });
+  if (!isRecord(governanceReport) || governanceReport.status !== 'current') {
+    throw new Error(`Public API governance records are not current for ${packageName}`);
+  }
+
+  const baseline = await resolvePreviousPublishedInventoryImpl({
+    packageName,
+    candidateVersion: null,
+    releaseChannel,
+    repositoryRoot,
+    env,
+  });
+  try {
+    const [candidateInventory, candidateDeclarations] = await Promise.all([
+      readInventory(join(resolvedPackageRoot, INVENTORY_PATH), 'Current source API inventory'),
+      readRegularUtf8(join(resolvedPackageRoot, DECLARATION_PATH), 'Current source declaration record'),
+    ]);
+    const comparison = baseline.previousInventoryPath === null || baseline.previousDeclarationsPath === null
+      ? comparePublicApiReleaseRecords({
+        packageName,
+        candidateVersion: sourceVersion,
+        previousVersion: null,
+        previousInventory: null,
+        candidateInventory,
+        previousDeclarations: null,
+        candidateDeclarations,
+      })
+      : comparePublicApiReleaseRecords({
+        packageName,
+        candidateVersion: sourceVersion,
+        previousVersion: baseline.previousVersion,
+        previousInventory: await readInventory(baseline.previousInventoryPath, 'Previous published API inventory'),
+        candidateInventory,
+        previousDeclarations: await readRegularUtf8(baseline.previousDeclarationsPath, 'Previous published declaration record'),
+        candidateDeclarations,
+      });
+    return Object.freeze({ sourceVersion, releaseChannel, comparison });
+  } finally {
+    await baseline.cleanup();
+  }
+}
+
+/**
  * Runs the canonical generator against the isolated candidate package and
  * compares those records with the only allowed historical input: the previous
  * published tarball.
@@ -390,6 +501,7 @@ export async function preparePublicApiGovernance({
   packageName: packageNameInput,
   packageRoot,
   candidateVersion: candidateVersionInput,
+  releaseChannel: releaseChannelInput,
   repositoryRoot = packageRoot,
   env = process.env,
   resolvePreviousPublishedInventoryImpl = resolvePreviousPublishedApiInventory,
@@ -397,10 +509,12 @@ export async function preparePublicApiGovernance({
 }) {
   const packageName = normalizePackageName(packageNameInput);
   const candidateVersion = normalizePublishedVersion(candidateVersionInput, 'Candidate version');
+  const releaseChannel = resolveCandidateReleaseChannel(candidateVersion, releaseChannelInput);
   const resolvedPackageRoot = resolve(packageRoot);
   const baseline = await resolvePreviousPublishedInventoryImpl({
     packageName,
     candidateVersion,
+    releaseChannel,
     repositoryRoot,
     env,
   });
@@ -408,6 +522,7 @@ export async function preparePublicApiGovernance({
     const governanceInput = {
       profileId: String(profileId ?? '').trim(),
       packageRoot: resolvedPackageRoot,
+      packageRootKind: 'source-complete-publication-sandbox',
       write: true,
       publishedVersion: candidateVersion,
       ...(baseline.previousInventoryPath === null ? {} : {
@@ -481,6 +596,7 @@ export function renderPublicApiReleaseComparison(report) {
   if (report.status === 'dormant_pre_baseline') {
     return [
       `[pipeline] public API comparison: ${report.packageName}@${report.candidateVersion} has no prior published tarball (dormant pre-baseline)`,
+      '  human review required: no; no prior published baseline is available.',
       '',
     ].join('\n');
   }
@@ -490,7 +606,7 @@ export function renderPublicApiReleaseComparison(report) {
     `  added=${facts.addedSymbols.length} removed=${facts.removedSymbols.length} deprecated=${facts.deprecatedSymbols.length} changed-symbols=${facts.changedSymbols.length} changed-declaration-blocks=${facts.changedDeclarationBlocks.length}`,
     ...(facts.removedSymbols.length > 0 ? [`  removed (breaking): ${facts.removedSymbols.join(', ')}`] : []),
     ...(facts.changedDeclarationBlocks.length > 0 ? [`  declaration review: ${facts.changedDeclarationBlocks.join(', ')}`] : []),
-    '  compatibility classification and version selection remain human release decisions.',
+    `  human review required: ${report.disposition.humanReviewRequired ? 'yes' : 'no'}; compatibility classification and version selection remain human release decisions.`,
     '',
   ].join('\n');
 }

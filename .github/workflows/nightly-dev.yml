@@ -299,6 +299,7 @@ jobs:
           node ../scripts/pipeline/release/analyze-release-change.mjs \
             --base "$base" \
             --head "$CANDIDATE_SOURCE_SHA" \
+            --channel dev \
             --profile integrated \
             --has-cli-candidate true \
             --has-server-candidate true \

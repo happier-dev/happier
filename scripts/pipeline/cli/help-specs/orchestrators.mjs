@@ -20,13 +20,13 @@ const releaseProfileChoices = RELEASE_VALIDATION_PROFILE_IDS.join('|');
 export const COMMAND_HELP_ORCHESTRATORS = {
   'release-analyze': {
     summary: 'Classify changed release seams before notes/version materialization.',
-    usage: 'node scripts/pipeline/run.mjs release-analyze --base <ref> --head <ref> --profile <integrated|stable> --has-cli-candidate <bool> --has-server-candidate <bool> --has-published-relay-predecessor <bool>',
+    usage: 'node scripts/pipeline/run.mjs release-analyze --base <ref> --head <ref> --channel <dev|preview|stable> --profile <integrated|stable> --has-cli-candidate <bool> --has-server-candidate <bool> --has-published-relay-predecessor <bool>',
     bullets: [
-      'Returns deterministic risk triggers and required fast/heavy evidence; the release agent owns the semantic compatibility verdict.',
+      'Returns deterministic risk triggers, owner-produced public API comparisons, and required fast/heavy evidence; the release agent owns the semantic compatibility verdict.',
       'Run while inspecting the release diff, before committing release notes or versions.',
     ],
     examples: [
-      'node scripts/pipeline/run.mjs release-analyze --base cli-v1.2.3 --head HEAD --profile integrated --has-cli-candidate true --has-server-candidate false --has-published-relay-predecessor false',
+      'node scripts/pipeline/run.mjs release-analyze --base cli-v1.2.3 --head HEAD --channel preview --profile integrated --has-cli-candidate true --has-server-candidate false --has-published-relay-predecessor false',
     ],
   },
   'release-local-candidates': {
