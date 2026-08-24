@@ -42,8 +42,12 @@ describe('happier session create (integration)', () => {
 
   const envKeys = [
     'HAPPIER_SERVER_URL',
+    'HAPPIER_PUBLIC_SERVER_URL',
+    'HAPPIER_LOCAL_SERVER_URL',
     'HAPPIER_WEBAPP_URL',
+    'HAPPIER_ACTIVE_SERVER_ID',
     'HAPPIER_HOME_DIR',
+    'HAPPIER_SESSION_ID',
     'HAPPIER_STACK_INVOKED_CWD',
     'HAPPIER_SESSION_REQUESTED_DIRECTORY',
     'HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS',
@@ -56,6 +60,8 @@ describe('happier session create (integration)', () => {
   let observedSpawnBody: Record<string, unknown> | null = null;
   let sessionGetAttempts = 0;
   let sessionGetNotFoundUntil = 0;
+  let callerSessionGetAttempts = 0;
+  let callerPermissionMode: 'default' | 'safe-yolo' | 'yolo' = 'yolo';
   let sessionSocket: ApiSessionSocketStub;
 
   beforeEach(async () => {
@@ -81,6 +87,8 @@ describe('happier session create (integration)', () => {
     observedSpawnBody = null;
     sessionGetAttempts = 0;
     sessionGetNotFoundUntil = 0;
+    callerSessionGetAttempts = 0;
+    callerPermissionMode = 'yolo';
 
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
@@ -93,6 +101,41 @@ describe('happier session create (integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ success: true, sessionId }));
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/v2/sessions/sess_integration_caller_123') {
+        callerSessionGetAttempts += 1;
+        const callerMetadataCiphertext = encodeBase64(
+          encryptWithDataKey({
+            path: process.cwd(),
+            host: 'spawn-host',
+            permissionMode: callerPermissionMode,
+            permissionModeUpdatedAt: 10,
+          }, dek),
+          'base64',
+        );
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          session: {
+            id: 'sess_integration_caller_123',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            archivedAt: null,
+            metadata: callerMetadataCiphertext,
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            pendingCount: 0,
+            pendingVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope, 'base64'),
+            share: null,
+          },
+        }));
         return;
       }
 
@@ -175,6 +218,9 @@ describe('happier session create (integration)', () => {
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
     envScope.patch({
+      HAPPIER_PUBLIC_SERVER_URL: undefined,
+      HAPPIER_LOCAL_SERVER_URL: undefined,
+      HAPPIER_ACTIVE_SERVER_ID: undefined,
       HAPPIER_STACK_INVOKED_CWD: undefined,
       HAPPIER_SESSION_REQUESTED_DIRECTORY: undefined,
     });
@@ -242,11 +288,19 @@ describe('happier session create (integration)', () => {
 
   it('returns a session_create JSON envelope and marks created=true when tag does not exist', async () => {
     const { handleSessionCommand } = await import('./index');
+    envScope.patch({ HAPPIER_SESSION_ID: 'sess_integration_caller_123' });
 
     const output = captureConsoleJsonOutput();
 
     try {
-      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--prompt', 'Plan the refactor', '--json'], {
+      await handleSessionCommand([
+        'create',
+        '--tag', 'MyTag',
+        '--title', 'My Title',
+        '--prompt', 'Plan the refactor',
+        '--permission-mode', 'yolo',
+        '--json',
+      ], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -259,7 +313,7 @@ describe('happier session create (integration)', () => {
 
       const parsed = output.json();
       expect(parsed.v).toBe(1);
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       expect(parsed.kind).toBe('session_create');
       expect(parsed.data?.created).toBe(true);
       expect(parsed.data?.session?.id).toBe('sess_integration_create_123');
@@ -271,7 +325,46 @@ describe('happier session create (integration)', () => {
         kind: 'builtInAgent',
         agentId: DEFAULT_CATALOG_AGENT_ID,
       });
+      expect(observedSpawnBody).toEqual(expect.objectContaining({ permissionMode: 'yolo' }));
+      expect(callerSessionGetAttempts).toBeGreaterThan(0);
       expect(observedInitialMessageRpc).toBe(false);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('rejects a permission escalation above the initiating session mode', async () => {
+    const { handleSessionCommand } = await import('./index');
+    envScope.patch({ HAPPIER_SESSION_ID: 'sess_integration_caller_123' });
+    callerPermissionMode = 'safe-yolo';
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand([
+        'create',
+        '--permission-mode', 'yolo',
+        '--json',
+      ], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      expect(output.json()).toMatchObject({
+        v: 1,
+        ok: false,
+        kind: 'session_create',
+        error: {
+          code: 'permission_escalation_denied',
+        },
+      });
+      expect(callerSessionGetAttempts).toBeGreaterThan(0);
+      expect(observedSpawnBody).toBeNull();
     } finally {
       output.restore();
     }

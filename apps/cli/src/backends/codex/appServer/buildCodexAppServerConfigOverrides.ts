@@ -54,14 +54,17 @@ function assignInjectedServerKeys(serverNames: readonly string[]): Map<string, s
 
 export function buildCodexAppServerConfigOverrides(
     mcpServers: Readonly<Record<string, McpServerConfig>>,
+    options: Readonly<{
+        happierSessionId?: string;
+    }> = {},
 ): string[] {
     const serverNames = Object.keys(mcpServers);
-    if (serverNames.length === 0) {
-        return [];
-    }
-
     const injectedKeys = assignInjectedServerKeys(serverNames);
     const overrides: string[] = [];
+
+    if (options.happierSessionId) {
+        overrides.push(`shell_environment_policy.set.HAPPIER_SESSION_ID=${quoteTomlString(options.happierSessionId)}`);
+    }
 
     for (const serverName of [...serverNames].sort((left, right) => left.localeCompare(right))) {
         const config = mcpServers[serverName];

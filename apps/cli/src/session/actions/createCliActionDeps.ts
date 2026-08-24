@@ -636,10 +636,14 @@ export function createCliActionDeps(params: Readonly<{
   const fetchCurrentSessionMetadata = async (): Promise<Record<string, unknown> | null> => {
     try {
       const rawSession = await fetchSessionById({ token: params.token, sessionId: params.sessionId });
+      const mode = params.mode ?? resolveSessionStoredContentEncryptionMode(rawSession ?? undefined);
+      const ctx = params.credentials
+        ? resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession ?? undefined)
+        : params.ctx;
       currentSessionMetadata = readSessionMetadata({
         rawSession,
-        mode: params.mode,
-        ctx: params.ctx,
+        mode,
+        ctx,
       });
       return currentSessionMetadata;
     } catch {

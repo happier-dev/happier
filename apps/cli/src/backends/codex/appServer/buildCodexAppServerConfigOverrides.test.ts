@@ -37,4 +37,14 @@ describe('buildCodexAppServerConfigOverrides', () => {
         expect(overrides).toContain('mcp_servers.happier__server_with_spaces.command="node"');
         expect(overrides).not.toContain('mcp_servers.context7.command="echo"');
     });
+
+    it('injects only the explicit Happier session context into Codex shell subprocesses', () => {
+        const overrides = buildCodexAppServerConfigOverrides({}, {
+            happierSessionId: 'session-123',
+        });
+
+        expect(overrides).toEqual([
+            'shell_environment_policy.set.HAPPIER_SESSION_ID="session-123"',
+        ]);
+    });
 });
