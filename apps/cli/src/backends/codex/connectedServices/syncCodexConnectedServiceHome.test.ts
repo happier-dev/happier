@@ -166,8 +166,6 @@ describe('syncCodexConnectedServiceHome', () => {
     const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
     try {
       const previousCodexHome = join(root, 'previous-codex-home');
-      await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
-      await writeFile(join(sourceCodexHome, 'sessions', 'source-rollout.jsonl'), '{"id":"source"}\n');
       await mkdir(join(destinationCodexHome, 'sessions'), { recursive: true });
       await writeFile(join(destinationCodexHome, 'sessions', 'local-rollout.jsonl'), '{"id":"local"}\n');
       await mkdir(join(previousCodexHome, 'memories'), { recursive: true });
@@ -201,8 +199,9 @@ describe('syncCodexConnectedServiceHome', () => {
         targetSqliteHome: destinationCodexHome,
       });
       await expect(readFile(join(destinationCodexHome, 'sessions', 'local-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"local"}\n');
-      await expect(readFile(join(sourceCodexHome, 'history.jsonl'), 'utf8')).resolves.toBe('');
+      await expect(exists(join(sourceCodexHome, 'history.jsonl'))).resolves.toBe(false);
       await expect(exists(join(sourceCodexHome, 'memories', 'raw_memories.md'))).resolves.toBe(false);
+      await expect(readdir(sourceCodexHome)).resolves.not.toContainEqual(expect.stringContaining('.happier-state-preflight-'));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
