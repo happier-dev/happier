@@ -987,6 +987,100 @@ describe('Happier SDK client', () => {
     for (const { body } of requests) expect(body.target).toEqual(target);
   });
 
+  it('cancels an execution-run stream as soon as its terminal page is delivered', async () => {
+    const actionIds: string[] = [];
+    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
+      actionIds.push(actionId);
+      if (actionId === 'execution.run.stream.start') {
+        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+      }
+      if (actionId === 'execution.run.stream.read') {
+        return response({
+          v: 1,
+          actionId,
+          execution: {
+            ok: true,
+            result: {
+              streamId: 'stream-1',
+              events: [{ t: 'done', assistantText: 'complete' }],
+              nextCursor: 1,
+              done: true,
+            },
+          },
+        });
+      }
+      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const stream = await connect({ endpoint: 'http://daemon', token: 'pat' }).runs.startStream({
+      runId: 'run-1',
+      message: 'Continue.',
+    });
+    const iterator = stream[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { t: 'done', assistantText: 'complete' },
+    });
+
+    await vi.waitFor(() => expect(actionIds).toEqual([
+      'execution.run.stream.start',
+      'execution.run.stream.read',
+      'execution.run.stream.cancel',
+    ]));
+  });
+
+  it('delivers a terminal execution-run event before surfacing its cleanup failure', async () => {
+    const actionIds: string[] = [];
+    const cancellationFailure = new TypeError('connection reset');
+    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
+      actionIds.push(actionId);
+      if (actionId === 'execution.run.stream.start') {
+        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+      }
+      if (actionId === 'execution.run.stream.read') {
+        return response({
+          v: 1,
+          actionId,
+          execution: {
+            ok: true,
+            result: {
+              streamId: 'stream-1',
+              events: [{ t: 'done', assistantText: 'complete' }],
+              nextCursor: 1,
+              done: true,
+            },
+          },
+        });
+      }
+      throw cancellationFailure;
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const stream = await connect({ endpoint: 'http://daemon', token: 'pat' }).runs.startStream({
+      runId: 'run-1',
+      message: 'Continue.',
+    });
+    const iterator = stream[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { t: 'done', assistantText: 'complete' },
+    });
+    await expect(iterator.next()).rejects.toMatchObject({
+      name: 'HappierTransportError',
+      cause: cancellationFailure,
+    });
+    expect(actionIds).toEqual([
+      'execution.run.stream.start',
+      'execution.run.stream.read',
+      'execution.run.stream.cancel',
+    ]);
+  });
+
   it('cancels an execution-run stream when its iterator returns early', async () => {
     const actionIds: string[] = [];
     const fetch = vi.fn(async (url: URL | RequestInfo) => {

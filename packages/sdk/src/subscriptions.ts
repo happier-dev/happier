@@ -54,6 +54,7 @@ export async function startExecutionRunStream(params: Readonly<{
   let terminal = false;
   let cancelled = false;
   let cancelPromise: Promise<void> | undefined;
+  let terminalCleanupPromise: Promise<void> | undefined;
 
   const removeAbortListener = () => signal.removeEventListener('abort', onAbort);
   const cancel = (): Promise<void> => {
@@ -75,12 +76,19 @@ export async function startExecutionRunStream(params: Readonly<{
 
   const iterator: AsyncIterator<HappierExecutionRunStreamEvent> = {
     async next(): Promise<IteratorResult<HappierExecutionRunStreamEvent>> {
-      if (cancelled) return { done: true, value: undefined };
+      if (cancelled) {
+        await terminalCleanupPromise;
+        return { done: true, value: undefined };
+      }
 
       while (true) {
         const event = events[0];
         if (event !== undefined) {
           events = events.slice(1);
+          if (terminal && events.length === 0) {
+            terminalCleanupPromise ??= cancel();
+            void terminalCleanupPromise.catch(() => undefined);
+          }
           return { done: false, value: event };
         }
         if (terminal) {
