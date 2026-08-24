@@ -12,6 +12,7 @@ import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRun
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import type { Credentials } from '@/persistence';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createDaemonMemoryActionDeps } from '@/session/actions/createDaemonMemoryActionDeps';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   PromptRegistryInstallRequestV1Schema,
@@ -23,7 +24,6 @@ import {
   isActionSpecSurfacedOn,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1 } from '@happier-dev/protocol';
 import {
   createMcpActionApprovalRequirement,
   createMcpActionEnablement,
@@ -180,16 +180,9 @@ export function createHappierMcpServer(
       executionRunAction: async (_sessionId, request) => await executionRuns.action(request),
       executionRunWait: async (_sessionId, request) => await executionRuns.wait(request),
 
-      daemonMemorySearch: async ({ query }): Promise<MemorySearchResultV1> => {
-        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
-        return MemorySearchResultV1Schema.parse(res);
-      },
-      daemonMemoryGetWindow: async ({ sessionId, seqFrom, seqTo }): Promise<MemoryWindowV1> => {
-        const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, { v: 1, sessionId, seqFrom, seqTo });
-        return MemoryWindowV1Schema.parse(res);
-      },
-      daemonMemoryEnsureUpToDate: async ({ sessionId }) =>
-        await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, sessionId ? { sessionId } : {}),
+      ...createDaemonMemoryActionDeps({
+        invoke: async ({ method, request }) => await sessionScopedRpc(method, request),
+      }),
 
       promptRegistryInstall: async (args) => {
         if (!args.installTarget) {

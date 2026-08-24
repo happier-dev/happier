@@ -5,9 +5,11 @@ import { createActionToolExecutorBridge } from './createActionToolExecutorBridge
 import { createChangeTitleToolHandler } from './createChangeTitleToolHandler';
 import { normalizeExecutionRunToolResult } from './normalizeExecutionRunToolResult';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createDaemonMemoryActionDeps } from '@/session/actions/createDaemonMemoryActionDeps';
 import { startExecutionRun } from '@/session/services/executionRuns';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { resolvePermissionPrivilegeFromSessionMetadata } from '@happier-dev/agents';
 
 export async function callBuiltInHappierTool(params: Readonly<{
@@ -70,14 +72,24 @@ export async function callBuiltInHappierTool(params: Readonly<{
     ? rawSession.machineId.trim()
     : null;
   const actionsSettings = readActionsSettingsFromEnv();
-  const executor = createCliActionExecutor({
-    token: params.credentials.token,
-    credentials: params.credentials,
-    sessionId,
-    ctx,
-    mode,
-    rawSession,
-  });
+  const executor = createCliActionExecutor(
+    {
+      token: params.credentials.token,
+      credentials: params.credentials,
+      sessionId,
+      ctx,
+      mode,
+      rawSession,
+    },
+    createDaemonMemoryActionDeps({
+      invoke: async ({ machineId, method, request }) => await callMachineRpc({
+        credentials: params.credentials,
+        machineId,
+        method,
+        request,
+      }),
+    }),
+  );
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
     isActionEnabled: (id) => isActionEnabledByEnv(id, { surface }),

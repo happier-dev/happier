@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const resolveSessionTransportContext = vi.fn();
 const updateSessionMetadataWithRetry = vi.fn();
 const startExecutionRun = vi.fn();
-const createCliActionExecutor = vi.fn(() => ({
+const callMachineRpc = vi.fn();
+const createCliActionExecutor = vi.fn((..._args: unknown[]) => ({
   execute,
 }));
 const execute = vi.fn();
@@ -22,6 +23,10 @@ vi.mock('@/session/actions/createCliActionExecutor', () => ({
 
 vi.mock('@/session/services/executionRuns', () => ({
   startExecutionRun,
+}));
+
+vi.mock('@/session/transport/rpc/machineRpc', () => ({
+  callMachineRpc,
 }));
 
 vi.mock('@/session/transport/rpc/sessionRpc', () => ({
@@ -121,6 +126,21 @@ describe('callBuiltInHappierTool', () => {
         },
       }),
     );
+
+    callMachineRpc.mockResolvedValueOnce({ v: 1, ok: true, hits: [] });
+    const memoryDeps = createCliActionExecutor.mock.calls.at(-1)?.[1] as {
+      daemonMemorySearch: (args: unknown) => Promise<unknown>;
+    };
+    await expect(memoryDeps.daemonMemorySearch({
+      machineId: 'machine-1',
+      query: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' },
+    })).resolves.toEqual({ v: 1, ok: true, hits: [] });
+    expect(callMachineRpc).toHaveBeenCalledWith({
+      credentials: expect.objectContaining({ token: 'token' }),
+      machineId: 'machine-1',
+      method: 'daemon.memory.search',
+      request: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' },
+    });
   });
 
   it('rejects action_options_resolve on the CLI surface', async () => {
@@ -146,14 +166,21 @@ describe('callBuiltInHappierTool', () => {
       }),
     });
     expect(execute).not.toHaveBeenCalled();
-    expect(createCliActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
-      token: 'token',
-      sessionId: 'sess-1',
-      rawSession: {
-        id: 'sess-1',
-        metadata: { summary: { text: 'Old title' } },
-      },
-    }));
+    expect(createCliActionExecutor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'token',
+        sessionId: 'sess-1',
+        rawSession: {
+          id: 'sess-1',
+          metadata: { summary: { text: 'Old title' } },
+        },
+      }),
+      expect.objectContaining({
+        daemonMemorySearch: expect.any(Function),
+        daemonMemoryGetWindow: expect.any(Function),
+        daemonMemoryEnsureUpToDate: expect.any(Function),
+      }),
+    );
   });
 
   it('preserves session resolution ambiguity details for built-in tool calls', async () => {
