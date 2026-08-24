@@ -287,4 +287,68 @@ describe("authRoutes (account auth request) (integration)", () => {
 
         await app.close();
     });
+
+    it("requires a present user to approve an account-auth request before its successor token can be polled", async () => {
+        const { publicKeyBase64 } = createAccountKeypair();
+        const account = await db.account.create({
+            data: { publicKey: `pk-terminal-automation-${Date.now()}` },
+            select: { id: true },
+        });
+        const [presentUserToken, terminalAutomationToken] = await Promise.all([
+            auth.createToken(account.id),
+            auth.createToken(account.id, { session: "terminal-automation" }),
+        ]);
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const request = await app.inject({
+            method: "POST",
+            url: "/v1/auth/account/request",
+            payload: { publicKey: publicKeyBase64 },
+        });
+        expect(request.statusCode).toBe(200);
+        expect(request.json()).toEqual({ state: "requested" });
+
+        const automationResponse = await app.inject({
+            method: "POST",
+            url: "/v1/auth/account/response",
+            headers: { authorization: `Bearer ${terminalAutomationToken}` },
+            payload: { publicKey: publicKeyBase64, response: "automation must not approve" },
+        });
+        expect(automationResponse.statusCode).toBe(403);
+        expect(automationResponse.json()).toEqual({ error: "present_user_required" });
+
+        const stillRequested = await app.inject({
+            method: "POST",
+            url: "/v1/auth/account/request",
+            payload: { publicKey: publicKeyBase64 },
+        });
+        expect(stillRequested.statusCode).toBe(200);
+        expect(stillRequested.json()).toEqual({ state: "requested" });
+
+        const presentUserResponse = await app.inject({
+            method: "POST",
+            url: "/v1/auth/account/response",
+            headers: { authorization: `Bearer ${presentUserToken}` },
+            payload: { publicKey: publicKeyBase64, response: "present user approved" },
+        });
+        expect(presentUserResponse.statusCode).toBe(200);
+        expect(presentUserResponse.json()).toEqual({ success: true });
+
+        const authorized = await app.inject({
+            method: "POST",
+            url: "/v1/auth/account/request",
+            payload: { publicKey: publicKeyBase64 },
+        });
+        expect(authorized.statusCode).toBe(200);
+        expect(authorized.json()).toMatchObject({
+            state: "authorized",
+            token: expect.any(String),
+            response: "present user approved",
+        });
+
+        await app.close();
+    });
 });

@@ -307,6 +307,70 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         await app.close();
     });
 
+    it("requires a present user to approve a terminal-auth request before its successor token can be polled", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `pk-terminal-approval-${Date.now()}` },
+            select: { id: true },
+        });
+        const [presentUserToken, terminalAutomationToken] = await Promise.all([
+            auth.createToken(account.id),
+            auth.createToken(account.id, { session: "terminal-automation" }),
+        ]);
+        const { publicKeyBase64 } = createTerminalKeypair();
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const request = await app.inject({
+            method: "POST",
+            url: "/v1/auth/request",
+            payload: { publicKey: publicKeyBase64, supportsV2: true },
+        });
+        expect(request.statusCode).toBe(200);
+        expect(request.json()).toEqual({ state: "requested" });
+
+        const automationResponse = await app.inject({
+            method: "POST",
+            url: "/v1/auth/response",
+            headers: { authorization: `Bearer ${terminalAutomationToken}` },
+            payload: { publicKey: publicKeyBase64, response: "automation must not approve" },
+        });
+        expect(automationResponse.statusCode).toBe(403);
+        expect(automationResponse.json()).toEqual({ error: "present_user_required" });
+
+        const stillRequested = await app.inject({
+            method: "POST",
+            url: "/v1/auth/request",
+            payload: { publicKey: publicKeyBase64, supportsV2: true },
+        });
+        expect(stillRequested.statusCode).toBe(200);
+        expect(stillRequested.json()).toEqual({ state: "requested" });
+
+        const presentUserResponse = await app.inject({
+            method: "POST",
+            url: "/v1/auth/response",
+            headers: { authorization: `Bearer ${presentUserToken}` },
+            payload: { publicKey: publicKeyBase64, response: "present user approved" },
+        });
+        expect(presentUserResponse.statusCode).toBe(200);
+        expect(presentUserResponse.json()).toEqual({ success: true });
+
+        const authorized = await app.inject({
+            method: "POST",
+            url: "/v1/auth/request",
+            payload: { publicKey: publicKeyBase64, supportsV2: true },
+        });
+        expect(authorized.statusCode).toBe(200);
+        expect(authorized.json()).toMatchObject({
+            state: "authorized",
+            token: expect.any(String),
+            response: "present user approved",
+        });
+
+        await app.close();
+    });
+
     it("returns consumed when the claim write loses a race after eligibility checks", async () => {
         const { body: signInBody } = createSignInRequest();
 

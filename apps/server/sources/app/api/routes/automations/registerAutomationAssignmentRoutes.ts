@@ -4,10 +4,11 @@ import { type Fastify } from "../../types";
 import { updateAutomation } from "@/app/automations/automationCrudService";
 import { toAutomationV2ApiDto } from "@/app/automations/automationApiProjection";
 import { AutomationValidationError } from "@/app/automations/automationValidation";
+import { requirePresentUser } from "../../utils/requirePresentUser";
 
 export function registerAutomationAssignmentRoutes(app: Fastify): void {
     app.post('/v2/automations/:id/assignments', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
             body: z.object({

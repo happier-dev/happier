@@ -24,6 +24,7 @@ vi.mock("@/app/plugins/webhooks/endpointActions", async (importOriginal) => {
 });
 
 import { registerPluginWebhookEndpointRoutes } from "./registerPluginWebhookEndpointRoutes";
+import { PRESENT_USER_REQUIRED_ERROR } from "../../../utils/requirePresentUser";
 
 describe("plugin webhook present-user endpoint routes", () => {
     it("registers only the present-user lifecycle projections behind authentication", () => {
@@ -43,6 +44,7 @@ describe("plugin webhook present-user endpoint routes", () => {
             expect(getRouteEntry(app, "POST", path).opts.preHandler).toEqual([
                 app.authenticate,
                 expect.any(Function),
+                expect.any(Function),
             ]);
         }
         for (const path of [
@@ -53,11 +55,55 @@ describe("plugin webhook present-user endpoint routes", () => {
             expect(getRouteEntry(app, "POST", path).opts.preHandler).toEqual([
                 app.authenticate,
                 expect.any(Function),
+                expect.any(Function),
             ]);
         }
         expect([...app.routes.keys()]).not.toContain(
             "POST /v1/plugins/webhooks/endpoints/check-correspondence",
         );
+    });
+
+    it("refuses terminal authority before a credential secret can be generated", async () => {
+        const app = createFakeRouteApp();
+        const configureCredential = vi.fn(async () => ({
+            kind: "configured" as const,
+            webhookEndpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+            revision: 2,
+            credentialVersionId: "credential-1",
+            oneTimeGeneratedSecret: "must-not-be-returned",
+        }));
+        registerPluginWebhookEndpointRoutes(app as never, {
+            ensure: vi.fn(),
+            read: vi.fn(),
+            revoke: vi.fn(),
+            retarget: vi.fn(),
+            movePending: vi.fn(),
+            configureCredential,
+            rotateCredential: vi.fn(),
+            finishCredentialRotation: vi.fn(),
+        }, { HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1" });
+        const reply = createReplyStub();
+
+        const response = await getRouteHandler(
+            app,
+            "POST",
+            PluginWebhookActionHttpPathsV1["plugin.webhook.endpoint.credential.configure"],
+        )({
+            userId: "account-authenticated",
+            authAuthority: "account_automation",
+            body: {
+                webhookEndpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+                expectedRevision: 1,
+            },
+        }, reply);
+
+        expect(reply.statusCode).toBe(403);
+        expect(response).toBeUndefined();
+        expect(reply.send).toHaveBeenCalledWith({ error: PRESENT_USER_REQUIRED_ERROR });
+        expect(reply.send).not.toHaveBeenCalledWith(expect.objectContaining({
+            oneTimeGeneratedSecret: expect.anything(),
+        }));
+        expect(configureCredential).not.toHaveBeenCalled();
     });
 
     it("derives Account authority from authentication and does not accept it from input", async () => {
@@ -94,7 +140,7 @@ describe("plugin webhook present-user endpoint routes", () => {
             app,
             "POST",
             PluginWebhookActionHttpPathsV1["plugin.webhook.endpoint.read"],
-        )({ userId: "account-authenticated", body: input }, reply);
+        )({ userId: "account-authenticated", authAuthority: "present_user", body: input }, reply);
 
         expect(read).toHaveBeenCalledWith({ accountId: "account-authenticated", input });
         expect(reply.headers).toEqual({ "Cache-Control": "no-store" });

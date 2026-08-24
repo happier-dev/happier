@@ -4,10 +4,16 @@ import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { type Fastify } from "../../types";
 import { resolveAccountAuthRequestPolicyFromEnv } from "./accountAuthRequestPolicy";
+import {
+    PresentUserRequiredResponseSchema,
+    requirePresentUser,
+} from "@/app/api/utils/requirePresentUser";
 
 export function registerAccountAuthRoutes(app: Fastify): void {
     const requestedSchema = z.object({ state: z.literal('requested') });
     const invalidKeySchema = z.object({ error: z.literal('Invalid public key') });
+    const requestNotFoundSchema = z.object({ error: z.literal('Request not found') });
+    const responseSuccessSchema = z.object({ success: z.literal(true) });
     const authorizedV1Schema = z.object({
         state: z.literal('authorized'),
         token: z.string(),
@@ -122,12 +128,18 @@ export function registerAccountAuthRoutes(app: Fastify): void {
 
     // Approve account auth request
     app.post('/v1/auth/account/response', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             body: z.object({
                 response: z.string(),
                 publicKey: z.string()
-            })
+            }),
+            response: {
+                200: responseSuccessSchema,
+                401: invalidKeySchema,
+                403: PresentUserRequiredResponseSchema,
+                404: requestNotFoundSchema,
+            },
         }
     }, async (request, reply) => {
         const tweetnacl = (await import("tweetnacl")).default;

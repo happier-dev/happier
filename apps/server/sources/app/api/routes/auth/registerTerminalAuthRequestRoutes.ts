@@ -7,6 +7,10 @@ import { debug } from "@/utils/logging/log";
 import { type Fastify } from "../../types";
 import { type TerminalAuthRequestPolicy } from "./terminalAuthRequestPolicy";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import {
+    PresentUserRequiredResponseSchema,
+    requirePresentUser,
+} from "@/app/api/utils/requirePresentUser";
 
 const BASE64_URL_REGEX = /^[A-Za-z0-9_-]+$/;
 
@@ -279,12 +283,18 @@ export function registerTerminalAuthRequestRoutes(
 
     // Approve auth request
     app.post('/v1/auth/response', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             body: z.object({
                 response: z.string(),
                 publicKey: z.string()
-            })
+            }),
+            response: {
+                200: z.object({ success: z.literal(true) }),
+                401: z.object({ error: z.literal("Invalid public key") }),
+                403: PresentUserRequiredResponseSchema,
+                404: z.object({ error: z.literal("Request not found") }),
+            },
         }
     }, async (request, reply) => {
         debug({ module: 'auth-response' }, `Auth response endpoint hit - user: ${request.userId}`);

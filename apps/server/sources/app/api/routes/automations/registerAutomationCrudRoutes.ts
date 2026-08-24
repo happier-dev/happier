@@ -28,13 +28,14 @@ import {
     toAutomationRunV2ApiDto,
     toAutomationV2ApiDto,
 } from "@/app/automations/automationApiProjection";
+import { requirePresentUser } from "../../utils/requirePresentUser";
 
 export function registerAutomationCrudRoutes(app: Fastify): void {
     const runNowHeadersSchema = z.object({
         "idempotency-key": AutomationManualIdempotencyKeyV1Schema.optional(),
     }).passthrough();
     app.get('/v2/automations', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
     }, async (request) => {
         const rows = await listAutomations({
             accountId: request.userId,
@@ -45,7 +46,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     });
 
     app.post('/v2/automations', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
     }, async (request, reply) => {
         try {
             const account = await db.account.findUnique({
@@ -94,7 +95,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     });
 
     app.get('/v2/automations/:id', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
         },
@@ -112,7 +113,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     });
 
     app.patch('/v2/automations/:id', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
         },
@@ -180,7 +181,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     });
 
     app.delete('/v2/automations/:id', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
         },
@@ -198,7 +199,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     });
 
     app.post('/v2/automations/:id/pause', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
         },
@@ -217,7 +218,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     });
 
     app.post('/v2/automations/:id/resume', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
         },
@@ -236,7 +237,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     });
 
     app.post('/v2/automations/:id/run-now', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
             headers: runNowHeadersSchema,
@@ -269,7 +270,7 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
     });
 
     app.get('/v2/automations/:id/runs', {
-        preHandler: app.authenticate,
+        preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
             querystring: z.object({

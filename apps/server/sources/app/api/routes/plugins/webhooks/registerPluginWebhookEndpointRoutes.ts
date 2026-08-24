@@ -35,6 +35,7 @@ import {
 } from "@/app/plugins/webhooks/endpointActions";
 import { PluginWebhookEndpointStoreError } from "@/app/plugins/webhooks/endpointStore";
 import { readPluginWebhookAccountStatusV1 } from "@/app/plugins/webhooks/statusStore";
+import { requirePresentUser } from "../../../utils/requirePresentUser";
 import {
     discardPluginWebhookDeliveryV1,
     replayPluginWebhookDeliveryV1,
@@ -87,7 +88,7 @@ export function registerPluginWebhookEndpointRoutes(
             : {},
     );
     const featureGate = createServerFeatureGatePreHandler("plugins.webhooks", env);
-    const authenticatedWebhookPreHandler = [app.authenticate, featureGate];
+    const authenticatedWebhookPreHandler = [app.authenticate, requirePresentUser, featureGate];
     app.post(PluginWebhookActionHttpPathsV1["plugin.webhook.endpoint.ensure"], {
         preHandler: authenticatedWebhookPreHandler,
         schema: {
