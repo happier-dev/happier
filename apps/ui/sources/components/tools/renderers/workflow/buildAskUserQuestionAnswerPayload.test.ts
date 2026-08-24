@@ -85,6 +85,29 @@ describe('buildAskUserQuestionAnswerPayload', () => {
         });
     });
 
+    it('does not let an untouched allow-empty freeform override a selected option', () => {
+        const result = buildAskUserQuestionAnswerPayload({
+            questions: [{
+                question: 'Choose or edit',
+                header: 'Value',
+                multiSelect: false,
+                options: [{ value: 'preset', label: 'Preset' }],
+                freeform: { allowEmpty: true },
+            }],
+            selections: new Map([[0, new Set([0])]]),
+            freeformAnswers: new Map(),
+            structuredQuestionAnswersV1Supported: true,
+        });
+
+        expect(result).toEqual({
+            kind: 'modern',
+            send: {
+                protocol: 'structured-question-v1',
+                structuredAnswersV1: { 'Choose or edit': ['preset'] },
+            },
+        });
+    });
+
     it('submits canonical option values while leaving display labels independent', () => {
         const result = buildAskUserQuestionAnswerPayload({
             questions: [{
