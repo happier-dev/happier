@@ -98,6 +98,27 @@ describe('author package boundary', () => {
     }
   });
 
+  it('describes the tarball the declared files inventory actually produces', () => {
+    // The README used to promise "only compiled `dist` output, `package.json`,
+    // and this README" while `files` also shipped three API-governance
+    // artifacts. `npm pack` reads `files`, so that inventory is the only
+    // authority the prose can be checked against.
+    const packageRoot = join(new URL('.', import.meta.url).pathname, '..');
+    const files = (JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
+      files?: readonly string[];
+    }).files ?? [];
+    expect(files.length).toBeGreaterThan(0);
+    const readme = readFileSync(join(packageRoot, 'README.md'), 'utf8');
+    const sectionStart = readme.indexOf('## Package tarball contents');
+    expect(sectionStart, 'README.md has no "## Package tarball contents" section').toBeGreaterThanOrEqual(0);
+    const section = readme.slice(sectionStart);
+
+    const documented = new Set(
+      [...section.matchAll(/^\| `([^`]+)` \|/gmu)].map((match) => match[1]!.replace(/\/\*\*$/u, '')),
+    );
+    expect([...documented].sort()).toEqual([...files].sort());
+  });
+
   it('depends on plugin-sdk rather than the private Protocol runtime', () => {
     const packageRoot = join(new URL('.', import.meta.url).pathname, '..');
     const packageJson = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
@@ -156,8 +177,11 @@ describe('author package boundary', () => {
     expect(prepack).toContain('check:api-governance:prepared');
     expect(prepareCandidate).toContain('build');
     expect(prepack.indexOf('prepare:api-governance')).toBeLessThan(prepack.indexOf('check:api-governance:prepared'));
-    expect(packageJson.scripts?.pretypecheck).toBe('yarn --cwd ../plugin-sdk -s check:public-toolchain');
+    expect(packageJson.scripts?.pretypecheck).toBeUndefined();
     expect(packageJson.scripts?.prebuild).toBe('yarn --cwd ../plugin-sdk -s check:public-toolchain');
+    expect(packageJson.scripts?.['typecheck:local']).toBe(
+      'yarn --cwd ../plugin-sdk -s check:public-toolchain && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json',
+    );
     expect(packageJson.scripts?.test).toBe('../../apps/stack/bin/hstack-exec --script=test:local');
     expect(packageJson.scripts?.['test:local']).toContain('test:external-authoring');
   });

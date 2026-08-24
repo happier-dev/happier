@@ -177,5 +177,21 @@ The root component props are deliberately curated. In particular, `Form` and
 schema source instructions or host account metadata; List and overlay adapters
 derive host-only injection props from their public semantic inputs.
 
-The package tarball should contain only compiled `dist` output, `package.json`,
-and this README.
+## Package tarball contents
+
+`npm pack` emits exactly what `files` in `package.json` selects. Verified with
+`npm pack --ignore-scripts --dry-run --json` against the current `dist`:
+
+| Entry | What it is |
+|---|---|
+| `dist/**` | The compiled output: one `.js`, `.js.map`, `.d.ts` and `.d.ts.map` per module. The `index` and `surfaceEntry` entry modules sit at the root; the rest are under `advanced`, `components`, `composer`, `data`, `environment`, `hostApi`, `presentation`, `presentationHost` and `testing` |
+| `package.json` | Package metadata and the declared entry points |
+| `README.md` | This file |
+| `API.md` | The generated public API inventory |
+| `api-surface.json` | The machine-readable public surface the API governance check compares against |
+| `api-declarations.md` | The generated declaration listing behind that check |
+
+The three API-governance artifacts ship deliberately: they are the published
+record of the public surface, and an author reads `API.md` from
+`node_modules/@happier-dev/plugin-ui/` rather than guessing export names. No
+`src/**`, test, fixture, or config file is included.
