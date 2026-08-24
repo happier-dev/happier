@@ -90,11 +90,7 @@ function toResult(envelope) {
     parts.push("candidates: " + error.candidates.join(", "));
   }
   const projected = truncateToolOutput(parts.join(" — "));
-  return {
-    content: [{ type: "text", text: projected.content }],
-    details: { truncation: projected },
-    isError: true,
-  };
+  throw new Error(projected.content);
 }
 
 function invoke(config, toolName, args, callId, signal, cwd) {

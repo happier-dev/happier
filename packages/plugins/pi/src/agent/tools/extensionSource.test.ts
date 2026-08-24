@@ -151,6 +151,52 @@ describe('Pi Happier tools extension', () => {
     }
   });
 
+  it('throws when the Happier bridge returns a failed tool envelope', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-tools-error-test-'));
+    try {
+      const extensionPath = join(root, 'extension.mjs');
+      const configPath = join(root, 'config.json');
+      writeFileSync(extensionPath, buildPiHappierToolsExtensionSource());
+      writeFileSync(configPath, JSON.stringify({
+        v: 1,
+        sessionId: 'session-1',
+        directory: root,
+        systemPrompt: '',
+        tools: [{
+          name: 'host_tool',
+          title: 'Host tool',
+          description: 'Host resolved',
+          inputSchema: { type: 'object', properties: {} },
+        }],
+        launch: {
+          executablePath: process.execPath,
+          argsPrefix: ['-e', 'process.stdout.write(JSON.stringify({ ok: false, error: { code: "action_failed", message: "expected failure" } }) + "\\n")', '--'],
+        },
+      }));
+      const module = await import(`${pathToFileURL(extensionPath).href}?${Math.random()}`);
+      const handlers = new Map<string, Array<(event: unknown) => unknown>>();
+      const tools: Array<Readonly<{
+        execute: (...args: unknown[]) => Promise<unknown>;
+      }>> = [];
+      module.default({
+        registerFlag() {},
+        getFlag(name: string) {
+          return name === PI_HAPPIER_TOOLS_CONFIG_FLAG ? configPath : undefined;
+        },
+        registerTool(tool: (typeof tools)[number]) { tools.push(tool); },
+        on(name: string, handler: (event: unknown) => unknown) {
+          handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+        },
+      });
+      for (const handler of handlers.get('session_start') ?? []) await handler({});
+
+      await expect(tools[0]?.execute('call-1', {}, undefined, undefined, { cwd: root }))
+        .rejects.toThrow('action_failed');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('forwards Pi tool-call identity through the native Agent bridge', async () => {
     const source = buildPiHappierToolsExtensionSource();
     expect(source).toContain('"--tool-call-id", callId.trim()');
