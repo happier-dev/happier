@@ -91,6 +91,7 @@ type HarnessProps = Readonly<{
   withActionBar?: boolean;
   onAction?: (actionId: string, keys: readonly string[]) => void;
   query?: string;
+  retainedSelectionKeys?: readonly string[];
 }>;
 
 function Harness(props: HarnessProps): React.ReactElement {
@@ -116,6 +117,9 @@ function Harness(props: HarnessProps): React.ReactElement {
         multiple: {
           store,
           isItemSelectable: (item: Entry) => item.selectable,
+          ...(props.retainedSelectionKeys === undefined
+            ? {}
+            : { retainedSelectionKeys: props.retainedSelectionKeys }),
         },
       }}
       footer={props.withActionBar ? (
@@ -201,6 +205,34 @@ describe('List multi-selection capability', () => {
     mounted.unmount();
   });
 
+  it('enters selection mode from an ordinary touch-sized control and then toggles rows without opening them', async () => {
+    const opened: string[] = [];
+    const mounted = mount(
+      <Harness withActionBar onSelectedKeyChange={(key) => opened.push(key)} />,
+    );
+
+    const enter = mounted.container.querySelector<HTMLElement>(
+      '[data-testid="happier-list-selection-mode"]',
+    );
+    expect(enter).not.toBeNull();
+    expect(enter?.textContent).toContain('Select');
+    // The host button owner exposes the minimum interactive box directly;
+    // hit slop alone would not make adjacent controls non-overlapping on touch.
+    expect(Number.parseFloat(enter?.style.minHeight ?? '0')).toBeGreaterThanOrEqual(44);
+
+    await act(async () => { enter?.click(); });
+    expect(opened).toEqual([]);
+    expect(mounted.container.querySelector('[data-testid="bulk-bar"]')).toBeNull();
+
+    await pressRow(mounted.container, 'Bravo');
+    await pressRow(mounted.container, 'Delta');
+
+    expect(opened).toEqual([]);
+    expect(selectedLabels(mounted.container)).toEqual(['Bravo', 'Delta']);
+    expect(mounted.container.querySelector('[data-testid="bulk-bar"]')).not.toBeNull();
+    mounted.unmount();
+  });
+
   it('opens a detail on a plain press and toggles once a selection is live', async () => {
     const opened: string[] = [];
     const mounted = mount(<Harness onSelectedKeyChange={(key) => opened.push(key)} />);
@@ -270,6 +302,51 @@ describe('List multi-selection capability', () => {
 
     await mounted.rerender(<Harness query="" onStore={(next) => { store = next; }} />);
     expect(selectedLabels(mounted.container)).toEqual(['Bravo', 'Echo']);
+    mounted.unmount();
+  });
+
+  it('keeps a selection whose rows an OWNER OUTSIDE this List narrowed away', async () => {
+    // Triage's case: the query narrows the corpus walk upstream, so the rows
+    // never reach this List at all and its own author-dataset eligibility
+    // cannot see them. Without a retained set the selection the reader built is
+    // pruned by typing, which is the silent drop the eligible/visible split
+    // exists to prevent.
+    let store: ListMultiSelectionStore | null = null;
+    const mounted = mount(<Harness onStore={(next) => { store = next; }} />);
+
+    await pressRow(mounted.container, 'Bravo', { ctrlKey: true });
+    await pressRow(mounted.container, 'Echo', { ctrlKey: true });
+    expect(store?.getSnapshot().count).toBe(2);
+
+    await mounted.rerender(
+      <Harness
+        items={[entries[0]!]}
+        retainedSelectionKeys={['b', 'e']}
+        onStore={(next) => { store = next; }}
+      />,
+    );
+
+    expect(Array.from(store?.getSnapshot().selectedKeys ?? []).sort()).toEqual(['b', 'e']);
+
+    await mounted.rerender(
+      <Harness retainedSelectionKeys={['b', 'e']} onStore={(next) => { store = next; }} />,
+    );
+    expect(selectedLabels(mounted.container)).toEqual(['Bravo', 'Echo']);
+    mounted.unmount();
+  });
+
+  it('never lets a retained key make an author-declared UNSELECTABLE row selectable', async () => {
+    // Retention answers "this row is hidden", never "this row may be chosen".
+    // `Charlie` is declared unselectable, so naming it retained must not admit
+    // it — otherwise a continuation or placeholder row joins a bulk action.
+    let store: ListMultiSelectionStore | null = null;
+    const mounted = mount(
+      <Harness retainedSelectionKeys={['c']} onStore={(next) => { store = next; }} />,
+    );
+
+    await pressRow(mounted.container, 'Charlie', { ctrlKey: true });
+
+    expect(store?.getSnapshot().count).toBe(0);
     mounted.unmount();
   });
 

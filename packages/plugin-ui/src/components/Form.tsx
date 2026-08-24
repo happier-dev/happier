@@ -241,6 +241,10 @@ export type TextFieldProps = Readonly<{
    * with Enter settles the composition rather than submitting a partial query.
    */
   onSubmitEditing?: () => void;
+  /** Reports IME start/end without exposing a platform event. */
+  onCompositionChange?: (isComposing: boolean) => void;
+  /** Returns true when Escape was handled after the active composition yielded it. */
+  onEscape?: () => boolean;
   /** Logical focus target transferred by the mounted host after author state changes. */
   focusTarget?: PluginUiFocusTarget;
   testID?: string;
@@ -282,6 +286,7 @@ export type SelectProps = Readonly<{
   multiple?: boolean;
   maxSelections?: number;
   minimumSelections?: number;
+  required?: boolean;
   onChange: (value: FormOptionValue | readonly FormOptionValue[]) => void;
   disabled?: boolean;
   testID?: string;
@@ -386,6 +391,7 @@ function FormRoot(props: FormProps): ReactElement {
               multiple={presentation.multiple}
               maxSelections={field.maxSelections}
               minimumSelections={field.required ? 1 : undefined}
+              required={field.required}
               disabled={disabled}
               onChange={(next) => patch(field.path, next)}
             />

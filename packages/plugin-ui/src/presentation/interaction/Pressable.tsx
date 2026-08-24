@@ -356,6 +356,22 @@ export function HappierPressable({
   const semanticSelected = accessibilityRole === 'option' || accessibilityRole === 'tab'
     ? selected === true
     : undefined;
+  // The `aria-posinset`/`aria-setsize` pair below is React Native Web only —
+  // React Native maps neither on a device. Android's accessibility service reads
+  // membership from `accessibilityCollectionItem`, which React Native's Android
+  // view config accepts but its published types omit. Derived from the SAME two
+  // values as the web aliases, so the two channels cannot disagree.
+  const nativeCollectionItem = Platform.OS === 'web'
+    || accessibilityPositionInSet === undefined
+    || accessibilitySetSize === undefined
+    ? undefined
+    : {
+        rowIndex: accessibilityPositionInSet - 1,
+        columnIndex: 0,
+        rowSpan: 1,
+        columnSpan: 1,
+        heading: false,
+      };
   // Preserve a static style as a static host prop. Besides avoiding a needless
   // callback for declarative chrome that has no press-state variation, this
   // keeps the host's resolved semantic theme projection observable to the
@@ -401,6 +417,8 @@ export function HappierPressable({
       aria-selected={semanticSelected}
       aria-posinset={accessibilityPositionInSet}
       aria-setsize={accessibilitySetSize}
+      // @ts-expect-error React Native's published types omit the Android-only collection-item prop its view config accepts.
+      accessibilityCollectionItem={nativeCollectionItem}
       aria-checked={checked}
       aria-invalid={invalid || undefined}
       aria-errormessage={invalid ? errorMessageId : undefined}
@@ -418,7 +436,6 @@ export function HappierPressable({
       onPressIn={onPressIn}
       onLongPress={isDisabled ? undefined : onLongPress}
       {...webContextMenuProps}
-      // @ts-expect-error React Native's native Pressable props omit RNW's keyboard hook.
       onKeyDown={Platform.OS === 'web' || onKeyDown !== undefined ? handleKeyDown : undefined}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}

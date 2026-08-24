@@ -45,13 +45,16 @@ import {
 } from '../presentation/collection/ItemOverflow.js';
 import type { HappierTone } from '../presentation/semantics.js';
 import { Field, TextField } from './Form.js';
+import { usePluginUiFocusTarget } from './Focus.js';
+import { Button } from './Button.js';
 import {
   ListMultiSelectionProvider,
   ListSelectionActionBar,
   useListMultiSelectionStoreSnapshot,
+  type ListMultiSelectionKey,
   type ListMultiSelectionStore,
 } from './ListMultiSelection.js';
-import { Stack } from './Layout.js';
+import { Row, Stack } from './Layout.js';
 import { Menu } from './Overlay.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
@@ -74,6 +77,8 @@ type ListSearchBaseProps<Item> = Readonly<{
   testID?: string;
   /** Decides whether one author item stays in the virtualized data window. */
   filter: (item: Item, query: string) => boolean;
+  /** IME draft text, or `null` once that draft has settled. */
+  onComposingValueChange?: (value: string | null) => void;
 }>;
 
 /**
@@ -110,6 +115,16 @@ type ListSelectionBaseProps<Item> = Readonly<{
    */
   onFocusedKeyChange?: (key: string) => void;
   /**
+   * Requests that this List reveal a row, make it the roving tab stop, and move
+   * physical focus to its mounted target. A new request object represents a new
+   * request even when the key is unchanged, such as repeatedly dismissing the
+   * same row's detail surface.
+   *
+   * The author chooses only the key. Reveal, virtualizer positioning and the
+   * eventual physical focus remain owned by List.
+   */
+  focusRequest?: Readonly<{ key: string }>;
+  /**
    * Opt in to keyed MULTI-selection beside the single selected key.
    *
    * The two cursors stay independent and neither derives from the other: the
@@ -134,6 +149,23 @@ export type ListMultiSelectionCapabilityProps<Item = unknown> = Readonly<{
    * continuation or placeholder row needs. Defaults to every row.
    */
   isItemSelectable?: (item: Item, index: number) => boolean;
+  /**
+   * Keys that stay eligible while the author's own rows do not contain them.
+   *
+   * The List already keeps a selection through ITS OWN search, because it can
+   * see the unfiltered dataset the author handed it. A list whose rows are
+   * narrowed by an owner OUTSIDE it — Triage's corpus walk matches the query
+   * before a row is ever published — hands over an already-narrowed dataset, so
+   * that same retention is invisible here and typing silently drops rows the
+   * reader chose. Naming those keys is how such an author says "hidden, not
+   * gone".
+   *
+   * It answers HIDDEN, never SELECTABLE: a key the author's own
+   * `isItemSelectable` excludes while its row IS present stays excluded, so a
+   * continuation or placeholder row cannot be admitted into a bulk action by
+   * being named here.
+   */
+  retainedSelectionKeys?: readonly ListMultiSelectionKey[];
 }>;
 
 /** One selected semantic List.Item key, controlled or initially author-owned. */
@@ -285,8 +317,33 @@ export type ItemProps = Readonly<{
   title?: string;
   subtitle?: string;
   detail?: string;
+  /**
+   * Optional line bounds for the three semantic text slots, off unless asked
+   * for.
+   *
+   * A virtualized List with no fixed row height reveals an unmounted row by the
+   * measured average (`onScrollToIndexFailed` below). A title free to grow to
+   * any height makes that average describe no row in particular, so the reveal
+   * lands short and the reader's scroll estimate drifts the further they page.
+   * A collection that knows its rows should stay comparable bounds them here;
+   * one that does not leaves them unbounded, exactly as before.
+   */
+  titleNumberOfLines?: number;
+  subtitleNumberOfLines?: number;
+  detailNumberOfLines?: number;
   icon?: ReactNode;
   accessory?: ReactNode;
+  /**
+   * Let the accessory take its own line rather than starve the row's text.
+   *
+   * A row whose accessory is a small trailing affordance wants the default: one
+   * line, and the text column shrinks. A row whose accessory is a set of real
+   * controls wants this: at a narrow width, the reader's largest type size or a
+   * long localization, the controls move below the text instead of squeezing it
+   * out. Placement mirrors under RTL; render, focus and announcement order never
+   * do.
+   */
+  accessoryWraps?: boolean;
   tone?: HappierTone;
   /**
    * The activation event travels with the press. A single-select list ignores
@@ -429,8 +486,17 @@ type RowFocusRequest = Readonly<{
   consume: (key: string, target: HappierFocusable) => void;
 }>;
 
-/** Mirrors the React Native scroll view's own growth, which used to be the List's outer box. */
-const virtualizedListBoxStyle: HappierPortableStyle = { flexGrow: 1, flexShrink: 1, minWidth: 0 };
+/**
+ * Gives the native virtualizer a bounded viewport through List's own box.
+ * `minHeight: 0` lets this flex child shrink below its content height instead
+ * of expanding its ancestors into an unbounded page-sized scroller.
+ */
+const virtualizedListBoxStyle: HappierPortableStyle = {
+  flex: 1,
+  minWidth: 0,
+  minHeight: 0,
+  overflow: 'hidden',
+};
 
 function useRowFocusRequest(): RowFocusRequest {
   const requested = useRef<string | null>(null);
@@ -451,6 +517,7 @@ function useRowFocusRequest(): RowFocusRequest {
 }
 
 function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>): ReactElement {
+  const translate = usePluginTranslation();
   // Density changes only the spacing between authored rows. It does not select
   // a separate item implementation or carry core row policy into the public
   // component surface.
@@ -458,6 +525,12 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const [uncontrolledQuery, setUncontrolledQuery] = useState(props.search?.defaultValue ?? '');
   const controlledQuery = props.search?.value;
   const query = controlledQuery === undefined ? uncontrolledQuery : controlledQuery;
+  const [composingQuery, setComposingQuery] = useState<string | null>(null);
+  const composingQueryRef = useRef<string | null>(null);
+  composingQueryRef.current = composingQuery;
+  const [searchSelection, setSearchSelection] = useState({ start: query.length, end: query.length });
+  const searchFocusTarget = usePluginUiFocusTarget();
+  const displayedQuery = composingQuery ?? query;
   const filter = props.search?.filter;
   const authorItems = props.items;
   const authorSections = props.sections;
@@ -549,15 +622,27 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // reader who selects six rows and then types in the search box still has six
   // rows selected when they clear it. Memoized on the dataset identity, so a
   // selection change never reprojects it.
+  const retainedSelectionKeys = multiCapability?.retainedSelectionKeys;
   const eligibleSelectionKeys = useMemo(() => {
     if (multiStore === null) return [];
     const authorRows = authorSections !== undefined
       ? authorSections.flatMap((section) => section.data.map((item, index) => ({ item, index })))
       : (authorItems ?? []).map((item, index) => ({ item, index }));
-    return authorRows
-      .filter((entry) => isItemSelectable?.(entry.item, entry.index) !== false)
-      .map((entry) => keyForItem(entry.item, entry.index));
-  }, [authorItems, authorSections, isItemSelectable, keyForItem, multiStore]);
+    const present = new Set<string>();
+    const eligible: string[] = [];
+    for (const entry of authorRows) {
+      const key = keyForItem(entry.item, entry.index);
+      present.add(key);
+      if (isItemSelectable?.(entry.item, entry.index) !== false) eligible.push(key);
+    }
+    // A retained key is only ever about a row that is NOT here. One whose row
+    // IS present has already been judged by the author's own predicate, and
+    // re-admitting it would let retention override an explicit exclusion.
+    for (const key of retainedSelectionKeys ?? []) {
+      if (!present.has(key)) eligible.push(key);
+    }
+    return eligible;
+  }, [authorItems, authorSections, isItemSelectable, keyForItem, multiStore, retainedSelectionKeys]);
   useEffect(() => {
     multiStore?.setVisibleRows({
       visibleOrderedKeys: visibleSelectionKeys,
@@ -637,9 +722,67 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     requestSelectionRef.current(key);
   }, [rowFocusRequest]);
   const requestQueryChange = (nextQuery: string) => {
+    if (composingQueryRef.current !== null) {
+      composingQueryRef.current = nextQuery;
+      setComposingQuery(nextQuery);
+      props.search?.onComposingValueChange?.(nextQuery);
+      return;
+    }
+    if (nextQuery === query) return;
     if (controlledQuery === undefined) setUncontrolledQuery(nextQuery);
     props.search?.onValueChange?.(nextQuery);
   };
+  const requestCompositionChange = (isComposing: boolean) => {
+    if (isComposing) {
+      composingQueryRef.current = displayedQuery;
+      setComposingQuery(displayedQuery);
+      props.search?.onComposingValueChange?.(displayedQuery);
+      return;
+    }
+    const settled = composingQueryRef.current;
+    composingQueryRef.current = null;
+    setComposingQuery(null);
+    props.search?.onComposingValueChange?.(null);
+    if (settled !== null) {
+      if (controlledQuery === undefined) setUncontrolledQuery(settled);
+      props.search?.onValueChange?.(settled);
+    }
+  };
+  const clearSearch = () => {
+    if (displayedQuery === '') return false;
+    composingQueryRef.current = null;
+    setComposingQuery(null);
+    props.search?.onComposingValueChange?.(null);
+    if (controlledQuery === undefined) setUncontrolledQuery('');
+    props.search?.onValueChange?.('');
+    return true;
+  };
+  useEffect(() => {
+    if (composingQueryRef.current !== null) return;
+    setSearchSelection((current) => {
+      const start = Math.min(current.start, query.length);
+      const end = Math.min(current.end, query.length);
+      return start === current.start && end === current.end ? current : { start, end };
+    });
+  }, [query]);
+  const searchEnabled = props.search !== undefined;
+  useEffect(() => {
+    if (!searchEnabled || Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.isComposing || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (
+        target.isContentEditable
+        || target.tagName === 'INPUT'
+        || target.tagName === 'TEXTAREA'
+        || target.tagName === 'SELECT'
+      )) return;
+      if (!searchFocusTarget.focus()) return;
+      event.preventDefault();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.removeEventListener('keydown', onKeyDown); };
+  }, [searchEnabled, searchFocusTarget]);
 
   // ---- Collection keyboard navigation -------------------------------------
   // A listbox is one composite widget, so it owns a single roving tab stop and
@@ -737,6 +880,16 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     if (mounted === undefined) return;
     rowFocusRequest.consume(key, mounted);
   };
+  const requestRowFocusRef = useRef(requestRowFocus);
+  requestRowFocusRef.current = requestRowFocus;
+  const authorFocusRequest = props.selection?.focusRequest;
+  useEffect(() => {
+    if (authorFocusRequest === undefined) return;
+    const rowIndex = rowIndexByKey.get(authorFocusRequest.key);
+    if (rowIndex === undefined) return;
+    requestFocusRef.current(authorFocusRequest.key);
+    requestRowFocusRef.current(authorFocusRequest.key, rowIndex);
+  }, [authorFocusRequest]);
   const moveFocus = (fromIndex: number, key: string, event: unknown): boolean => {
     const currentRowIndex = focusedIndex >= 0 ? focusedIndex : fromIndex;
     const multiStoreForKey = multiStoreRef.current;
@@ -825,16 +978,49 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     <Field label={props.search.label}>
       <TextField
         label={props.search.label}
-        value={query}
+        value={displayedQuery}
         onChange={requestQueryChange}
+        onCompositionChange={requestCompositionChange}
+        onEscape={clearSearch}
+        autoCapitalize="none"
+        autoCorrect={false}
+        selection={searchSelection}
+        onSelectionChange={setSearchSelection}
+        focusTarget={searchFocusTarget}
         placeholder={props.search.placeholder}
         testID={props.search.testID}
       />
     </Field>
   ) : null;
-  const headerContent = searchControl === null && (authorHeader === null || authorHeader === undefined)
+  /**
+   * The touch path into the SAME multi-selection store keyboard modifiers use.
+   *
+   * Touch has no Control/Command key, so without this explicit mode control an
+   * opted-in list exposed its bulk capability only to pointer/keyboard users.
+   * Once the mode is live, the ordinary row press already resolves to `toggle`
+   * through the canonical collection rule; no row-owned checkbox state or
+   * second reducer is needed.
+   */
+  const selectionModeControl = multiStore === null || eligibleSelectionKeys.length === 0 ? null : (
+    <Row gap="small" align="center">
+      <Button
+        title={multiSnapshot.isSelectionMode
+          ? translate('happier.plugin-ui.list.finishSelection', 'Done selecting')
+          : translate('happier.plugin-ui.list.selectItems', 'Select')}
+        variant="plain"
+        testID="happier-list-selection-mode"
+        onPress={() => {
+          if (multiSnapshot.isSelectionMode) multiStore.exit();
+          else multiStore.enter();
+        }}
+      />
+    </Row>
+  );
+  const headerContent = searchControl === null
+    && selectionModeControl === null
+    && (authorHeader === null || authorHeader === undefined)
     ? null
-    : <Stack gap="small">{searchControl}{authorHeader}</Stack>;
+    : <Stack gap="small">{searchControl}{selectionModeControl}{authorHeader}</Stack>;
   // Chrome is a SIBLING of the collection element, never a cell inside it. A
   // listbox admits groups and options and a list admits list items; a search
   // textbox, an author header or an empty-state block placed in the scroller
@@ -895,6 +1081,29 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     sectionKey: section.key,
   }), [renderRow, sectionRowOffsets]);
   const collectionRole = selectionEnabled ? 'listbox' : 'list';
+  // A listbox that admits more than one chosen option has to say so. The
+  // capability marks every chosen row `aria-selected`, and without this fact a
+  // screen reader treats those as contradictory and announces the last one as
+  // THE selection — while the bulk action still acts on the whole set. It is
+  // present only while the capability is mounted, so an ordinary
+  // single-selection list never claims a choice its reader cannot make.
+  const collectionMultiSelectable = multiStore === null ? undefined : true;
+  // `role="listbox"` is a React Native Web alias, and the selectable arm
+  // deliberately withholds the native `list` role that would contradict its
+  // `option` rows — so on Android a selectable list is not a collection at all
+  // unless it states its extent here. React Native's Android view config accepts
+  // `accessibilityCollection` while its published types omit it.
+  //
+  // The extent and the per-row `accessibilityCollectionItem` are ONE fact and
+  // have to be counted over the same traversal. A row indexes within its own
+  // unit (`setSize: section.data.length` above), which equals the whole list
+  // only on the flat arm. Publishing a whole-list extent beside section-local
+  // indices would make two rows claim row 0 and let no row reach
+  // `rowCount - 1`, so Android would announce a position that is false —
+  // strictly worse than the no-collection state it replaced.
+  const nativeCollection = Platform.OS === 'web' || !selectionEnabled || visibleSections !== undefined
+    ? undefined
+    : { rowCount: flatSetSize, columnCount: 1 };
   // The shared section owner, told which collection element the virtualizer
   // makes this header a direct child of. The rows are its siblings there, so
   // the header has to be a child that collection role actually permits.
@@ -916,6 +1125,8 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       accessibilityRole={selectionEnabled ? undefined : 'list'}
       // @ts-expect-error React Native's role union omits RNW's standard listbox role.
       role={collectionRole}
+      aria-multiselectable={collectionMultiSelectable}
+      accessibilityCollection={nativeCollection}
       accessibilityLabel={props.accessibilityLabel}
       testID={props.testID}
       style={props.style}
@@ -944,6 +1155,8 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       accessibilityRole={selectionEnabled ? undefined : 'list'}
       // @ts-expect-error React Native's role union omits RNW's standard listbox role.
       role={collectionRole}
+      aria-multiselectable={collectionMultiSelectable}
+      accessibilityCollection={nativeCollection}
       accessibilityLabel={props.accessibilityLabel}
       testID={props.testID}
       style={props.style}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createInitialHappierListMultiSelectionState,
@@ -6,14 +6,31 @@ import {
   resolveHappierListMultiSelectionKeyboardIntent,
   resolveHappierListMultiSelectionPointerAction,
   resolveHappierListMultiSelectionRange,
+  resolveHappierPointerPlatform,
   type HappierListMultiSelectionState,
 } from './multiSelection.js';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function selectedKeys(state: HappierListMultiSelectionState): string[] {
   return Array.from(state.selectedKeys).sort();
 }
 
 describe('reduceHappierListMultiSelection', () => {
+  it('preserves opaque selection keys exactly, including whitespace and empty strings', () => {
+    let state = createInitialHappierListMultiSelectionState({
+      scopeKey: 'scope-a',
+      visibleOrderedKeys: [' key ', 'key', ''],
+    });
+
+    state = reduceHappierListMultiSelection(state, { type: 'selectAllVisible' });
+
+    expect(Array.from(state.selectedKeys)).toEqual([' key ', 'key', '']);
+    expect(state.visibleOrderedKeys).toEqual([' key ', 'key', '']);
+  });
+
   it('replaces selection and tracks the range anchor separately from current focus', () => {
     let state = createInitialHappierListMultiSelectionState({
       scopeKey: 'scope-a',
@@ -390,5 +407,54 @@ describe('resolveHappierListMultiSelectionKeyboardIntent', () => {
     expect(intent({ key: 'ArrowDown' })).toBeNull();
     expect(intent({ key: 'Home' })).toBeNull();
     expect(intent({ key: 'Enter' })).toBeNull();
+  });
+});
+
+describe('resolveHappierPointerPlatform', () => {
+  it('resolves a browser on Apple hardware to the Command modifier rule', () => {
+    // `Platform.OS` collapses every desktop browser to `web`. Resolving that to
+    // a Control-modifier platform is not a neutral default on a Mac: Control+
+    // click IS the context-menu gesture there, so multi-selection would be
+    // unreachable in Safari and Chrome on macOS.
+    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+
+    expect(resolveHappierPointerPlatform('web')).toBe('macos');
+    expect(resolveHappierListMultiSelectionPointerAction({
+      isSelectionMode: false,
+      platform: resolveHappierPointerPlatform('web'),
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: true,
+    })).toBe('toggle');
+  });
+
+  it('keeps a non-Apple browser on the Control modifier rule', () => {
+    vi.stubGlobal('navigator', { platform: 'Win32' });
+
+    expect(resolveHappierPointerPlatform('web')).toBe('windows');
+    expect(resolveHappierListMultiSelectionPointerAction({
+      isSelectionMode: false,
+      platform: resolveHappierPointerPlatform('web'),
+      shiftKey: false,
+      ctrlKey: true,
+      metaKey: false,
+    })).toBe('toggle');
+  });
+
+  it('passes a mounted native platform through and falls back for an unknown one', () => {
+    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+
+    expect(resolveHappierPointerPlatform('ios')).toBe('ios');
+    expect(resolveHappierPointerPlatform('android')).toBe('android');
+    expect(resolveHappierPointerPlatform('macos')).toBe('macos');
+    expect(resolveHappierPointerPlatform('windows')).toBe('windows');
+    expect(resolveHappierPointerPlatform('linux')).toBe('linux');
+    expect(resolveHappierPointerPlatform('vision')).toBe('web');
+  });
+
+  it('treats a runtime without a browser navigator as non-Apple rather than failing', () => {
+    vi.stubGlobal('navigator', undefined);
+
+    expect(resolveHappierPointerPlatform('web')).toBe('windows');
   });
 });

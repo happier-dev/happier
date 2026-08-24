@@ -14,6 +14,7 @@ import {
   HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT,
   HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT,
   createHappierListMultiSelectionStore,
+  parseHappierListMultiSelectionRowSnapshot,
   type CreateHappierListMultiSelectionStateInput,
   type HappierListMultiSelectionActions,
   type HappierListMultiSelectionKey,
@@ -30,15 +31,6 @@ import { Text } from './Text.js';
 const SELECTION_COUNT_TRANSLATION_KEY = 'happier.plugin-ui.list.selectionCount';
 const SELECTION_CLEAR_TRANSLATION_KEY = 'happier.plugin-ui.list.clearSelection';
 const SELECTION_ACTION_BAR_TRANSLATION_KEY = 'happier.plugin-ui.list.selectionActions';
-
-/**
- * The context is keyed on `globalThis` for one physical reason: a host bundle
- * can end up with more than one copy of this module — the app graph and a
- * mounted plugin's graph each resolve their own — and two `createContext` calls
- * make a provider and its consumer invisible to one another. One key, one
- * context, whatever the module graph looks like.
- */
-const LIST_MULTI_SELECTION_CONTEXT_GLOBAL_KEY = '__HAPPIER_LIST_MULTI_SELECTION_CONTEXT__';
 
 export type ListMultiSelectionKey = HappierListMultiSelectionKey;
 export type ListMultiSelectionSnapshot = HappierListMultiSelectionSnapshot;
@@ -58,20 +50,7 @@ export const createListMultiSelectionStore: (
   input: CreateHappierListMultiSelectionStateInput,
 ) => ListMultiSelectionStore = createHappierListMultiSelectionStore;
 
-type ListMultiSelectionContextGlobal = typeof globalThis & {
-  [LIST_MULTI_SELECTION_CONTEXT_GLOBAL_KEY]?: React.Context<ListMultiSelectionStore | null>;
-};
-
-function resolveListMultiSelectionContext(): React.Context<ListMultiSelectionStore | null> {
-  const globalWithContext = globalThis as ListMultiSelectionContextGlobal;
-  const existingContext = globalWithContext[LIST_MULTI_SELECTION_CONTEXT_GLOBAL_KEY];
-  if (existingContext) return existingContext;
-  const context = createContext<ListMultiSelectionStore | null>(null);
-  globalWithContext[LIST_MULTI_SELECTION_CONTEXT_GLOBAL_KEY] = context;
-  return context;
-}
-
-const ListMultiSelectionContext = resolveListMultiSelectionContext();
+const ListMultiSelectionContext = createContext<ListMultiSelectionStore | null>(null);
 
 const INERT_SNAPSHOT: ListMultiSelectionSnapshot = HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT;
 
@@ -227,17 +206,17 @@ export function useListMultiSelectionRow(key: ListMultiSelectionKey): ListMultiS
     () => store?.getRowSnapshot(key) ?? getInertRowSnapshot(),
     () => store?.getRowSnapshot(key) ?? getInertRowSnapshot(),
   );
-  const [modeFlag, selectedFlag, focusedFlag] = rowSnapshot.split(':');
+  const { isSelectionMode, isSelected, isFocused } = parseHappierListMultiSelectionRowSnapshot(rowSnapshot);
   return useMemo(() => ({
-    isSelectionMode: modeFlag === '1',
-    isSelected: selectedFlag === '1',
-    isFocused: focusedFlag === '1',
+    isSelectionMode,
+    isSelected,
+    isFocused,
     replace: store ? () => store.replaceWith(key) : noop,
     toggle: store ? () => store.toggle(key) : noop,
     selectRange: store ? () => store.selectRange(key) : noop,
     addRange: store ? () => store.addRange(key) : noop,
     setFocused: store ? () => store.setFocusedKey(key) : noop,
-  }), [focusedFlag, key, modeFlag, selectedFlag, store]);
+  }), [isFocused, isSelected, isSelectionMode, key, store]);
 }
 
 /** One bulk destination offered while a selection is live. */
@@ -289,7 +268,7 @@ export function ListSelectionActionBar(props: ListSelectionActionBarProps): Reac
   const translate = usePluginTranslation();
   const store = useContext(ListMultiSelectionContext);
   const snapshot = useListMultiSelectionSnapshot();
-  if (store === null || !snapshot.isSelectionMode) return null;
+  if (store === null || !snapshot.isSelectionMode || snapshot.count === 0) return null;
   const selectedKeys = Array.from(snapshot.selectedKeys);
   return (
     <View

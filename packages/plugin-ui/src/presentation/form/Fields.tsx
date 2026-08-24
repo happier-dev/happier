@@ -9,13 +9,17 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  Platform,
   TextInput as ReactNativeTextInput,
   View,
   type TextStyle,
 } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
-import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
+import {
+  useOptionalHappierUiAccessibility,
+  useOptionalHappierUiLocalization,
+} from '../../environment/context.js';
 import {
   resolveHappierInteractiveTargetFloor,
   useHappierNativeMinimumInteractiveTargetSize,
@@ -288,6 +292,10 @@ export type HappierTextFieldProps = Readonly<{
    * composition instead of submitting a half-typed query.
    */
   onSubmitEditing?: () => void;
+  /** Reports the platform IME lifecycle without exposing a host event. */
+  onCompositionChange?: (isComposing: boolean) => void;
+  /** Returns true when Escape was handled and must not reach an outer owner. */
+  onEscape?: () => boolean;
   /** Additive host floor; the mounted environment's native target always wins. */
   minimumTouchTarget?: number;
   /** Private semantic focus binding supplied by the public TextField adapter; disabled fields report no target. */
@@ -313,10 +321,59 @@ export function HappierTextField(props: HappierTextFieldProps) {
     fontSize: props.theme.typography.body.fontSize,
     lineHeight: props.theme.typography.body.lineHeight,
   }, scaleOwnership.metricScale);
-  const setControlRef = useCallback((instance: unknown | null) => {
-    props.controlRef?.(props.disabled === true ? null : instance);
-  }, [props.controlRef, props.disabled]);
   const authorSelectionChange = props.onSelectionChange;
+  const composingRef = useRef(false);
+  const handleCompositionStart = useCallback(() => {
+    if (composingRef.current) return;
+    composingRef.current = true;
+    props.onCompositionChange?.(true);
+  }, [props.onCompositionChange]);
+  const handleCompositionEnd = useCallback(() => {
+    if (!composingRef.current) return;
+    composingRef.current = false;
+    props.onCompositionChange?.(false);
+  }, [props.onCompositionChange]);
+  const handleKeyPress = useCallback((event: Readonly<{
+    key?: string;
+    isComposing?: boolean;
+    preventDefault?: () => void;
+    stopPropagation?: () => void;
+    nativeEvent?: Readonly<{ key?: string; isComposing?: boolean }>;
+  }>) => {
+    const key = event.key ?? event.nativeEvent?.key;
+    const composing = event.isComposing ?? event.nativeEvent?.isComposing ?? composingRef.current;
+    if (key !== 'Escape' || composing) return;
+    if (props.onEscape?.() !== true) return;
+    event.preventDefault?.();
+    event.stopPropagation?.();
+  }, [props.onEscape]);
+  const handleChange = useCallback((event: Readonly<{
+    nativeEvent: Readonly<{ text?: string; isComposing?: boolean }>;
+  }>) => {
+    const composing = event.nativeEvent.isComposing;
+    if (typeof composing === 'boolean' && composing !== composingRef.current) {
+      composingRef.current = composing;
+      props.onCompositionChange?.(composing);
+    }
+    if (typeof event.nativeEvent.text === 'string') props.onChangeText(event.nativeEvent.text);
+  }, [props.onChangeText, props.onCompositionChange]);
+  const compositionTargetRef = useRef<Readonly<{
+    addEventListener(type: string, listener: () => void): void;
+    removeEventListener(type: string, listener: () => void): void;
+  }> | null>(null);
+  const setControlRef = useCallback((instance: unknown | null) => {
+    const previous = compositionTargetRef.current;
+    previous?.removeEventListener('compositionstart', handleCompositionStart);
+    previous?.removeEventListener('compositionend', handleCompositionEnd);
+    const candidate = instance && typeof instance === 'object'
+      && 'addEventListener' in instance && 'removeEventListener' in instance
+      ? instance as typeof compositionTargetRef.current
+      : null;
+    compositionTargetRef.current = candidate;
+    candidate?.addEventListener('compositionstart', handleCompositionStart);
+    candidate?.addEventListener('compositionend', handleCompositionEnd);
+    props.controlRef?.(props.disabled === true ? null : instance);
+  }, [handleCompositionEnd, handleCompositionStart, props.controlRef, props.disabled]);
   // React Native and React Native Web both report the caret inside the native
   // event; the portable selection is lifted out here so no caller has to know
   // the host event shape to keep a caret.
@@ -337,10 +394,11 @@ export function HappierTextField(props: HappierTextFieldProps) {
       aria-invalid={fieldIssue.invalid || undefined}
       aria-errormessage={fieldIssue.issueId}
       value={props.value}
-      onChangeText={props.onChangeText}
+      onChange={handleChange as never}
       selection={props.selection}
       onSelectionChange={authorSelectionChange === undefined ? undefined : onSelectionChange}
       onSubmitEditing={props.onSubmitEditing}
+      onKeyPress={handleKeyPress as never}
       placeholder={props.placeholder}
       placeholderTextColor={props.theme.colors.mutedText}
       editable={!props.disabled}
@@ -354,6 +412,10 @@ export function HappierTextField(props: HappierTextFieldProps) {
       keyboardType={props.keyboardType}
       allowFontScaling={scaleOwnership.allowHostFontScaling}
       testID={props.testID}
+      {...({
+        onCompositionStart: handleCompositionStart,
+        onCompositionEnd: handleCompositionEnd,
+      } as Record<string, unknown>)}
       style={{
         minWidth: minimumTouchTarget,
         minHeight: props.multiline ? Math.max(96, minimumTouchTarget ?? 0) : minimumTouchTarget,
@@ -534,6 +596,7 @@ export function HappierSelect<Value = string>(props: Readonly<{
   maxSelections?: number;
   /** A required multi-select keeps this many selected values available. */
   minimumSelections?: number;
+  required?: boolean;
   onChange: (value: Value | readonly Value[]) => void;
   /** Declarative controls can carry bounded JSON values rather than strings. */
   isEqual?: (left: Value, right: Value) => boolean;
@@ -547,6 +610,7 @@ export function HappierSelect<Value = string>(props: Readonly<{
 }>) {
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
   const fieldIssue = useHappierFieldIssueSemantics();
+  const localization = useOptionalHappierUiLocalization();
   const minimumTouchTarget = resolveMinimumTouchTarget(
     props.minimumTouchTarget,
     nativeMinimumTouchTarget,
@@ -605,6 +669,10 @@ export function HappierSelect<Value = string>(props: Readonly<{
     <View
       role={props.multiple ? 'group' : 'radiogroup'}
       accessibilityLabel={props.label}
+      accessibilityHint={Platform.OS === 'web' || !props.required
+        ? undefined
+        : localization?.translate('happier.plugin-ui.form.required', 'Required') ?? 'Required'}
+      aria-required={Platform.OS === 'web' && props.required ? true : undefined}
       testID={props.testID}
       style={{ gap: props.theme.spacing.small }}
     >

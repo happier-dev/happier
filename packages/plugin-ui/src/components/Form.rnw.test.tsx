@@ -355,6 +355,22 @@ describe('canonical Action Form presentation', () => {
     mount.unmount();
   });
 
+  it('exposes Select requiredness on the owning group', () => {
+    const mount = mountThroughReactNativeWeb(
+      <HappierSelect
+        label="Connection mode"
+        required
+        options={[{ value: 'poll', label: 'Polling' }]}
+        value="poll"
+        onChange={() => undefined}
+        theme={SURFACE_THEME_FIXTURE}
+      />,
+    );
+
+    expect(mount.container.querySelector('[role="radiogroup"]')?.getAttribute('aria-required')).toBe('true');
+    mount.unmount();
+  });
+
   it('does not give object-valued standalone choices duplicate React keys', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const mount = mountThroughReactNativeWeb(

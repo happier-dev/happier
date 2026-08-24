@@ -84,10 +84,43 @@ export type HappierListItemProps = Readonly<{
   title?: string;
   subtitle?: string;
   detail?: string;
+  /**
+   * Optional line bounds for the three semantic text slots.
+   *
+   * They exist because a virtualized collection with no fixed row height
+   * approaches an unmounted row by `averageItemLength * index`
+   * (`components/List.tsx#onScrollToIndexFailed`). A row whose title is free to
+   * grow to any height makes that average describe no row in particular, so a
+   * reveal lands somewhere else and the reader's scroll estimate drifts as they
+   * page. Bounding the growth is the collection's own decision, not the row's,
+   * which is why it is a prop here rather than a style each caller re-derives.
+   *
+   * Omitted, the slot keeps growing exactly as before: this is a capability a
+   * caller opts into, never a default that starts truncating existing rows.
+   */
+  titleNumberOfLines?: number;
+  subtitleNumberOfLines?: number;
+  detailNumberOfLines?: number;
   /** Decorative leading content; the row's label remains its text. */
   icon?: ReactNode;
   /** Trailing content such as the shared item overflow adapter. */
   accessory?: ReactNode;
+  /**
+   * Let the accessory take its own line rather than starve the row's text.
+   *
+   * The default row keeps every part on one line: the label column shrinks to
+   * nothing so the accessory always fits. That is right for a small trailing
+   * affordance and wrong for a row whose accessory is a set of real controls —
+   * at a narrow width, the reader's largest type size, or a long localization,
+   * the controls keep their intrinsic width and the title is squeezed out.
+   *
+   * With this on, the row wraps and the text column keeps at least half of it.
+   * Neither number nor breakpoint decides that: an accessory that does not fit
+   * beside a text column with an equal claim on the row moves below it, and the
+   * text column then takes the whole width. The platform mirrors the physical
+   * placement under RTL and never touches render, focus or announcement order.
+   */
+  accessoryWraps?: boolean;
   /** Keep an interactive accessory outside the row's primary Pressable. */
   accessoryOutsidePressable?: boolean;
   tone?: HappierTone;
@@ -242,8 +275,12 @@ export function HappierListItem({
   title,
   subtitle,
   detail,
+  titleNumberOfLines,
+  subtitleNumberOfLines,
+  detailNumberOfLines,
   icon,
   accessory,
+  accessoryWraps,
   accessoryOutsidePressable,
   tone = 'neutral',
   onPress,
@@ -346,6 +383,7 @@ export function HappierListItem({
         style={{
           flexDirection: 'row',
           alignItems: 'center',
+          flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
           gap: resolvedTheme.spacing.small,
           minHeight: targetSize,
           paddingHorizontal: resolvedTheme.spacing.medium,
@@ -362,12 +400,22 @@ export function HappierListItem({
             {icon}
           </View>
         ) : null}
-        <View style={{ flex: 1, minWidth: 0, gap: resolvedTheme.spacing.xsmall }}>
-          {title ? <HappierText style={textStyle(resolvedTheme, 'label', titleColor)}>{title}</HappierText> : null}
-          {subtitle ? <HappierText style={textStyle(resolvedTheme, 'body', resolvedTheme.colors.secondaryText)}>{subtitle}</HappierText> : null}
+        <View
+          style={{
+            flex: 1,
+            // Half the row when the accessory may wrap, because that is what
+            // makes it wrap at all: a column free to shrink to nothing lets an
+            // accessory keep its intrinsic width and take the title's space
+            // instead of its own line.
+            minWidth: accessoryWraps ? '50%' : 0,
+            gap: resolvedTheme.spacing.xsmall,
+          }}
+        >
+          {title ? <HappierText numberOfLines={titleNumberOfLines} style={textStyle(resolvedTheme, 'label', titleColor)}>{title}</HappierText> : null}
+          {subtitle ? <HappierText numberOfLines={subtitleNumberOfLines} style={textStyle(resolvedTheme, 'body', resolvedTheme.colors.secondaryText)}>{subtitle}</HappierText> : null}
           {customContent}
         </View>
-        {detail ? <HappierText style={textStyle(resolvedTheme, 'caption', resolvedTheme.colors.secondaryText)}>{detail}</HappierText> : null}
+        {detail ? <HappierText numberOfLines={detailNumberOfLines} style={textStyle(resolvedTheme, 'caption', resolvedTheme.colors.secondaryText)}>{detail}</HappierText> : null}
         {includeAccessory ? accessory : null}
         {isBusy ? (
           <HappierSpinner

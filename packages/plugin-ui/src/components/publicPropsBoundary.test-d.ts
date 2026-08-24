@@ -7,6 +7,7 @@ import type { LayoutChangeEvent, RowProps, ScreenProps, ScrollAreaProps, StackPr
 import type {
   ItemGroupProps,
   ItemProps,
+  ListMultiSelectionCapabilityProps,
   ListProps,
   ListSearchProps,
   ListSectionProps,
@@ -110,8 +111,12 @@ type _AuthorItemPropKeysAreCurated = Assert<IsEqual<keyof ItemProps,
   | 'title'
   | 'subtitle'
   | 'detail'
+  | 'titleNumberOfLines'
+  | 'subtitleNumberOfLines'
+  | 'detailNumberOfLines'
   | 'icon'
   | 'accessory'
+  | 'accessoryWraps'
   | 'tone'
   | 'onPress'
   | 'disabled'
@@ -139,6 +144,11 @@ type _AuthorListSectionPropKeysAreCurated = Assert<IsEqual<keyof ListSectionProp
   | 'title'
   | 'testID'
   | 'style'
+>>;
+
+type _AuthorListSelectionRetainsOpaqueHiddenKeys = Assert<IsEqual<
+  ListMultiSelectionCapabilityProps['retainedSelectionKeys'],
+  readonly string[] | undefined
 >>;
 
 type _AuthorItemGroupPropKeysAreCurated = Assert<IsEqual<keyof ItemGroupProps,
@@ -333,6 +343,14 @@ const privateSelectionFocusInjection: ListSelectionProps = {
   focusRef: null,
 };
 
+const authorSelectionFocusRequest: ListSelectionProps = {
+  selectedKey: null,
+  onSelectedKeyChange: () => undefined,
+  // Authors nominate only stable row identity; List retains reveal and the
+  // physical focus target.
+  focusRequest: { key: 'review-1' },
+};
+
 void staticAuthorForm;
 void connectedAccountSelect;
 void hostOwnedSelectMetadata;
@@ -351,6 +369,7 @@ void privateNativeVirtualizerWindow;
 void authorSelectionDisabledRows;
 void privateSelectionRovingProjection;
 void privateSelectionFocusInjection;
+void authorSelectionFocusRequest;
 void authorFocusTarget;
 void leakedPhysicalFocusTarget;
 

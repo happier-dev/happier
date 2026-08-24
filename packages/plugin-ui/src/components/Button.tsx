@@ -122,6 +122,7 @@ export function Button({
       : (variant === 'primary' ? theme.colors.accent : theme.colors.control);
 
   const resolveStyle = (state: HappierPressableStyleState): HappierPortableStyle => ({
+    minHeight: HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

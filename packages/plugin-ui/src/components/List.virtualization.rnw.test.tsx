@@ -3,6 +3,9 @@ import { act } from 'react';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
 
+// This is a deterministic SYSTEM-BOUNDARY fixture used to exercise List's
+// behavior with unmounted rows. It is not a measurement or an assertion about
+// React Native's real retained window; that belongs to loaded native QA.
 const VIRTUALIZED_WINDOW_SIZE = vi.hoisted(() => 12);
 
 const flatListCapture = vi.hoisted(() => ({
@@ -11,7 +14,6 @@ const flatListCapture = vi.hoisted(() => ({
   contentContainerStyle: [] as unknown[],
   keyboardShouldPersistTaps: [] as Array<unknown>,
   keyExtractor: [] as Array<(item: unknown, index: number) => string>,
-  mountedKeys: [] as Array<readonly string[]>,
   emptyComponent: [] as React.ReactNode[],
   imperativeReveals: [] as Array<Readonly<{ method: string; index?: number; offset?: number }>>,
   renderItem: [] as Array<(input: Readonly<{ item: unknown; index: number }>) => React.ReactNode>,
@@ -83,9 +85,6 @@ vi.mock('react-native', async () => {
       flatListCapture.contentContainerStyle.push(props.contentContainerStyle);
       flatListCapture.keyboardShouldPersistTaps.push(props.keyboardShouldPersistTaps);
       flatListCapture.keyExtractor.push(props.keyExtractor);
-      flatListCapture.mountedKeys.push(
-        windowItems.map((item, offset) => props.keyExtractor(item, boundedWindowStart + offset)),
-      );
       flatListCapture.emptyComponent.push(props.ListEmptyComponent);
       flatListCapture.renderItem.push(props.renderItem);
       flatListCapture.scrollToIndex.push((index) => {
@@ -113,6 +112,7 @@ vi.mock('react-native', async () => {
 });
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
+import { PluginUiPresentationHostProviderInternal } from '../presentationHost/context.js';
 import { useLivePluginResource } from '../hostApi/index.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { Button } from './Button.js';
@@ -124,19 +124,122 @@ function mountList(children: React.ReactNode) {
   const context = createSurfaceContext();
   return mountThroughReactNativeWeb(
     <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
-      {children}
+      <PluginUiPresentationHostProviderInternal host={{
+        focusTarget: (target: unknown) => {
+          const focus = (target as Readonly<{ focus?: () => void }> | null)?.focus;
+          if (typeof focus !== 'function') return false;
+          focus.call(target);
+          return true;
+        },
+        renderMarkdown: () => null,
+        renderCodeBlock: () => null,
+        renderPopover: () => null,
+        renderIcon: () => null,
+      }}>
+        {children}
+      </PluginUiPresentationHostProviderInternal>
     </PluginUiProvider>,
   );
 }
 
-function enterText(input: HTMLInputElement, value: string): void {
+function enterText(input: HTMLInputElement, value: string, isComposing = false): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
   if (!setter) throw new Error('The RNW List search fixture did not expose an input value setter.');
   setter.call(input, value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing }));
 }
 
 describe('virtualized List data ownership', () => {
+  it('owns exact search editing, IME settlement, Escape clearing, caret, and slash focus once', async () => {
+    const composingValues: Array<string | null> = [];
+    const settledValues: string[] = [];
+
+    function SearchList() {
+      const [value, setValue] = React.useState('hash-123');
+      return (
+        <List
+          items={[{ id: 'one', label: 'hash-123' }]}
+          keyForItem={(item) => item.id}
+          renderItem={(item) => <List.Item title={item.label} />}
+          search={{
+            label: 'Search findings',
+            value,
+            testID: 'owned-search',
+            filter: () => true,
+            onValueChange: (next) => {
+              settledValues.push(next);
+              setValue(next);
+            },
+            onComposingValueChange: (next) => { composingValues.push(next); },
+          }}
+        />
+      );
+    }
+
+    const mount = mountList(<SearchList />);
+    const input = mount.container.querySelector<HTMLInputElement>('[data-testid="owned-search"]');
+    expect(input).not.toBeNull();
+    expect(input?.getAttribute('autocapitalize')).toBe('none');
+    expect(input?.getAttribute('autocorrect')).toBe('off');
+
+    input?.setSelectionRange(2, 5);
+    await act(async () => {
+      input?.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      enterText(input!, 'ハッシュ', true);
+      input?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      input?.setSelectionRange(4, 4);
+      input?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
+    expect(settledValues).toEqual([]);
+    expect(composingValues).toContain('ハッシュ');
+
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(settledValues).toEqual([]);
+
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(settledValues).toEqual([]);
+
+    await act(async () => {
+      enterText(input!, 'ハッシュ', false);
+      input?.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    });
+    expect(settledValues).toEqual(['ハッシュ']);
+    expect(composingValues.at(-1)).toBeNull();
+    expect(input?.selectionStart).toBe(4);
+    expect(input?.selectionEnd).toBe(4);
+
+    input?.blur();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true }));
+    });
+    expect(document.activeElement).toBe(input);
+
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    expect(settledValues.at(-1)).toBe('');
+    expect(document.activeElement).toBe(input);
+
+    const emptyEscape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    await act(async () => { input?.dispatchEvent(emptyEscape); });
+    expect(emptyEscape.defaultPrevented).toBe(false);
+    mount.unmount();
+  });
+
   it('passes the author-owned item array through unchanged to the native virtualizer', () => {
     const items = [
       { id: 'first', label: 'First finding' },
@@ -248,6 +351,22 @@ describe('virtualized List data ownership', () => {
     );
 
     expect(flatListCapture.contentContainerStyle).toEqual([[{ gap: 8 }, { paddingBottom: 24 }]]);
+    mount.unmount();
+  });
+
+  it('gives the native virtualizer a bounded flex viewport through List own box', () => {
+    const mount = mountList(
+      <List
+        items={[{ id: 'first', label: 'First finding' }]}
+        keyForItem={(item) => item.id}
+        renderItem={(item) => <List.Item title={item.label} />}
+      />,
+    );
+
+    const collection = mount.container.querySelector<HTMLElement>('[role="list"]');
+    const collectionBox = collection?.parentElement;
+    expect(collectionBox).not.toBeNull();
+    expect(collectionBox?.style.minHeight).toBe('0px');
     mount.unmount();
   });
 
@@ -524,7 +643,7 @@ describe('virtualized List data ownership', () => {
     mount.unmount();
   });
 
-  it('keeps a 2,000-row public master/detail List bounded through search, selection, scrolling, and teardown', async () => {
+  it('keeps List behavior local when its virtualizer boundary leaves most of 2,000 rows unmounted', async () => {
     const items = Array.from({ length: 2_000 }, (_, index) => {
       const paddedIndex = String(index).padStart(4, '0');
       return {
@@ -625,7 +744,6 @@ describe('virtualized List data ownership', () => {
 
     flatListCapture.data.length = 0;
     flatListCapture.keyExtractor.length = 0;
-    flatListCapture.mountedKeys.length = 0;
     flatListCapture.renderItem.length = 0;
     flatListCapture.scrollToIndex.length = 0;
     flatListCapture.windowStarts.length = 0;
@@ -643,15 +761,8 @@ describe('virtualized List data ownership', () => {
       </PluginUiProvider>,
     );
     const options = () => Array.from(mount.container.querySelectorAll<HTMLElement>('[role="option"]'));
-    const expectedWindowKeys = (start: number, size = VIRTUALIZED_WINDOW_SIZE) => (
-      items.slice(start, start + size).map((item) => item.id)
-    );
-
     expect(flatListCapture.data.at(-1)).toBe(items);
-    expect(flatListCapture.mountedKeys.at(-1)).toEqual(expectedWindowKeys(0));
-    expect(options()).toHaveLength(VIRTUALIZED_WINDOW_SIZE);
     expect(options()[0]?.getAttribute('aria-posinset')).toBe('1');
-    expect(options().at(-1)?.getAttribute('aria-posinset')).toBe(String(VIRTUALIZED_WINDOW_SIZE));
     expect(options()[0]?.getAttribute('aria-setsize')).toBe(String(items.length));
     const initialRenderItem = flatListCapture.renderItem.at(-1);
     const initialKeyExtractor = flatListCapture.keyExtractor.at(-1);
@@ -694,7 +805,6 @@ describe('virtualized List data ownership', () => {
     expect(filter).toHaveBeenCalledTimes(items.length);
     expect(flatListCapture.data.at(-1)).toEqual(items.slice(990, 1_000));
     expect(flatListCapture.data.at(-1)?.[0]).toBe(items[990]);
-    expect(flatListCapture.mountedKeys.at(-1)).toEqual(expectedWindowKeys(990, 10));
     expect(options()).toHaveLength(10);
     expect(options()[0]?.getAttribute('aria-setsize')).toBe('10');
     await vi.waitFor(() => {
@@ -714,8 +824,6 @@ describe('virtualized List data ownership', () => {
     await act(async () => { scrollToIndex!(1_000); });
 
     expect(flatListCapture.windowStarts.at(-1)).toBe(1_000);
-    expect(flatListCapture.mountedKeys.at(-1)).toEqual(expectedWindowKeys(1_000));
-    expect(options()).toHaveLength(VIRTUALIZED_WINDOW_SIZE);
     expect(options()[0]?.getAttribute('aria-posinset')).toBe('1001');
     expect(options().at(-1)?.getAttribute('aria-posinset')).toBe('1012');
     expect(options()[0]?.getAttribute('aria-setsize')).toBe(String(items.length));

@@ -8,6 +8,7 @@ import {
 } from '../presentationHost/context.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { Item, ItemGroup, List } from './List.js';
+import { useListMultiSelectionController } from './ListMultiSelection.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { Text } from './Text.js';
 
@@ -25,6 +26,41 @@ function listTree(context: ReturnType<typeof createSurfaceContext>, children: Re
 }
 
 describe('plugin-ui List item presentation', () => {
+  it('restores physical focus through the virtualized List owner on request', async () => {
+    const repositories = [
+      { id: 'happier', title: 'happier' },
+      { id: 'protocol', title: 'protocol' },
+    ] as const;
+    const context = createSurfaceContext();
+    const onFocusedKeyChange = vi.fn();
+    const tree = (focusRequest?: Readonly<{ key: string }>) => (
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <List
+          accessibilityLabel="Repositories"
+          items={repositories}
+          keyForItem={(item) => item.id}
+          renderItem={(item) => <List.Item title={item.title} onPress={() => undefined} />}
+          selection={{
+            selectedKey: 'happier',
+            onSelectedKeyChange: () => undefined,
+            onFocusedKeyChange,
+            focusRequest,
+          }}
+        />
+      </PluginUiProvider>
+    );
+    const mount = mountThroughReactNativeWeb(tree());
+    const options = () => Array.from(mount.container.querySelectorAll<HTMLElement>('[role="option"]'));
+    await act(async () => { options()[0]?.focus(); });
+
+    await mount.render(tree({ key: 'protocol' }));
+
+    expect(document.activeElement).toBe(options()[1]);
+    expect(options().map((option) => option.getAttribute('tabindex'))).toEqual(['-1', '0']);
+    expect(onFocusedKeyChange).toHaveBeenLastCalledWith('protocol');
+    mount.unmount();
+  });
+
   it('resolves collection and group accessible names through the plugin catalog', () => {
     const context = createSurfaceContext({
       translations: {
@@ -448,5 +484,54 @@ describe('plugin-ui List item presentation', () => {
     expect(document.activeElement).toBe(radios[0]);
     expect(radios.map((radio) => radio.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false']);
     mount.unmount();
+  });
+
+  it('announces a multi-selectable listbox only while the selection capability is mounted', () => {
+    const repositories = [
+      { id: 'happier', title: 'happier' },
+      { id: 'protocol', title: 'protocol' },
+    ] as const;
+    type Repository = (typeof repositories)[number];
+
+    function RepositoryList(props: Readonly<{ multiple: boolean }>) {
+      const store = useListMultiSelectionController({ scopeKey: 'repositories', rows: 'collection' });
+      return (
+        <List
+          accessibilityLabel="Repositories"
+          items={repositories}
+          keyForItem={(item: Repository) => item.id}
+          renderItem={(item: Repository) => <List.Item title={item.title} onPress={() => undefined} />}
+          selection={{
+            onSelectedKeyChange: () => undefined,
+            ...(props.multiple ? { multiple: { store } } : {}),
+          }}
+        />
+      );
+    }
+
+    const context = createSurfaceContext();
+    const multiple = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <RepositoryList multiple />
+      </PluginUiProvider>,
+    );
+    // Several `aria-selected` options in a listbox that never declares itself
+    // multi-selectable are contradictory: a screen reader announces the last
+    // one as THE selection, so a bulk action acts on rows the reader was never
+    // told it had chosen.
+    expect(multiple.container.querySelector('[role="listbox"]')?.getAttribute('aria-multiselectable'))
+      .toBe('true');
+    multiple.unmount();
+
+    const single = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <RepositoryList multiple={false} />
+      </PluginUiProvider>,
+    );
+    // The single-selection listbox must NOT claim it, or every ordinary plugin
+    // list would tell a reader it can choose several rows when it cannot.
+    expect(single.container.querySelector('[role="listbox"]')?.getAttribute('aria-multiselectable'))
+      .toBeNull();
+    single.unmount();
   });
 });

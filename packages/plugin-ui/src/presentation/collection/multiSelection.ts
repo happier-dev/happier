@@ -67,20 +67,18 @@ export type HappierListMultiSelectionAction =
       eligibleKeys?: readonly HappierListMultiSelectionKey[] | ReadonlySet<HappierListMultiSelectionKey> | null;
     }>;
 
-function normalizeKeys(
+function readKeys(
   keys: readonly HappierListMultiSelectionKey[] | ReadonlySet<HappierListMultiSelectionKey> | null | undefined,
 ): HappierListMultiSelectionKey[] {
-  return Array.from(keys ?? [])
-    .map((key) => key.trim())
-    .filter(Boolean);
+  return Array.from(keys ?? []);
 }
 
 function createEligibleKeys(
   visibleOrderedKeys: readonly HappierListMultiSelectionKey[],
   eligibleKeys: readonly HappierListMultiSelectionKey[] | ReadonlySet<HappierListMultiSelectionKey> | null | undefined,
 ): ReadonlySet<HappierListMultiSelectionKey> {
-  if (!eligibleKeys) return new Set(normalizeKeys(visibleOrderedKeys));
-  return new Set(normalizeKeys(eligibleKeys));
+  if (!eligibleKeys) return new Set(readKeys(visibleOrderedKeys));
+  return new Set(readKeys(eligibleKeys));
 }
 
 function setsEqual(
@@ -161,7 +159,7 @@ function commit(
 export function createInitialHappierListMultiSelectionState(
   input: CreateHappierListMultiSelectionStateInput,
 ): HappierListMultiSelectionState {
-  const visibleOrderedKeys = normalizeKeys(input.visibleOrderedKeys);
+  const visibleOrderedKeys = readKeys(input.visibleOrderedKeys);
   return {
     isSelectionMode: false,
     selectedKeys: new Set(),
@@ -266,7 +264,7 @@ export function reduceHappierListMultiSelection(
       });
     }
     case 'setSelectedKeys': {
-      const requested = new Set(normalizeKeys(action.keys));
+      const requested = new Set(readKeys(action.keys));
       const selectedKeys = new Set<HappierListMultiSelectionKey>();
       for (const key of requested) {
         if (state.eligibleKeys.has(key)) selectedKeys.add(key);
@@ -288,7 +286,7 @@ export function reduceHappierListMultiSelection(
       });
     }
     case 'setVisibleOrder': {
-      const visibleOrderedKeys = normalizeKeys(action.visibleOrderedKeys);
+      const visibleOrderedKeys = readKeys(action.visibleOrderedKeys);
       const eligibleKeys = createEligibleKeys(visibleOrderedKeys, action.eligibleKeys);
       const pruned = pruneState(state, visibleOrderedKeys, eligibleKeys);
       return commit(state, {
@@ -307,7 +305,7 @@ export function reduceHappierListMultiSelection(
           eligibleKeys: action.eligibleKeys,
         });
       }
-      const visibleOrderedKeys = normalizeKeys(action.visibleOrderedKeys);
+      const visibleOrderedKeys = readKeys(action.visibleOrderedKeys);
       const eligibleKeys = createEligibleKeys(visibleOrderedKeys, action.eligibleKeys);
       return commit(state, {
         isSelectionMode: false,
@@ -512,13 +510,33 @@ const POINTER_PLATFORMS: ReadonlySet<string> = new Set<HappierPointerPlatform>([
 ]);
 
 /**
+ * Whether the browser is running on Apple hardware.
+ *
+ * `Platform.OS` collapses every desktop browser to `web`, so the modifier rule
+ * has no way to tell a Mac from a PC without asking the browser itself. This is
+ * the one place that asks, and `apps/ui`'s keyboard runtime reads the same
+ * answer through `resolveHappierPointerPlatform` — otherwise a reader would get
+ * Command for shortcuts and Control for selection in the very same window.
+ */
+function isAppleWebPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Mac|iPhone|iPad|iPod/iu.test(navigator.platform);
+}
+
+/**
  * The mounted platform, narrowed to the vocabulary the modifier rule uses.
  *
- * An unrecognised platform resolves to `web`, whose command modifier is
+ * A browser resolves to an effective desktop platform, because Control is not a
+ * neutral default there: on a Mac, Control+click IS the context-menu gesture,
+ * so treating every browser as non-Apple leaves multi-selection unreachable in
+ * Safari and Chrome on macOS.
+ *
+ * An unrecognised platform still resolves to `web`, whose command modifier is
  * Control — the same choice every non-Apple desktop makes — rather than
  * refusing to resolve a selection gesture at all.
  */
 export function resolveHappierPointerPlatform(platformOs: string): HappierPointerPlatform {
+  if (platformOs === 'web') return isAppleWebPlatform() ? 'macos' : 'windows';
   return POINTER_PLATFORMS.has(platformOs) ? platformOs as HappierPointerPlatform : 'web';
 }
 
@@ -568,6 +586,31 @@ export type HappierListMultiSelectionStore = HappierListMultiSelectionActions & 
  * literal at each inert call site so the format has exactly one author.
  */
 export const HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT = '0:0:0';
+
+/** The three facts a row's primitive encodes, decoded by its own author. */
+export type HappierListMultiSelectionRowFlags = Readonly<{
+  isSelectionMode: boolean;
+  isSelected: boolean;
+  isFocused: boolean;
+}>;
+
+/**
+ * Decode one row primitive.
+ *
+ * The encoding is deliberately a single comparable string so a row subscribes to
+ * its own three facts rather than to the snapshot, and it is decoded here so the
+ * format has one author instead of one per binding.
+ */
+export function parseHappierListMultiSelectionRowSnapshot(
+  rowSnapshot: string,
+): HappierListMultiSelectionRowFlags {
+  const [modeFlag, selectedFlag, focusedFlag] = rowSnapshot.split(':');
+  return {
+    isSelectionMode: modeFlag === '1',
+    isSelected: selectedFlag === '1',
+    isFocused: focusedFlag === '1',
+  };
+}
 
 export const HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT: HappierListMultiSelectionSnapshot = Object.freeze({
   isSelectionMode: false,
