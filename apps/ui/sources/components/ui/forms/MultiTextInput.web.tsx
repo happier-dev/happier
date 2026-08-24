@@ -91,11 +91,10 @@ interface MultiTextInputProps {
 
 const DEFAULT_TEXT_STYLE: TextStyle = { fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE };
 
-// The oversized-text round-trip is deferred (input debounce + parent sync
-// deferral), so more than one of our own emissions can be in flight through
-// React at once; remembering only the latest emission lets a superseded one
-// replay late and be mistaken for external content. The cap only needs to
-// cover emissions still in flight — a handful, not a history.
+// Parent state and persistence notifications can replay more than one of our
+// own emissions through React. Remembering only the latest lets a superseded
+// emission be mistaken for external content. The cap only needs to cover
+// values still in flight — a handful, not a history.
 const RECENT_EMITTED_VALUES_LIMIT = 8;
 
 type WebTextStyleOverride = Readonly<{
@@ -168,9 +167,9 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const isComposingRef = React.useRef(false);
     const liveValueRef = React.useRef(value);
     const lastEmittedValueRef = React.useRef(value);
-    // Superseded-replay watermark for the DEFERRED pipeline only: holds recent
-    // oversized emissions still potentially in flight. Small emissions are
-    // synchronous and cannot be reordered, so they are never tracked.
+    // Superseded-replay watermark for controlled-value round trips. Input
+    // callbacks may be synchronous, but the parent renders they trigger can
+    // still interleave with persistence and subscription notifications.
     const recentEmittedValuesRef = React.useRef<string[]>([]);
     const pendingChangeTextRef = React.useRef<string | null>(null);
     const pendingChangeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -221,13 +220,11 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         clearPendingChangeTimer();
         pendingChangeTextRef.current = null;
         lastEmittedValueRef.current = text;
-        if (isLargeTextInputValueLength(text.length)) {
-            const recentEmittedValues = recentEmittedValuesRef.current;
-            if (recentEmittedValues[recentEmittedValues.length - 1] !== text) {
-                recentEmittedValues.push(text);
-                if (recentEmittedValues.length > RECENT_EMITTED_VALUES_LIMIT) {
-                    recentEmittedValues.shift();
-                }
+        const recentEmittedValues = recentEmittedValuesRef.current;
+        if (recentEmittedValues[recentEmittedValues.length - 1] !== text) {
+            recentEmittedValues.push(text);
+            if (recentEmittedValues.length > RECENT_EMITTED_VALUES_LIMIT) {
+                recentEmittedValues.shift();
             }
         }
         onChangeText(text);
@@ -355,8 +352,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         }
 
         // Reconcile adopts EXTERNAL values only. A value this input itself
-        // emitted is a superseded round-trip replay (the deferred pipeline can
-        // deliver an older emission after a newer one was already flushed);
+        // emitted is a superseded round-trip replay (parent state or repository
+        // notifications can render an older emission after a newer one);
         // adopting it would roll the live text back and jump the caret.
         if (recentEmittedValuesRef.current.includes(value)) {
             recordLargeTextInputDiagnostic({

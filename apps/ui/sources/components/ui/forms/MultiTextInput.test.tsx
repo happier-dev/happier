@@ -1100,6 +1100,78 @@ describe('MultiTextInput', () => {
         }
     });
 
+    it('does not roll back live short text when an earlier emitted value replays through props', async () => {
+        vi.useFakeTimers();
+        try {
+            const { MultiTextInput } = await import('./MultiTextInput.web');
+            const onChangeText = vi.fn();
+            const firstEdit = 'hello world hello wo';
+            const secondEdit = 'hello world hello world hello world';
+            const externalText = 'continued on another device';
+            const mockTextarea = {
+                value: '',
+                selectionStart: 0,
+                selectionEnd: 0,
+                scrollTop: 0,
+                scrollHeight: 30,
+                style: {} as Record<string, string>,
+                setSelectionRange: vi.fn(),
+                dispatchEvent: vi.fn(),
+                focus: vi.fn(),
+                blur: vi.fn(),
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+            };
+
+            let tree: renderer.ReactTestRenderer | null = null;
+            await act(async () => {
+                tree = renderer.create(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value=""
+                        onChangeText={onChangeText}
+                    />,
+                    {
+                        createNodeMock: (element) => (element.type === 'textarea' ? mockTextarea : null),
+                    },
+                );
+            });
+            const input = tree!.root.findByType('textarea' as any);
+
+            for (const text of [firstEdit, secondEdit]) {
+                mockTextarea.value = text;
+                mockTextarea.selectionStart = text.length;
+                mockTextarea.selectionEnd = text.length;
+                await act(async () => {
+                    input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
+                });
+            }
+
+            await act(async () => {
+                tree!.update(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={firstEdit}
+                        onChangeText={onChangeText}
+                    />,
+                );
+            });
+            expect(mockTextarea.value).toBe(secondEdit);
+
+            await act(async () => {
+                tree!.update(
+                    <MultiTextInput
+                        testID="composer-input"
+                        value={externalText}
+                        onChangeText={onChangeText}
+                    />,
+                );
+            });
+            expect(mockTextarea.value).toBe(externalText);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('records web large-text changes with live value metadata only', async () => {
         const { MultiTextInput } = await import('./MultiTextInput.web');
         const tree = (await renderScreen(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {

@@ -158,6 +158,27 @@ describe('SessionWarningActionBanner', () => {
         expect(flattenStyle(screen.findByTestId('warning-check')?.props.style({ pressed: false })).maxWidth).toBe('100%');
     });
 
+    it('can align composer-conflict actions with the title on desktop', async () => {
+        const { SessionWarningActionBanner } = await import('./SessionWarningActionBanner');
+        const screen = await renderScreen(
+            <SessionWarningActionBanner
+                testID="warning"
+                title="Draft conflict"
+                body="This field changed on another device."
+                actionsPlacement="title"
+                actionTestID="warning-primary"
+                actionLabel="Use synced"
+                onActionPress={vi.fn()}
+            />,
+        );
+
+        expect(flattenStyle(screen.findByTestId('warning')?.props.style)).toMatchObject({
+            flexDirection: 'column',
+            alignItems: 'stretch',
+        });
+        expect(screen.findByTestId('warning-actions-row')).toBeTruthy();
+    });
+
     it('wraps a long action run into a right-aligned block beside the copy on desktop', async () => {
         const { SessionWarningActionBanner } = await import('./SessionWarningActionBanner');
 
