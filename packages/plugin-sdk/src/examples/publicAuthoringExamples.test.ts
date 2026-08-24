@@ -129,7 +129,7 @@ const requiredExamples = [
 // each product's source shape so an omitted package cannot quietly escape the
 // external-author contract.
 const copyableExamples = [
-    { name: 'background-indexer', sourceEntry: 'src/index.ts', ui: 'none', coldManifest: true },
+    { name: 'background-indexer', sourceEntry: 'src/index.ts', ui: 'none', coldManifest: false },
     { name: 'descriptor-only', sourceEntry: 'src/index.ts', ui: 'none', coldManifest: true },
     { name: 'hosted-web', sourceEntry: 'src/index.ts', ui: 'hostedWeb', coldManifest: true },
     { name: 'react-native-installed', sourceEntry: 'src/index.ts', ui: 'reactNative', coldManifest: true },
@@ -892,16 +892,11 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
     });
 
     it('runs the Background Indexer through its declared public daemon-database and background-service seams', async () => {
-        const manifest = readExampleManifest('background-indexer');
-        expect(manifest.contributes.daemonDatabases).toEqual([{
-            id: 'workspace-index',
-            migrations: [{ version: 1, id: 'create-workspace-index' }],
-            incumbentQueryFixtureId: 'workspace-index-v1',
-        }]);
-        expect(manifest.contributes.backgroundServices).toEqual([{
-            id: 'workspace-indexer',
-            title: 'Index workspace documents',
-        }]);
+        // The Background Indexer authors one source module through the single
+        // public `definePlugin(...)` path: its cold manifest is projected from
+        // that module, never hand-maintained beside it.
+        expect(existsSync(join(examplesRoot, 'background-indexer', '.happier-plugin', 'plugin.json')))
+            .toBe(false);
 
         const module = await import(pathToFileURL(join(
             examplesRoot,

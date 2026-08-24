@@ -1,7 +1,5 @@
-import type {
-    PluginApi,
-    PluginDaemonDatabaseRuntimeProjection,
-} from '@happier-dev/plugin-sdk';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { PluginDaemonDatabaseRuntimeProjection } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
 import type {
     DaemonDatabaseMigrationReadTransaction,
@@ -72,6 +70,19 @@ export const runWorkspaceIndexer: BackgroundServiceRunner = async (context) => {
     }
 };
 
-export function activate(api: Pick<PluginApi, 'backgroundServices'>): void {
-    api.backgroundServices.register('workspace-indexer', runWorkspaceIndexer);
-}
+export const { manifest, activate } = definePlugin({
+    id: 'examples.background-indexer',
+    version: '0.1.0',
+    displayName: 'Background Indexer',
+    description: 'A public-only daemon database and background-service reference.',
+    entrypoints: { daemon: './dist/index.js' },
+    hostAccess: { required: [], optional: [] },
+    daemonDatabases,
+    backgroundServices: [{
+        declaration: {
+            id: 'workspace-indexer',
+            title: 'Index workspace documents',
+        },
+        runner: runWorkspaceIndexer,
+    }],
+});

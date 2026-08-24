@@ -11,8 +11,7 @@
     "happier-plugin"
   ],
   "files": [
-    "dist",
-    ".happier-plugin"
+    "dist"
   ],
   "scripts": {
     "build": "happier plugins author build .",

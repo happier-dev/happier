@@ -236,7 +236,6 @@
     "examples/advanced-package-root/test/index.test.mjs",
     "examples/advanced-package-root/tsconfig.json",
     "examples/authoring-support.json",
-    "examples/background-indexer/.happier-plugin/plugin.json",
     "examples/background-indexer/package.json",
     "examples/background-indexer/README.md",
     "examples/background-indexer/src/index.ts",

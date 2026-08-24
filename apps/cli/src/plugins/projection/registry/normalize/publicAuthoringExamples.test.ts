@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -30,9 +30,11 @@ function listInstallableExampleRoots(): readonly string[] {
     .sort();
 }
 
-function readLoadedExamplePlugin(exampleRoot: string): LoadedPlugin {
-  const manifestPath = join(exampleRoot, '.happier-plugin', 'plugin.json');
-  const rawManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as unknown;
+function loadedExamplePluginFromManifest(
+  exampleRoot: string,
+  manifestPath: string,
+  rawManifest: unknown,
+): LoadedPlugin {
   const manifest = readCanonicalPluginManifest(rawManifest);
   expect(manifest, `${manifestPath} must normalize through the CLI plugin manifest projection`).not.toBeNull();
   if (!manifest) {
@@ -54,6 +56,28 @@ function readLoadedExamplePlugin(exampleRoot: string): LoadedPlugin {
       resolvedVersion: manifest.version,
     },
   };
+}
+
+function readLoadedExamplePlugin(exampleRoot: string): LoadedPlugin {
+  const manifestPath = join(exampleRoot, '.happier-plugin', 'plugin.json');
+  return loadedExamplePluginFromManifest(
+    exampleRoot,
+    manifestPath,
+    JSON.parse(readFileSync(manifestPath, 'utf8')) as unknown,
+  );
+}
+
+/**
+ * The Background Indexer authors through the single public `definePlugin(...)`
+ * path, so its manifest is projected from source rather than committed beside
+ * it. It is the registry projection's only non-UI author package, which is what
+ * makes "carries exactly the UI-declaring examples" falsifiable.
+ */
+async function loadCodeDefinedBackgroundIndexer(): Promise<LoadedPlugin> {
+  const exampleRoot = join(examplesRoot, 'background-indexer');
+  const entryPath = join(exampleRoot, 'src', 'index.ts');
+  const module = await import(pathToFileURL(entryPath).href) as Readonly<{ manifest: unknown }>;
+  return loadedExamplePluginFromManifest(exampleRoot, entryPath, module.manifest);
 }
 
 describe('plugin SDK public installable examples', () => {
@@ -174,8 +198,11 @@ describe('plugin SDK public installable examples', () => {
     });
   });
 
-  it('normalizes through the CLI contribution registry projection', () => {
-    const loadedPlugins = listInstallableExampleRoots().map(readLoadedExamplePlugin);
+  it('normalizes through the CLI contribution registry projection', async () => {
+    const loadedPlugins = [
+      ...listInstallableExampleRoots().map(readLoadedExamplePlugin),
+      await loadCodeDefinedBackgroundIndexer(),
+    ];
     expect(loadedPlugins.map((plugin) => plugin.pluginId).sort()).toEqual([
       'examples.background-indexer',
       'examples.descriptor-only',
