@@ -129,6 +129,12 @@ HAPPIER_TOKEN='hap_v1_…' happier list
 account automation but not present-user approvals, API/security-policy changes,
 or other security and trust controls.
 
+API-eligible Actions are allowed and unprompted by default. A present user can
+change an Action's **API** setting to **Ask first** or **Off** before sharing a
+token with automation. The same credential-aware Action transport supports
+delegated work, planning, and voice-agent runs; these retain the API Token's
+account-automation ceiling.
+
 See [API Tokens](/security/api-tokens) for creation, revocation, the one-minute
 daemon-local validation-cache limit, and Action settings.
 
@@ -365,14 +371,14 @@ If a supported session is already running, you can reattach to that same live se
 
 ```bash
 happier attach
-happier attach <session-id>
+happier attach <session-id-or-prefix-or-tag>
 ```
 
 This is the main “start in the app, continue in the terminal” workflow. In a supported TTY, `happier attach` opens an interactive picker of active sessions:
 
 - **local attachable sessions** are selectable immediately
 - **active but non-attachable sessions** stay visible but disabled with a reason
-- **remote-capable provider sessions** are marked as remote; press `P` in the picker to run a reachability check before attaching
+- **remote-capable Agent sessions** are marked as remote; press `P` in the picker to run a reachability check before attaching
 
 If the session is stopped, use `happier resume` instead.
 
@@ -381,18 +387,18 @@ Important notes:
 - tmux and other terminal-host attach flows work only for sessions that are still owned by the current machine.
 - You must target the same Happier account/server profile that owns the session.
 
-Attach strategy depends on the provider:
+Attach strategy depends on the Agent:
 
-- Some providers use Happier's `tmux`-backed attach flow.
-- OpenCode uses a provider-native attach flow for server-backed sessions.
+- Some Agents use Happier's `tmux`-backed attach flow.
+- OpenCode uses an Agent-native attach flow for server-backed sessions.
 
-For OpenCode, the supported reattach command is still `happier attach <session-id>`. Do not rely on a raw vendor `opencode attach ...` command as your normal Happier workflow.
+For OpenCode, the supported reattach command is still `happier attach <session-id-or-prefix-or-tag>`. Do not rely on a raw vendor `opencode attach ...` command as your normal Happier workflow.
 
 Supported attach styles include:
 
 - **tmux-backed sessions** on machines where tmux is enabled
 - **Windows Terminal** or **Console** hosted sessions on Windows
-- **provider-native attach** for supported provider sessions such as OpenCode
+- **Agent-native attach** for supported Agent sessions such as OpenCode
 
 For the full workflow, see [Features → Attach to a running session](/sessions/attach-to-session).
 
@@ -411,16 +417,16 @@ In a supported TTY, Happier shows an interactive picker of resumable inactive se
 ### Resume by id
 
 ```bash
-happier resume <session-id>
+happier resume <session-id-or-prefix-or-tag>
 ```
 
-You can use a full session id or an unambiguous prefix.
+You can use a full Session id, an unambiguous id prefix, or an exact Session tag.
 
 Important behavior:
 
-- resume is strict: if the provider resume fails, Happier errors instead of starting a fresh session
+- resume is strict: if the Agent resume fails, Happier errors instead of starting a fresh session
 - archived or already-active sessions cannot be resumed
-- the command restores the session working directory before launching the provider again
+- the command restores the session working directory before launching the Agent again
 
 For the full user guide and the meaning of “resumable”, see [Features → Resume inactive sessions](/sessions/session-resume).
 
@@ -451,7 +457,13 @@ happier list --json
 Use the top-level commands for everyday session work. The `happier session ...`
 family remains available for its advanced and administrative commands.
 
-Deep reference: [CLI sessions](/apps/cli-sessions).
+These top-level commands are first-class entries in the current development
+CLI command registry. They are not released yet; existing released CLI
+capabilities such as `attach`, `resume`, session status, archive, metadata
+updates, and Action discovery remain under their established commands.
+
+Deep reference: [CLI sessions](/apps/cli-sessions), including the shared full-id,
+prefix, or tag selector.
 
 ### Create a session (scriptable)
 
@@ -478,42 +490,36 @@ containing `data.session.id`; later lines are compact transcript rows.
 ### Send messages
 
 ```bash
-happier send <session-id> "ping"
+happier send <session-id-or-prefix-or-tag> "ping"
 ```
 
 Wait for an agent response (useful for scripts; can time out if the agent is busy/offline):
 
 ```bash
-happier send <session-id> "ping" --wait --timeout 60
+happier send <session-id-or-prefix-or-tag> "ping" --wait --timeout 60
 ```
 
 ### Status, stop, archive
 
 ```bash
-happier session status <session-id>
-happier history <session-id>
-happier wait <session-id> --timeout 60
-happier stop <session-id>
-happier session archive <session-id>
-happier session unarchive <session-id>
+happier session status <session-id-or-prefix-or-tag>
+happier history <session-id-or-prefix-or-tag>
+happier wait <session-id-or-prefix-or-tag> --timeout 60
+happier stop <session-id-or-prefix-or-tag>
+happier session archive <session-id-or-prefix-or-tag>
+happier session unarchive <session-id-or-prefix-or-tag>
 ```
 
 ### Set title / model / permission mode
 
 ```bash
-happier session set-title <session-id> "New title"
-happier session set-model <session-id> <model-id>
-happier session set-model <session-id> <model-id> --provider-connection <connection-id|native>
-happier session set-permission-mode <session-id> <mode>
+happier session set-title <session-id-or-prefix-or-tag> "New title"
+happier session set-model <session-id-or-prefix-or-tag> <model-id>
+happier session set-model <session-id-or-prefix-or-tag> <model-id> --provider-connection <connection-id|native>
+happier session set-permission-mode <session-id-or-prefix-or-tag> <mode>
 ```
 
 `<mode>` accepts common aliases (for example `ask`, `default`, `yolo`). Use `--json` to script and see the normalized `permissionMode` value.
-
-### Session id prefixes
-
-Commands that accept `<session-id-or-prefix>` allow an **unambiguous prefix** of a full session id.
-
-If the prefix matches multiple sessions, the command fails with candidates.
 
 ### Approvals from CLI commands
 
@@ -529,7 +535,7 @@ For advanced automation, approvals can also be decided with
 `happier session actions execute`:
 
 ```bash
-happier session actions execute <session-id> approval.request.decide --input-json '{"artifactId":"<id>","decision":"approve"}' --json
+happier session actions execute <session-id-or-prefix-or-tag> approval.request.decide --input-json '{"artifactId":"<id>","decision":"approve"}' --json
 ```
 
 ### Action catalog from the CLI
@@ -539,7 +545,7 @@ You can inspect and execute Happier actions directly:
 ```bash
 happier session actions list
 happier session actions describe <action-id>
-happier session actions execute <session-id> <action-id> --input-json '<json>'
+happier session actions execute <session-id-or-prefix-or-tag> <action-id> --input-json '<json>'
 ```
 
 ### Execution runs (review / plan / delegate / voice agent)
@@ -547,10 +553,10 @@ happier session actions execute <session-id> <action-id> --input-json '<json>'
 Execution runs are the structured “run” layer for multi-step flows in a session (for example: start a review run, then send follow-up messages, then stop).
 
 ```bash
-happier session run list <session-id>
-happier session run start <session-id> --intent <intent> --agent <agent-id>
-happier session run send <session-id> <run-id> "message"
-happier session run stop <session-id> <run-id>
+happier session run list <session-id-or-prefix-or-tag>
+happier session run start <session-id-or-prefix-or-tag> --intent <intent> --agent <agent-id>
+happier session run send <session-id-or-prefix-or-tag> <run-id> "message"
+happier session run stop <session-id-or-prefix-or-tag> <run-id>
 ```
 
 ## External MCP control surface

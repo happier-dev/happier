@@ -11,6 +11,13 @@ For everyday command-line work, use these top-level commands. The longer
 `happier session ...` forms remain available when they fit an existing script
 or a detailed session workflow.
 
+<Callout>
+  **Developer Preview:** the top-level `spawn`, `list`/`ls`, `send`, `history`,
+  `wait`, `stop`, and `delegate` commands described here are implemented in the
+  current development source but are not released yet. They are first-class CLI
+  commands, not aliases maintained outside the command registry.
+</Callout>
+
 | Top-level command | Session command |
 | --- | --- |
 | `happier spawn` | `happier session create` |
@@ -23,25 +30,23 @@ or a detailed session workflow.
 
 ## Session identifiers
 
-Most commands accept either:
-
-- a full `<session-id>`
-- or an **unambiguous prefix** (`<session-id-or-prefix>`)
-
-If the prefix matches multiple sessions, the command fails and prints candidates (use `--json` for structured output).
+Most Session-targeting commands accept a full Session id, an unambiguous id
+prefix, or a Session tag. This page uses `<session-id-or-prefix-or-tag>` for
+that shared selector. If a prefix matches multiple Sessions, the command fails
+and prints candidates (use `--json` for structured output).
 
 ## Attach vs resume
 
-Use **attach** when the session is still running and you want to reconnect to the live local/provider process:
+Use **attach** when the session is still running and you want to reconnect to the live local Agent process:
 
 ```bash
-happier attach <session-id>
+happier attach <session-id-or-prefix-or-tag>
 ```
 
 Use **resume** when the session is inactive but vendor-resumable:
 
 ```bash
-happier resume <session-id>
+happier resume <session-id-or-prefix-or-tag>
 ```
 
 Short version:
@@ -128,13 +133,13 @@ happier list --resumable
 ## Status
 
 ```bash
-happier session status <session-id-or-prefix>
+happier session status <session-id-or-prefix-or-tag>
 ```
 
 Live status (when supported):
 
 ```bash
-happier session status <session-id-or-prefix> --live
+happier session status <session-id-or-prefix-or-tag> --live
 ```
 
 ## Messaging
@@ -142,24 +147,24 @@ happier session status <session-id-or-prefix> --live
 Send a user message:
 
 ```bash
-happier send <session-id-or-prefix> "ping"
+happier send <session-id-or-prefix-or-tag> "ping"
 ```
 
 Wait for the agent to become idle:
 
 ```bash
-happier send <session-id-or-prefix> "ping" --wait --timeout 60
+happier send <session-id-or-prefix-or-tag> "ping" --wait --timeout 60
 ```
 
 Or wait without sending:
 
 ```bash
-happier wait <session-id-or-prefix> --timeout 60
+happier wait <session-id-or-prefix-or-tag> --timeout 60
 ```
 
 Notes:
 
-- `send` targets active sessions. For inactive sessions, use `happier list --resumable` and `happier resume <session-id-or-prefix>` first.
+- `send` targets active sessions. For inactive sessions, use `happier list --resumable` and `happier resume <session-id-or-prefix-or-tag>` first.
 - `--wait` can time out if the Agent is offline/busy or its Agent runtime does not emit an “idle” signal.
 - `--permission-mode` lets you override the permission intent for a single send.
 - `--model` lets you target a specific model for that message when the selected Agent supports it.
@@ -170,8 +175,20 @@ Notes:
 Start delegated work from an existing Session with a chosen Agent:
 
 ```bash
-happier delegate <session-id-or-prefix> "Review the failing tests" --agent <agent-id>
+happier delegate <session-id-or-prefix-or-tag> "Review the failing tests" --agent <agent-id>
 ```
+
+Plan and voice-agent runs use their canonical nested commands:
+
+```bash
+happier session plan start <session-id-or-prefix-or-tag> --backends <agent-id> --instructions "Plan the change"
+happier session voice-agent start <session-id-or-prefix-or-tag> --backends <agent-id> --instructions "Investigate the issue"
+```
+
+`delegate`, `session plan start`, and `session voice-agent start` select the
+credential-aware Action transport before any legacy Session bootstrap. They
+therefore also work with `--api-token` or `HAPPIER_TOKEN`, subject to the same
+account-automation restrictions as every other API Token invocation.
 
 See [Delegated work](/extending/subagents) for lifecycle and result details.
 
@@ -180,7 +197,7 @@ See [Delegated work](/extending/subagents) for lifecycle and result details.
 Get recent transcript rows:
 
 ```bash
-happier history <session-id-or-prefix> --tail 20
+happier history <session-id-or-prefix-or-tag> --tail 20
 ```
 
 `--limit 20` remains accepted for existing scripts and has the same behavior.
@@ -188,10 +205,15 @@ happier history <session-id-or-prefix> --tail 20
 Scripting / debugging variants:
 
 ```bash
-happier history <session-id-or-prefix> --json
-happier history <session-id-or-prefix> --format raw --include-meta --json
-happier history <session-id-or-prefix> --format raw --include-meta --include-structured-payload --json
+happier history <session-id-or-prefix-or-tag> --json
+happier history <session-id-or-prefix-or-tag> --format raw --include-meta --json
+happier history <session-id-or-prefix-or-tag> --format raw --include-meta --include-structured-payload --json
 ```
+
+For a human-readable live tail, use `--follow` without `--jsonl`; compact rows
+print as they arrive. Use `--follow --jsonl` when another program consumes the
+stream: each emitted line is one compact history row. `--follow --json` is
+rejected because it cannot represent a multi-line stream.
 
 Use `compact` when you want a simpler text-focused view.
 Use `raw` when you need provider payloads, metadata, or structured tool/message records.
@@ -201,22 +223,22 @@ Use `raw` when you need provider payloads, metadata, or structured tool/message 
 Stop a session:
 
 ```bash
-happier stop <session-id-or-prefix>
+happier stop <session-id-or-prefix-or-tag>
 ```
 
 Archive / unarchive:
 
 ```bash
-happier session archive <session-id-or-prefix>
-happier session unarchive <session-id-or-prefix>
+happier session archive <session-id-or-prefix-or-tag>
+happier session unarchive <session-id-or-prefix-or-tag>
 ```
 
 Update metadata:
 
 ```bash
-happier session set-title <session-id-or-prefix> "New title"
-happier session set-model <session-id-or-prefix> <model-id>
-happier session set-permission-mode <session-id-or-prefix> <mode>
+happier session set-title <session-id-or-prefix-or-tag> "New title"
+happier session set-model <session-id-or-prefix-or-tag> <model-id>
+happier session set-permission-mode <session-id-or-prefix-or-tag> <mode>
 ```
 
 ### Choosing the model source (`--provider-connection`)
@@ -226,14 +248,15 @@ already accepts `--provider-connection <id>`; `set-model` and `session send` acc
 same flag, plus `native` for the Agent's own model source:
 
 ```bash
-happier session set-model <session-id-or-prefix> <model-id> --provider-connection <connection-id>
-happier session set-model <session-id-or-prefix> <model-id> --provider-connection native
-happier session send <session-id-or-prefix> "ping" --model <model-id> --provider-connection <connection-id>
+happier session set-model <session-id-or-prefix-or-tag> <model-id> --provider-connection <connection-id>
+happier session set-model <session-id-or-prefix-or-tag> <model-id> --provider-connection native
+happier session send <session-id-or-prefix-or-tag> "ping" --model <model-id> --provider-connection <connection-id>
 ```
 
-Omit the flag to leave the current source unchanged. `--provider-connection <id>` requires a
-concrete `--model` value on `session send`; `native` clears the connection so the Agent's own
-model source answers.
+Omit the flag to leave the current source unchanged. `native` clears the connection so the
+Agent's own model source answers. On `session send` a connection is only ever applied together
+with the model selection it sources, so the flag always needs `--model`: an exact `<id>` needs a
+concrete model id, and `native` accepts a concrete id or `--model default`.
 
 ### Retrying one message safely (`--local-id`)
 
@@ -241,7 +264,7 @@ model source answers.
 ambiguously, retry with that exact id instead of sending again:
 
 ```bash
-happier session send <session-id-or-prefix> "ping" --local-id <local-id>
+happier session send <session-id-or-prefix-or-tag> "ping" --local-id <local-id>
 ```
 
 The pending queue is keyed by `localId`, so a retry rejoins the same durable input rather than
@@ -263,8 +286,8 @@ Common intents and aliases:
 Use it in either place:
 
 ```bash
-happier session set-permission-mode <session-id-or-prefix> read_only
-happier send <session-id-or-prefix> "ping" --permission-mode safe-yolo
+happier session set-permission-mode <session-id-or-prefix-or-tag> read_only
+happier send <session-id-or-prefix-or-tag> "ping" --permission-mode safe-yolo
 ```
 
 Notes:
@@ -296,7 +319,7 @@ Session control commands are implemented as **actions**.
 
 That means:
 
-- each action can be enabled/disabled per surface (UI / CLI / session-agent / voice / external MCP)
+- each action can be enabled or disabled on the surfaces it supports
 - each action can optionally require approval per surface
 
 When a command is approval-gated, the CLI returns an “approval request created” payload instead of executing immediately.
@@ -314,15 +337,19 @@ Example:
 
 ```bash
 # 1) run an approval-gated command
-happier session set-title <session-id> "New title" --json
+happier session set-title <session-id-or-prefix-or-tag> "New title" --json
 
 # 2) approve it through the Action command
-happier session actions execute <session-id> approval.request.decide \
+happier session actions execute <session-id-or-prefix-or-tag> approval.request.decide \
   --input-json '{"artifactId":"<approval-artifact-id>","decision":"approve"}' \
   --json
 ```
 
-This is the same approval object that the app Inbox shows. Most users should review in the app, but scripted operators can decide approvals through the action surface when that fits their workflow.
+This is the same approval object that the app Inbox shows. A normally signed-in
+CLI carries present-user authority and can make the decision. A CLI invocation
+authenticated with `--api-token` or `HAPPIER_TOKEN` carries account-automation
+authority instead and receives `present_user_required`; API Tokens cannot
+approve their own requests. Most users should review in the app.
 
 ## Actions (advanced scripting)
 
@@ -336,7 +363,7 @@ happier session actions describe <action-id> --json
 Execute an action:
 
 ```bash
-happier session actions execute <session-id> <action-id> --input-json '<json>' --json
+happier session actions execute <session-id-or-prefix-or-tag> <action-id> --input-json '<json>' --json
 ```
 
 Current JSON envelopes:
@@ -350,19 +377,19 @@ Current JSON envelopes:
 Execution runs are the structured “run” layer for multi-step flows (review / plan / delegate / voice agent):
 
 ```bash
-happier session run start <session-id> --intent <intent> --agent <agent-id> --json
-happier session run list <session-id> --json
-happier session run get <session-id> <run-id> --json
-happier session run send <session-id> <run-id> "message" --json
-happier session run stop <session-id> <run-id> --json
-happier session run wait <session-id> <run-id> --timeout 300 --json
+happier session run start <session-id-or-prefix-or-tag> --intent <intent> --agent <agent-id> --json
+happier session run list <session-id-or-prefix-or-tag> --json
+happier session run get <session-id-or-prefix-or-tag> <run-id> --json
+happier session run send <session-id-or-prefix-or-tag> <run-id> "message" --json
+happier session run stop <session-id-or-prefix-or-tag> <run-id> --json
+happier session run wait <session-id-or-prefix-or-tag> <run-id> --timeout 300 --json
 ```
 
 Advanced run control:
 
 ```bash
-happier session run action <session-id> <run-id> <action-id> --input-json '<json>' --json
-happier session run stream-start <session-id> <run-id> "message" --json
-happier session run stream-read <session-id> <run-id> <stream-id> --cursor 0 --json
-happier session run stream-cancel <session-id> <run-id> <stream-id> --json
+happier session run action <session-id-or-prefix-or-tag> <run-id> <action-id> --input-json '<json>' --json
+happier session run stream-start <session-id-or-prefix-or-tag> <run-id> "message" --json
+happier session run stream-read <session-id-or-prefix-or-tag> <run-id> <stream-id> --cursor 0 --json
+happier session run stream-cancel <session-id-or-prefix-or-tag> <run-id> <stream-id> --json
 ```
