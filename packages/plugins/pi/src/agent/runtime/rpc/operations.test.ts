@@ -42,6 +42,9 @@ type Capture = {
   listener?: (record: unknown) => void | Promise<void>;
   resolveExit?: (result: Awaited<ReturnType<PluginProtocolClientHandle<'jsonStream'>['wait']>>) => void;
   warnings?: unknown[][];
+  questionRequests?: unknown[];
+  questionResult?: unknown;
+  questionHandler?: (request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
 };
 
 function createRuntimeContext(capture: Capture) {
@@ -103,6 +106,17 @@ function createRuntimeContext(capture: Capture) {
       error: () => undefined,
     },
     services: {
+      interactions: {
+        askQuestions: async (request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+          capture.questionRequests?.push(request);
+          if (capture.questionHandler) return await capture.questionHandler(request, options);
+          return capture.questionResult ?? {
+            requestId: 'pi-question-unavailable',
+            kind: 'questions',
+            status: 'unavailable',
+          };
+        },
+      },
       exec: {
         systemTools: {
           resolve: async () => {
@@ -270,6 +284,98 @@ function configuration(options: Readonly<Record<string, string>>): AgentSessionC
 }
 
 describe('createPiRuntimeOperations', () => {
+  it('answers a blocking Pi extension dialog through the canonical interaction surface', async () => {
+    const capture: Capture = {
+      specs: [],
+      written: [],
+      questionRequests: [],
+      questionResult: {
+        requestId: 'host-question-1',
+        kind: 'questions',
+        status: 'answered',
+        answers: {
+          'pi-dialog-1': {
+            kind: 'singleChoice',
+            answer: { kind: 'choice', choiceId: 'choice-1' },
+          },
+        },
+      },
+    };
+    const runtime = await createRuntime(capture);
+
+    await emit(capture, {
+      type: 'extension_ui_request',
+      id: 'pi-dialog-1',
+      method: 'select',
+      title: 'Choose scope',
+      options: ['Repository', 'Workspace'],
+    });
+
+    await vi.waitFor(() => expect(capture.questionRequests).toHaveLength(1));
+    expect(capture.questionRequests?.[0]).toEqual({
+      kind: 'questions',
+      title: 'Pi question',
+      questions: [{
+        id: 'pi-dialog-1',
+        prompt: 'Choose scope',
+        type: 'singleChoice',
+        required: true,
+        choices: [
+          { id: 'choice-0', label: 'Repository' },
+          { id: 'choice-1', label: 'Workspace' },
+        ],
+      }],
+    });
+    await vi.waitFor(() => expect(capture.written).toContainEqual({
+      type: 'extension_ui_response',
+      id: 'pi-dialog-1',
+      value: 'Workspace',
+    }));
+
+    await runtime.dispose();
+  });
+
+  it('cancels a blocking Pi extension dialog before aborting its turn', async () => {
+    const capture: Capture = {
+      specs: [],
+      written: [],
+      questionRequests: [],
+      questionHandler: async (_request, options) => await new Promise((resolve) => {
+        options?.signal?.addEventListener('abort', () => resolve({
+          requestId: 'host-question-cancelled',
+          kind: 'questions',
+          status: 'userCancelled',
+        }), { once: true });
+      }),
+    };
+    const runtime = await createRuntime(capture);
+    const prompt = sendPrompt(runtime, 'ask me');
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    await emit(capture, { type: 'agent_start' });
+    await emit(capture, {
+      type: 'extension_ui_request',
+      id: 'pi-dialog-cancelled',
+      method: 'input',
+      title: 'Enter a value',
+    });
+    await vi.waitFor(() => expect(capture.questionRequests).toHaveLength(1));
+
+    const cancel = runtime.cancel!({ turnId: 'pi-turn-1', reason: 'user' });
+    await vi.waitFor(() => expect(capture.written).toContainEqual({
+      type: 'extension_ui_response',
+      id: 'pi-dialog-cancelled',
+      cancelled: true,
+    }));
+    await waitForWrittenCount(capture, 3);
+    expect(capture.written.at(-1)).toEqual(expect.objectContaining({ type: 'abort' }));
+    await ackLastCommand(capture);
+    await expect(cancel).resolves.toEqual({ status: 'requested', turnId: 'pi-turn-1' });
+
+    await runtime.dispose();
+  });
+
   it('publishes the process command catalog once for native command dispatch', async () => {
     const capture: Capture = {
       specs: [],

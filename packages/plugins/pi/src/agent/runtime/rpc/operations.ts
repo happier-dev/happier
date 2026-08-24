@@ -56,11 +56,19 @@ import {
 import type { PiPermissionMode, PiRpcStateData } from './types.js';
 import { createPiSessionModelsSource } from '../modelsSource.js';
 import { projectPiSessionStatsUsage } from './usage.js';
+import {
+  buildPiExtensionUiQuestionRequest,
+  buildPiExtensionUiResponse,
+  parsePiBlockingExtensionUiRequest,
+  type PiBlockingExtensionUiRequest,
+} from './extensionUi.js';
 
 const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
 
 type PiRuntimeOperationsParams = Readonly<{
-  services: Pick<PluginServices, 'exec'>;
+  services: Pick<PluginServices, 'exec'> & Readonly<{
+    interactions: Pick<PluginServices['interactions'], 'askQuestions'>;
+  }>;
   models?: AgentSessionModelsService;
   logger: PluginLoggerService;
   cwd: string;
@@ -335,6 +343,7 @@ function createRuntimeOperations(params: Readonly<{
   isProviderNativeCommand: (prompt: string) => boolean;
   refreshModels?: () => void;
   observeUsage?: (turnId: string | null) => void;
+  cancelBlockingExtensionUiRequests: () => Promise<void>;
 }>): RuntimeOperationsWithRecordHandler {
   const runtimeEventProjector = createPiRuntimeEventProjector();
   let sessionId = params.initialSessionId;
@@ -782,6 +791,7 @@ function createRuntimeOperations(params: Readonly<{
         : null;
       pendingCancellation = cancellation;
       try {
+        await params.cancelBlockingExtensionUiRequests();
         await params.rpc.send({ type: 'abort' }, 30_000);
       } catch (error) {
         if (pendingCancellation === cancellation) pendingCancellation = null;
@@ -838,6 +848,7 @@ function createRuntimeOperations(params: Readonly<{
     },
     async resetOrDisposeRuntime(): Promise<void> {
       disposalStarted = true;
+      await params.cancelBlockingExtensionUiRequests();
       pendingPromptAdmission?.bufferedRecords.dispose();
       pendingPromptAdmission = null;
       pendingCancellation = null;
@@ -1139,11 +1150,55 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
   let operations: RuntimeOperationsWithRecordHandler | null = null;
   let usageObservationSequence = 0;
   let usageObservationChain = Promise.resolve();
-  const rpc = createPiJsonStreamRpcClient({
+  const blockingExtensionUiRequests = new Map<string, Readonly<{
+    controller: AbortController;
+    task: Promise<void>;
+  }>>();
+  let rpc: PiJsonStreamRpcClient;
+  const cancelBlockingExtensionUiRequests = async (): Promise<void> => {
+    const active = [...blockingExtensionUiRequests.values()];
+    for (const request of active) request.controller.abort();
+    await Promise.allSettled(active.map((request) => request.task));
+  };
+  const handleBlockingExtensionUiRequest = (request: PiBlockingExtensionUiRequest): void => {
+    if (blockingExtensionUiRequests.has(request.id)) return;
+    const controller = new AbortController();
+    const task = (async (): Promise<void> => {
+      let result: unknown;
+      try {
+        result = await params.services.interactions.askQuestions(
+          buildPiExtensionUiQuestionRequest(request),
+          { signal: controller.signal },
+        );
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          params.logger.warn('[PiRuntime] Extension dialog interaction failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      try {
+        await rpc.write(buildPiExtensionUiResponse(request, result));
+      } catch (error) {
+        params.logger.warn('[PiRuntime] Extension dialog response failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        blockingExtensionUiRequests.delete(request.id);
+      }
+    })();
+    blockingExtensionUiRequests.set(request.id, { controller, task });
+  };
+  rpc = createPiJsonStreamRpcClient({
     handle,
     onEvent(record) {
       if (record.type === 'runtime_event') {
         publishRuntimeEvent(record.event);
+        return;
+      }
+      const blockingExtensionUiRequest = parsePiBlockingExtensionUiRequest(record);
+      if (blockingExtensionUiRequest) {
+        handleBlockingExtensionUiRequest(blockingExtensionUiRequest);
         return;
       }
       operations?.handleRuntimeRecord(record);
@@ -1213,6 +1268,7 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
         });
       });
     },
+    cancelBlockingExtensionUiRequests,
     ...(modelsSource ? { refreshModels: () => { void modelsSource.refresh(); } } : {}),
   });
   let modelsBinding: ReturnType<AgentSessionModelsService['bind']> | null = null;

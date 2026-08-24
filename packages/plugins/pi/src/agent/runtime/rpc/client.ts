@@ -4,6 +4,7 @@ import {
   redactBugReportSensitiveText,
   trimBugReportTextToMaxBytes,
 } from '@happier-dev/plugin-sdk';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
@@ -24,6 +25,7 @@ function readResponse(record: Readonly<Record<string, unknown>>): PiRpcResponse 
 
 export type PiJsonStreamRpcClient = Readonly<{
   send(command: PiRpcCommandWithoutId, timeoutMs?: number): Promise<PiRpcResponse>;
+  write(record: JsonValue): Promise<void>;
   onExit(listener: (result: PiJsonStreamRpcExit) => void): () => void;
   dispose(): Promise<void>;
 }>;
@@ -216,6 +218,9 @@ export function createPiJsonStreamRpcClient(params: PiJsonStreamRpcClientParams)
         if (observedTerminal) removePending(id)?.reject(observedTerminal.error);
       }
       return await response;
+    },
+    async write(record) {
+      await params.handle.client.write(record);
     },
     onExit(listener) {
       let active = true;
