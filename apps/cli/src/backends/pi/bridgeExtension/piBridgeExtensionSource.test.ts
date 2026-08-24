@@ -70,6 +70,8 @@ describe('buildPiBridgeExtensionSource', () => {
     expect(source).toContain('"--source", "happier"');
     expect(source).toContain('"--tool", toolName');
     expect(source).toContain('"--args-json", JSON.stringify(args ?? {})');
+    expect(source).not.toContain('TOOL_CALL_TIMEOUT_MS');
+    expect(source).toContain('BRIDGE_OUTPUT_MAX_BYTES');
   });
 
   it('keeps context telemetry in the session-bound extension lifecycle', () => {
@@ -106,6 +108,10 @@ if (args.input.value === 'fail') {
   process.stdout.write(JSON.stringify({ ok: false, error: { code: 'action_failed', message: 'expected failure' } }) + '\\n');
 } else if (args.input.value === 'large') {
   process.stdout.write(JSON.stringify({ ok: true, data: { output: 'x'.repeat(100000) } }) + '\\n');
+} else if (args.input.value === 'transport-overflow') {
+  process.stdout.write('x'.repeat(2 * 1024 * 1024));
+} else if (args.input.value === 'wait') {
+  setInterval(() => {}, 1000);
 } else {
   process.stdout.write(JSON.stringify({ ok: true, data: { output: { echoed: args } } }) + '\\n');
 }
@@ -181,6 +187,31 @@ if (args.input.value === 'fail') {
       expect(Buffer.byteLength(largeResult.content[0]!.text, 'utf8')).toBeLessThanOrEqual(50 * 1024);
       expect(largeResult.content[0]!.text).toContain('[Output truncated');
       expect(largeResult.details).not.toHaveProperty('envelope');
+
+      await expect(harness.tools[0]!.execute(
+        'call-4',
+        { value: 'transport-overflow' },
+        new AbortController().signal,
+        undefined,
+        { cwd: dir },
+      )).resolves.toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: expect.stringContaining('bridge_output_limit') }],
+      });
+
+      const controller = new AbortController();
+      const waitingCall = harness.tools[0]!.execute(
+        'call-5',
+        { value: 'wait' },
+        controller.signal,
+        undefined,
+        { cwd: dir },
+      );
+      setTimeout(() => controller.abort(), 25);
+      await expect(waitingCall).resolves.toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: expect.stringContaining('bridge_cancelled') }],
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

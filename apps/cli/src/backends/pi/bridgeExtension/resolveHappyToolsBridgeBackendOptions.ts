@@ -12,7 +12,7 @@ import {
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 
 import { ensurePiBridgeExtensionAsset } from './piBridgeExtensionAssets';
-import { readActionsSettingsFromEnv } from '@/settings/actionsSettings';
+import { readActionsSettingsOverrideFromEnv } from '@/settings/actionsSettings';
 import { resolveSessionAgentToolPresentation } from '@/agent/tools/happierTools/resolveSessionAgentToolPresentation';
 import { PiBridgeSessionConfigSchema, type PiBridgeSessionConfig } from './piBridgeSessionConfig';
 
@@ -30,8 +30,10 @@ export type HappyToolsBridgeBackendOptions = Readonly<{
 }>;
 
 function resolveActionsSettings(settings: Record<string, unknown> | null | undefined): ActionsSettingsV1 {
+  const environmentOverride = readActionsSettingsOverrideFromEnv();
+  if (environmentOverride) return environmentOverride;
   const parsed = ActionsSettingsV1Schema.safeParse(settings?.actionsSettingsV1);
-  return parsed.success ? parsed.data : readActionsSettingsFromEnv();
+  return parsed.success ? parsed.data : { v: 1, actions: {} };
 }
 
 /**
@@ -96,7 +98,10 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     launch: {
       filePath: launchSpec.filePath,
       argPrefix: launchArgPrefix,
-      env: launchSpec.env ?? {},
+      env: {
+        ...(launchSpec.env ?? {}),
+        HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify(actionsSettings),
+      },
     },
   });
   const extensionPath = await ensurePiBridgeExtensionAsset(params.agentDir);

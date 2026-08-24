@@ -18,6 +18,7 @@ function tempAgentDir(): string {
 afterEach(() => {
   for (const dir of TEMP_DIRS) removeTempDirSync(dir);
   TEMP_DIRS.clear();
+  delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
 });
 
 describe('resolveHappyToolsBridgeBackendOptions', () => {
@@ -118,6 +119,37 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
     });
     expect(explicitlyDiscoverable?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('memory_search');
     expect(explicitlyDiscoverable?.sessionConfig.promptAddition).not.toContain('memory_search');
+  });
+
+  it('uses one environment-overridden action policy for registration and child execution', async () => {
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'memory.search': { toolExposureModes: { session_agent: 'discoverable_only' } },
+      },
+    });
+    const resolved = await resolveHappyToolsBridgeBackendOptions({
+      agentDir: tempAgentDir(),
+      sessionId: 'happy-session-1',
+      settings: {
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'memory.search': { toolExposureModes: { session_agent: 'direct' } },
+          },
+        },
+      },
+      memoryRecallGuidanceEnabled: true,
+      memoryMachineId: 'machine-1',
+    });
+
+    expect(resolved?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('memory_search');
+    expect(JSON.parse(resolved?.sessionConfig.launch.env.HAPPIER_ACTIONS_SETTINGS_V1 ?? 'null')).toMatchObject({
+      v: 1,
+      actions: {
+        'memory.search': { toolExposureModes: { session_agent: 'discoverable_only' } },
+      },
+    });
   });
 
   it('keeps the Happier CLI launch spec in the protected session config', async () => {

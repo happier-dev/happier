@@ -14,7 +14,8 @@ import { readFileSync } from "node:fs";
 
 const CONFIG_PATH_FLAG = ${jsString(PI_BRIDGE_CONFIG_PATH_FLAG)};
 const TOKEN_COUNT_MARKER_TYPE = ${jsString(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)};
-const TOOL_CALL_TIMEOUT_MS = 120000;
+const BRIDGE_OUTPUT_MAX_BYTES = 1024 * 1024;
+const BRIDGE_OUTPUT_MAX_LINES = 4000;
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 2000;
 const TOOL_OUTPUT_NOTICE_RESERVE_BYTES = 256;
@@ -123,15 +124,36 @@ function runChild(filePath, argv, options) {
       resolve({ stdout: "", stderr: String(error?.message ?? error), code: null, killed: false });
       return;
     }
-    let stdout = "";
-    let stderr = "";
+    const createOutputCollector = () => {
+      const chunks = [];
+      let bytes = 0;
+      let lines = 1;
+      let limited = false;
+      return {
+        append(data) {
+          const chunk = Buffer.isBuffer(data) ? data : Buffer.from(String(data ?? ""), "utf8");
+          lines += (chunk.toString("utf8").match(/\\n/g) ?? []).length;
+          const remaining = Math.max(0, BRIDGE_OUTPUT_MAX_BYTES - bytes);
+          if (remaining > 0) {
+            const accepted = chunk.subarray(0, remaining);
+            chunks.push(accepted);
+            bytes += accepted.length;
+          }
+          if (chunk.length > remaining || lines > BRIDGE_OUTPUT_MAX_LINES) limited = true;
+        },
+        text() { return Buffer.concat(chunks, bytes).toString("utf8"); },
+        get limited() { return limited; },
+      };
+    };
+    const stdout = createOutputCollector();
+    const stderr = createOutputCollector();
     let killed = false;
     let settled = false;
-    let timeoutId = null;
+    let forceKillTimer = null;
     const finish = (result) => {
       if (settled) return;
       settled = true;
-      if (timeoutId) clearTimeout(timeoutId);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       options.signal?.removeEventListener?.("abort", killChild);
       resolve(result);
     };
@@ -139,18 +161,26 @@ function runChild(filePath, argv, options) {
       if (killed || child.exitCode !== null || child.signalCode !== null) return;
       killed = true;
       try { child.kill("SIGTERM"); } catch {}
-      setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5000).unref?.();
+      forceKillTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5000);
+      forceKillTimer.unref?.();
     };
     if (options.signal) {
       if (options.signal.aborted) killChild();
       else options.signal.addEventListener("abort", killChild, { once: true });
     }
-    timeoutId = setTimeout(killChild, options.timeoutMs);
-    timeoutId.unref?.();
-    child.stdout?.on("data", (data) => { stdout += data.toString(); });
-    child.stderr?.on("data", (data) => { stderr += data.toString(); });
-    child.once("error", (error) => finish({ stdout, stderr: stderr + String(error?.message ?? error), code: null, killed }));
-    child.once("close", (code) => finish({ stdout, stderr, code, killed }));
+    child.stdout?.on("data", (data) => stdout.append(data));
+    child.stderr?.on("data", (data) => stderr.append(data));
+    child.once("error", (error) => {
+      stderr.append(String(error?.message ?? error));
+      finish({ stdout: stdout.text(), stderr: stderr.text(), code: null, killed, outputLimited: stdout.limited || stderr.limited });
+    });
+    child.once("close", (code) => finish({
+      stdout: stdout.text(),
+      stderr: stderr.text(),
+      code,
+      killed,
+      outputLimited: stdout.limited || stderr.limited,
+    }));
   });
 }
 
@@ -170,10 +200,10 @@ async function callHappierTool(config, toolName, args, toolCallId, signal, cwd) 
   const result = await runChild(config.launch.filePath, argv, {
     cwd,
     env: { ...process.env, ...config.launch.env },
-    timeoutMs: TOOL_CALL_TIMEOUT_MS,
     signal,
   });
-  if (result.killed) return { ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled or timed out" } };
+  if (result.killed) return { ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled" } };
+  if (result.outputLimited) return { ok: false, error: { code: "bridge_output_limit", message: "Happier tools bridge output exceeded its bounded transport limit" } };
   return parseEnvelope(result.stdout);
 }
 

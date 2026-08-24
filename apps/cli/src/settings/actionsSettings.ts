@@ -10,19 +10,24 @@ import {
 
 const ENV_KEY = 'HAPPIER_ACTIONS_SETTINGS_V1';
 
-export function readActionsSettingsFromEnv(): { v: 1; actions: Record<ActionId, any> } {
+export function readActionsSettingsOverrideFromEnv(): { v: 1; actions: Record<ActionId, any> } | null {
   const raw = typeof process.env[ENV_KEY] === 'string' ? String(process.env[ENV_KEY]).trim() : '';
-  if (!raw) return { v: 1 as const, actions: {} as Record<ActionId, any> };
+  if (!raw) return null;
 
   let parsedJson: unknown = null;
   try {
     parsedJson = JSON.parse(raw);
   } catch {
-    return { v: 1 as const, actions: {} as Record<ActionId, any> };
+    return null;
   }
 
   const parsed = ActionsSettingsV1Schema.safeParse(parsedJson);
-  return parsed.success ? (parsed.data as any) : ({ v: 1 as const, actions: {} as Record<ActionId, any> } as any);
+  return parsed.success ? (parsed.data as any) : null;
+}
+
+export function readActionsSettingsFromEnv(): { v: 1; actions: Record<ActionId, any> } {
+  return readActionsSettingsOverrideFromEnv()
+    ?? { v: 1 as const, actions: {} as Record<ActionId, any> };
 }
 
 export function isActionEnabledByEnv(
