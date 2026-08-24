@@ -1320,6 +1320,52 @@ describe('sessionScanner', () => {
     )
   }, 10_000)
 
+  it('classifies an unhooked diagnostic transcript once without replaying or following it', async () => {
+    const diagnosticSessionId = '33333333-3333-4333-8333-333333333333'
+    const diagnosticFile = join(projectDir, `${diagnosticSessionId}.jsonl`)
+    const classifications: string[] = []
+
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (message) => collectedMessages.push(message),
+      discoverNewSessions: true,
+      bindToFirstSession: true,
+      bindDiscoveredSessions: false,
+      replayInitialMessages: true,
+      classifyDiscoveredSession: ({ sessionId }) => {
+        classifications.push(sessionId)
+        return 'diagnostic'
+      },
+    })
+
+    await writeFile(diagnosticFile,
+      `${JSON.stringify({
+        type: 'assistant',
+        uuid: 'diagnostic-initial',
+        timestamp: new Date().toISOString(),
+        sessionId: diagnosticSessionId,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'rate limited' }] },
+        isApiErrorMessage: true,
+      } as RawJSONLines)}\n`,
+    )
+
+    await waitFor(() => classifications.length === 1)
+    await appendFile(diagnosticFile,
+      `${JSON.stringify({
+        type: 'assistant',
+        uuid: 'diagnostic-later',
+        timestamp: new Date().toISOString(),
+        sessionId: diagnosticSessionId,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'foreign continuation' }] },
+      } as RawJSONLines)}\n`,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 250))
+
+    expect(classifications).toEqual([diagnosticSessionId])
+    expect(collectedMessages).toHaveLength(0)
+  })
+
   it('drops rows whose sessionId differs from the bound session (hard per-row filter)', async () => {
     const boundSessionId = '44444444-4444-4444-4444-444444444444'
     const boundFile = join(projectDir, `${boundSessionId}.jsonl`)
