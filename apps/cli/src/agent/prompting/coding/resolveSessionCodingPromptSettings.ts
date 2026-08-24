@@ -31,3 +31,27 @@ export function resolveSessionCodingPromptSettings(params: Readonly<{
     override: selectedProfileOverride,
   });
 }
+
+type SessionCodingPromptProfileSource = Readonly<{
+  getMetadataSnapshot?: (() => unknown) | null;
+}>;
+
+/**
+ * Resolves effective coding-prompt settings at session-owned runtime boundaries.
+ * Compatibility session implementations may not expose a metadata snapshot reader,
+ * so absence or malformed metadata intentionally falls back to Account behavior.
+ */
+export function resolveSessionCodingPromptSettingsFromSession(params: Readonly<{
+  settings: Record<string, unknown>;
+  session: SessionCodingPromptProfileSource;
+}>): Record<string, unknown> {
+  const metadata = params.session.getMetadataSnapshot?.();
+  const profileId = metadata && typeof metadata === 'object' && 'profileId' in metadata
+    ? metadata.profileId
+    : null;
+
+  return resolveSessionCodingPromptSettings({
+    settings: params.settings,
+    profileId: typeof profileId === 'string' ? profileId : null,
+  });
+}

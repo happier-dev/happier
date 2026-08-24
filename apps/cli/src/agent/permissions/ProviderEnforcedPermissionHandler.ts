@@ -25,7 +25,7 @@ import {
 } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import type { AccountSettings, ActionId } from '@happier-dev/protocol';
 import { shouldDenyAgentSessionTitleToolCall } from './codingPromptTitlePermission';
-import { resolveSessionCodingPromptSettings } from '../prompting/coding/resolveSessionCodingPromptSettings';
+import { resolveSessionCodingPromptSettingsFromSession } from '../prompting/coding/resolveSessionCodingPromptSettings';
 import { resolveAgentRequestKind } from './requestKind';
 import { isTrustedAlwaysAutoApproveToolName } from './alwaysAutoApproveToolName';
 
@@ -129,9 +129,9 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     if (shouldDenyAgentSessionTitleToolCall({
       // Same merged decision the prompt and tools bridge consume: a profile override
       // that disables title updates must also disable it at this deny layer.
-      settings: resolveSessionCodingPromptSettings({
+      settings: resolveSessionCodingPromptSettingsFromSession({
         settings: this.getAccountSettingsSnapshot() ?? {},
-        profileId: this.session.getMetadataSnapshot()?.profileId ?? null,
+        session: this.session,
       }),
       toolName,
       input,

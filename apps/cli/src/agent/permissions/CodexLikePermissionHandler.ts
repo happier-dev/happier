@@ -26,7 +26,7 @@ import { isTrustedAlwaysAutoApproveToolName } from './alwaysAutoApproveToolName'
 import { extractShellCommand } from './permissionToolIdentifier';
 import { resolveAgentRequestKind } from './requestKind';
 import { shouldDenyAgentSessionTitleToolCall } from './codingPromptTitlePermission';
-import { resolveSessionCodingPromptSettings } from '../prompting/coding/resolveSessionCodingPromptSettings';
+import { resolveSessionCodingPromptSettingsFromSession } from '../prompting/coding/resolveSessionCodingPromptSettings';
 import { parseTrustedHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 
 export type { PermissionResult, PendingRequest };
@@ -116,7 +116,16 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       return null;
     }
 
-    if (this.shouldDenySessionTitleToolCall(toolName, input)) {
+    if (shouldDenyAgentSessionTitleToolCall({
+      // Same merged decision the prompt and tools bridge consume: a profile override
+      // that disables title updates must also disable it at this deny layer.
+      settings: resolveSessionCodingPromptSettingsFromSession({
+        settings: this.getAccountSettingsSnapshot() ?? {},
+        session: this.session,
+      }),
+      toolName,
+      input,
+    })) {
       return { decision: 'denied' };
     }
 
