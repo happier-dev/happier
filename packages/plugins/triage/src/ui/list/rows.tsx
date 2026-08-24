@@ -1,5 +1,11 @@
 import * as React from 'react';
-import { Button, List, usePluginTranslation, type ListItemProps } from '@happier-dev/plugin-ui';
+import {
+  Button,
+  List,
+  useListMultiSelectionRow,
+  usePluginTranslation,
+  type ListItemProps,
+} from '@happier-dev/plugin-ui';
 
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 import type { TriageListSectionItemV1 } from './sections.js';
@@ -34,6 +40,37 @@ export type TriageRowPinHandlersV1 = Readonly<{
 }>;
 
 const PIN_ACTION_ID = 'set-pinned';
+
+/**
+ * The row's own way into a bulk selection, and the ONLY one a touch reader has.
+ *
+ * The shared `List` already turns a modified press into a set and an unmodified
+ * press into a toggle once a set is being built — but a finger has no Command
+ * key, so without a stated affordance the whole capability is desktop-only. It
+ * lives in the row's existing secondary-action overflow rather than as a new
+ * control: that owner already handles focus, keyboard activation and the touch
+ * target, and it keeps the press target of the row itself unchanged.
+ */
+export const TRIAGE_ROW_SELECT_ACTION_ID_V1 = 'toggle-selected';
+
+/**
+ * The row's secondary actions, in the order a reader meets them.
+ *
+ * Select comes first because it is the affordance a touch reader has no other
+ * way to reach, while Pin is also reachable from the entry's own detail. The
+ * order is decided here rather than inline so it can be stated and falsified
+ * rather than re-derived from a JSX literal.
+ */
+export function triageListRowSecondaryActionsV1(input: Readonly<{
+  selectLabel: string;
+  pinLabel: string;
+  pinDisabled: boolean;
+}>): readonly Readonly<{ id: string; label: string; disabled?: boolean }>[] {
+  return [
+    { id: TRIAGE_ROW_SELECT_ACTION_ID_V1, label: input.selectLabel },
+    { id: PIN_ACTION_ID, label: input.pinLabel, disabled: input.pinDisabled },
+  ];
+}
 
 /** Stable automation identity derived from the canonical collision-safe row key. */
 export function triageListRowTestId(rowKey: string): string {
@@ -102,6 +139,24 @@ export function TriageListRow(props: Readonly<{
     ? text('plugins.triage.surface.row.unpin', 'Unpin {title}', { title: row.title })
     : text('plugins.triage.surface.row.pin', 'Pin {title}', { title: row.title });
   const onSetPinned = React.useCallback(() => { handlers.onSetPinned(row); }, [handlers, row]);
+  // The shared selection owner's own per-row facts, subscribed per row: the
+  // three-character primitive commits this row and the row that lost the
+  // anchor, not every mounted cell.
+  const selection = useListMultiSelectionRow(row.key);
+  const selectLabel = selection.isSelected
+    ? text('plugins.triage.surface.row.deselect', 'Deselect {title}', { title: row.title })
+    : text('plugins.triage.surface.row.select', 'Select {title}', { title: row.title });
+  const onSecondaryAction = React.useCallback((actionId: string) => {
+    // `enter` rather than `toggle` for the first row: turning selection mode on
+    // AND choosing the row the reader pressed is one gesture, and entering an
+    // empty selection mode would make the bar appear with nothing in it.
+    if (actionId === TRIAGE_ROW_SELECT_ACTION_ID_V1) {
+      if (selection.isSelectionMode) selection.toggle();
+      else selection.replace();
+      return;
+    }
+    handlers.onSetPinned(row);
+  }, [handlers, row, selection]);
 
   const common = triageListRowItemProps(row, busy);
 
@@ -125,7 +180,11 @@ export function TriageListRow(props: Readonly<{
   return (
     <List.Item
       {...common}
-      secondaryActions={[{ id: PIN_ACTION_ID, label, disabled }]}
+      secondaryActions={triageListRowSecondaryActionsV1({
+        selectLabel,
+        pinLabel: label,
+        pinDisabled: disabled,
+      })}
       // Kept as an explicit override rather than falling back to plugin-ui's
       // default: that default resolves `happier.plugin-ui.list.moreActions`
       // against the MOUNTED plugin's catalog, which Triage does not declare, so
@@ -135,7 +194,7 @@ export function TriageListRow(props: Readonly<{
         'More actions for {title}',
         { title: row.title },
       )}
-      onSecondaryAction={onSetPinned}
+      onSecondaryAction={onSecondaryAction}
     />
   );
 }

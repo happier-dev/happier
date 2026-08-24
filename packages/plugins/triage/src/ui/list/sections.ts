@@ -59,6 +59,24 @@ export type TriageListSectionItemV1 =
 
 export type TriageListSectionV1 = ListSectionData<TriageListSectionItemV1>;
 
+/**
+ * Which section items may join a keyed bulk set.
+ *
+ * A module constant rather than an inline lambda for the same reason
+ * `readTriageListSectionItemKey` is: the shared `List` memoizes its selectable
+ * roving entries on this identity, and a new function each render rebuilds them
+ * for the whole window on every shell render.
+ *
+ * A continuation row names no entry, so it stays readable, focusable and
+ * openable while never joining a set — the same rule selection, activation and
+ * the reducer's visible order already follow. A range extension steps OVER it
+ * rather than stopping on it, which is why the shared owner asks the predicate
+ * instead of reading the disabled rows.
+ */
+export function isTriageListSectionItemSelectable(item: TriageListSectionItemV1): boolean {
+  return item.kind === 'entry';
+}
+
 /** The one continuation-row key per section; unique across the whole `List`. */
 export function triageContinuationRowKey(sectionKey: string): string {
   return `continuation:${sectionKey}`;

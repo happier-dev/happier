@@ -13,6 +13,7 @@ import {
   Screen,
   Stack,
   Status,
+  useListMultiSelectionController,
   usePluginAccessibility,
   usePluginHostApi,
   usePluginTheme,
@@ -27,6 +28,7 @@ import { useTriageActions } from '../actions/useTriageActions.js';
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageEntryDetailLaunchInputV1 } from '../../composer/entryDetailLaunchInput.js';
 import type { CorpusSmartPolicyV1 } from '../../corpus/query/smartPolicy.js';
+import type { TriageActionV1 } from '../../settings/actions.js';
 import {
   triageEntryRowKey,
   type TriageListLensV1,
@@ -37,13 +39,23 @@ import type { CorpusSavedViewV1, CorpusSavedViewsReadV1 } from '../../settings/s
 import { projectTriageCurrentUiContextV1 } from '../currentContext.js';
 import { projectTriageDetailHeaderV1 } from '../detail/header.js';
 import { TriageDetailHeaderView, TriageDetailRegion } from '../detail/region.js';
+import { resolveTriageSourceWorkflowSubjectV1 } from '../detail/sourceSurface.js';
 import { TriageFilterRail } from '../filters/rail.js';
 import { planTriageFilterFacetsV1 } from '../filters/plan.js';
 import {
   TRIAGE_PINNED_SECTION_KEY,
+  isTriageListSectionItemSelectable,
   planTriageListSections,
   type TriageListSectionItemV1,
 } from '../list/sections.js';
+import { TriageBulkActionBar } from '../list/BulkActionBar.js';
+import {
+  projectTriageBulkSelectedEntriesV1,
+  type TriageBulkSelectedEntryV1,
+} from '../list/bulkSelectionEntries.js';
+import { readTriageBulkSelectionScopeKeyV1 } from '../list/bulkSelectionScope.js';
+import type { TriageBulkSessionDestinationV1 } from '../list/bulkSessionPlan.js';
+import { useTriageBulkEntrySessions } from '../list/useBulkEntrySessions.js';
 import {
   readTriageListSectionItemKey,
   useTriageListRowRenderer,
@@ -97,6 +109,9 @@ import {
   resolveTriageListRefreshV1,
   resolveTriageListShellState,
 } from './windowState.js';
+
+const EMPTY_WINDOW_ROWS: readonly TriageListRowV1[] = Object.freeze([]);
+const EMPTY_BULK_KEYS: readonly string[] = Object.freeze([]);
 
 /**
  * The mounted PRs & Issues shell.
@@ -762,6 +777,117 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    */
   const surfaceContext = useSurfaceContext();
   /**
+   * The bulk set — a THIRD independent cursor.
+   *
+   * `core/SURFACE.md` §3.1 keeps `focus` and `selection` as two independent
+   * SINGLE cursors, and that independence is load-bearing: keyboard traversal
+   * never opens a detail, and opening a detail never moves the reading cursor.
+   * A bulk set is neither of them, so it is NOT folded into the reducer: it is
+   * the shared `List`'s own keyed multi-selection, the same owner the sessions
+   * list binds (`@happier-dev/plugin-ui`'s collection multi-selection), mounted
+   * here as an opt-in capability. Copying that reducer into this plugin would
+   * be a second answer to what a modified press means.
+   *
+   * `rows: 'collection'` hands the visible order to the mounted `List` rather
+   * than to this shell: only the List can see the rows its virtualizer has not
+   * mounted, and a range extension or select-all measured from this file would
+   * disagree with what the reader can actually reach.
+   *
+   * What counts as "the same list" is decided by its own owner
+   * (`ui/list/bulkSelectionScope.ts`) rather than spelled here, so the rule can
+   * be falsified directly — which is what caught the transient query being part
+   * of it and silently clearing the set on every keystroke.
+   */
+  const bulkSelectionScopeKey = React.useMemo(
+    () => readTriageBulkSelectionScopeKeyV1(surface),
+    [surface],
+  );
+  const bulkSelection = useListMultiSelectionController({
+    scopeKey: bulkSelectionScopeKey,
+    rows: 'collection',
+  });
+  const windowRows = state.kind === 'window' ? state.window.rows : EMPTY_WINDOW_ROWS;
+  const windowRowsRef = React.useRef(windowRows);
+  windowRowsRef.current = windowRows;
+
+  /**
+   * The rows a bulk press can still act on after the list has moved under it.
+   *
+   * A query narrows the corpus walk UPSTREAM of the shared `List`, so a row the
+   * reader selected and then typed past is not filtered out of the List's own
+   * dataset — it never reaches the List at all, and its eligibility disappears
+   * with it. Two facts are therefore held here for exactly as long as the scope
+   * lives: the keys, so the selection owner knows those rows are HIDDEN rather
+   * than gone, and the payload each one was selected with, so the press can
+   * still start a Session for an entry the current window no longer lists.
+   *
+   * It is not a second selection: the set itself stays the shared owner's, and
+   * this holds nothing the owner has not been told about.
+   */
+  const retainedBulkEntries = React.useRef(new Map<string, TriageBulkSelectedEntryV1>());
+  const [retainedBulkKeys, setRetainedBulkKeys] = React.useState<readonly string[]>(EMPTY_BULK_KEYS);
+  React.useEffect(() => {
+    // A new scope is a different list, and the owner has already cleared the
+    // set for it. Holding payloads from the previous one would let a later
+    // press act on entries this scope never listed.
+    retainedBulkEntries.current = new Map();
+    setRetainedBulkKeys(EMPTY_BULK_KEYS);
+  }, [bulkSelectionScopeKey]);
+  React.useEffect(() => bulkSelection.subscribe(() => {
+    const selected = bulkSelection.getSnapshot().selectedKeys;
+    let grew = false;
+    for (const key of selected) {
+      if (retainedBulkEntries.current.has(key)) continue;
+      const projected = projectTriageBulkSelectedEntriesV1({
+        rows: windowRowsRef.current,
+        keys: [key],
+      });
+      const entry = projected.entries[0];
+      if (entry === undefined) continue;
+      retainedBulkEntries.current.set(key, entry);
+      grew = true;
+    }
+    // Only a GROWN set re-renders: a deselection leaves the payload held and
+    // the key retained, which costs nothing and keeps a reader who unticks and
+    // reticks one row from rebuilding the list twice.
+    if (grew) setRetainedBulkKeys([...retainedBulkEntries.current.keys()]);
+  }), [bulkSelection]);
+
+  const bulkSessions = useTriageBulkEntrySessions();
+  const runBulkAction = React.useCallback((input: Readonly<{
+    action: TriageActionV1;
+    destination: TriageBulkSessionDestinationV1;
+    keys: readonly string[];
+  }>) => {
+    // The CURRENT window answers first, so a press acts on the freshest facts
+    // this mount holds; the retained payload answers only for a row the window
+    // no longer lists. A key neither can answer for is reported, never dropped.
+    const projected = projectTriageBulkSelectedEntriesV1({
+      rows: windowRowsRef.current,
+      keys: input.keys,
+    });
+    const freshByKey = new Map(projected.entries.map((entry) => [entry.key, entry]));
+    const entries: TriageBulkSelectedEntryV1[] = [];
+    const unavailableKeys: string[] = [];
+    for (const key of input.keys) {
+      const entry = freshByKey.get(key) ?? retainedBulkEntries.current.get(key);
+      if (entry === undefined) unavailableKeys.push(key);
+      else entries.push(entry);
+    }
+    bulkSessions.run({
+      action: input.action,
+      destination: input.destination,
+      entries: entries.map((entry) => ({
+        ...entry,
+        workflowSubject: resolveTriageSourceWorkflowSubjectV1(
+          surfaceContext.targetedContributions,
+          entry.entryRef,
+        ),
+      })),
+      unavailableKeys,
+    });
+  }, [bulkSessions, surfaceContext.targetedContributions]);
+  /**
    * `core/SURFACE.md` §2.1. The shell measures its OWN fill region and combines
    * that width with the reader's type size; it never asks the platform how big
    * a phone is. The solver has always been here — what was missing was this
@@ -1268,7 +1394,34 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               // The shared owner of activation, roving focus, the tab stop and the
               // option semantics. Without it every row rendered as inert text and a
               // reader had no way to open anything.
-              selection={{ selectedKey, onSelectedKeyChange: activateRow, onFocusedKeyChange: focusRow }}
+              selection={{
+                selectedKey,
+                onSelectedKeyChange: activateRow,
+                onFocusedKeyChange: focusRow,
+                // The bulk set beside the detail cursor, never instead of it.
+                multiple: {
+                  store: bulkSelection,
+                  isItemSelectable: isTriageListSectionItemSelectable,
+                  // The rows this page narrowed away are HIDDEN, not gone. The
+                  // shared owner cannot tell the difference on its own here,
+                  // because the narrowing happened before a row ever reached it.
+                  retainedSelectionKeys: retainedBulkKeys,
+                },
+              }}
+              /*
+                The bulk bar lives in the `List`'s own footer so it reads the
+                same selection store the rows do — one owner for the count on
+                screen and the keys a press acts on — and so gaining or losing
+                it never changes the tree shape around the virtualizer.
+              */
+              footer={(
+                <TriageBulkActionBar
+                  actions={configuredActions.actions}
+                  phase={bulkSessions.phase}
+                  onRun={runBulkAction}
+                  onCancel={bulkSessions.cancel}
+                />
+              )}
               empty={empty === null ? null : empty.kind === 'sourceFailure' ? (
                 <ErrorState
                   title={empty.title}

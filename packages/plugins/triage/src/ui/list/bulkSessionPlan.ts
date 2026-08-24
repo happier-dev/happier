@@ -1,5 +1,14 @@
+import type {
+    TriageEntryRefV1,
+    TriageSourceWorkflowSubjectV1,
+} from '@happier-dev/triage-protocol/v1';
+
 import type { TriageEntrySessionStartRequestV1 } from '../../sessions/entrySessionOrchestrator.js';
 import { isHostCancellation } from '../../hostCancellation.js';
+import {
+    planTriageOfferedActionsV1,
+    type TriageActionV1,
+} from '../../settings/actions.js';
 import { sameTriageEntryRefV1 } from '../state/surface.js';
 
 /**
@@ -8,8 +17,10 @@ import { sameTriageEntryRefV1 } from '../state/surface.js';
  *
  * A bulk action resolves its profile and its prompt ONCE, for the action, and
  * then fans the selection out. This module owns exactly that fan-out and the
- * two facts it can get silently wrong:
+ * four facts it can get silently wrong:
  *
+ *  - whether the source offers this exact action for each selected entry;
+ *  - how an inapplicable entry is refused without aborting the other entries;
  *  - how many Sessions one press asks for, and which entries each carries;
  *  - that every one of those Sessions has its OWN creation key.
  *
@@ -34,30 +45,76 @@ import { sameTriageEntryRefV1 } from '../state/surface.js';
 export type TriageBulkEntrySelectionV1 = Pick<
     TriageEntrySessionStartRequestV1,
     'entryRef' | 'display' | 'workspaceMode'
->;
+> & Readonly<{ workflowSubject: TriageSourceWorkflowSubjectV1 | null }>;
 
 /**
- * The two Session-producing destinations of a bulk action.
+ * The TWO things this module reads off a selected entry: its canonical
+ * reference for identity/dedupe, and the exact source-declared workflow
+ * subject used by the configured action planner.
  *
- * The third approved destination — attach the whole selection to the host's New
- * Session screen and open it — produces no Session and is deliberately absent
- * from this union rather than present and unimplemented. It is currently
- * unreachable: `PLUGIN_UI_HOST_METHODS_V1` has no method that navigates to the
- * host's New Session screen, and a `newSession` composer's `instanceId` is
- * minted at that screen's own mount and only ever handed to a plugin through a
- * host-stamped composer mount input.
+ * Everything else a press carries — the connection, the bounded presentation,
+ * the routing hint, the repository — belongs to whoever starts the Session, and
+ * naming it here would make this module a second definition of what a start
+ * needs. So the fan-out is generic over the caller's own payload and constrains
+ * only the member it actually compares.
  */
-export type TriageBulkSessionDestinationV1 = 'oneSessionForAllEntries' | 'oneSessionPerEntry';
-
-/** One Session this press asks for: one creation key, and the entries it carries. */
-export type TriageBulkSessionUnitV1 = Readonly<{
-    creationKey: string;
-    entries: readonly TriageBulkEntrySelectionV1[];
+export type TriageBulkEntryIdentityV1 = Readonly<{
+    entryRef: TriageEntryRefV1;
+    workflowSubject: TriageSourceWorkflowSubjectV1 | null;
 }>;
 
-export type TriageBulkSessionPlanV1 =
-    | Readonly<{ status: 'planned'; units: readonly TriageBulkSessionUnitV1[] }>
-    | Readonly<{ status: 'refused'; reason: 'emptySelection' | 'creationKeyCollision' }>;
+export type TriageBulkActionRefusalV1<TEntry = TriageBulkEntrySelectionV1> = Readonly<{
+    entry: TEntry;
+    reason: 'workflowSubjectUnavailable' | 'actionInapplicable';
+}>;
+
+/**
+ * The three approved destinations of a bulk action (`PLAN.md` §0a A6).
+ *
+ * Two of them produce Sessions here. The third — attach the whole selection to
+ * the host's own New Session screen and open it — produces none, and is not a
+ * missing arm: both halves of it now exist. Its NAVIGATION half is
+ * `selectActionInput({ action: 'session.spawn_new', projection:
+ * 'newSessionSeed' })`, which seeds the host's real New Session draft and opens
+ * the screen; its ATTACHMENT half is the seed's declared author-shaped
+ * additions, which the New Session composer applies AT ITS OWN MOUNT, where the
+ * contribution authority and the host-minted instance id actually resolve
+ * (`sessionComposerPresentationTargets.ts#createAttachmentAuthorityResolver`).
+ * Nothing here mints an attachment identity, and after the seed the real
+ * composer's canonical snapshot owns every edit and the send.
+ */
+export type TriageBulkSessionDestinationV1 =
+    | 'oneSessionForAllEntries'
+    | 'oneSessionPerEntry'
+    | 'attachAllToNewSession';
+
+/** One Session this press asks for: one creation key, and the entries it carries. */
+export type TriageBulkSessionUnitV1<TEntry = TriageBulkEntrySelectionV1> = Readonly<{
+    creationKey: string;
+    entries: readonly TEntry[];
+}>;
+
+export type TriageBulkSessionPlanV1<TEntry = TriageBulkEntrySelectionV1> =
+    | Readonly<{
+        status: 'planned';
+        units: readonly TriageBulkSessionUnitV1<TEntry>[];
+        refusals: readonly TriageBulkActionRefusalV1<TEntry>[];
+    }>
+    /**
+     * No Session is created and no creation key is spent: the whole deduped
+     * selection is seeded into the host's New Session screen, and what becomes
+     * of it there is the reader's to decide.
+     */
+    | Readonly<{
+        status: 'seedNewSession';
+        entries: readonly TEntry[];
+        refusals: readonly TriageBulkActionRefusalV1<TEntry>[];
+    }>
+    | Readonly<{
+        status: 'refused';
+        reason: 'emptySelection' | 'noApplicableEntries' | 'creationKeyCollision';
+        refusals?: readonly TriageBulkActionRefusalV1<TEntry>[];
+    }>;
 
 /**
  * Selection order, first occurrence wins.
@@ -70,20 +127,22 @@ export type TriageBulkSessionPlanV1 =
  * The scan is quadratic because a selection is bounded by what the list has
  * rendered; the window ceiling is the Action response bound, currently 56 rows.
  */
-function distinctInSelectionOrder(
-    selection: readonly TriageBulkEntrySelectionV1[],
-): readonly TriageBulkEntrySelectionV1[] {
-    const kept: TriageBulkEntrySelectionV1[] = [];
+function distinctInSelectionOrder<TEntry extends TriageBulkEntryIdentityV1>(
+    selection: readonly TEntry[],
+): readonly TEntry[] {
+    const kept: TEntry[] = [];
     for (const candidate of selection) {
-        if (kept.some((held) => `${held.entryRef.collisionScope}␟${held.entryRef.entryId}`
-            === `${candidate.entryRef.collisionScope}␟${candidate.entryRef.entryId}`)) continue;
+        if (kept.some((held) => sameTriageEntryRefV1(held.entryRef, candidate.entryRef))) continue;
         kept.push(candidate);
     }
     return kept;
 }
 
-export function planTriageBulkEntrySessions(input: Readonly<{
-    selection: readonly TriageBulkEntrySelectionV1[];
+export function planTriageBulkEntrySessions<
+    TEntry extends TriageBulkEntryIdentityV1 = TriageBulkEntrySelectionV1,
+>(input: Readonly<{
+    action: TriageActionV1;
+    selection: readonly TEntry[];
     destination: TriageBulkSessionDestinationV1;
     /**
      * The one creation-key mint, injected for the same reason the single-entry
@@ -91,25 +150,63 @@ export function planTriageBulkEntrySessions(input: Readonly<{
      * and a runtime whose `crypto` surface is not guaranteed.
      */
     mintCreationKey: () => string;
-}>): TriageBulkSessionPlanV1 {
+}>): TriageBulkSessionPlanV1<TEntry> {
     const entries = distinctInSelectionOrder(input.selection);
     if (entries.length === 0) return { status: 'refused', reason: 'emptySelection' };
 
-    const groups: readonly (readonly TriageBulkEntrySelectionV1[])[] =
-        input.destination === 'oneSessionForAllEntries'
-            ? [entries]
-            : entries.map((entry) => [entry]);
+    const applicable: TEntry[] = [];
+    const refusals: TriageBulkActionRefusalV1<TEntry>[] = [];
+    for (const entry of entries) {
+        if (entry.workflowSubject === null) {
+            refusals.push({ entry, reason: 'workflowSubjectUnavailable' });
+            continue;
+        }
+        const offered = planTriageOfferedActionsV1([input.action], entry.workflowSubject);
+        if (offered[0] !== input.action) {
+            refusals.push({ entry, reason: 'actionInapplicable' });
+            continue;
+        }
+        applicable.push(entry);
+    }
+    const frozenRefusals = Object.freeze(refusals);
+    if (applicable.length === 0) {
+        return { status: 'refused', reason: 'noApplicableEntries', refusals: frozenRefusals };
+    }
 
-    const sharedKey = input.mintCreationKey();
-    const units: TriageBulkSessionUnitV1[] = [];
+    // The seed spends no creation key, because it creates nothing. Minting one
+    // and discarding it would put a spent identity into a press that never
+    // reached the canonical creator.
+    if (input.destination === 'attachAllToNewSession') {
+        return {
+            status: 'seedNewSession',
+            entries: Object.freeze([...applicable]),
+            refusals: frozenRefusals,
+        };
+    }
+
+    const groups: readonly (readonly TEntry[])[] =
+        input.destination === 'oneSessionForAllEntries'
+            ? [applicable]
+            : applicable.map((entry) => [entry]);
+
+    const units: TriageBulkSessionUnitV1<TEntry>[] = [];
     const spent = new Set<string>();
     for (const group of groups) {
-        const creationKey = sharedKey;
-
+        const creationKey = input.mintCreationKey();
+        // One Session, one key. `session.spawn_new` dedupes on `creationKey`, so
+        // a repeat here is not a duplicate request — it is the second Session
+        // silently becoming the first.
+        if (spent.has(creationKey)) {
+            return {
+                status: 'refused',
+                reason: 'creationKeyCollision',
+                ...(frozenRefusals.length === 0 ? {} : { refusals: frozenRefusals }),
+            };
+        }
         spent.add(creationKey);
         units.push(Object.freeze({ creationKey, entries: group }));
     }
-    return { status: 'planned', units: Object.freeze(units) };
+    return { status: 'planned', units: Object.freeze(units), refusals: frozenRefusals };
 }
 
 /**
@@ -122,8 +219,8 @@ export function planTriageBulkEntrySessions(input: Readonly<{
  * observed", which is the only true thing to say. Retrying it means re-sending
  * the SAME key, which the canonical creator rejoins.
  */
-export type TriageBulkSessionUnitResultV1<TOutcome> = Readonly<{
-    unit: TriageBulkSessionUnitV1;
+export type TriageBulkSessionUnitResultV1<TOutcome, TEntry = TriageBulkEntrySelectionV1> = Readonly<{
+    unit: TriageBulkSessionUnitV1<TEntry>;
 }> & (
     | Readonly<{ status: 'settled'; outcome: TOutcome }>
     | Readonly<{ status: 'unknownOutcome' }>
@@ -143,20 +240,30 @@ export type TriageBulkSessionUnitResultV1<TOutcome> = Readonly<{
  * question — but every unit that already ran keeps its result, because those
  * Sessions exist and dropping their outcomes would orphan them.
  */
-export async function runTriageBulkEntrySessions<TOutcome>(input: Readonly<{
-    units: readonly TriageBulkSessionUnitV1[];
-    start: (unit: TriageBulkSessionUnitV1) => Promise<TOutcome>;
+export async function runTriageBulkEntrySessions<
+    TOutcome,
+    TEntry = TriageBulkEntrySelectionV1,
+>(input: Readonly<{
+    units: readonly TriageBulkSessionUnitV1<TEntry>[];
+    start: (unit: TriageBulkSessionUnitV1<TEntry>) => Promise<TOutcome>;
     signal?: AbortSignal;
-}>): Promise<readonly TriageBulkSessionUnitResultV1<TOutcome>[]> {
-    const results = await Promise.all(input.units.map(
-        async (unit): Promise<TriageBulkSessionUnitResultV1<TOutcome>> => {
-            try {
-                return { status: 'settled', unit, outcome: await input.start(unit) };
-            } catch (error) {
-                void isHostCancellation(error, input.signal);
-                return { status: 'unknownOutcome', unit };
-            }
-        },
-    ));
+}>): Promise<readonly TriageBulkSessionUnitResultV1<TOutcome, TEntry>[]> {
+    const results: TriageBulkSessionUnitResultV1<TOutcome, TEntry>[] = [];
+    let cancelled = false;
+    for (const unit of input.units) {
+        if (cancelled || input.signal?.aborted === true) {
+            results.push({ status: 'notStarted', unit });
+            continue;
+        }
+        try {
+            results.push({ status: 'settled', unit, outcome: await input.start(unit) });
+        } catch (error) {
+            // The key is retained on the unit this result carries, so a retry
+            // re-sends the SAME key and the canonical creator rejoins rather
+            // than creating a second Session for one entry.
+            results.push({ status: 'unknownOutcome', unit });
+            if (isHostCancellation(error, input.signal)) cancelled = true;
+        }
+    }
     return Object.freeze(results);
 }
