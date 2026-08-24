@@ -202,7 +202,10 @@ export class ConnectedServiceCredentialRefreshError extends Error {
 
 export class ConnectedServiceRefreshCoordinator {
   private readonly runtimeRegistry: ConnectedServiceRuntimeRegistry;
-  private readonly inFlightRefreshes = new Map<string, Promise<ConnectedServiceCredentialRefreshResult>>();
+  private readonly inFlightRefreshes = new Map<string, Readonly<{
+    credentialReady: Promise<ConnectedServiceCredentialRefreshResult>;
+    completion: Promise<ConnectedServiceCredentialRefreshResult>;
+  }>>();
   private readonly inFlightRefreshRematerializations = new Map<string, Promise<RematerializedTargetsResult>>();
   private readonly inFlightRefreshAuthUpdatedNotifications = new Map<
     string,
@@ -605,7 +608,11 @@ export class ConnectedServiceRefreshCoordinator {
     return await this.refreshOauthBinding(
       { serviceId: input.serviceId, profileId: input.profileId },
       this.params.now(),
-      { force: input.force === true, reason: 'spawn_preflight' },
+      {
+        force: input.force === true,
+        reason: 'spawn_preflight',
+        adoptCredentialReadyFromInFlightRefresh: true,
+      },
     );
   }
 
@@ -883,44 +890,50 @@ export class ConnectedServiceRefreshCoordinator {
   private async refreshOauthBinding(
     binding: BoundProfile,
     now: number,
-    options: Readonly<{ force: boolean; reason: ConnectedServiceRefreshReason }>,
+    options: Readonly<{
+      force: boolean;
+      reason: ConnectedServiceRefreshReason;
+      adoptCredentialReadyFromInFlightRefresh?: boolean;
+    }>,
   ): Promise<ConnectedServiceCredentialRefreshResult> {
-    // Coalesce + serialize per `{serviceId, profileId}` binding (NOT split on `force`). A rotation
-    // consumes the refresh token server-side, so two concurrent refreshes for one binding could each
-    // present the same record and mint a superseded (401-bound) token. Any caller that arrives while a
-    // refresh is in flight awaits it; a forced caller adopts that result when it rotated, otherwise it
-    // runs its own refresh chained strictly after (never concurrently) so it reads the freshly persisted
-    // record.
+    // Coalesce + serialize the credential rotation per `{serviceId, profileId}` binding (NOT split on
+    // `force`). Downstream distribution is deliberately tracked as a separate completion: a restarted
+    // runner's spawn preflight may need the credential that the owner has already persisted while that
+    // same owner is waiting for the runner to respawn before distribution can finish. Making the
+    // credential-ready result wait on distribution creates a circular wait and poisons the daemon's
+    // global spawn gate. The initiating caller still owns and awaits the one distribution transaction;
+    // only a joining spawn preflight may adopt the already-persisted rotation early.
     const key = bindingKey(binding);
-    const existing = this.inFlightRefreshes.get(key);
-    if (existing) {
-      // A rejecting in-flight refresh represents an attempt that re-running concurrently would not
-      // improve; every joiner adopts the same rejection rather than firing a duplicate refresh.
-      const observed = await existing;
-      if (inFlightResultSatisfiesCaller(observed, options)) {
-        return observed;
+    while (true) {
+      const existing = this.inFlightRefreshes.get(key);
+      if (existing) {
+        // A rejecting credential rotation represents an attempt that re-running concurrently would
+        // not improve; every joiner adopts the same rejection rather than firing a duplicate refresh.
+        const observed = await existing.credentialReady;
+        if (inFlightResultSatisfiesCaller(observed, options)) {
+          return options.adoptCredentialReadyFromInFlightRefresh === true && observed.status === 'refreshed'
+            ? observed
+            : await existing.completion;
+        }
+        // Preserve the existing serialized forced-after-non-forced contract: health persistence and
+        // any non-rotation completion work settle before the forced retry re-reads canonical state.
+        await existing.completion;
+        continue;
       }
-      // Forced caller behind a non-rotating `not_needed`: run a fresh refresh, serialized after it.
-    }
 
-    const previous = this.inFlightRefreshes.get(key);
-    const promise = (async () => {
-      if (previous) {
-        // Serialize behind any refresh already running for this binding before reading/rotating so a
-        // chained refresh reads the freshly persisted (rotated) record instead of racing it.
-        await previous.catch(() => undefined);
-      }
-      return await this.finalizeRefreshResult(
+      const credentialReady = this.refreshOauthBindingUnserialized(binding, now, options);
+      const completion = credentialReady.then(async (result) => await this.finalizeRefreshResult(
         binding,
-        await this.refreshOauthBindingUnserialized(binding, now, options),
-      );
-    })();
-    this.inFlightRefreshes.set(key, promise);
-    try {
-      return await promise;
-    } finally {
-      if (this.inFlightRefreshes.get(key) === promise) {
-        this.inFlightRefreshes.delete(key);
+        result,
+      ));
+      const inFlight = { credentialReady, completion } as const;
+      this.inFlightRefreshes.set(key, inFlight);
+      try {
+        return await completion;
+      } finally {
+        if (this.inFlightRefreshes.get(key) === inFlight) {
+          this.inFlightRefreshes.delete(key);
+        }
       }
     }
   }
