@@ -1060,7 +1060,7 @@ describe('plugin invocation ActionsService', () => {
         expect(invokeContributedAction).not.toHaveBeenCalled();
     });
 
-    it('fails closed for runtime strings outside the generated plugin action registry', async () => {
+    it('fails closed for unknown and plugin-unavailable runtime action strings', async () => {
         const execute = vi.fn();
         const service = createPluginInvocationActionsService({
             seed: {
@@ -1077,8 +1077,12 @@ describe('plugin invocation ActionsService', () => {
 
         await expect(Reflect.apply(service.execute, service, ['unknown.action', {}]))
             .rejects.toMatchObject({ code: 'plugin_action_unknown' });
+        // This raw durable Start is known to the host Action registry but not
+        // exposed on the Plugin surface. Runtime calls that bypass the SDK
+        // type union must fail that generic surface admission before parsing
+        // the raw RPC input schema.
         await expect(Reflect.apply(service.execute, service, ['sessions.external.takeover.start', {}]))
-            .rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+            .rejects.toMatchObject({ code: 'plugin_action_not_available' });
         expect(execute).not.toHaveBeenCalled();
     });
 
