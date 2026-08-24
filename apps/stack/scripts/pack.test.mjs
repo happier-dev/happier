@@ -442,6 +442,7 @@ test('exportPackSandboxTarball transforms and validates a public SDK tarball onl
   const root = await mkdtemp(join(tmpdir(), 'pack-test-public-sdk-publication-'));
   const sandboxRoot = join(root, 'sandbox');
   const sandboxPackDir = join(sandboxRoot, 'packages', 'plugin-ui');
+  const sandboxPluginSdkDir = join(sandboxRoot, 'packages', 'plugin-sdk');
   const sourceRoot = join(root, 'source');
   const sourcePackageJsonPath = join(sourceRoot, 'packages', 'plugin-ui', 'package.json');
   const destinationDir = join(root, 'destination');
@@ -449,6 +450,7 @@ test('exportPackSandboxTarball transforms and validates a public SDK tarball onl
   const tarballName = `happier-dev-plugin-ui-${candidateVersion}.tgz`;
   try {
     await mkdir(sandboxPackDir, { recursive: true });
+    await mkdir(sandboxPluginSdkDir, { recursive: true });
     await mkdir(dirname(sourcePackageJsonPath), { recursive: true });
     await mkdir(destinationDir);
     const sourceManifest = {
@@ -467,6 +469,10 @@ test('exportPackSandboxTarball transforms and validates a public SDK tarball onl
     };
     await writeFile(sourcePackageJsonPath, JSON.stringify(sourceManifest));
     await writeFile(join(sandboxPackDir, 'package.json'), JSON.stringify(sourceManifest));
+    await writeFile(
+      join(sandboxPluginSdkDir, 'package.json'),
+      JSON.stringify({ name: '@happier-dev/plugin-sdk', version: '0.0.0' }),
+    );
     await writeFile(join(sandboxPackDir, 'release-contract.test.mjs'), 'export {}\n');
 
     const metadata = await exportPackSandboxTarball({
@@ -541,6 +547,156 @@ test('exportPackSandboxTarball transforms and validates a public SDK tarball onl
   }
 });
 
+test('exportPackSandboxTarball aligns the staged Plugin SDK manifest before Plugin UI candidate preparation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-plugin-ui-candidate-alignment-'));
+  const sandboxRoot = join(root, 'sandbox');
+  const sandboxPackDir = join(sandboxRoot, 'packages', 'plugin-ui');
+  const sandboxPluginSdkDir = join(sandboxRoot, 'packages', 'plugin-sdk');
+  const sourceRoot = join(root, 'source');
+  const destinationDir = join(root, 'destination');
+  const candidateVersion = '0.1.0-preview.10';
+  const tarballName = `happier-dev-plugin-ui-${candidateVersion}.tgz`;
+  const candidateProjectionPath = join(
+    sandboxPluginSdkDir,
+    'src',
+    'ui',
+    'build',
+    'publicToolchainCompatibility.generated.ts',
+  );
+  const phases = [];
+  const pluginUiManifest = {
+    name: '@happier-dev/plugin-ui',
+    version: '0.0.0',
+    private: true,
+    happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+    dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+  };
+  const pluginSdkManifest = {
+    name: '@happier-dev/plugin-sdk',
+    version: '0.0.0',
+  };
+  try {
+    await mkdir(sandboxPackDir, { recursive: true });
+    await mkdir(sandboxPluginSdkDir, { recursive: true });
+    await mkdir(join(sourceRoot, 'packages', 'plugin-ui'), { recursive: true });
+    await mkdir(join(sourceRoot, 'packages', 'plugin-sdk'), { recursive: true });
+    await mkdir(destinationDir);
+    await writeFile(
+      join(sourceRoot, 'packages', 'plugin-ui', 'package.json'),
+      JSON.stringify(pluginUiManifest),
+    );
+    await writeFile(
+      join(sourceRoot, 'packages', 'plugin-sdk', 'package.json'),
+      JSON.stringify(pluginSdkManifest),
+    );
+    await writeFile(join(sandboxPackDir, 'package.json'), JSON.stringify(pluginUiManifest));
+    await writeFile(join(sandboxPluginSdkDir, 'package.json'), JSON.stringify(pluginSdkManifest));
+
+    await exportPackSandboxTarball({
+      monorepoRoot: sourceRoot,
+      packageRelDir: 'packages/plugin-ui',
+      destinationDir,
+      packageVersion: candidateVersion,
+      publication: {
+        expectedPackageName: '@happier-dev/plugin-ui',
+        dependencyVersions: { '@happier-dev/plugin-sdk': candidateVersion },
+        requiredFiles: ['API.md', 'api-declarations.md', 'api-surface.json'],
+        apiGovernance: { profileId: 'plugin-ui' },
+      },
+      createPackSandboxImpl: async () => sandboxRoot,
+      validatePublicationApiGovernanceImpl: async () => ({ status: 'current' }),
+      preparePublicationApiGovernanceImpl: async () => {
+        await writeFile(join(sandboxPackDir, 'API.md'), '# generated\n');
+        await writeFile(join(sandboxPackDir, 'api-declarations.md'), '# declarations\n');
+        await writeFile(join(sandboxPackDir, 'api-surface.json'), '{"symbols":[]}\n');
+        return {
+          summary: {
+            status: 'dormant_pre_baseline',
+            previousVersion: null,
+            removedSymbolsAreBreaking: false,
+            humanReviewRequired: false,
+          },
+        };
+      },
+      runCaptureImpl: async (command, args, options) => {
+        if (command === process.execPath) {
+          assert.deepEqual(args, ['./scripts/generatePublicToolchainCompatibility.mjs', '--write']);
+          assert.equal(options.cwd, sandboxPluginSdkDir);
+          const stagedPluginSdkManifest = JSON.parse(
+            await readFile(join(sandboxPluginSdkDir, 'package.json'), 'utf8'),
+          );
+          assert.equal(stagedPluginSdkManifest.version, candidateVersion);
+          await mkdir(dirname(candidateProjectionPath), { recursive: true });
+          await writeFile(candidateProjectionPath, 'export const candidateProjection = true;\n');
+          phases.push('candidate-projection');
+          return '';
+        }
+        if (command === 'npm' && args[0] === 'run') {
+          assert.deepEqual(
+            phases,
+            ['candidate-projection'],
+            'candidate projection must be refreshed before Plugin UI prepared-check',
+          );
+          assert.equal(existsSync(candidateProjectionPath), true);
+          const preparedPluginUiManifest = JSON.parse(
+            await readFile(join(sandboxPackDir, 'package.json'), 'utf8'),
+          );
+          const preparedPluginSdkManifest = JSON.parse(
+            await readFile(join(sandboxPluginSdkDir, 'package.json'), 'utf8'),
+          );
+          assert.equal(preparedPluginUiManifest.version, candidateVersion);
+          assert.equal(
+            preparedPluginUiManifest.dependencies['@happier-dev/plugin-sdk'],
+            candidateVersion,
+          );
+          assert.equal(
+            preparedPluginSdkManifest.version,
+            candidateVersion,
+            'Plugin UI preparation must observe the same staged Plugin SDK candidate version',
+          );
+          phases.push('candidate-prepared');
+          return '';
+        }
+        if (command === 'npm') {
+          if (args.includes('--dry-run')) return 'dry-run';
+          await writeFile(join(sandboxPackDir, tarballName), 'candidate');
+          return tarballName;
+        }
+        if (command === 'tar' && args[0] === '-tf') {
+          return [
+            'package/package.json',
+            'package/API.md',
+            'package/api-declarations.md',
+            'package/api-surface.json',
+          ].join('\n');
+        }
+        if (command === 'tar' && args[0] === '-xOf') {
+          return JSON.stringify({
+            name: '@happier-dev/plugin-ui',
+            version: candidateVersion,
+            happier: { publicSdkRelease: { posture: 'developer_preview' } },
+            publishConfig: { access: 'public' },
+            dependencies: { '@happier-dev/plugin-sdk': candidateVersion },
+          });
+        }
+        throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+      },
+    });
+
+    assert.deepEqual(
+      JSON.parse(await readFile(join(sourceRoot, 'packages', 'plugin-ui', 'package.json'), 'utf8')),
+      pluginUiManifest,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(sourceRoot, 'packages', 'plugin-sdk', 'package.json'), 'utf8')),
+      pluginSdkManifest,
+    );
+    assert.deepEqual(phases, ['candidate-projection', 'candidate-prepared']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('exportPackSandboxTarball requires canonical Developer Preview metadata for a public SDK package', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pack-test-public-sdk-preview-metadata-'));
   const sandboxRoot = join(root, 'sandbox');
@@ -586,6 +742,7 @@ test('exportPackSandboxTarball runs public API governance against the transforme
   const candidateVersion = '0.1.0-preview.8';
   const tarballName = `happier-dev-plugin-ui-${candidateVersion}.tgz`;
   const calls = [];
+  const phases = [];
   try {
     await mkdir(sandboxPackDir, { recursive: true });
     await mkdir(destinationDir);
@@ -609,6 +766,8 @@ test('exportPackSandboxTarball runs public API governance against the transforme
       createPackSandboxImpl: async () => sandboxRoot,
       validatePublicationApiGovernanceImpl: async () => ({ status: 'current' }),
       preparePublicationApiGovernanceImpl: async (input) => {
+        assert.equal(phases.at(-1), 'candidate-prepared');
+        phases.push('governance');
         calls.push(input);
         const transformed = JSON.parse(await readFile(join(sandboxPackDir, 'package.json'), 'utf8'));
         assert.equal(transformed.version, candidateVersion);
@@ -630,7 +789,14 @@ test('exportPackSandboxTarball runs public API governance against the transforme
       },
       runCaptureImpl: async (command, args) => {
         if (command === 'npm') {
+          if (args[0] === 'run') {
+            assert.deepEqual(args, ['run', '--silent', 'prepare:api-governance']);
+            phases.push('candidate-prepared');
+            return '';
+          }
           assert.equal(calls.length, 1, 'governance must finish before npm pack observes the sandbox');
+          assert.equal(phases.at(-1), 'governance');
+          assert.equal(args.includes('--ignore-scripts'), true, 'packing must not rebuild the prepared candidate');
           if (args.includes('--dry-run')) return 'dry-run';
           await writeFile(join(sandboxPackDir, tarballName), 'candidate');
           return tarballName;
@@ -663,6 +829,7 @@ test('exportPackSandboxTarball runs public API governance against the transforme
       repositoryRoot: sourceRoot,
       env: process.env,
     }]);
+    assert.deepEqual(phases, ['candidate-prepared', 'governance']);
     assert.deepEqual(metadata.publication.apiGovernance, {
       status: 'dormant_pre_baseline',
       previousVersion: null,
@@ -745,6 +912,7 @@ test('exportPackSandboxTarball rejects API declaration drift introduced only in 
           };
         },
         runCaptureImpl: async (command, args, options) => {
+          if (command === 'npm' && args[0] === 'run') return '';
           if (command === 'npm' && args.includes('--dry-run')) return 'dry-run';
           if (command === 'npm') {
             await writeFile(
@@ -772,6 +940,299 @@ test('exportPackSandboxTarball rejects API declaration drift introduced only in 
       }),
       /exact final tarball API governance.*drift/u,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('exportPackSandboxTarball runs the declared public candidate lifecycle before governance and ignored-script packing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-public-sdk-prepack-lifecycle-'));
+  const sandboxRoot = join(root, 'sandbox');
+  const sandboxPackDir = join(sandboxRoot, 'packages', 'sdk');
+  const destinationDir = join(root, 'destination');
+  const candidateVersion = '0.1.0-preview.11';
+  const tarballName = `happier-dev-sdk-${candidateVersion}.tgz`;
+  const phases = [];
+  try {
+    await mkdir(sandboxPackDir, { recursive: true });
+    await mkdir(destinationDir);
+    await writeFile(join(sandboxPackDir, 'package.json'), JSON.stringify({
+      name: '@happier-dev/sdk',
+      version: '0.0.0',
+      private: true,
+      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+      bundledDependencies: ['@happier-dev/protocol'],
+      dependencies: { '@happier-dev/protocol': '0.0.0' },
+    }));
+
+    await exportPackSandboxTarball({
+      monorepoRoot: root,
+      packageRelDir: 'packages/sdk',
+      destinationDir,
+      packageVersion: candidateVersion,
+      publication: {
+        expectedPackageName: '@happier-dev/sdk',
+        requiredFiles: ['API.md', 'api-declarations.md', 'api-surface.json'],
+        apiGovernance: { profileId: 'sdk', candidatePreparation: 'prepack' },
+      },
+      createPackSandboxImpl: async () => sandboxRoot,
+      validatePublicationApiGovernanceImpl: async () => ({ status: 'current' }),
+      preparePublicationApiGovernanceImpl: async () => {
+        assert.deepEqual(phases, ['prepack']);
+        phases.push('governance');
+        await writeFile(join(sandboxPackDir, 'API.md'), '# generated\n');
+        await writeFile(join(sandboxPackDir, 'api-declarations.md'), '# declarations\n');
+        await writeFile(join(sandboxPackDir, 'api-surface.json'), '{"symbols":[]}\n');
+        return {
+          summary: {
+            status: 'dormant_pre_baseline',
+            previousVersion: null,
+            removedSymbolsAreBreaking: false,
+            humanReviewRequired: false,
+          },
+        };
+      },
+      runCaptureImpl: async (command, args) => {
+        if (command === 'npm' && args[0] === 'run') {
+          assert.deepEqual(
+            args,
+            ['run', '--silent', 'prepack'],
+            'the SDK publication config must select its canonical artifact lifecycle',
+          );
+          phases.push('prepack');
+          return '';
+        }
+        if (command === 'npm') {
+          assert.deepEqual(phases, ['prepack', 'governance']);
+          assert.equal(args.includes('--ignore-scripts'), true, 'packing must not rerun the lifecycle');
+          if (args.includes('--dry-run')) return 'dry-run';
+          await writeFile(join(sandboxPackDir, tarballName), 'candidate');
+          return tarballName;
+        }
+        if (command === 'tar' && args[0] === '-tf') {
+          return [
+            'package/package.json',
+            'package/API.md',
+            'package/api-declarations.md',
+            'package/api-surface.json',
+            'package/node_modules/@happier-dev/protocol/package.json',
+          ].join('\n');
+        }
+        if (command === 'tar' && args[0] === '-xOf') {
+          return JSON.stringify({
+            name: '@happier-dev/sdk',
+            version: candidateVersion,
+            happier: { publicSdkRelease: { posture: 'developer_preview' } },
+            publishConfig: { access: 'public' },
+            dependencies: { '@happier-dev/protocol': '0.0.0' },
+          });
+        }
+        throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+      },
+    });
+
+    assert.deepEqual(phases, ['prepack', 'governance']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('exportPackSandboxTarball removes declaration-test inputs before candidate preparation and rejects emitted survivors', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-declaration-test-artifacts-'));
+  const sandboxRoot = join(root, 'sandbox');
+  const sandboxPackDir = join(sandboxRoot, 'packages', 'plugin-ui');
+  const destinationDir = join(root, 'destination');
+  const candidateVersion = '0.1.0-preview.8';
+  const tarballName = `happier-dev-plugin-ui-${candidateVersion}.tgz`;
+  const declarationTestFiles = [
+    'src/direct.test-d.ts',
+    'src/direct.test-d.tsx',
+    'dist/direct.test-d.js',
+    'dist/direct.test-d.d.ts',
+    'dist/direct.test-d.js.map',
+    'dist/direct.test-d.d.ts.map',
+    'node_modules/@happier-dev/protocol/dist/transitive.contract.test-d.js',
+  ];
+  const postPreparationTestFile = 'node_modules/@happier-dev/protocol/dist/post-preparation.contract.test-d.js';
+  try {
+    await mkdir(sandboxPackDir, { recursive: true });
+    await mkdir(destinationDir);
+    await writeFile(join(sandboxPackDir, 'package.json'), JSON.stringify({
+      name: '@happier-dev/plugin-ui',
+      version: '0.0.0',
+      private: true,
+      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+    }));
+    for (const relativePath of declarationTestFiles) {
+      const filePath = join(sandboxPackDir, relativePath);
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, 'declaration-test artifact\n');
+    }
+
+    await assert.rejects(
+      () => exportPackSandboxTarball({
+        monorepoRoot: root,
+        packageRelDir: 'packages/plugin-ui',
+        destinationDir,
+        packageVersion: candidateVersion,
+        publication: {
+          expectedPackageName: '@happier-dev/plugin-ui',
+          requiredFiles: ['API.md'],
+          apiGovernance: { profileId: 'plugin-ui' },
+        },
+        createPackSandboxImpl: async () => sandboxRoot,
+        validatePublicationApiGovernanceImpl: async () => ({ status: 'current' }),
+        preparePublicationApiGovernanceImpl: async () => ({
+          summary: {
+            status: 'dormant_pre_baseline',
+            previousVersion: null,
+            removedSymbolsAreBreaking: false,
+            humanReviewRequired: false,
+          },
+        }),
+        runCaptureImpl: async (command, args) => {
+          if (command === 'npm') {
+            if (args[0] === 'run') {
+              for (const relativePath of declarationTestFiles) {
+                assert.equal(
+                  existsSync(join(sandboxPackDir, relativePath)),
+                  false,
+                  `declaration-test input must be removed before candidate preparation: ${relativePath}`,
+                );
+              }
+              const postPreparationTestPath = join(sandboxPackDir, postPreparationTestFile);
+              await mkdir(dirname(postPreparationTestPath), { recursive: true });
+              await writeFile(postPreparationTestPath, 'declaration-test artifact emitted by preparation\n');
+              return '';
+            }
+            assert.equal(
+              existsSync(join(sandboxPackDir, postPreparationTestFile)),
+              false,
+              'declaration-test output must be removed after candidate preparation',
+            );
+            if (args.includes('--dry-run')) return 'dry-run';
+            await writeFile(join(sandboxPackDir, tarballName), 'candidate');
+            return tarballName;
+          }
+          if (command === 'tar' && args[0] === '-tf') {
+            return [
+              'package/package.json',
+              'package/API.md',
+              'package/dist/reintroduced.test-d.d.ts.map',
+            ].join('\n');
+          }
+          throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+        },
+      }),
+      /public tarball must not include test file: package\/dist\/reintroduced\.test-d\.d\.ts\.map/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('exportPackSandboxTarball materializes plugin-sdk governance in a source-complete publication sandbox', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-plugin-sdk-publication-governance-'));
+  const sandboxRoot = join(root, 'sandbox');
+  const sandboxPackDir = join(sandboxRoot, 'packages', 'plugin-sdk');
+  const destinationDir = join(root, 'destination');
+  const candidateVersion = '0.1.0-preview.9';
+  const tarballName = `happier-dev-plugin-sdk-${candidateVersion}.tgz`;
+  const monorepoRoot = await findMonorepoRoot(dirname(fileURLToPath(import.meta.url)));
+  try {
+    await mkdir(join(sandboxPackDir, 'scripts'), { recursive: true });
+    await mkdir(destinationDir);
+    await writeFile(join(sandboxPackDir, 'package.json'), JSON.stringify({
+      name: '@happier-dev/plugin-sdk',
+      version: '0.0.0',
+      private: true,
+      type: 'module',
+      happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+    }));
+    await writeFile(
+      join(sandboxPackDir, 'scripts', 'apiSurfaceCli.mjs'),
+      [
+        "import { writeFile } from 'node:fs/promises';",
+        "import { join } from 'node:path';",
+        'export async function runApiSurfaceCli(options) {',
+        "  if (!options.write) throw new Error('publication governance must write candidate records');",
+        "  await writeFile(join(options.packageRoot, 'API.md'), '# Plugin SDK API\\n');",
+        "  await writeFile(join(options.packageRoot, 'api-declarations.md'), '# Plugin SDK declarations\\n');",
+        '  await writeFile(join(options.packageRoot, \'api-surface.json\'), `${JSON.stringify({',
+        '    schemaVersion: 1,',
+        "    packageName: '@happier-dev/plugin-sdk',",
+        '    entrypoints: [],',
+        '    symbols: [],',
+        '  }, null, 2)}\\n`);',
+        "  await writeFile(join(options.packageRoot, 'capability-matrix.json'), '{}\\n');",
+        '  return {',
+        "    mode: 'write',",
+        "    status: 'current',",
+        '    summary: { plannedFiles: 4, changedFiles: 4, writtenFiles: 4 },',
+        '    files: [],',
+        '  };',
+        '}',
+        '',
+      ].join('\n'),
+    );
+
+    const metadata = await exportPackSandboxTarball({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-sdk',
+      destinationDir,
+      packageVersion: candidateVersion,
+      publication: {
+        expectedPackageName: '@happier-dev/plugin-sdk',
+        requiredFiles: [
+          'API.md',
+          'api-declarations.md',
+          'api-surface.json',
+          'capability-matrix.json',
+        ],
+        apiGovernance: { profileId: 'plugin-sdk' },
+      },
+      createPackSandboxImpl: async () => sandboxRoot,
+      validatePublicationApiGovernanceImpl: async () => ({ status: 'current' }),
+      runCaptureImpl: async (command, args) => {
+        if (command === 'npm') {
+          if (args[0] === 'run') {
+            assert.deepEqual(args, ['run', '--silent', 'prepare:api-governance']);
+            return '';
+          }
+          const inventory = JSON.parse(await readFile(join(sandboxPackDir, 'api-surface.json'), 'utf8'));
+          assert.equal(inventory.packageName, '@happier-dev/plugin-sdk');
+          assert.equal(args.includes('--ignore-scripts'), true);
+          if (args.includes('--dry-run')) return 'dry-run';
+          await writeFile(join(sandboxPackDir, tarballName), 'candidate');
+          return tarballName;
+        }
+        if (command === 'tar' && args[0] === '-tf') {
+          return [
+            'package/package.json',
+            'package/API.md',
+            'package/api-declarations.md',
+            'package/api-surface.json',
+            'package/capability-matrix.json',
+          ].join('\n');
+        }
+        if (command === 'tar' && args[0] === '-xOf') {
+          return JSON.stringify({
+            name: '@happier-dev/plugin-sdk',
+            version: candidateVersion,
+            happier: { publicSdkRelease: { posture: 'developer_preview' } },
+            publishConfig: { access: 'public' },
+          });
+        }
+        throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+      },
+    });
+
+    assert.deepEqual(metadata.publication.apiGovernance, {
+      status: 'dormant_pre_baseline',
+      previousVersion: null,
+      removedSymbolsAreBreaking: false,
+      humanReviewRequired: false,
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1466,6 +1927,68 @@ test('createPackSandbox materializes only the declared root-hoisted runtime clos
         dependencyName: 'unapproved-runtime',
       }),
       /outside the caller-approved root/i,
+    );
+  } finally {
+    if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('createPackSandbox materializes a staged build workspace runtime closure without expanding the target bundle', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-build-workspace-runtime-'));
+  let sandboxRoot;
+  try {
+    const monorepoRoot = await createHoistedRuntimePackFixture({ root });
+    await mkdir(join(monorepoRoot, 'packages', 'plugin-ui'), { recursive: true });
+    await writeFile(
+      join(monorepoRoot, 'packages', 'plugin-ui', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/plugin-ui',
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+      }),
+    );
+    assert.deepEqual(
+      await resolvePackSandboxWorkspaceRelDirs({
+        monorepoRoot,
+        packageRelDir: 'packages/plugin-sdk',
+      }),
+      ['packages/plugin-sdk', 'packages/protocol'],
+    );
+
+    sandboxRoot = await createPackSandbox({
+      monorepoRoot,
+      packageRelDir: 'packages/plugin-ui',
+    });
+
+    const pluginSdkBuildRuntimeDir = join(
+      sandboxRoot,
+      'packages',
+      'protocol',
+      'node_modules',
+      '@fixture',
+      'runtime',
+    );
+    assert.equal(
+      (await lstat(pluginSdkBuildRuntimeDir)).isSymbolicLink(),
+      false,
+      'a staged Plugin SDK build must resolve its Protocol runtime closure from sandbox-owned bytes',
+    );
+    assert.doesNotThrow(() => assertPhysicalPathWithinApprovedRoot({
+      approvedRootDir: sandboxRoot,
+      sourcePath: pluginSdkBuildRuntimeDir,
+      dependencyName: '@fixture/runtime',
+    }));
+    assert.equal(
+      existsSync(join(
+        sandboxRoot,
+        'packages',
+        'plugin-ui',
+        'node_modules',
+        '@fixture',
+        'runtime',
+      )),
+      false,
+      'the build-only closure must not become a target-package runtime dependency',
     );
   } finally {
     if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });

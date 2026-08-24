@@ -265,6 +265,66 @@ async function readInternalWorkspacePackageNames({ monorepoRoot, workspaceRelDir
   return packageNames;
 }
 
+async function resolvePackSandboxWorkspaceStaging({ monorepoRoot, packageRelDir }) {
+  const normalizedPackageRelDir = await validatePackSandboxPackageRelDir({
+    monorepoRoot,
+    packageRelDir,
+  });
+  const toolingWorkspaceNames = await resolveBundledInternalWorkspacePackageNameClosure({
+    monorepoRoot,
+    packageNames: ['@happier-dev/cli-common'],
+  });
+  const runtimeWorkspaceRelDirs = await resolvePackSandboxWorkspaceRelDirs({
+    monorepoRoot,
+    packageRelDir: normalizedPackageRelDir,
+  });
+  const runtimeWorkspaceNames = await readInternalWorkspacePackageNames({
+    monorepoRoot,
+    workspaceRelDirs: runtimeWorkspaceRelDirs,
+  });
+  const buildWorkspaceNames = await resolveBundledInternalWorkspacePackageNameClosure({
+    monorepoRoot,
+    packageNames: [...toolingWorkspaceNames, ...runtimeWorkspaceNames],
+    includeBuildOnly: true,
+  });
+  const targetPackageJson = await readJson(join(monorepoRoot, normalizedPackageRelDir, 'package.json'));
+  const targetPackageName = String(targetPackageJson?.name ?? '').trim();
+  const buildWorkspaceRelDirs = buildWorkspaceNames
+    .map((packageName) => (
+      packageName === targetPackageName ? normalizedPackageRelDir : resolveInternalWorkspaceRelDir(packageName)
+    ))
+    .filter(Boolean);
+  const bundledBuildWorkspaceRelDirs = new Set();
+  for (const buildWorkspaceRelDir of buildWorkspaceRelDirs) {
+    const buildWorkspacePackageJson = await readJson(
+      join(monorepoRoot, buildWorkspaceRelDir, 'package.json'),
+    );
+    if (readBundledInternalWorkspacePackageNames(buildWorkspacePackageJson).length === 0) {
+      continue;
+    }
+    for (const runtimeWorkspaceRelDir of await resolvePackSandboxWorkspaceRelDirs({
+      monorepoRoot,
+      packageRelDir: buildWorkspaceRelDir,
+    })) {
+      bundledBuildWorkspaceRelDirs.add(runtimeWorkspaceRelDir);
+    }
+  }
+  const materializedWorkspaceRelDirs = [...new Set([
+    ...runtimeWorkspaceRelDirs,
+    ...bundledBuildWorkspaceRelDirs,
+  ])].sort((left, right) => left.localeCompare(right));
+
+  return {
+    normalizedPackageRelDir,
+    runtimeWorkspaceRelDirs,
+    buildWorkspaceRelDirs,
+    bundledBuildWorkspaceRelDirs: [...bundledBuildWorkspaceRelDirs].sort((left, right) => (
+      left.localeCompare(right)
+    )),
+    materializedWorkspaceRelDirs,
+  };
+}
+
 function normalizeWorkspaceRelDir(workspaceRelDir) {
   const normalizedWorkspaceRelDir = String(workspaceRelDir ?? '').trim().replaceAll('\\', '/');
   const segments = normalizedWorkspaceRelDir.split('/');
@@ -317,35 +377,15 @@ async function validatePackSandboxSourceRelDirs({
   }));
 }
 
-export async function resolvePackSandboxSourceRelDirs({ monorepoRoot, packageRelDir }) {
-  const normalizedPackageRelDir = await validatePackSandboxPackageRelDir({
-    monorepoRoot,
-    packageRelDir,
-  });
-  const toolingWorkspaceNames = await resolveBundledInternalWorkspacePackageNameClosure({
-    monorepoRoot,
-    packageNames: ['@happier-dev/cli-common'],
-  });
-  const runtimeWorkspaceRelDirs = await resolvePackSandboxWorkspaceRelDirs({
-    monorepoRoot,
-    packageRelDir: normalizedPackageRelDir,
-  });
-  const runtimeWorkspaceNames = await readInternalWorkspacePackageNames({
-    monorepoRoot,
-    workspaceRelDirs: runtimeWorkspaceRelDirs,
-  });
-  const buildWorkspaceNames = await resolveBundledInternalWorkspacePackageNameClosure({
-    monorepoRoot,
-    packageNames: [...toolingWorkspaceNames, ...runtimeWorkspaceNames],
-    includeBuildOnly: true,
-  });
-  const targetPackageJson = await readJson(join(monorepoRoot, normalizedPackageRelDir, 'package.json'));
-  const targetPackageName = String(targetPackageJson?.name ?? '').trim();
-  const buildWorkspaceRelDirs = buildWorkspaceNames
-    .map((packageName) => (
-      packageName === targetPackageName ? normalizedPackageRelDir : resolveInternalWorkspaceRelDir(packageName)
-    ))
-    .filter(Boolean);
+async function resolvePackSandboxSourceRelDirsFromWorkspaceStaging({
+  monorepoRoot,
+  workspaceStaging,
+}) {
+  const {
+    runtimeWorkspaceRelDirs,
+    buildWorkspaceRelDirs,
+    bundledBuildWorkspaceRelDirs,
+  } = workspaceStaging;
 
   // The generator's own selector is the sole external-consumer inventory. An
   // installed hstack resolves it from the monorepo being packed rather than
@@ -425,6 +465,7 @@ export async function resolvePackSandboxSourceRelDirs({ monorepoRoot, packageRel
     'scripts/workspaces',
     'scripts/testing/process',
     ...buildWorkspaceRelDirs,
+    ...bundledBuildWorkspaceRelDirs,
     ...runtimeWorkspaceRelDirs,
     ...publicToolchainConsumerSourceRelDirs,
     ...capabilityMatrixProvingConsumerSourceRelDirs,
@@ -434,6 +475,13 @@ export async function resolvePackSandboxSourceRelDirs({ monorepoRoot, packageRel
   return await validatePackSandboxSourceRelDirs({
     monorepoRoot,
     workspaceRelDirs: sourceRelDirs,
+  });
+}
+
+export async function resolvePackSandboxSourceRelDirs({ monorepoRoot, packageRelDir }) {
+  return await resolvePackSandboxSourceRelDirsFromWorkspaceStaging({
+    monorepoRoot,
+    workspaceStaging: await resolvePackSandboxWorkspaceStaging({ monorepoRoot, packageRelDir }),
   });
 }
 
@@ -899,17 +947,14 @@ export async function createPackSandbox({
     // Workspace prepack scripts share the repository-owned lock, command, dependency-order, and
     // publication helpers. Keep that canonical script layer in the sandbox instead of teaching
     // each package a second standalone bundling implementation.
-    const dirsToCopy = new Set(await resolvePackSandboxSourceRelDirs({
-      monorepoRoot,
-      packageRelDir: normalizedPackageRelDir,
-    }));
-    // The copy set additionally carries build-only internal workspaces so prepack scripts resolve.
-    // Only the package's declared runtime bundle closure may have its external runtime dependency
-    // tree vendored: a tooling-only workspace's runtime dependencies never reach the tarball.
-    const runtimeBundleRelDirs = await resolvePackSandboxWorkspaceRelDirs({
+    const workspaceStaging = await resolvePackSandboxWorkspaceStaging({
       monorepoRoot,
       packageRelDir: normalizedPackageRelDir,
     });
+    const dirsToCopy = new Set(await resolvePackSandboxSourceRelDirsFromWorkspaceStaging({
+      monorepoRoot,
+      workspaceStaging,
+    }));
     for (const d of dirsToCopy) {
       const { segments } = normalizeWorkspaceRelDir(d);
       const src = join(monorepoRoot, ...segments);
@@ -989,7 +1034,13 @@ export async function createPackSandbox({
     await materializePackSandboxRuntimeDependencyClosure({
       monorepoRoot,
       sandboxRoot,
-      workspaceRelDirs: runtimeBundleRelDirs,
+      // The target package's runtime closure is only the artifact boundary.
+      // A staged build workspace that declares an internal bundle closure may
+      // run the canonical bundler during prepack. Its declared closure must
+      // therefore resolve from within the isolated sandbox as well. This
+      // materializes only those build inputs; npm pack still selects the
+      // target package's own declared files and does not include siblings.
+      workspaceRelDirs: workspaceStaging.materializedWorkspaceRelDirs,
       runtimeDependencies,
     });
     const sandboxBinDir = join(sandboxRoot, 'node_modules', '.bin');
@@ -1186,7 +1237,15 @@ function normalizePublicationApiGovernance(value) {
   if (!profileId || profileId.length > 128 || !/^[a-z][a-z0-9_-]*$/u.test(profileId)) {
     throw new Error('[pack] publication apiGovernance.profileId must be a bounded identifier');
   }
-  return Object.freeze({ profileId });
+  const candidatePreparation = value.candidatePreparation === undefined
+    ? 'prepare:api-governance'
+    : String(value.candidatePreparation ?? '').trim();
+  if (!['prepare:api-governance', 'prepack'].includes(candidatePreparation)) {
+    throw new Error(
+      '[pack] publication apiGovernance.candidatePreparation must be prepare:api-governance or prepack',
+    );
+  }
+  return Object.freeze({ profileId, candidatePreparation });
 }
 
 function normalizePublicationConfig(publication, packageVersion) {
@@ -1205,12 +1264,12 @@ function normalizePublicationConfig(publication, packageVersion) {
 }
 
 function isPackTestFile(relativePath) {
-  return /(?:^|\/)[^/]+\.test\.[cm]?[jt]sx?$/iu.test(relativePath);
+  return /(?:^|\/)[^/]+\.test(?:-d)?(?:\.[cm]?[jt]sx?|\.[cm]?d\.[cm]?ts)(?:\.map)?$/iu.test(relativePath);
 }
 
 async function removePackSandboxTestFiles(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.name === 'node_modules' || entry.name === '.git') continue;
+    if (entry.name === '.git') continue;
     const entryPath = join(directory, entry.name);
     if (entry.isDirectory()) {
       await removePackSandboxTestFiles(entryPath);
@@ -1249,15 +1308,21 @@ function projectPublicSdkDeveloperPreview(manifest) {
   };
 }
 
-async function applyPublicationPackSandboxTransform({ sandboxPackDir, config, packageVersion }) {
+async function applyPublicationPackSandboxTransform({
+  sandboxRoot,
+  sandboxPackDir,
+  config,
+  packageVersion,
+}) {
   const packageJsonPath = join(sandboxPackDir, 'package.json');
   const manifest = await readJson(packageJsonPath);
   if (!isPlainRecord(manifest) || manifest.name !== config.expectedPackageName) {
     throw new Error(`[pack] publication package name must be ${config.expectedPackageName}`);
   }
-  if (manifest.version !== packageVersion) {
-    throw new Error(`[pack] publication package version must be ${packageVersion}`);
+  if (typeof manifest.version !== 'string' || !manifest.version.trim()) {
+    throw new Error('[pack] publication package must declare a non-empty source version');
   }
+  manifest.version = packageVersion;
   projectPublicSdkDeveloperPreview(manifest);
   if (manifest.publishConfig !== undefined && !isPlainRecord(manifest.publishConfig)) {
     throw new Error('[pack] publication publishConfig must be an object when present');
@@ -1276,7 +1341,48 @@ async function applyPublicationPackSandboxTransform({ sandboxPackDir, config, pa
     }
   }
   await writeFile(packageJsonPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  for (const [dependencyName, dependencyVersion] of Object.entries(config.dependencyVersions)) {
+    const workspaceRelDir = resolveInternalWorkspaceRelDir(dependencyName);
+    if (!workspaceRelDir) continue;
+    const { segments } = normalizeWorkspaceRelDir(workspaceRelDir);
+    const workspacePackageJsonPath = resolve(sandboxRoot, ...segments, 'package.json');
+    if (!pathIsInside(sandboxRoot, workspacePackageJsonPath) || !(await pathExists(workspacePackageJsonPath))) {
+      throw new Error(
+        `[pack] publication workspace dependency is unavailable in sandbox: ${dependencyName}`,
+      );
+    }
+    const workspaceManifest = await readJson(workspacePackageJsonPath);
+    if (!isPlainRecord(workspaceManifest) || workspaceManifest.name !== dependencyName) {
+      throw new Error(`[pack] publication workspace dependency manifest must be ${dependencyName}`);
+    }
+    await writeFile(
+      workspacePackageJsonPath,
+      `${JSON.stringify({ ...workspaceManifest, version: dependencyVersion }, null, 2)}\n`,
+    );
+  }
   await removePackSandboxTestFiles(sandboxPackDir);
+}
+
+async function preparePublicationCandidateToolchain({
+  sandboxRoot,
+  config,
+  runCaptureImpl,
+  env,
+}) {
+  if (!Object.hasOwn(config.dependencyVersions, '@happier-dev/plugin-sdk')) return;
+  const pluginSdkRelDir = resolveInternalWorkspaceRelDir('@happier-dev/plugin-sdk');
+  if (!pluginSdkRelDir) {
+    throw new Error('[pack] Plugin SDK workspace path is unavailable for candidate toolchain preparation');
+  }
+  const pluginSdkDir = join(sandboxRoot, ...normalizeWorkspaceRelDir(pluginSdkRelDir).segments);
+  if (!(await pathExists(join(pluginSdkDir, 'package.json')))) {
+    throw new Error('[pack] Plugin SDK workspace is unavailable for candidate toolchain preparation');
+  }
+  await runCaptureImpl(
+    process.execPath,
+    ['./scripts/generatePublicToolchainCompatibility.mjs', '--write'],
+    { cwd: pluginSdkDir, env },
+  );
 }
 
 /**
@@ -1436,16 +1542,26 @@ export async function exportPackSandboxTarball({
   let apiGovernancePreparation = null;
 
   try {
-    if (packageVersion !== null) {
-      const normalizedPackageVersion = String(packageVersion).trim();
-      if (
+    const normalizedPackageVersion = packageVersion === null ? null : String(packageVersion).trim();
+    if (
+      normalizedPackageVersion !== null
+      && (
         normalizedPackageVersion !== packageVersion
         || !normalizedPackageVersion
         || normalizedPackageVersion.length > 128
         || !/^[0-9A-Za-z][0-9A-Za-z.-]*$/u.test(normalizedPackageVersion)
-      ) {
-        throw new Error('[pack] package version override must be a bounded portable package version');
-      }
+      )
+    ) {
+      throw new Error('[pack] package version override must be a bounded portable package version');
+    }
+    if (publicationConfig) {
+      await applyPublicationPackSandboxTransform({
+        sandboxRoot,
+        sandboxPackDir,
+        config: publicationConfig,
+        packageVersion: normalizedPackageVersion,
+      });
+    } else if (normalizedPackageVersion !== null) {
       const sandboxPackageJsonPath = join(sandboxPackDir, 'package.json');
       const sandboxPackageJson = await readJson(sandboxPackageJsonPath);
       await writeFile(
@@ -1456,15 +1572,28 @@ export async function exportPackSandboxTarball({
         }, null, 2)}\n`,
       );
     }
-    if (publicationConfig) {
-      await applyPublicationPackSandboxTransform({
-        sandboxPackDir,
-        config: publicationConfig,
-        packageVersion: String(packageVersion),
-        validatePublicationApiGovernanceImpl,
-      });
-    }
     if (publicationConfig?.apiGovernance) {
+      // Public-package lifecycle scripts are candidate preparation owners. Run
+      // that graph exactly once, then govern and pack the resulting bytes
+      // without allowing either npm pack invocation to rebuild the candidate.
+      // The Plugin UI prepared check reads Plugin SDK's generated compatibility
+      // projection. Its source facts were just transformed into candidate
+      // versions, so regenerate that canonical projection in the sandbox
+      // before the check rather than bypassing it or patching its bytes.
+      await preparePublicationCandidateToolchain({
+        sandboxRoot,
+        config: publicationConfig,
+        runCaptureImpl,
+        env,
+      });
+      await runCaptureImpl('npm', [
+        'run',
+        '--silent',
+        publicationConfig.apiGovernance.candidatePreparation,
+      ], {
+        cwd: sandboxPackDir,
+        env,
+      });
       apiGovernancePreparation = await preparePublicationApiGovernanceImpl({
         profileId: publicationConfig.apiGovernance.profileId,
         packageName: publicationConfig.expectedPackageName,
@@ -1481,14 +1610,23 @@ export async function exportPackSandboxTarball({
       }
       if (apiGovernancePreparation.log) console.log(apiGovernancePreparation.log);
     }
-    await runCaptureImpl('npm', ['pack', '--dry-run'], {
+    if (publicationConfig?.apiGovernance) {
+      // Candidate preparation can refresh the bundled workspace-dependency
+      // closure. Reapply the shared filter so generated declaration tests do
+      // not survive into the exact artifact.
+      await removePackSandboxTestFiles(sandboxPackDir);
+    }
+    const packArgs = publicationConfig?.apiGovernance
+      ? ['pack', '--ignore-scripts']
+      : ['pack'];
+    await runCaptureImpl('npm', [...packArgs, '--dry-run'], {
       cwd: sandboxPackDir,
       env: {
         ...env,
         npm_config_dry_run: 'true',
       },
     });
-    const tarballNameRaw = await runCaptureImpl('npm', ['pack'], {
+    const tarballNameRaw = await runCaptureImpl('npm', packArgs, {
       cwd: sandboxPackDir,
       env: {
         ...env,
@@ -1532,6 +1670,7 @@ export async function exportPackSandboxTarball({
         env,
         config: publicationConfig,
         packageVersion: String(packageVersion),
+        validatePublicationApiGovernanceImpl,
       });
     }
 
