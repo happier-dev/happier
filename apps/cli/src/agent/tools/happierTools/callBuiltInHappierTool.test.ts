@@ -76,6 +76,44 @@ describe('callBuiltInHappierTool', () => {
     );
   });
 
+  it('dispatches trusted session-agent bridge calls on the agent surface with session machine context', async () => {
+    resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        id: 'sess-1',
+        machineId: 'machine-1',
+        metadata: { summary: { text: 'Old title' } },
+      },
+      ctx: { type: 'plain' as const },
+      mode: 'plain' as const,
+    });
+    execute.mockResolvedValueOnce({ ok: true, result: { matches: [] } });
+
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'action_execute',
+      args: {
+        actionId: 'memory.search',
+        input: { query: { v: 1, query: 'bridge', scope: { type: 'global' }, mode: 'hints' } },
+      },
+      invocation: 'session_agent_bridge',
+    });
+
+    expect(result).toEqual({ ok: true, result: { matches: [] } });
+    expect(execute).toHaveBeenCalledWith(
+      'memory.search',
+      expect.objectContaining({ machineId: 'machine-1' }),
+      expect.objectContaining({
+        defaultSessionId: 'sess-1',
+        defaultSessionMachineId: 'machine-1',
+        surface: 'session_agent',
+      }),
+    );
+  });
+
   it('rejects action_options_resolve on the CLI surface', async () => {
     const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
     const result = await callBuiltInHappierTool({

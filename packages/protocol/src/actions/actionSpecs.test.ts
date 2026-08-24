@@ -870,6 +870,27 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('memory.search');
     expect(spec.id).toBe('memory.search');
     expect(spec.surfaces.voice_tool).toBe(true);
+    expect(spec.surfaces.session_agent).toBe(true);
+    expect(spec.surfaces.cli).toBe(false);
+  });
+
+  it('declares only semantically valid session-bound contextual defaults', () => {
+    expect(getActionSpec('session.title.set').contextualDefaults).toEqual({
+      sessionId: 'current_session',
+    });
+    expect(getActionSpec('session.status.get').contextualDefaults).toEqual({
+      sessionId: 'current_session',
+    });
+    expect(getActionSpec('memory.search').contextualDefaults).toEqual({
+      machineId: 'current_session_machine',
+    });
+    expect(getActionSpec('memory.get_window').contextualDefaults).toEqual({
+      machineId: 'current_session_machine',
+    });
+    expect(getActionSpec('memory.get_window').contextualDefaults).not.toHaveProperty('sessionId');
+    expect(serializeActionSpec(getActionSpec('memory.get_window')).contextualDefaults).toEqual({
+      machineId: 'current_session_machine',
+    });
   });
 
   it('exposes session fork action spec', () => {

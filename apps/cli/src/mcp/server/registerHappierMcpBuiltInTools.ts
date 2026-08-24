@@ -1,6 +1,8 @@
 import { listBuiltInHappierTools, type BuiltInHappierToolsSurface } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import type { ActionsSettingsV1, ApprovalRequestOriginV1 } from '@happier-dev/protocol';
+import { getEquivalentActionIdForBuiltInTool } from '@/agent/tools/happierTools/actionToolCatalog';
+import { projectContextualActionToolInputSchema } from '@/agent/tools/happierTools/contextualActionToolInput';
 
 type ToolRegistrar = Readonly<{
     registerTool: (name: string, meta: unknown, handler: (args: unknown, extra?: unknown) => Promise<unknown>) => void;
@@ -39,6 +41,7 @@ export function registerHappierMcpBuiltInTools(
     server: ToolRegistrar,
     params: Readonly<{
         sessionId: string;
+        defaultSessionMachineId?: string | null;
         surface: BuiltInHappierToolsSurface;
         actionsSettings?: ActionsSettingsV1 | null;
         getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
@@ -55,12 +58,21 @@ export function registerHappierMcpBuiltInTools(
     });
 
     for (const tool of enabledTools) {
+        const actionId = getEquivalentActionIdForBuiltInTool(tool.name);
+        const inputSchema = projectContextualActionToolInputSchema({
+            actionId,
+            inputSchema: tool.inputSchema,
+            context: {
+                defaultSessionId: params.sessionId,
+                defaultSessionMachineId: params.defaultSessionMachineId ?? null,
+            },
+        });
         server.registerTool(
             tool.name,
             {
                 description: tool.description,
                 title: tool.title,
-                inputSchema: tool.inputSchema,
+                inputSchema,
             },
             async (args: unknown, extra?: unknown) => {
                 try {

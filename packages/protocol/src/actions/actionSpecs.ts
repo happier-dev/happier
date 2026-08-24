@@ -91,6 +91,18 @@ export const ActionToolExposureSchema = z.object({
 }).strict();
 export type ActionToolExposure = z.infer<typeof ActionToolExposureSchema>;
 
+export const ActionContextualDefaultSourceSchema = z.enum([
+  'current_session',
+  'current_session_machine',
+]);
+export type ActionContextualDefaultSource = z.infer<typeof ActionContextualDefaultSourceSchema>;
+
+export const ActionContextualDefaultsSchema = z.object({
+  sessionId: ActionContextualDefaultSourceSchema.optional(),
+  machineId: ActionContextualDefaultSourceSchema.optional(),
+}).strict();
+export type ActionContextualDefaults = z.infer<typeof ActionContextualDefaultsSchema>;
+
 export const ActionSafetySchema = z.enum(['safe', 'danger']);
 export type ActionSafety = z.infer<typeof ActionSafetySchema>;
 
@@ -220,6 +232,7 @@ export const ActionSpecSchema = z.object({
   prompting: ActionPromptingSchema.optional(),
   operation: ActionOperationDeclarationV1Schema.optional(),
   toolExposure: ActionToolExposureSchema.optional(),
+  contextualDefaults: ActionContextualDefaultsSchema.optional(),
   approval: ActionApprovalSchema,
   surfaces: ActionSurfaceSchema,
   inputSchema: ZodSchemaLike,
@@ -2297,6 +2310,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: true,
       cli: true,
     },
+    contextualDefaults: { sessionId: 'current_session' },
     inputHints: {
       title: 'Set title',
       fields: [
@@ -2436,6 +2450,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: true,
       cli: true,
     },
+    contextualDefaults: { sessionId: 'current_session' },
     inputHints: {
       title: 'Get session status',
       fields: [
@@ -3474,8 +3489,9 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       session_agent: true,
       mcp: false,
-      cli: true,
+      cli: false,
     },
+    contextualDefaults: { machineId: 'current_session_machine' },
     inputSchema: MemorySearchInputSchema,
   },
   {
@@ -3503,8 +3519,9 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       session_agent: true,
       mcp: false,
-      cli: true,
+      cli: false,
     },
+    contextualDefaults: { machineId: 'current_session_machine' },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
       mcp: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },

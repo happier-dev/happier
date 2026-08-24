@@ -247,6 +247,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           sessionId: context.sessionId,
           toolName,
           args: parsedArgs,
+          ...(args.includes('--session-agent-bridge') ? { invocation: 'session_agent_bridge' as const } : {}),
         });
       } else {
         const context = await resolveCustomToolsRuntimeContext(args, deps, { requireSessionId: true });

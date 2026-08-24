@@ -13,6 +13,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
   sessionId: string;
   toolName: string;
   args: unknown;
+  invocation?: 'cli' | 'session_agent_bridge';
 }>): Promise<Awaited<ReturnType<typeof dispatchBuiltInHappierTool>>> {
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
@@ -44,6 +45,10 @@ export async function callBuiltInHappierTool(params: Readonly<{
     };
   }
   const { rawSession, ctx, mode, sessionId } = sessionTarget;
+  const surface = params.invocation === 'session_agent_bridge' ? 'session_agent' : 'cli';
+  const defaultSessionMachineId = typeof rawSession.machineId === 'string' && rawSession.machineId.trim()
+    ? rawSession.machineId.trim()
+    : null;
   const actionsSettings = readActionsSettingsFromEnv();
   const executor = createCliActionExecutor({
     token: params.credentials.token,
@@ -55,19 +60,20 @@ export async function callBuiltInHappierTool(params: Readonly<{
   });
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'cli' }),
-    surface: 'cli',
+    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface }),
+    surface,
     actionsSettings,
+    defaultSessionMachineId,
   });
 
   return await dispatchBuiltInHappierTool({
     toolName: params.toolName,
     args: params.args,
     sessionId,
-    surface: 'cli',
+    surface,
     actionsSettings,
     deps: {
-      changeTitle: createChangeTitleToolHandler({ executor, surface: 'cli' }),
+      changeTitle: createChangeTitleToolHandler({ executor, surface }),
       startExecutionRun: async (sessionId, request) => {
         const result = await startExecutionRun({
           token: params.credentials.token,

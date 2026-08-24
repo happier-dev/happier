@@ -229,10 +229,12 @@ export function createHappierMcpServer(
     actionsSettings: readActionsSettings(),
     getActionsSettings: readActionsSettings,
     resolveCallerPermissionMode: () => resolveLiveClientPermissionMode(client, sessionMetadataSnapshot),
+    defaultSessionMachineId: sessionLocation?.machineId ?? null,
   });
 
   const { toolNames } = registerHappierMcpBuiltInTools(mcp as any, {
     sessionId: client.sessionId,
+    defaultSessionMachineId: sessionLocation?.machineId ?? null,
     surface: toolSurface,
     actionsSettings: readActionsSettings(),
     getActionsSettings: readActionsSettings,
