@@ -1,72 +1,55 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { NewSessionDraft } from '@/sync/domains/state/persistence';
-
 import { appendTranscriptSelectionToNewSessionDraft } from './appendTranscriptSelectionToNewSessionDraft';
 
-function createDraft(overrides: Partial<NewSessionDraft> = {}): NewSessionDraft {
-    return {
-        input: 'Existing draft',
-        selectedMachineId: 'machine-a',
-        selectedPath: '/repo',
-        entryIntent: 'automation',
-        selectedProfileId: 'profile-a',
-        selectedSecretId: 'secret-a',
-        agentType: 'claude',
-        permissionMode: 'default',
-        modelMode: 'default',
-        acpSessionModeId: null,
-        updatedAt: 1,
-        ...overrides,
-    };
-}
-
 describe('appendTranscriptSelectionToNewSessionDraft', () => {
-    it('appends the transcript prompt to an existing scoped new-session draft without losing selections', () => {
+    it('seeds a fresh exact-address draft instead of mutating another open draft', () => {
         const scope = { serverId: 'server-a', accountId: 'account-a' };
-        const existingDraft = createDraft({ targetServerId: 'server-existing' });
-        const saveNewSessionDraft = vi.fn();
+        const writeNewSessionDraft = vi.fn();
+        const flushSessionDraft = vi.fn(async () => ({ status: 'clean' as const }));
 
-        appendTranscriptSelectionToNewSessionDraft({
+        const draftId = appendTranscriptSelectionToNewSessionDraft({
             promptText: 'Forwarded transcript',
             sourceServerId: 'server-a',
             scope,
-            nowMs: () => 123,
-            loadNewSessionDraft: vi.fn(() => existingDraft),
-            saveNewSessionDraft,
+            createDraftId: () => '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            writeNewSessionDraft,
+            flushSessionDraft,
         });
 
-        expect(saveNewSessionDraft).toHaveBeenCalledWith({
-            ...existingDraft,
-            input: 'Existing draft\n\nForwarded transcript',
-            entryIntent: 'session',
-            updatedAt: 123,
-        }, scope);
+        expect(draftId).toBe('8e0a5dd1-b1df-43dd-b51e-b7787b30362e');
+        expect(writeNewSessionDraft).toHaveBeenCalledWith({
+            scope,
+            draftId,
+            patch: {
+                text: 'Forwarded transcript',
+                authoring: {
+                    targetType: 'new_session',
+                    serverId: 'server-a',
+                },
+            },
+            materializationIntent: 'seeded',
+        });
+        expect(flushSessionDraft).toHaveBeenCalledWith({
+            scope,
+            address: { kind: 'newSession', draftId },
+        });
     });
 
-    it('creates a session draft targeting the source server when no draft exists', () => {
-        const saveNewSessionDraft = vi.fn();
-
-        appendTranscriptSelectionToNewSessionDraft({
+    it('does not create an address for empty content or without an account scope', () => {
+        const writeNewSessionDraft = vi.fn();
+        expect(appendTranscriptSelectionToNewSessionDraft({
+            promptText: '   ',
+            sourceServerId: 'server-a',
+            scope: { serverId: 'server-a', accountId: 'account-a' },
+            writeNewSessionDraft,
+        })).toBeNull();
+        expect(appendTranscriptSelectionToNewSessionDraft({
             promptText: 'Forwarded transcript',
             sourceServerId: 'server-a',
             scope: null,
-            nowMs: () => 456,
-            loadNewSessionDraft: vi.fn(() => null),
-            saveNewSessionDraft,
-        });
-
-        expect(saveNewSessionDraft).toHaveBeenCalledWith(expect.objectContaining({
-            input: 'Forwarded transcript',
-            selectedMachineId: null,
-            selectedPath: null,
-            entryIntent: 'session',
-            agentType: 'claude',
-            permissionMode: 'default',
-            modelMode: 'default',
-            acpSessionModeId: null,
-            targetServerId: 'server-a',
-            updatedAt: 456,
-        }), null);
+            writeNewSessionDraft,
+        })).toBeNull();
+        expect(writeNewSessionDraft).not.toHaveBeenCalled();
     });
 });

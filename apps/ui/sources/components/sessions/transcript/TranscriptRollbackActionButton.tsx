@@ -5,7 +5,10 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { storage } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { flushSessionDraft, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { t } from '@/text';
 import type { SessionRollbackTarget } from '@happier-dev/protocol';
@@ -23,6 +26,13 @@ export const TranscriptRollbackActionButton = React.memo((props: {
 }) => {
     const { theme } = useUnistyles();
     const [isRollingBack, setIsRollingBack] = React.useState(false);
+    const activeScope = useActiveServerAccountScope();
+    const draftScope = React.useMemo(() => activeScope
+        ? createServerAccountScope(
+            resolveServerIdForSessionIdFromLocalCache(props.sessionId) ?? activeScope.serverId,
+            activeScope.accountId,
+        )
+        : null, [activeScope, props.sessionId]);
     const executor = React.useMemo(
         () => createDefaultActionExecutor({ resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache }),
         [],
@@ -80,15 +90,24 @@ export const TranscriptRollbackActionButton = React.memo((props: {
             }
 
             const restoredDraftText = typeof props.restoredDraftText === 'string' ? props.restoredDraftText : null;
-            if (restoredDraftText && restoredDraftText.trim().length > 0) {
-                storage.getState().updateSessionDraft(props.sessionId, restoredDraftText);
+            if (draftScope && restoredDraftText && restoredDraftText.trim().length > 0) {
+                writeExistingSessionDraft({
+                    scope: draftScope,
+                    sessionId: props.sessionId,
+                    patch: { text: restoredDraftText },
+                    materializationIntent: 'seeded',
+                });
+                fireAndForget(flushSessionDraft({
+                    scope: draftScope,
+                    address: { kind: 'session', sessionId: props.sessionId },
+                }), { tag: 'TranscriptRollbackActionButton.restoreDraft' });
             }
         } catch (error) {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
         } finally {
             setIsRollingBack(false);
         }
-    }, [executor, isApprovalRequestCreated, isRollingBack, props.restoredDraftText, props.sessionId, props.target, readInnerOkError]);
+    }, [draftScope, executor, isApprovalRequestCreated, isRollingBack, props.restoredDraftText, props.sessionId, props.target, readInnerOkError]);
 
     const accessibilityLabel = props.target?.type === 'before_user_message'
         ? t('session.rollback.beforeUserMessageA11y')
