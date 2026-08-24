@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -45,7 +45,10 @@ describe('SoftSlideTransitionFrame native blur', () => {
             </SoftSlideTransitionFrame>,
         );
 
-        expect(screen.findAllByType('BlurView')).toHaveLength(2);
+        await vi.waitFor(async () => {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+            expect(screen.findAllByType('BlurView')).toHaveLength(2);
+        });
         expect(screen.findByTestId('soft-exit-layer')?.props).toMatchObject({
             accessibilityElementsHidden: true,
             importantForAccessibility: 'no-hide-descendants',
