@@ -479,11 +479,11 @@ describe('syncCodexConnectedServiceHome', () => {
 
   it('serializes concurrent syncs for the same destination Codex home', async () => {
     const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
+    let releaseFirstSymlink = () => {};
     try {
       await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
       await writeFile(join(sourceCodexHome, 'sessions', 'source-rollout.jsonl'), '{"id":"source"}\n');
       const symlinkCalls: string[] = [];
-      let releaseFirstSymlink!: () => void;
       const firstSymlinkCanFinish = new Promise<void>((resolve) => {
         releaseFirstSymlink = resolve;
       });
@@ -512,7 +512,7 @@ describe('syncCodexConnectedServiceHome', () => {
         accountSettings: settings('linked', 'shared'),
         processEnv: { CODEX_HOME: sourceCodexHome },
       });
-      await waitFor(() => symlinkCalls.length === 1);
+      await waitFor(() => symlinkCalls.length === 1, 10_000);
       const secondSync = syncCodexConnectedServiceHome({
         destinationCodexHome,
         accountSettings: settings('linked', 'shared'),
@@ -530,6 +530,66 @@ describe('syncCodexConnectedServiceHome', () => {
       releaseFirstSymlink();
       await Promise.all([firstSync, secondSync]);
       expect(symlinkCalls).toHaveLength(4);
+    } finally {
+      releaseFirstSymlink();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reconciles fixed-name Codex state when different homes share one native source', async () => {
+    const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
+    const secondDestinationCodexHome = join(root, 'materialized-codex-home-2');
+    const firstPreviousCodexHome = join(root, 'previous-codex-home-1');
+    const secondPreviousCodexHome = join(root, 'previous-codex-home-2');
+    try {
+      await mkdir(firstPreviousCodexHome, { recursive: true });
+      await mkdir(secondPreviousCodexHome, { recursive: true });
+      await writeFile(
+        join(firstPreviousCodexHome, 'history.jsonl'),
+        '{"session_id":"first","ts":1,"text":"first prompt"}\n',
+      );
+      await writeFile(
+        join(secondPreviousCodexHome, 'history.jsonl'),
+        '{"session_id":"second","ts":2,"text":"second prompt"}\n',
+      );
+      await writeFile(
+        join(firstPreviousCodexHome, 'session_index.jsonl'),
+        '{"id":"first","thread_name":"First","updated_at":"2026-08-24T10:00:00.000Z"}\n',
+      );
+      await writeFile(
+        join(secondPreviousCodexHome, 'session_index.jsonl'),
+        '{"id":"second","thread_name":"Second","updated_at":"2026-08-24T11:00:00.000Z"}\n',
+      );
+      const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
+
+      await Promise.all([
+        syncCodexConnectedServiceHome({
+          destinationCodexHome,
+          previousCodexHome: firstPreviousCodexHome,
+          accountSettings: settings('linked', 'shared'),
+          processEnv: { CODEX_HOME: sourceCodexHome },
+        }),
+        syncCodexConnectedServiceHome({
+          destinationCodexHome: secondDestinationCodexHome,
+          previousCodexHome: secondPreviousCodexHome,
+          accountSettings: settings('linked', 'shared'),
+          processEnv: { CODEX_HOME: sourceCodexHome },
+        }),
+      ]);
+
+      const historyLines = (await readFile(join(sourceCodexHome, 'history.jsonl'), 'utf8')).trimEnd().split('\n');
+      expect(historyLines).toHaveLength(2);
+      expect(historyLines).toEqual(expect.arrayContaining([
+        '{"session_id":"first","ts":1,"text":"first prompt"}',
+        '{"session_id":"second","ts":2,"text":"second prompt"}',
+      ]));
+      const indexLines = (await readFile(join(sourceCodexHome, 'session_index.jsonl'), 'utf8')).trimEnd().split('\n');
+      expect(indexLines).toHaveLength(2);
+      expect(indexLines).toEqual(expect.arrayContaining([
+        '{"id":"first","thread_name":"First","updated_at":"2026-08-24T10:00:00.000Z"}',
+        '{"id":"second","thread_name":"Second","updated_at":"2026-08-24T11:00:00.000Z"}',
+      ]));
+      await expect(readdir(sourceCodexHome)).resolves.not.toContainEqual(expect.stringContaining('.happier-import-'));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

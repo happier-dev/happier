@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 
-const destinationLocks = new Map<string, Promise<void>>();
+const rootLocks = new Map<string, Promise<void>>();
 
 export class ConnectedServiceStateSharingLockError extends Error {
   readonly code = 'state_sharing_lock_unavailable';
@@ -40,33 +40,33 @@ type LockOptions = Readonly<{
   staleLockTimeoutMs?: number;
 }>;
 
-async function withInProcessDestinationLock<T>(destinationHome: string, fn: () => Promise<T>): Promise<T> {
-  const key = resolve(destinationHome);
-  const previous = destinationLocks.get(key) ?? Promise.resolve();
+async function withInProcessRootLock<T>(rootHome: string, fn: () => Promise<T>): Promise<T> {
+  const key = resolve(rootHome);
+  const previous = rootLocks.get(key) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolvePromise) => {
     release = resolvePromise;
   });
   const queued = previous.catch(() => undefined).then(() => current);
-  destinationLocks.set(key, queued);
+  rootLocks.set(key, queued);
   await previous.catch(() => undefined);
   try {
     return await fn();
   } finally {
     release();
-    if (destinationLocks.get(key) === queued) {
-      destinationLocks.delete(key);
+    if (rootLocks.get(key) === queued) {
+      rootLocks.delete(key);
     }
   }
 }
 
-export async function withConnectedServiceStateSharingDestinationLock<T>(
-  destinationHome: string,
+async function withConnectedServiceStateSharingRootLock<T>(
+  rootHome: string,
   fn: () => Promise<T>,
   options: LockOptions = {},
 ): Promise<T> {
-  return await withInProcessDestinationLock(destinationHome, async () => {
-    const lockPath = `${resolve(destinationHome)}.happier-state-sharing.lock`;
+  return await withInProcessRootLock(rootHome, async () => {
+    const lockPath = `${resolve(rootHome)}.happier-state-sharing.lock`;
     try {
       return await withJsonOwnerFileLock({
         lockPath,
@@ -75,17 +75,42 @@ export async function withConnectedServiceStateSharingDestinationLock<T>(
         staleAfterMs: options.staleLockTimeoutMs ?? 5 * 60_000,
         errorCode: 'state_sharing_lock_unavailable',
       }, async () => {
-        await mkdir(destinationHome, { recursive: true });
+        await mkdir(rootHome, { recursive: true });
         return await fn();
       });
     } catch (error) {
       if ((error as Error | null)?.message?.startsWith('state_sharing_lock_unavailable')) {
         throw new ConnectedServiceStateSharingLockError({
           providerId: options.providerId ?? null,
-          destinationHome,
+          destinationHome: rootHome,
         });
       }
       throw error;
     }
   });
+}
+
+export async function withConnectedServiceStateSharingLocks<T>(
+  rootHomes: readonly string[],
+  fn: () => Promise<T>,
+  options: LockOptions = {},
+): Promise<T> {
+  const roots = [...new Set(rootHomes.map((rootHome) => resolve(rootHome)))].sort();
+  const acquire = async (index: number): Promise<T> => {
+    if (index >= roots.length) return await fn();
+    return await withConnectedServiceStateSharingRootLock(
+      roots[index],
+      async () => await acquire(index + 1),
+      options,
+    );
+  };
+  return await acquire(0);
+}
+
+export async function withConnectedServiceStateSharingDestinationLock<T>(
+  destinationHome: string,
+  fn: () => Promise<T>,
+  options: LockOptions = {},
+): Promise<T> {
+  return await withConnectedServiceStateSharingLocks([destinationHome], fn, options);
 }
