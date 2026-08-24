@@ -674,7 +674,7 @@ export function mapGitScmErrorCode(stderr: string): ScmOperationErrorCode {
 
 export {
   readScmHostingRepositoryIdentity,
+  normalizeScmHostingRepositoryIdentity,
   sameScmHostingRepositoryIdentity,
   type ScmHostingRepositoryIdentityV1,
 } from './hostingRepositoryIdentity.js';
-  normalizeScmHostingRepositoryIdentity,
