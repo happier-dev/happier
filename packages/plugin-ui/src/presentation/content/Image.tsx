@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { Image as ReactNativeImage, View } from 'react-native';
 
 import type {
@@ -122,6 +122,8 @@ export function HappierImage(props: Readonly<{
   backing?: HappierBrandMarkBacking;
   /** Internal: an adjacent canonical label makes this fallback initial decorative. */
   fallbackAccessibilityHidden?: boolean;
+  /** Internal author diagnostic emitted by the Resource-owning component. */
+  onDecodeError?: () => void;
 }>): ReactElement {
   const pixels = resolveHappierImagePixels(props.size);
   const backingStyle = props.backing
@@ -131,10 +133,16 @@ export function HappierImage(props: Readonly<{
     }
     : undefined;
   const source = readHappierRenderableImageSource(props.bytes);
-  if (source) {
+  const [failedSource, setFailedSource] = useState<typeof source>();
+  const renderableSource = source === failedSource ? undefined : source;
+  if (renderableSource) {
     return (
       <ReactNativeImage
-        source={source}
+        source={renderableSource}
+        onError={() => {
+          setFailedSource(renderableSource);
+          props.onDecodeError?.();
+        }}
         accessibilityLabel={props.accessibilityLabel}
         accessible={Boolean(props.accessibilityLabel)}
         testID={props.testID}
@@ -183,6 +191,12 @@ export type HappierBrandMarkProps = Readonly<{
   testID?: string;
   /** An adjacent host-owned label already names the brand; keep the mark decorative. */
   externallyLabelled?: boolean;
+  /**
+   * Called when the platform decoder rejects an already-admitted PNG. The mark
+   * has already changed to its ordinary neutral fallback; no image bytes or
+   * host-private decoder details are exposed to the callback.
+   */
+  onDecodeError?: () => void;
 }>;
 
 export function HappierBrandMark(props: HappierBrandMarkProps): ReactElement {
@@ -199,6 +213,7 @@ export function HappierBrandMark(props: HappierBrandMarkProps): ReactElement {
         backing={backing}
         accessibilityLabel={showName || props.externallyLabelled ? undefined : props.displayName}
         fallbackAccessibilityHidden={showName || props.externallyLabelled}
+        onDecodeError={props.onDecodeError}
       />
       {showName ? <HappierText>{props.displayName}</HappierText> : null}
     </View>

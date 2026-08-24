@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb, mountThroughReactNativeWebAsync } from '../rnwMount.testSupport.js';
 import { createAdmittedBrandPngFixture, createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { BrandMark } from './Image.js';
+import { BrandMark, Image as ResourceImage } from './Image.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { PluginUiPresentationHostProviderInternal } from '../presentationHost/context.js';
 
@@ -53,6 +53,56 @@ function renderedColor(property: 'backgroundColor' | 'borderColor', color: strin
 }
 
 describe('bounded package image and brand fallback', () => {
+  it('reports one attributable diagnostic and renders the neutral fallback when the web decoder fails', async () => {
+    const context = createSurfaceContext();
+    const diagnostic = vi.fn();
+    const resource = { pluginId: 'example.images', localId: 'broken-at-decode' };
+    const BrowserImage = window.Image;
+    class FailingBrowserImage {
+      onerror: ((event: Event) => void) | null = null;
+      onload: (() => void) | null = null;
+
+      set src(_value: string) {
+        queueMicrotask(() => this.onerror?.(new Event('error')));
+      }
+    }
+    Object.defineProperty(window, 'Image', { configurable: true, value: FailingBrowserImage });
+    try {
+      const mount = await mountThroughReactNativeWebAsync(
+        <PluginUiProvider
+          hostApi={createHostApiStub(context, {
+            diagnostic,
+            readResource: async () => ({
+              contentType: 'image/png',
+              digest: `sha256:${'e'.repeat(64)}`,
+              bytes: createAdmittedBrandPngFixture({ admit: false }),
+            }),
+          })}
+          context={context}
+        >
+          <ResourceImage resource={resource} fallback="NO" accessibilityLabel="Broken image" />
+        </PluginUiProvider>,
+      );
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mount.container.querySelector('img')).toBeNull();
+      expect(mount.container.textContent).toBe('NO');
+      expect(diagnostic).toHaveBeenCalledTimes(1);
+      expect(diagnostic).toHaveBeenCalledWith({
+        code: 'plugin_renderable_image_decode_failed',
+        severity: 'warning',
+        message: 'The platform image decoder could not render this packaged PNG.',
+        details: { resource },
+      });
+      mount.unmount();
+    } finally {
+      Object.defineProperty(window, 'Image', { configurable: true, value: BrowserImage });
+    }
+  });
+
   it('backs an admitted transparent brand mark with the host semantic surface in light, dark, and high-contrast contexts', async () => {
     const cases = [
       { colorScheme: 'light' as const, contrast: 'normal' as const, background: 'surface' as const },

@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { useCallback, type ReactElement } from 'react';
 
 import { useHappierUiPlatform } from '../environment/context.js';
 import type { PluginUiResourceReference } from '../hostApi/resourceStore.js';
@@ -6,6 +6,19 @@ import { usePluginResource } from '../hostApi/index.js';
 import { HappierBrandMark, HappierImage, type HappierImageSize } from '../presentation/content/Image.js';
 import { usePluginTheme } from './PluginUiProvider.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
+import { usePluginHostApi } from '../hostApi/context.js';
+
+function useImageDecodeDiagnostic(resource: PluginUiResourceReference): () => void {
+  const hostApi = usePluginHostApi();
+  return useCallback(() => {
+    hostApi.diagnostic({
+      code: 'plugin_renderable_image_decode_failed',
+      severity: 'warning',
+      message: 'The platform image decoder could not render this packaged PNG.',
+      details: { resource },
+    });
+  }, [hostApi, resource]);
+}
 
 export type ImageProps = Readonly<{
   /** An admitted packaged image/png Resource. Remote/data URLs are not accepted. */
@@ -21,6 +34,7 @@ export function Image({ resource, size = 'medium', accessibilityLabel, fallback 
   const { resource: snapshot } = usePluginResource(resource);
   const theme = usePluginTheme();
   const content = snapshot.value;
+  const onDecodeError = useImageDecodeDiagnostic(resource);
   return (
     <HappierImage
       bytes={content?.contentType === 'image/png' ? content.bytes : undefined}
@@ -29,6 +43,7 @@ export function Image({ resource, size = 'medium', accessibilityLabel, fallback 
       fallback={fallback}
       theme={theme}
       testID={testID}
+      onDecodeError={onDecodeError}
     />
   );
 }
@@ -125,6 +140,7 @@ function ResourceBrandMark(props: Readonly<{
 }>): ReactElement {
   const { resource: snapshot } = usePluginResource(props.resource);
   const content = snapshot.value;
+  const onDecodeError = useImageDecodeDiagnostic(props.resource);
   return (
     <HappierBrandMark
       displayName={props.displayName}
@@ -135,6 +151,7 @@ function ResourceBrandMark(props: Readonly<{
       theme={props.theme}
       colorScheme={props.colorScheme}
       testID={props.testID}
+      onDecodeError={onDecodeError}
     />
   );
 }

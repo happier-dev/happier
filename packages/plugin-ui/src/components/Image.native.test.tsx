@@ -13,7 +13,7 @@ vi.mock('react-native', () => ({
 import { PluginUiPresentationHostProviderInternal } from '../presentationHost/context.js';
 import { HappierBrandMark, resolveHappierBrandFallback } from '../presentation/content/Image.js';
 import { createAdmittedBrandPngFixture, createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { BrandMark } from './Image.js';
+import { BrandMark, Image as ResourceImage } from './Image.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 
 const TRANSPARENT_BRAND_BYTES = createAdmittedBrandPngFixture();
@@ -28,6 +28,87 @@ afterEach(() => {
 });
 
 describe('native BrandMark presentation', () => {
+  it('reports one attributable diagnostic and renders the neutral fallback when native decoding fails', async () => {
+    const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
+    const diagnostic = vi.fn();
+    const resource = { pluginId: 'example.images', localId: 'broken-at-decode' };
+
+    await act(async () => {
+      renderer = create(
+        <PluginUiProvider
+          hostApi={createHostApiStub(context, {
+            diagnostic,
+            readResource: async () => ({
+              contentType: 'image/png',
+              digest: `sha256:${'e'.repeat(64)}`,
+              bytes: createAdmittedBrandPngFixture({ admit: false }),
+            }),
+          })}
+          context={context}
+        >
+          <ResourceImage resource={resource} fallback="NO" />
+        </PluginUiProvider>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => renderer!.root.findByType('Image').props.onError());
+
+    expect(renderer!.root.findAllByType('Image')).toHaveLength(0);
+    expect(renderer!.root.findByType('Text').props.children).toBe('NO');
+    expect(diagnostic).toHaveBeenCalledTimes(1);
+    expect(diagnostic).toHaveBeenCalledWith({
+      code: 'plugin_renderable_image_decode_failed',
+      severity: 'warning',
+      message: 'The platform image decoder could not render this packaged PNG.',
+      details: { resource },
+    });
+  });
+
+  it('reports the mounted brand resource when its native decoder fails', async () => {
+    const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
+    const diagnostic = vi.fn();
+    const resource = { pluginId: 'happier.scm.forge.github', localId: 'brand-icon' };
+
+    await act(async () => {
+      renderer = create(
+        <PluginUiProvider
+          hostApi={createHostApiStub(context, {
+            diagnostic,
+            readResource: async () => ({
+              contentType: 'image/png',
+              digest: `sha256:${'f'.repeat(64)}`,
+              bytes: createAdmittedBrandPngFixture({ admit: false }),
+            }),
+          })}
+          context={context}
+        >
+          <PluginUiPresentationHostProviderInternal host={{
+            brand: { displayName: 'GitHub', resource },
+            renderMarkdown: () => null,
+            renderCodeBlock: () => null,
+            renderPopover: () => null,
+            renderIcon: () => null,
+          }}>
+            <BrandMark />
+          </PluginUiPresentationHostProviderInternal>
+        </PluginUiProvider>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => renderer!.root.findByType('Image').props.onError());
+
+    expect(diagnostic).toHaveBeenCalledWith({
+      code: 'plugin_renderable_image_decode_failed',
+      severity: 'warning',
+      message: 'The platform image decoder could not render this packaged PNG.',
+      details: { resource },
+    });
+  });
+
   it('preserves the first display-name grapheme in its neutral fallback', () => {
     expect(resolveHappierBrandFallback('🤖 Tools')).toBe('🤖');
     expect(resolveHappierBrandFallback('e\u0301clair')).toBe('E\u0301');
@@ -128,10 +209,8 @@ describe('native BrandMark presentation', () => {
   it('does not re-encode a digest-equal reread that arrives as fresh bytes', async () => {
     const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
     const digest = `sha256:${'c'.repeat(64)}`;
-    // A length divisible by three makes indexed reads exactly one per byte
-    // per conversion, with no read past the final triple. Admission is left to
-    // the store below, which is the owner under test here.
-    const brandBytes = createAdmittedBrandPngFixture({ byteLength: 27, admit: false });
+    // Admission is left to the store below, which is the owner under test here.
+    const brandBytes = createAdmittedBrandPngFixture({ admit: false });
     let reads = 0;
     // Every read hands back a DISTINCT array with the same admitted digest,
     // which is what a real transport does. Counting indexed reads measures
@@ -173,9 +252,9 @@ describe('native BrandMark presentation', () => {
       await Promise.resolve();
     });
     const firstSource = renderer!.root.findByType('Image').props.source;
-    // The header probe reads a fixed 20 bytes before the conversion does its
-    // one pass, so a conversion is `byteLength + 20` indexed reads.
-    const readsPerConversion = brandBytes.byteLength + 20;
+    // The complete-envelope probe reads a fixed 32 bytes before the conversion does its
+    // one pass, so a conversion is `byteLength + 32` indexed reads.
+    const readsPerConversion = brandBytes.byteLength + 32;
     const conversionsAfterFirstMount = indexedReads / readsPerConversion;
 
     // Remount through the same provider: the store rereads canonically and the

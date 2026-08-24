@@ -65,33 +65,23 @@ export function createHostApiStub(
   } satisfies PluginUiHostApi;
 }
 
-/**
- * A minimal admissible packaged mark: PNG signature plus a real IHDR.
- *
- * The renderable-image owner reads the declared canvas out of IHDR to bound
- * decode memory, so a bare signature is deliberately NOT admissible. Every test
- * that needs an admitted mark builds one here rather than restating the header
- * layout, and `byteLength` stays divisible by three so an indexed-read counter
- * measures exactly one read per byte per base64 conversion.
- */
+/** A complete, decoder-valid 1x1 RGBA PNG used by every positive image fixture. */
+const VALID_TRANSPARENT_PNG = Object.freeze([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+  0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+  0x01, 0x00, 0x4f, 0x25, 0xc4, 0xd6, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44,
+  0x41, 0x54, 0x78, 0x9c, 0x63, 0x64, 0x00, 0x02, 0x00, 0x00, 0x0a, 0x00,
+  0x02, 0x6c, 0x41, 0xb3, 0x42, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+  0x44, 0xae, 0x42, 0x60, 0x82,
+]);
+
 export function createAdmittedBrandPngFixture(options?: Readonly<{
-  width?: number;
-  height?: number;
-  byteLength?: number;
   /** Skip admission to model bytes that reached a render without an owner. */
   admit?: boolean;
 }>): Uint8Array {
-  const width = options?.width ?? 16;
-  const height = options?.height ?? 16;
-  const byteLength = Math.max(options?.byteLength ?? 27, 27);
-  const bytes = new Uint8Array(byteLength);
-  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-  // IHDR chunk: its 13-byte length, then the chunk type.
-  bytes.set([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52], 8);
-  const view = new DataView(bytes.buffer);
-  view.setUint32(16, width);
-  view.setUint32(20, height);
-  for (let index = 24; index < byteLength; index += 1) bytes[index] = index % 251;
+  const bytes = new Uint8Array(VALID_TRANSPARENT_PNG);
   if (options?.admit !== false) materializeHappierRenderableImage(bytes);
   return bytes;
 }

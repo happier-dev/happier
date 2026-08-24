@@ -71,10 +71,12 @@ describe('author package boundary', () => {
       const source = readFileSync(filePath, 'utf8');
       const isTypeOnlyEnvironmentContract = /environment/u.test(filePath);
       const isCanonicalIconContract = /presentation[\\/]content[\\/]Icon\.ts$/u.test(filePath);
+      const isCanonicalRenderableImageContract = /presentation[\\/]content[\\/]renderableImage\.ts$/u.test(filePath);
       return importedSpecifiers(source)
         .filter((specifier) => !allowedPresentationSpecifier(specifier))
         .filter((specifier) => !(isTypeOnlyEnvironmentContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isCanonicalIconContract && specifier === '@happier-dev/plugin-sdk/ui'))
+        .filter((specifier) => !(isCanonicalRenderableImageContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .map((specifier) => `${relative(sourceRoot, filePath)} → ${specifier}`);
     });
 
@@ -158,6 +160,22 @@ describe('author package boundary', () => {
     expect(packageJson.scripts?.prebuild).toBe('yarn --cwd ../plugin-sdk -s check:public-toolchain');
     expect(packageJson.scripts?.test).toBe('../../apps/stack/bin/hstack-exec --script=test:local');
     expect(packageJson.scripts?.['test:local']).toContain('test:external-authoring');
+  });
+
+  it('derives renderable-image diagnostics from the browser-safe UI contract', () => {
+    const packageRoot = resolve(new URL('.', import.meta.url).pathname, '..');
+    for (const relativePath of [
+      'src/presentation/content/renderableImage.ts',
+      'src/hostApi/resourceStore.ts',
+    ]) {
+      const source = readFileSync(join(packageRoot, relativePath), 'utf8');
+      expect(source, relativePath).not.toMatch(
+        /import type \{[^}]*PluginDiagnosticData[^}]*\} from '@happier-dev\/plugin-sdk';/u,
+      );
+      expect(source, relativePath).toMatch(
+        /import type \{[^}]*PluginUiHostApi[^}]*\} from '@happier-dev\/plugin-sdk\/ui';/u,
+      );
+    }
   });
 
   it('exports environment facts only from their dedicated public entry', () => {

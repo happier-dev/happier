@@ -16,7 +16,11 @@ import { useSurfaceContext } from '../components/PluginUiProvider.js';
 import { Tabs } from '../components/Tabs.js';
 import { TargetedSurface } from '../components/TargetedSurface.js';
 import { Text } from '../components/Text.js';
-import { createSurfaceContext, SURFACE_THEME_FIXTURE } from '../surfaceFixture.testSupport.js';
+import {
+  createAdmittedBrandPngFixture,
+  createSurfaceContext,
+  SURFACE_THEME_FIXTURE,
+} from '../surfaceFixture.testSupport.js';
 import { defineUiSurface } from '../surfaceEntry.js';
 import { createPluginUiRnwSemanticSurfaceAdapter } from './rnwSemanticAdapter.testSupport.js';
 
@@ -265,7 +269,7 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
         readResource: async () => ({
           contentType: 'image/png',
           digest: `sha256:${'1'.repeat(64)}`,
-          bytes: new Uint8Array([137, 80, 78, 71]),
+          bytes: createAdmittedBrandPngFixture(),
         }),
       },
     });
@@ -287,6 +291,27 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
       name: 'Review logo',
     });
 
+    await fixture.dispose();
+  });
+
+  it('keeps a malformed Image resource on its fallback path', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity,
+      surface: defineUiSurface(() => <Image resource="broken-logo" accessibilityLabel="Broken logo" />),
+      surfaceContext: createSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        readResource: async () => ({
+          contentType: 'image/png',
+          digest: `sha256:${'2'.repeat(64)}`,
+          bytes: new Uint8Array([137, 80, 78, 71]),
+        }),
+      },
+    });
+
+    await expect(fixture.findByRole('image', { name: 'Broken logo' })).rejects.toMatchObject({
+      code: 'invalid_payload',
+    });
     await fixture.dispose();
   });
 

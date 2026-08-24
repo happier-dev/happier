@@ -19,9 +19,16 @@
  * platform image host is ever handed a source. One ceiling, shared by every
  * platform and every renderer; a renderer never invents its own.
  *
- * Rejection is not an error state: an unrenderable mark falls back to the same
- * neutral text presentation an absent mark already uses.
+ * Rejection is not an error state *for the end user*: an unrenderable mark
+ * falls back to the same neutral text presentation an absent mark already uses.
+ * It is very much one for the AUTHOR, who otherwise cannot tell a refused image
+ * from an image they never shipped, so every refusal is returned as an
+ * attributable diagnostic and each admitting owner reports it under the
+ * identity only that owner knows.
  */
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+
+type PluginDiagnosticData = Parameters<PluginUiHostApi['diagnostic']>[0];
 
 /**
  * A platform image source derived from one admitted byte identity.
@@ -41,9 +48,9 @@ export const HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE = 'image/png';
  * Derived from what the shipped marks actually are, not from the Resource
  * ceiling: the largest first-party packaged mark is 135 511 B
  * (`plugins/inspector/assets/brand.png`), and the rest are under 8 KiB. This
- * leaves roughly four times that headroom while keeping the one-time
- * materialization at 275 ms at the ceiling and 7 ms for that largest real
- * mark, measured with the encoder below.
+ * leaves roughly four times that headroom. The one-time materialization costs
+ * about 3 ms at the ceiling and about 1 ms for that largest real mark, both
+ * measured with the encoder below as the minimum CPU time of nine runs.
  */
 export const HAPPIER_MAX_RENDERABLE_IMAGE_BYTES = 512 * 1024;
 
@@ -56,21 +63,61 @@ export const HAPPIER_MAX_RENDERABLE_IMAGE_BYTES = 512 * 1024;
  */
 export const HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS = 4_194_304;
 
+/**
+ * Why one byte identity is not renderable.
+ *
+ * Structurally a `PluginDiagnosticData`, because the author-facing diagnostic
+ * channel is what an owner reports it through: the code, the severity and the
+ * deciding numbers are decided once, here, so two owners cannot describe the
+ * same refusal differently. Only the identity of *which* image was refused is
+ * added by the owner that knows it.
+ */
+export type HappierRenderableImageRefusal = Readonly<{
+  code:
+  | 'plugin_renderable_image_empty'
+  | 'plugin_renderable_image_not_png'
+  | 'plugin_renderable_image_too_many_bytes'
+  | 'plugin_renderable_image_too_many_pixels';
+  severity: 'warning';
+  message: string;
+  details: Readonly<{
+    byteLength: number;
+    /** The ceiling the refusal was measured against; absent when no ceiling decided it. */
+    limit?: number;
+    /** The declared canvas, present once the bytes parsed as a PNG. */
+    pixels?: number;
+  }>;
+}>;
+
+/** Admission is a decision, not an absence: a refusal names the bound that made it. */
+export type HappierRenderableImageAdmission =
+  | Readonly<{ admitted: true; source: HappierRenderableImageSource }>
+  | Readonly<{ admitted: false; refusal: HappierRenderableImageRefusal }>;
+
+function refuse(
+  code: HappierRenderableImageRefusal['code'],
+  message: string,
+  details: HappierRenderableImageRefusal['details'],
+): HappierRenderableImageAdmission {
+  return Object.freeze({
+    admitted: false as const,
+    refusal: Object.freeze({
+      code,
+      severity: 'warning' as const,
+      message,
+      details: Object.freeze(details),
+    }) satisfies PluginDiagnosticData,
+  });
+}
+
 const PNG_SIGNATURE = Object.freeze([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-/** Signature (8) + IHDR length/type (8) + width (4) + height (4). */
-const PNG_IHDR_MINIMUM_BYTES = 24;
+/** Signature + complete IHDR (including CRC) + the mandatory terminal IEND chunk. */
+const PNG_MINIMUM_COMPLETE_BYTES = 45;
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-/**
- * Every twelve-bit group as its two-character encoding. Halving the loop's
- * iterations and its string appends is what keeps the bounded conversion in the
- * tens of milliseconds instead of the hundreds.
- */
-const BASE64_TWELVE_BIT_PAIRS: readonly string[] = Object.freeze(
-  Array.from({ length: 4096 }, (_unused, value) => (
-    BASE64_ALPHABET[(value >>> 6) & 63]! + BASE64_ALPHABET[value & 63]!
-  )),
-);
+// React Native provides neither `btoa` nor `Buffer`, so the portable encoder
+// stays local. Direct alphabet indexing avoids a 4,096-entry startup table;
+// measurement found no material ordinary-image benefit from that table.
 /** Flush point for the accumulating rope; keeps peak intermediate strings small. */
 const BASE64_CHUNK_CHARS = 32_768;
 
@@ -82,7 +129,12 @@ function bytesToBase64(bytes: Uint8Array): string {
   let buffer = '';
   for (let index = 0; index < triples; index += 3) {
     const group = (bytes[index]! << 16) | (bytes[index + 1]! << 8) | bytes[index + 2]!;
-    buffer += BASE64_TWELVE_BIT_PAIRS[group >>> 12]! + BASE64_TWELVE_BIT_PAIRS[group & 4095]!;
+    buffer += (
+      BASE64_ALPHABET[(group >>> 18) & 63]!
+      + BASE64_ALPHABET[(group >>> 12) & 63]!
+      + BASE64_ALPHABET[(group >>> 6) & 63]!
+      + BASE64_ALPHABET[group & 63]!
+    );
     if (buffer.length >= BASE64_CHUNK_CHARS) {
       chunks.push(buffer);
       buffer = '';
@@ -90,10 +142,14 @@ function bytesToBase64(bytes: Uint8Array): string {
   }
   if (remainder === 1) {
     const group = bytes[triples]! << 16;
-    buffer += `${BASE64_TWELVE_BIT_PAIRS[group >>> 12]!}==`;
+    buffer += `${BASE64_ALPHABET[(group >>> 18) & 63]!}${BASE64_ALPHABET[(group >>> 12) & 63]!}==`;
   } else if (remainder === 2) {
     const group = (bytes[triples]! << 16) | (bytes[triples + 1]! << 8);
-    buffer += `${BASE64_TWELVE_BIT_PAIRS[group >>> 12]!}${BASE64_ALPHABET[(group >>> 6) & 63]!}=`;
+    buffer += (
+      `${BASE64_ALPHABET[(group >>> 18) & 63]!}`
+      + `${BASE64_ALPHABET[(group >>> 12) & 63]!}`
+      + `${BASE64_ALPHABET[(group >>> 6) & 63]!}=`
+    );
   }
   if (buffer.length > 0) chunks.push(buffer);
   return chunks.join('');
@@ -114,13 +170,23 @@ function readUint32BigEndian(bytes: Uint8Array, offset: number): number {
  * image host will try to decode.
  */
 export function readHappierPngPixelCount(bytes: Uint8Array): number | null {
-  if (bytes.byteLength < PNG_IHDR_MINIMUM_BYTES) return null;
+  if (bytes.byteLength < PNG_MINIMUM_COMPLETE_BYTES) return null;
   for (let index = 0; index < PNG_SIGNATURE.length; index += 1) {
     if (bytes[index] !== PNG_SIGNATURE[index]) return null;
   }
   // The IHDR chunk is required to be first, so its width/height sit at fixed
   // offsets; anything else is not a decodable PNG for our purposes.
-  if (bytes[12] !== 0x49 || bytes[13] !== 0x48 || bytes[14] !== 0x44 || bytes[15] !== 0x52) return null;
+  if (
+    bytes[8] !== 0x00 || bytes[9] !== 0x00 || bytes[10] !== 0x00 || bytes[11] !== 0x0d
+    || bytes[12] !== 0x49 || bytes[13] !== 0x48 || bytes[14] !== 0x44 || bytes[15] !== 0x52
+  ) return null;
+  // PNG requires IEND to be the final chunk. Checking that fixed terminator is
+  // enough to reject a truncated prefix without walking chunks or validating CRCs.
+  const iend = bytes.byteLength - 12;
+  if (
+    bytes[iend] !== 0x00 || bytes[iend + 1] !== 0x00 || bytes[iend + 2] !== 0x00 || bytes[iend + 3] !== 0x00
+    || bytes[iend + 4] !== 0x49 || bytes[iend + 5] !== 0x45 || bytes[iend + 6] !== 0x4e || bytes[iend + 7] !== 0x44
+  ) return null;
   const width = readUint32BigEndian(bytes, 16);
   const height = readUint32BigEndian(bytes, 20);
   if (width <= 0 || height <= 0) return null;
@@ -141,23 +207,51 @@ const SOURCE_BY_ADMITTED_BYTES = new WeakMap<Uint8Array, HappierRenderableImageS
 /**
  * Admit one byte identity as a renderable image and record its source.
  *
- * Called by the owners that acquire bytes, never from a render. Returns `null`
- * when the bytes are not a renderable image or exceed a product ceiling, which
- * is the neutral-fallback outcome rather than a failure.
+ * Called by the owners that acquire bytes, never from a render. A refusal is
+ * the neutral-fallback outcome for the reader rather than a failure, but it is
+ * returned as an attributable diagnostic so the owner that knows which image
+ * these bytes are can tell its author which bound refused them and why.
  */
 export function materializeHappierRenderableImage(
   bytes: Uint8Array,
-): HappierRenderableImageSource | null {
+): HappierRenderableImageAdmission {
   const existing = SOURCE_BY_ADMITTED_BYTES.get(bytes);
-  if (existing) return existing;
-  if (bytes.byteLength === 0 || bytes.byteLength > HAPPIER_MAX_RENDERABLE_IMAGE_BYTES) return null;
+  if (existing) return Object.freeze({ admitted: true as const, source: existing });
+  const byteLength = bytes.byteLength;
+  if (byteLength === 0) {
+    return refuse(
+      'plugin_renderable_image_empty',
+      'Renderable image bytes are empty.',
+      { byteLength },
+    );
+  }
+  if (byteLength > HAPPIER_MAX_RENDERABLE_IMAGE_BYTES) {
+    return refuse(
+      'plugin_renderable_image_too_many_bytes',
+      `Renderable image is ${byteLength} bytes, past the ${HAPPIER_MAX_RENDERABLE_IMAGE_BYTES}-byte ceiling.`,
+      { byteLength, limit: HAPPIER_MAX_RENDERABLE_IMAGE_BYTES },
+    );
+  }
   const pixels = readHappierPngPixelCount(bytes);
-  if (pixels === null || pixels > HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS) return null;
+  if (pixels === null) {
+    return refuse(
+      'plugin_renderable_image_not_png',
+      `Renderable image bytes are not a PNG; ${HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE} is the one renderable type.`,
+      { byteLength },
+    );
+  }
+  if (pixels > HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS) {
+    return refuse(
+      'plugin_renderable_image_too_many_pixels',
+      `Renderable image declares ${pixels} pixels, past the ${HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS}-pixel decode ceiling.`,
+      { byteLength, pixels, limit: HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS },
+    );
+  }
   const source = Object.freeze({
     uri: `data:${HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE};base64,${bytesToBase64(bytes)}`,
   });
   SOURCE_BY_ADMITTED_BYTES.set(bytes, source);
-  return source;
+  return Object.freeze({ admitted: true as const, source });
 }
 
 /**

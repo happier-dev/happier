@@ -28,6 +28,8 @@ export {
   HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS,
   HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE,
   materializeHappierRenderableImage,
+  type HappierRenderableImageAdmission,
+  type HappierRenderableImageRefusal,
   type HappierRenderableImageSource,
 } from '../presentation/content/renderableImage.js';
 export {

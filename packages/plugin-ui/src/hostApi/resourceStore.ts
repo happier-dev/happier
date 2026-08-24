@@ -5,6 +5,8 @@ import type {
   ResourceSubscriptionEvent,
 } from '@happier-dev/plugin-sdk/ui';
 
+type PluginDiagnosticData = Parameters<PluginUiHostApi['diagnostic']>[0];
+
 import {
   HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE,
   materializeHappierRenderableImage,
@@ -26,6 +28,12 @@ export type PluginUiResourceClient = Readonly<{
   watchResource?: (...args: Parameters<PluginUiHostApi['watchResource']>) => Promise<
     Disposable & Readonly<{ admittedDigest?: string }>
   >;
+  /**
+   * The author-facing diagnostic channel for this mount. A refused renderable
+   * image is invisible on every user-facing surface by design, so without this
+   * the author of the image has no way to learn that a bound rejected it.
+   */
+  diagnostic?: PluginUiHostApi['diagnostic'];
 }>;
 
 /**
@@ -50,9 +58,13 @@ export function createPluginUiHostApiResourceClient(
   const watchResource = typeof hostApi.watchResource === 'function'
     ? hostApi.watchResource.bind(hostApi)
     : undefined;
+  const diagnostic = typeof hostApi.diagnostic === 'function'
+    ? hostApi.diagnostic.bind(hostApi)
+    : undefined;
   return Object.freeze({
     readResource: hostApi.readResource.bind(hostApi),
     ...(watchResource ? { watchResource } : {}),
+    ...(diagnostic ? { diagnostic } : {}),
   });
 }
 
@@ -160,6 +172,13 @@ export function pluginUiResourceReferenceKey(
     : `qualified:${normalized.pluginId}\u0000${normalized.localId}`;
 }
 
+/** The author-readable name of a Resource; the entry key is a NUL-joined map key. */
+function resourceLabel(reference: PluginUiResourceReference): string {
+  return typeof reference === 'string'
+    ? reference
+    : `${reference.pluginId}/${reference.localId}`;
+}
+
 function readError(error: unknown): PluginUiResourceError {
   const candidate = error && typeof error === 'object'
     ? error as Readonly<{ code?: unknown; diagnostics?: unknown; message?: unknown }>
@@ -251,6 +270,16 @@ export function createPluginUiResourceStore(input: Readonly<{
 
   const isStoreCurrent = (): boolean => !disposed && (accountLifetime?.isCurrent() ?? true);
   const isEntryCurrent = (entry: MutableEntry): boolean => !entry.disposed && isStoreCurrent();
+
+  /** Fire-and-forget: a diagnostic sink must never fail a Resource read. */
+  function reportDiagnostic(data: PluginDiagnosticData): void {
+    try {
+      input.client.diagnostic?.(data);
+    } catch {
+      // The mounted host owns delivery; a sink failure cannot change the
+      // Resource state this read just resolved.
+    }
+  }
 
   function publish(entry: MutableEntry, next: PluginUiResourceSnapshot): void {
     if (sameSnapshot(entry.snapshot, next)) return;
@@ -381,7 +410,18 @@ export function createPluginUiResourceStore(input: Readonly<{
         // image owner alone decides the renderable type and the product size
         // and decode ceilings.
         if (!unchanged && value.contentType === HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE) {
-          materializeHappierRenderableImage(value.bytes);
+          const admission = materializeHappierRenderableImage(value.bytes);
+          if (!admission.admitted) {
+            // A refused image is indistinguishable from an absent one on every
+            // user-facing surface, so the only place an author can learn about
+            // it is their own diagnostic channel. The owner decided the code,
+            // severity and numbers; this adds the Resource identity, which is
+            // the one fact only this entry knows.
+            reportDiagnostic({
+              ...admission.refusal,
+              details: { ...admission.refusal.details, resource: resourceLabel(entry.resource) },
+            });
+          }
         }
         publish(entry, {
           value: unchanged ? previous.value : value,

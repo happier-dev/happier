@@ -10,8 +10,8 @@ vi.mock('react-native', () => ({
   View: 'View',
 }));
 
-import { createSurfaceContext } from '../../surfaceFixture.testSupport.js';
-import { HappierImage } from './Image.js';
+import { createAdmittedBrandPngFixture, createSurfaceContext } from '../../surfaceFixture.testSupport.js';
+import { HappierBrandMark, HappierImage } from './Image.js';
 import { materializeHappierRenderableImage } from './renderableImage.js';
 
 /**
@@ -39,6 +39,7 @@ function pngBytes(width: number, height: number, byteLength: number): Uint8Array
   new DataView(bytes.buffer).setUint32(16, width);
   new DataView(bytes.buffer).setUint32(20, height);
   for (let index = 24; index < byteLength; index += 1) bytes[index] = index % 251;
+  bytes.set([0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130], byteLength - 12);
   return bytes;
 }
 
@@ -52,6 +53,53 @@ afterEach(() => {
 });
 
 describe('HappierImage byte source derivation', () => {
+  it('exposes the decoder-failure callback on the public brand-mark contract', async () => {
+    const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
+    const onDecodeError = vi.fn();
+
+    await act(async () => {
+      renderer = create(
+        <HappierBrandMark
+          displayName="GitHub"
+          bytes={createAdmittedBrandPngFixture()}
+          theme={context.theme}
+          colorScheme={context.colorScheme}
+          onDecodeError={onDecodeError}
+        />,
+      );
+    });
+    await act(async () => renderer!.root.findByType('Image').props.onError());
+
+    expect(renderer!.root.findAllByType('Image')).toHaveLength(0);
+    expect(renderer!.root.findByType('Text').props.children).toBe('G');
+    expect(onDecodeError).toHaveBeenCalledTimes(1);
+  });
+
+  it('transitions an admitted source through the existing neutral fallback after a decoder error', async () => {
+    const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
+    const bytes = createAdmittedBrandPngFixture({ admit: false });
+    expect(materializeHappierRenderableImage(bytes).admitted).toBe(true);
+    const onDecodeError = vi.fn();
+
+    await act(async () => {
+      renderer = create(
+        <HappierImage
+          bytes={bytes}
+          fallback="PX"
+          theme={context.theme}
+          backing={{ backgroundColor: '#101010', foregroundColor: '#f0f0f0' }}
+          onDecodeError={onDecodeError}
+        />,
+      );
+    });
+    const image = renderer!.root.findByType('Image');
+    await act(async () => image.props.onError());
+
+    expect(renderer!.root.findAllByType('Image')).toHaveLength(0);
+    expect(renderer!.root.findByType('Text').props.children).toBe('PX');
+    expect(onDecodeError).toHaveBeenCalledTimes(1);
+  });
+
   it('reads no bytes at all during render, because materialization is not a render', async () => {
     const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
     const counted = countingBytes(pngBytes(32, 32, 3_072));
@@ -59,7 +107,7 @@ describe('HappierImage byte source derivation', () => {
     // Resource store and the host brand reader do when bytes arrive. It reads
     // every byte exactly once; every read after this point belongs to a render.
     const admitted = materializeHappierRenderableImage(counted.proxy);
-    expect(admitted).not.toBeNull();
+    expect(admitted.admitted).toBe(true);
     expect(counted.reads()).toBeGreaterThanOrEqual(3_072);
     const materializationReads = counted.reads();
 
@@ -84,7 +132,7 @@ describe('HappierImage byte source derivation', () => {
     // Zero conversions, not one and not ten: the source was already derived.
     expect(readsAfterFirstRender).toBe(0);
     expect(counted.reads() - materializationReads).toBe(0);
-    expect(firstSource).toBe(admitted);
+    expect(firstSource).toBe(admitted.admitted ? admitted.source : null);
     expect(lastSource).toBe(firstSource);
   });
 
