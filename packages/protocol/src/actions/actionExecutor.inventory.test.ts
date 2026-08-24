@@ -1144,11 +1144,11 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
-  it('accepts action.spec.search on the cli surface (pi tools-bridge calls through it)', async () => {
+  it('accepts action.spec.search on the session-Agent surface', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('action.spec.search', { query: '', limit: 5 }, { surface: 'cli' });
+    const res = await executor.execute('action.spec.search', { query: '', limit: 5 }, { surface: 'session_agent' });
 
     expect(res.ok).toBe(true);
   });
