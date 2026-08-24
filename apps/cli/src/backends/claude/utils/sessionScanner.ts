@@ -302,6 +302,7 @@ export async function createSessionScanner(opts: {
             if (disposition === 'ignore') continue;
             if (disposition === 'diagnostic') {
                 for (const message of messages) {
+                    if (!isClaudeApiErrorDiagnosticMessage(message)) continue;
                     await processSessionMessage(
                         normalizeClaudeToolUseNamesInRawJsonLines(message),
                         { suppressSideEffects: true },
@@ -962,16 +963,18 @@ function resolveUnhookedSessionDisposition(params: Readonly<{
 }
 
 function shouldDiscoverUnhookedSession(messages: readonly RawJSONLines[]): boolean {
-    return messages.some((message) => {
-        if (message.type !== 'assistant') return false;
-        const record = message as Record<string, unknown>;
-        return record.isApiErrorMessage === true
-            || record.error != null
-            || record.apiErrorStatus != null
-            || record.api_error_status != null
-            || record.errorStatus != null
-            || record.error_status != null;
-    });
+    return messages.some(isClaudeApiErrorDiagnosticMessage);
+}
+
+function isClaudeApiErrorDiagnosticMessage(message: RawJSONLines): boolean {
+    if (message.type !== 'assistant') return false;
+    const record = message as Record<string, unknown>;
+    return record.isApiErrorMessage === true
+        || record.error != null
+        || record.apiErrorStatus != null
+        || record.api_error_status != null
+        || record.errorStatus != null
+        || record.error_status != null;
 }
 
 function readClaudeSessionJsonlEntrySessionId(entry: string): string | null {
