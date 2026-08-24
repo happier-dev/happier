@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
@@ -262,16 +263,21 @@ describe('Codex runtime contribution leaves', () => {
       await runtimeContribution.materializeCodexAuthEnvironment({
         connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
         rootDir: codexHome,
-        openaiCodex: {
-          kind: 'oauth',
+        openaiCodex: buildConnectedServiceCredentialRecord({
+          now: 1_700_000_000_000,
           serviceId: 'openai-codex',
+          profileId: 'default',
+          kind: 'oauth',
           oauth: {
             accessToken: 'access-token',
             refreshToken: 'refresh-token',
             idToken: 'id-token',
+            scope: null,
+            tokenType: null,
             providerAccountId: 'account-1',
+            providerEmail: null,
           },
-        },
+        }),
       });
 
       const authPath = join(codexHome, 'auth.json');
@@ -296,23 +302,32 @@ describe('Codex runtime contribution leaves', () => {
       const result = await runtimeContribution.materializeCodexAuthEnvironment({
         connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
         rootDir: codexHome,
-        openaiCodex: {
-          kind: 'oauth',
+        openaiCodex: buildConnectedServiceCredentialRecord({
+          now: 1_700_000_000_000,
           serviceId: 'openai-codex',
+          profileId: 'default',
+          kind: 'oauth',
           oauth: {
             accessToken: 'coding-access-token',
             refreshToken: 'coding-refresh-token',
             idToken: 'coding-id-token',
+            scope: null,
+            tokenType: null,
             providerAccountId: 'coding-account',
+            providerEmail: null,
           },
-        },
-        openai: {
-          kind: 'token',
+        }),
+        openai: buildConnectedServiceCredentialRecord({
+          now: 1_700_000_000_000,
           serviceId: 'openai',
+          profileId: 'default',
+          kind: 'token',
           token: {
             token: 'sk-realtime-account',
+            providerAccountId: null,
+            providerEmail: null,
           },
-        },
+        }),
       });
 
       expect(result.env).toEqual({ CODEX_HOME: codexHome });
