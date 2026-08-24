@@ -17,7 +17,7 @@
       "default": "./dist/index.js"
     }
   },
-  "description": "Copyable target plugin consuming a versioned feature-owned triage-sources contribution protocol.",
+  "description": "First-party Preview target consuming the canonical Triage contribution protocol.",
   "files": [
     "dist"
   ],
@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/triage-sources-protocol": "0.1.0",
+    "@happier-dev/triage-protocol": "0.0.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

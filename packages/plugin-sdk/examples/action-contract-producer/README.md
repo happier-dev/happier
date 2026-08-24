@@ -1,8 +1,8 @@
 # First-party Preview Cross-plugin Contribution Target
 
 This copyable plugin owns the `document-reviewers` contribution point. It
-imports the versioned `triage-sources` feature protocol, which declares the
-source descriptor, required `review` Action role, and required detail surface.
+imports the canonical versioned `@happier-dev/triage-protocol`, which declares
+the source descriptor, required source Action roles, and required detail surface.
 The paired contributor imports that same feature-owned value. Neither plugin
 recreates the protocol or imports the other plugin's implementation. The target
 has no contributor registry, runtime callback, or Action lookup.

@@ -27,6 +27,10 @@ vi.mock(
 // this package's TypeScript program: its authoring contract is checked by the
 // dedicated feature-protocol fixture project.
 vi.mock(
+    '@happier-dev/triage-protocol/v1',
+    async () => await vi.importActual('../../../triage-protocol/src/v1/index.ts'),
+);
+vi.mock(
     '@happier-dev/triage-sources-protocol/v1',
     async () => await vi.importActual('../../fixtures/feature-protocols/triage-sources-protocol/src/v1.ts'),
 );
@@ -60,14 +64,15 @@ async function loadExample(
 function expectTriageSourcePointSemantics(
     manifest: PluginManifest,
     pointId: string,
-    descriptor: Readonly<{ kind: 'issue'; label: string }>,
+    descriptor: Readonly<Record<string, unknown>>,
+    protocolId = 'triage-sources',
 ): void {
     const parsed = parsePluginManifest(manifest);
     if (!parsed.ok) throw new Error(`targeted_contribution_${pointId}_manifest_invalid`);
     const point = targetedContributionsHost
         .readTargetedContributionPointSemanticRefs(manifest)
         .find((candidate) => candidate.id === pointId
-            && candidate.protocol.id === 'triage-sources'
+            && candidate.protocol.id === protocolId
             && candidate.protocol.version === 1);
     if (!point) throw new Error(`targeted_contribution_${pointId}_semantic_ref_missing`);
     const declaration = parsed.manifest.contributes.pluginContributionPoints
@@ -127,8 +132,8 @@ describe('cross-plugin contribution public authoring example', () => {
             'utf8',
         );
 
-        expect(operationTargetSource).toContain("from '@happier-dev/triage-sources-protocol/v1'");
-        expect(operationContributorSource).toContain("from '@happier-dev/triage-sources-protocol/v1'");
+        expect(operationTargetSource).toContain("from '@happier-dev/triage-protocol/v1'");
+        expect(operationContributorSource).toContain("from '@happier-dev/triage-protocol/v1'");
         expect(operationTargetSource).not.toContain('defineContributionProtocol');
         expect(operationContributorSource).not.toContain('defineContributionProtocol');
         expect(operationTargetSource).toContain('browserTargets:');
@@ -144,9 +149,13 @@ describe('cross-plugin contribution public authoring example', () => {
     it('uses one feature-owned protocol package in the copyable target and contributor examples', () => {
         for (const name of ['action-contract-producer', 'action-contract-consumer'] as const) {
             const source = readFileSync(join(examplesRoot, name, 'src', 'index.ts'), 'utf8');
-            expect(source).toContain("from '@happier-dev/triage-sources-protocol/v1'");
+            expect(source).toContain("from '@happier-dev/triage-protocol/v1'");
             expect(source).not.toContain('defineContributionProtocol');
             expect(source).not.toContain('defineTargetedContribution');
+            expect(readFileSync(join(examplesRoot, name, 'package.json'), 'utf8'))
+                .toContain('"@happier-dev/triage-protocol": "0.0.0"');
+            expect(readFileSync(join(examplesRoot, name, 'test', 'index.test.mjs'), 'utf8'))
+                .toContain('@happier-dev/triage-protocol');
         }
     });
 
@@ -163,12 +172,12 @@ describe('cross-plugin contribution public authoring example', () => {
                     '@happier-dev/plugin-sdk/http',
                     '@happier-dev/plugin-sdk/notifications',
                     '@happier-dev/plugin-sdk/secrets',
-                    '@happier-dev/triage-sources-protocol/v1',
+                    '@happier-dev/triage-protocol/v1',
                 ]
                 : [
                     '@happier-dev/plugin-sdk',
                     '@happier-dev/plugin-sdk/browser',
-                    '@happier-dev/triage-sources-protocol/v1',
+                    '@happier-dev/triage-protocol/v1',
                 ]);
         }
     });
@@ -190,46 +199,16 @@ describe('cross-plugin contribution public authoring example', () => {
                 pluginContributionPoints: [{
                     id: 'document-reviewers',
                     protocols: [{
-                        id: 'triage-sources',
+                        id: 'happier.triage/sources',
                         version: 1,
-                        descriptor: {
-                            type: 'object',
-                            properties: {
-                                kind: {
-                                    anyOf: [{ const: 'issue' }, { const: 'pull-request' }],
-                                },
-                                label: { type: 'string' },
-                            },
-                            required: ['kind', 'label'],
-                            additionalProperties: false,
-                        },
                         operations: {
-                            inspect: {
+                            listInstances: {
                                 required: true,
-                                input: { kind: 'contributorDefined' },
-                                resultSchema: {
-                                    type: 'object',
-                                    properties: {
-                                        inspected: { anyOf: [{ const: true }, { const: false }] },
-                                        entryId: { type: 'string' },
-                                    },
-                                    required: ['inspected', 'entryId'],
-                                    additionalProperties: false,
-                                },
+                                input: { kind: 'protocolDefined' },
                                 action: { surface: 'plugin', dangerLevel: 'safe' },
                             },
-                        },
-                        surfaces: {
-                            detail: {
-                                required: true,
-                                inputSchema: {
-                                    type: 'object',
-                                    properties: { entryId: { type: 'string' } },
-                                    required: ['entryId'],
-                                    additionalProperties: false,
-                                },
-                                presentation: 'content',
-                            },
+                            scan: { required: true },
+                            get: { required: true },
                         },
                     }],
                 }],
@@ -249,9 +228,17 @@ describe('cross-plugin contribution public authoring example', () => {
                         pluginId: 'examples.action-contract-producer',
                         pointId: 'document-reviewers',
                     },
-                    protocol: { id: 'triage-sources', version: 1 },
-                    descriptor: { kind: 'issue', label: 'Document review' },
-                    operations: { inspect: 'prepare-document-review' },
+                    protocol: { id: 'happier.triage/sources', version: 1 },
+                    descriptor: {
+                        v: 1,
+                        purpose: 'document-review',
+                        displayName: 'Document review',
+                    },
+                    operations: {
+                        listInstances: 'list-document-review-instances',
+                        scan: 'scan-document-reviews',
+                        get: 'get-document-review',
+                    },
                     surfaces: {
                         detail: { renderer: 'document-review-detail' },
                     },
@@ -261,7 +248,18 @@ describe('cross-plugin contribution public authoring example', () => {
         expectTriageSourcePointSemantics(
             target.manifest,
             'document-reviewers',
-            { kind: 'issue', label: 'Document review' },
+            {
+                v: 1,
+                purpose: 'document-review',
+                displayName: 'Document review',
+                kinds: [{
+                    id: 'document-review',
+                    workflowSubject: 'issue',
+                    displayName: 'Document review',
+                    pluralDisplayName: 'Document reviews',
+                }],
+            },
+            'happier.triage/sources',
         );
 
         // No target fixture is installed. The contributor's unrelated Action
@@ -271,11 +269,15 @@ describe('cross-plugin contribution public authoring example', () => {
             module: { activate: contributor.activate },
         });
         try {
-            await expect(contributorTestkit.invokeAction('prepare-document-review', {
-                entryId: 'review-public-contract',
+            await expect(contributorTestkit.invokeAction('list-document-review-instances', {
+                v: 1,
             }, { surface: 'plugin' })).resolves.toEqual({
-                inspected: true,
-                entryId: 'review-public-contract',
+                kind: 'failed',
+                failure: {
+                    class: 'unknown',
+                    code: 'example-not-connected',
+                    detail: 'This copyable example has no provider connection.',
+                },
             });
         } finally {
             await contributorTestkit.dispose();

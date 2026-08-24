@@ -7,7 +7,7 @@ import {
 import type { PluginRequestInterceptor } from '@happier-dev/plugin-sdk/http';
 import type { NotificationSender } from '@happier-dev/plugin-sdk/notifications';
 import type { SecretStatus } from '@happier-dev/plugin-sdk/secrets';
-import { triageSourcesV1 } from '@happier-dev/triage-sources-protocol/v1';
+import { TriageSourcesContributionPointV1 } from '@happier-dev/triage-protocol/v1';
 
 /**
  * The webhook credential is plugin-owned, so it is declared as a plugin secret
@@ -189,7 +189,7 @@ const plugin = definePlugin({
     },
   },
   contributionPoints: {
-    'document-reviewers': triageSourcesV1.point(),
+    'document-reviewers': TriageSourcesContributionPointV1,
   },
 });
 

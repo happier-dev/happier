@@ -1,9 +1,9 @@
 # First-party Preview Cross-plugin Contribution Contributor
 
 This copyable plugin contributes the local `local-document-reviewer` binding
-to the target plugin's `document-reviewers` point. The protocol role is named
-`review`, but it deliberately binds to this package's arbitrary local Action
-id, `prepare-document-review`.
+to the target plugin's `document-reviewers` point through the canonical Triage
+protocol. Its required source roles deliberately bind to this package's arbitrary
+local Action ids.
 
 That Action remains an ordinary plugin Action. This package does not search
 global Action ids, self-register with the target, or provide a fallback
