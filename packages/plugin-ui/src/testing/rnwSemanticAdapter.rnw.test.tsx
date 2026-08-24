@@ -290,6 +290,28 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
     await fixture.dispose();
   });
 
+  it('removes aria-hidden subtrees from semantic queries after an author update', async () => {
+    function AuthorSurface() {
+      const { locale } = useSurfaceContext();
+      return (
+        <div aria-hidden={locale === 'de' ? 'true' : undefined}>
+          <Text value="Retained details" />
+        </div>
+      );
+    }
+    const fixture = await createPluginUiTestkit({
+      identity,
+      surface: defineUiSurface(AuthorSurface),
+      surfaceContext: createSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    });
+
+    await expect(fixture.getByText('Retained details')).resolves.toEqual({ content: 'Retained details' });
+    await fixture.updateSurface(createSurfaceContext({ locale: 'de' }));
+    await expect(fixture.queryByText('Retained details')).resolves.toBeUndefined();
+    await fixture.dispose();
+  });
+
   it('invokes a real controlled List option without inventing a test-only selection path', async () => {
     function AuthorSurface() {
       const [selected, setSelected] = useState<'current' | 'previous'>('current');

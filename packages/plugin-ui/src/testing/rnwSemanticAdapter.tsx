@@ -158,6 +158,38 @@ function readTextFieldFacts(element: HTMLElement): Readonly<{
   });
 }
 
+/**
+ * Whether the platform has taken this element out of the accessibility tree.
+ *
+ * A surface that keeps a region MOUNTED but hidden — a retained pane, a stacked
+ * composition whose other pane is off screen — is making a real accessibility
+ * claim: the reader cannot see it, so a screen reader must not read it and Tab
+ * must not enter it. An adapter that reported every element the DOM still holds
+ * would answer that claim with the opposite of the truth, and every assertion
+ * built on it ("the list is not on screen while the entry is open") would pass
+ * for a surface that never hid anything.
+ *
+ * Hiding is inherited by the subtree and jsdom computes no inherited layout, so
+ * the ancestors up to the mount container are walked explicitly. The element's
+ * OWN declaration is read rather than a resolved cascade: React Native Web
+ * writes the styles this package produces as inline declarations, and asking
+ * jsdom to resolve a full cascade for every element of every snapshot costs far
+ * more than the class-authored hiding no Happier surface produces.
+ *
+ * Both platform layout hiding and the explicit accessibility-tree contract hide
+ * a node here: `display: none`, `visibility: hidden`, `hidden`, or
+ * `aria-hidden="true"` on the node or any ancestor.
+ */
+function isHiddenFromAccessibilityTree(element: HTMLElement, container: HTMLElement): boolean {
+  for (let node: HTMLElement | null = element; node !== null; node = node.parentElement) {
+    if (node.hasAttribute('hidden')) return true;
+    if (node.getAttribute('aria-hidden') === 'true') return true;
+    if (node.style.display === 'none' || node.style.visibility === 'hidden') return true;
+    if (node === container) break;
+  }
+  return false;
+}
+
 function readSemanticNode(
   element: HTMLElement,
   handle: string,
@@ -203,7 +235,12 @@ function readTextNodes(container: HTMLElement): readonly Readonly<{ content: str
   const walker = container.ownerDocument.createTreeWalker(container, textNodeFilter);
   for (let current = walker.nextNode(); current !== null; current = walker.nextNode()) {
     const content = normalizeText(current.textContent);
-    if (content !== undefined) texts.push(Object.freeze({ content }));
+    if (content === undefined) continue;
+    // Text the platform has hidden is not text the reader can reach, for the
+    // same reason its enclosing element is not a semantic node.
+    const owner = current.parentElement;
+    if (owner !== null && isHiddenFromAccessibilityTree(owner, container)) continue;
+    texts.push(Object.freeze({ content }));
   }
   return Object.freeze(texts);
 }
@@ -323,6 +360,7 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
           elementsByHandle.clear();
           const nodes: PluginUiSemanticAdapterNode[] = [];
           for (const element of mount.container.querySelectorAll<HTMLElement>('[role], input, textarea, img, [aria-label]')) {
+            if (isHiddenFromAccessibilityTree(element, mount.container)) continue;
             const handle = handleForElement(element);
             const node = readSemanticNode(element, handle);
             if (!node) continue;
