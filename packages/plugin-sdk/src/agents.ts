@@ -26,6 +26,15 @@ export type {
 } from '@happier-dev/protocol';
 export type { PluginAgentDefinition } from './definePlugin.js';
 
+export {
+    CodexPassiveRealtimeSetupResultV1Schema as AgentPassiveRealtimeSetupResultV1Schema,
+    CodexPassiveRealtimeSetupStatusV1Schema as AgentPassiveRealtimeSetupStatusV1Schema,
+} from '@happier-dev/protocol/capabilities';
+export type {
+    CodexPassiveRealtimeSetupResultV1 as AgentPassiveRealtimeSetupResultV1,
+    CodexPassiveRealtimeSetupStatusV1 as AgentPassiveRealtimeSetupStatusV1,
+} from '@happier-dev/protocol/capabilities';
+
 /**
  * The Agent capability projection an Agent plugin manifest authors against.
  *

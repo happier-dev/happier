@@ -114,6 +114,7 @@ test('projects the strict canonical Agent transcript raw record through the SDK 
   )), 'SDK must own the declaration-neutral public author projection');
   assert.ok(!agentSource.statements.some((statement) => (
     ts.isExportDeclaration(statement)
+    && statement.moduleSpecifier
     && ts.isStringLiteral(statement.moduleSpecifier)
     && statement.moduleSpecifier.text === '@happier-dev/protocol'
   )), 'SDK must not leak the Protocol declaration graph through its public author type');

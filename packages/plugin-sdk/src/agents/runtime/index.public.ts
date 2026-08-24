@@ -135,6 +135,9 @@ export type { AgentSessionHookServerHandle } from '../../agentRuntime/projection
 export type { AgentSessionHookServerStartRequest } from '../../agentRuntime/projections.js';
 export type { AgentSessionHooksService } from '../../agentRuntime/projections.js';
 export type { AgentSessionHostServices } from '../../agentRuntime/projections.js';
+export type { AgentSessionHappierToolsService } from '../../agentRuntime/projections.js';
+export type { AgentSessionNativeToolBridgeConfig } from '../../agentRuntime/projections.js';
+export type { AgentSessionNativeToolDescriptor } from '../../agentRuntime/projections.js';
 export type { AgentSessionInFlightConfigurationOutcome } from '../../agentRuntime/projections.js';
 export type { AgentSessionInput } from '../../agentRuntime/projections.js';
 export type { AgentSessionMcpLaunchConfig } from '../../agentRuntime/projections.js';

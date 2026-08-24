@@ -127,6 +127,7 @@ export type { AgentSessionGoalControlContext } from '../../agentRuntime/projecti
 export type { AgentSessionGoalMutation } from '../../agentRuntime/projections.js';
 export type { AgentSessionGoalMutationResult } from '../../agentRuntime/projections.js';
 export type { AgentSessionGoalRefreshResult } from '../../agentRuntime/projections.js';
+export type { AgentSessionHappierToolsService } from '../../agentRuntime/projections.js';
 export type { AgentSessionHookForwarderAssets } from '../../agentRuntime/projections.js';
 export type { AgentSessionHookPluginDirCreateRequest } from '../../agentRuntime/projections.js';
 export type { AgentSessionHookPluginFile } from '../../agentRuntime/projections.js';
@@ -147,6 +148,8 @@ export type { AgentSessionModelOptionChoice } from '../../agentRuntime/projectio
 export type { AgentSessionModelsService } from '../../agentRuntime/projections.js';
 export type { AgentSessionModelsSnapshot } from '../../agentRuntime/projections.js';
 export type { AgentSessionModelsSource } from '../../agentRuntime/projections.js';
+export type { AgentSessionNativeToolBridgeConfig } from '../../agentRuntime/projections.js';
+export type { AgentSessionNativeToolDescriptor } from '../../agentRuntime/projections.js';
 export type { AgentSessionOpenRequest } from '../../agentRuntime/projections.js';
 export type { AgentSessionPreAdmissionBuffer } from '../../agentRuntime/projections.js';
 export type { AgentSessionPreAdmissionBufferResult } from '../../agentRuntime/projections.js';

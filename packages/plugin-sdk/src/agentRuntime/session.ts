@@ -114,80 +114,6 @@ export type AgentSessionProviderBinding = Readonly<{
 
 export type AgentSessionProviderCheckpoint = JsonValue;
 
-type RuntimeEventBase = Readonly<{
-  sequence: number;
-  sessionId: string;
-  emittedAtMs: number;
-}>;
-
-type RuntimeTurnEvent = RuntimeEventBase & Readonly<{
-  turnId: string;
-  agentTurnId?: string;
-}>;
-
-type RuntimeEventDiagnostic = PluginDiagnosticData;
-
-type RuntimeEventInputIds = [string, ...string[]];
-
-type RuntimeEventDelivery =
-  | Readonly<{ kind: 'newTurn'; turnId: string }>
-  | Readonly<{ kind: 'followUp'; turnId: string }>
-  | Readonly<{ kind: 'steer'; turnId: string }>;
-
-type RuntimeEventUsageTokens = Readonly<{
-  input: number;
-  output: number;
-  reasoning: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-}>;
-
-type RuntimeEventUsageCost = Readonly<{
-  reportedUsd: number;
-  estimatedUsd: number;
-  invoiceUsd?: number;
-  billingContext?:
-    | 'api_usage'
-    | 'subscription_included'
-    | 'subscription_with_possible_overage'
-    | 'unknown';
-  costSource?:
-    | 'provider_reported'
-    | 'provider_reported_api_equivalent'
-    | 'pricing_estimate'
-    | 'invoice'
-    | 'none';
-  currency: string;
-  breakdown?: Record<string, number>;
-  effectiveUsd?: number;
-}>;
-
-type RuntimeEventContextUsage = Readonly<{
-  v: 1;
-  modelId: string | null;
-  usedTokens: number;
-  windowTokens: number | null;
-  totalProcessedTokens: number | null;
-  baselineTokens: number | null;
-  isAutoCompactEnabled: boolean | null;
-  categories: Array<Readonly<{
-    key: string;
-    label: string | null;
-    tokens: number;
-  }>> | null;
-  observedAtMs: number;
-  source: 'provider_live' | 'provider_turn' | 'derived_estimate';
-}>;
-
-type RuntimeCompactionEvent = RuntimeEventBase & Readonly<{
-  kind: 'context-compaction';
-  compactionId: string;
-  turnId?: string;
-  trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
-  retryAttempt?: number;
-}>;
-
 /**
  * Public declaration projection of the Protocol-owned runtime event union.
  * The Protocol schema remains the sole validation and semantic owner; this
@@ -195,57 +121,115 @@ type RuntimeCompactionEvent = RuntimeEventBase & Readonly<{
  * the host-private Protocol package.
  */
 export type AgentSessionRuntimeEvent =
-  | (RuntimeEventBase & Readonly<{
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'input-accepted';
-      inputIds: RuntimeEventInputIds;
-      delivery: RuntimeEventDelivery;
-    }>)
-  | (RuntimeEventBase & Readonly<{
+      inputIds: [string, ...string[]];
+      delivery:
+        | Readonly<{ kind: 'newTurn'; turnId: string }>
+        | Readonly<{ kind: 'followUp'; turnId: string }>
+        | Readonly<{ kind: 'steer'; turnId: string }>;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'input-rejected';
-      inputIds: RuntimeEventInputIds;
-      diagnostic: RuntimeEventDiagnostic;
+      inputIds: [string, ...string[]];
+      diagnostic: PluginDiagnosticData;
       retryable: boolean;
-    }>)
-  | (RuntimeEventBase & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'input-custody-unknown';
-      inputIds: RuntimeEventInputIds;
-      issue: RuntimeEventDiagnostic;
-    }>)
-  | (RuntimeEventBase & Readonly<{
+      inputIds: [string, ...string[]];
+      issue: PluginDiagnosticData;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'input-delivery-failed';
-      inputIds: RuntimeEventInputIds;
-      delivery: Exclude<RuntimeEventDelivery, Readonly<{ kind: 'steer'; turnId: string }>>;
-      issue: RuntimeEventDiagnostic;
+      inputIds: [string, ...string[]];
+      delivery:
+        | Readonly<{ kind: 'newTurn'; turnId: string }>
+        | Readonly<{ kind: 'followUp'; turnId: string }>;
+      issue: PluginDiagnosticData;
       duplicateRisk: 'possible' | 'likely' | 'unknown';
-    }>)
-  | (RuntimeEventBase & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'provider-session-id';
       providerSessionId: string;
       nativeSessionLogPath?: string;
-    }>)
-  | (RuntimeEventBase & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'available-commands';
       commands: Array<Readonly<{
         name: string;
         description?: string;
       }>>;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'turn-start';
       startedBy: 'host' | 'provider';
       causedByTurnId?: string;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{ kind: 'turn-progress' }>)
-  | (RuntimeTurnEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
+      kind: 'turn-progress';
+    }>
+  | (Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
+    }> & Readonly<{
       kind: 'turn-agent-id-observed';
       agentTurnId: string;
     }>)
-  | (RuntimeTurnEvent & Readonly<{ kind: 'turn-complete' }>)
-  | (RuntimeTurnEvent & Readonly<{
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
+      kind: 'turn-complete';
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'turn-failed';
-      diagnostic: RuntimeEventDiagnostic;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{
+      diagnostic: PluginDiagnosticData;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'turn-cancelled';
       cause:
         | 'user'
@@ -255,49 +239,80 @@ export type AgentSessionRuntimeEvent =
         | 'providerCancelled'
         | 'providerInterrupted'
         | 'unknown';
-      diagnostic?: RuntimeEventDiagnostic;
-    }>)
-  | (RuntimeEventBase & Readonly<{
+      diagnostic?: PluginDiagnosticData;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'runtime-ended';
       cause: 'providerEnded' | 'connectionLost' | 'processExited' | 'protocolError' | 'unknown';
       retryable: boolean;
-      diagnostic?: RuntimeEventDiagnostic;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{
+      diagnostic?: PluginDiagnosticData;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'message-delta';
       channel: 'assistant' | 'reasoning';
       text: string;
       sidechainId?: string;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'tool-call';
       toolCallId: string;
       toolName: string;
       input: JsonValue;
       sidechainId?: string;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'tool-progress';
       toolCallId: string;
       progress: JsonValue;
       sidechainId?: string;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'tool-result';
       toolCallId: string;
       output: JsonValue;
       isError?: boolean;
       sidechainId?: string;
-    }>)
-  | (RuntimeEventBase & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'transcript-message-committed';
       messageId: string;
       role: 'user' | 'assistant' | 'reasoning';
       text: string;
       turnId?: string;
       sidechainId?: string;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'file-edit';
       editId: string;
       path: string;
@@ -306,54 +321,155 @@ export type AgentSessionRuntimeEvent =
       oldContent?: string;
       newContent?: string;
       sidechainId?: string;
-    }>)
-  | (RuntimeEventBase & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'usage-observed';
       observationId: string;
       turnId?: string;
       source: string;
       scope: 'turn_delta' | 'session_cumulative' | 'session_final';
       modelId?: string;
-      tokens?: RuntimeEventUsageTokens;
-      cost?: RuntimeEventUsageCost;
-      context?: RuntimeEventContextUsage;
-    }>)
-  | (RuntimeTurnEvent & Readonly<{
+      tokens?: Readonly<{
+        input: number;
+        output: number;
+        reasoning: number;
+        cacheRead: number;
+        cacheWrite: number;
+        total: number;
+      }>;
+      cost?: Readonly<{
+        reportedUsd: number;
+        estimatedUsd: number;
+        invoiceUsd?: number;
+        billingContext?:
+          | 'api_usage'
+          | 'subscription_included'
+          | 'subscription_with_possible_overage'
+          | 'unknown';
+        costSource?:
+          | 'provider_reported'
+          | 'provider_reported_api_equivalent'
+          | 'pricing_estimate'
+          | 'invoice'
+          | 'none';
+        currency: string;
+        breakdown?: Record<string, number>;
+        effectiveUsd?: number;
+      }>;
+      context?: Readonly<{
+        v: 1;
+        modelId: string | null;
+        usedTokens: number;
+        windowTokens: number | null;
+        totalProcessedTokens: number | null;
+        baselineTokens: number | null;
+        isAutoCompactEnabled: boolean | null;
+        categories: Array<Readonly<{
+          key: string;
+          label: string | null;
+          tokens: number;
+        }>> | null;
+        observedAtMs: number;
+        source: 'provider_live' | 'provider_turn' | 'derived_estimate';
+      }>;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
       kind: 'turn-rollback-boundary';
       agentRollbackOrdinal?: number;
       providerCheckpoint?: AgentSessionProviderCheckpoint;
-    }>)
-  | (RuntimeEventBase & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       kind: 'runtime-activity-snapshot';
       state: 'active' | 'idle' | 'unknown';
       activeCount: number;
-    }>)
-  | (RuntimeCompactionEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'context-compaction';
+      compactionId: string;
+      turnId?: string;
+      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      retryAttempt?: number;
       phase: 'started';
       tokenCountBefore?: number;
       tokenCountSource?: 'providerReported' | 'providerEstimated' | 'derivedEstimate';
-    }>)
-  | (RuntimeCompactionEvent & Readonly<{ phase: 'progress' }>)
-  | (RuntimeCompactionEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'context-compaction';
+      compactionId: string;
+      turnId?: string;
+      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      retryAttempt?: number;
+      phase: 'progress';
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'context-compaction';
+      compactionId: string;
+      turnId?: string;
+      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      retryAttempt?: number;
       phase: 'completed';
       tokenCountBefore?: number;
       tokenCountAfter?: number;
       tokenCountSource?: 'providerReported' | 'providerEstimated' | 'derivedEstimate';
       continuation?: 'paused';
       pauseReason?: 'agentIdleAfterCompaction';
-    }>)
-  | (RuntimeCompactionEvent & Readonly<{
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'context-compaction';
+      compactionId: string;
+      turnId?: string;
+      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      retryAttempt?: number;
       phase: 'failed';
-      diagnostic: RuntimeEventDiagnostic;
-    }>)
-  | (RuntimeCompactionEvent & Readonly<{
+      diagnostic: PluginDiagnosticData;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'context-compaction';
+      compactionId: string;
+      turnId?: string;
+      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      retryAttempt?: number;
       phase: 'cancelled';
-      diagnostic?: RuntimeEventDiagnostic;
-    }>)
-  | (RuntimeCompactionEvent & Readonly<{
+      diagnostic?: PluginDiagnosticData;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
+      kind: 'context-compaction';
+      compactionId: string;
+      turnId?: string;
+      trigger: 'manual' | 'automatic' | 'threshold' | 'overflow' | 'unknown';
+      retryAttempt?: number;
       phase: 'outcomeUnknown';
-      diagnostic: RuntimeEventDiagnostic;
-    }>);
+      diagnostic: PluginDiagnosticData;
+    }>;
 
 export type AgentSessionRuntimeAuthApplyRequest = Readonly<{
   serviceId: string;
