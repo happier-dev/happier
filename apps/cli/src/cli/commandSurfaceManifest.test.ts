@@ -25,7 +25,7 @@ describe('CLI command-surface manifest', () => {
     await primeProjectedCommandSurfaceEntries();
     const entries = listRootHelpCommands();
     const commands = entries.map((entry) => entry.command);
-    expect(commands.slice(0, 29)).toEqual([
+    expect(commands.slice(0, 34)).toEqual([
       null,
       'setup',
       'auth',
@@ -37,11 +37,15 @@ describe('CLI command-surface manifest', () => {
       'completion',
       'agents',
       'providers',
+      'profiles',
       'plugins',
       'notify',
       'install',
       'status',
       'service',
+      'daemon',
+      'machine',
+      'relay',
       'doctor',
       'uninstall',
       'self',
@@ -55,8 +59,9 @@ describe('CLI command-surface manifest', () => {
       'stop',
       'delegate',
       'resume',
+      'server',
     ]);
-    expect(new Set(commands.slice(29))).toEqual(new Set([
+    expect(new Set(commands.slice(34))).toEqual(new Set([
       'claude',
       'opencode',
       'antigravity',
@@ -103,6 +108,11 @@ describe('CLI command-surface manifest', () => {
       rootHelpLabel: 'happier providers',
       rootHelpDescription: 'Configure model providers and connections',
     });
+    for (const command of ['daemon', 'machine', 'relay', 'profiles', 'server']) {
+      const entry = entries.find((candidate) => candidate.command === command);
+      expect(entry).toMatchObject({ rootHelpLabel: `happier ${command}` });
+      expect(entry?.rootHelpDescription).toEqual(expect.stringMatching(/\S/u));
+    }
     expect(entries.find((entry) => entry.command === 'opencode')).toMatchObject({
       rootHelpLabel: 'happier opencode',
       rootHelpDescription: 'Start OpenCode CLI',
@@ -243,6 +253,9 @@ describe('CLI command-surface manifest', () => {
 
     expect(help).toMatch(installerGate('setup'));
     expect(help).toMatch(installerGate('auth'));
+    for (const command of ['daemon', 'machine', 'relay', 'profiles', 'server']) {
+      expect(help).toMatch(installerGate(command));
+    }
     // A surface the CLI does not advertise must not satisfy the gate, or the
     // check would pass for anything.
     expect(help).not.toMatch(installerGate('definitely-not-a-command'));

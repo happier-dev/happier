@@ -6,16 +6,45 @@ import type { StoredCredentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import {
+  normalizeActionExecuteResult,
+  type NormalizedCliActionExecuteResult,
+} from './shared/normalizeActionExecuteResult';
+import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 import { assertSessionCommandArguments } from './shared/assertSessionCommandArguments';
+
+const SESSION_WAIT_USAGE = `Usage: ${SESSION_HELP_LINES.wait}`;
+
+export function resolveSessionWaitTimeoutSeconds(argv: readonly string[]): number {
+  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout', { min: 1 });
+  return typeof timeoutSecondsRaw === 'number' && Number.isFinite(timeoutSecondsRaw) && timeoutSecondsRaw > 0
+    ? Math.min(3600, timeoutSecondsRaw)
+    : 300;
+}
+
+export async function executeSessionWaitAction(params: Readonly<{
+  executor: ReturnType<typeof createCliActionExecutorFromCredentials>;
+  sessionId: string;
+  timeoutSeconds: number;
+}>): Promise<NormalizedCliActionExecuteResult> {
+  return normalizeActionExecuteResult(await params.executor.execute(
+    'session.wait.idle',
+    { sessionId: params.sessionId, timeoutSeconds: params.timeoutSeconds },
+    { surface: 'cli', defaultSessionId: null },
+  ));
+}
+
+export function printSessionWaitSuccess(): void {
+  console.log(ok('Session idle'));
+}
 
 export async function cmdSessionWait(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   assertSessionCommandArguments(argv, {
-    usage: 'Usage: happier session wait <session-id-or-prefix> [--timeout <seconds>] [--json]',
+    usage: SESSION_WAIT_USAGE,
     startIndex: 1,
     booleanFlags: ['--json'],
     valueFlags: ['--timeout'],
@@ -24,14 +53,10 @@ export async function cmdSessionWait(
   const json = wantsJson(argv);
   const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1, valueFlags: ['--timeout'] });
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session wait <session-id-or-prefix> [--timeout <seconds>] [--json]');
+    throw new Error(SESSION_WAIT_USAGE);
   }
 
-  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout', { min: 1 });
-  const timeoutSeconds =
-    typeof timeoutSecondsRaw === 'number' && Number.isFinite(timeoutSecondsRaw) && timeoutSecondsRaw > 0
-      ? Math.min(3600, timeoutSecondsRaw)
-      : 300;
+  const timeoutSeconds = resolveSessionWaitTimeoutSeconds(argv);
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -44,12 +69,11 @@ export async function cmdSessionWait(
   }
 
   const executor = createCliActionExecutorFromCredentials({ credentials });
-  const actionRes = await executor.execute(
-    'session.wait.idle',
-    { sessionId: idOrPrefix, timeoutSeconds },
-    { surface: 'cli', defaultSessionId: null },
-  );
-  const normalized = normalizeActionExecuteResult(actionRes as any);
+  const normalized = await executeSessionWaitAction({
+    executor,
+    sessionId: idOrPrefix,
+    timeoutSeconds,
+  });
   if (!normalized.ok) {
     if (json) {
       await printJsonEnvelope({
@@ -75,5 +99,5 @@ export async function cmdSessionWait(
     await printJsonEnvelope({ ok: true, kind: 'session_wait', data: { sessionId: result.sessionId, idle: true, observedAt: result.observedAt } });
     return;
   }
-  console.log(ok('Session idle'));
+  printSessionWaitSuccess();
 }

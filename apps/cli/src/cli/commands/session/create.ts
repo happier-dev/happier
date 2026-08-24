@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 import { SessionSpawnNewResultV1Schema, type SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 
-import { hasFlag, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { hasFlag } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import type { StoredCredentials } from '@/persistence';
@@ -12,6 +12,11 @@ import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/t
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { parseSessionCreateSpawnOptions } from './create/parseSessionCreateSpawnOptions';
 import { normalizeSessionCreateSpawnRequest } from './create/normalizeSessionCreateSpawnRequest';
+import {
+  executeSessionWaitAction,
+  printSessionWaitSuccess,
+  resolveSessionWaitTimeoutSeconds,
+} from './wait';
 import { resolveConnectedServicesLaunchAuthWithInventory } from '@/cli/connectedServicesLaunchAuth';
 import { resolveCatalogAgentConnectedServiceIds } from '@/agent/catalog/registry';
 
@@ -217,14 +222,38 @@ export async function cmdSessionCreate(
   };
 
   if (waitAfterCreation) {
-    const { cmdSessionWait } = await import('./wait');
-    const timeout = readFlagValue(argv, '--timeout');
-    await cmdSessionWait([
-      'wait',
-      created.sessionId,
-      ...(timeout ? ['--timeout', timeout] : []),
-      ...(json ? ['--json'] : []),
-    ], deps);
+    const waitResult = await executeSessionWaitAction({
+      executor,
+      sessionId: created.sessionId,
+      timeoutSeconds: resolveSessionWaitTimeoutSeconds(argv),
+    });
+    if (!waitResult.ok) {
+      if (json) {
+        await printJsonEnvelope({
+          ok: false,
+          kind: 'session_create',
+          error: {
+            code: waitResult.errorCode,
+            ...(waitResult.candidates ? { candidates: waitResult.candidates } : {}),
+            ...(waitResult.errorMessage ? { message: waitResult.errorMessage } : {}),
+          },
+        });
+        return;
+      }
+      throw new Error(waitResult.errorMessage ?? waitResult.errorCode);
+    }
+    if (await tryHandleApprovalRequestCreated({
+      envelopeKind: 'session_create',
+      json,
+      result: waitResult.data,
+    })) {
+      return;
+    }
+    if (json) {
+      await printJsonEnvelope({ ok: true, kind: 'session_create', data: output });
+      return;
+    }
+    printSessionWaitSuccess();
     return;
   }
   if (followAfterCreation) {

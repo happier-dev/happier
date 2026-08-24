@@ -40,13 +40,46 @@ describe('happier session plan start (integration)', () => {
 
     const { encodeBase64: encodeBase64Session, encryptWithDataKey } = await import('@/api/encryption');
     const metadataCiphertext = encodeBase64Session(
-      encryptWithDataKey({ path: '/tmp', flavor: 'claude' }, dek),
+      encryptWithDataKey({ path: '/tmp', flavor: 'claude', machineId: 'machine-integration-1' }, dek),
       'base64',
     );
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === '/v2/account/settings') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          version: 1,
+          content: {
+            t: 'plain',
+            v: {
+              schemaVersion: 2,
+              actionsSettingsV1: {
+                v: 1,
+                actions: {
+                  'action.options.resolve': { enabled: true, disabledSurfaces: [], disabledPlacements: [] },
+                  'subagents.plan.start': { enabled: true, disabledSurfaces: [], disabledPlacements: [] },
+                },
+              },
+            },
+          },
+        }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/account/encryption/currentness') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({
+          mode: 'e2ee',
+          version: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: null,
+          updatedAt: 1,
+        }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -57,8 +90,8 @@ describe('happier session plan start (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
-              activeAt: 0,
+              active: true,
+              activeAt: 2,
               metadata: metadataCiphertext,
               metadataVersion: 0,
               agentState: null,
@@ -66,6 +99,7 @@ describe('happier session plan start (integration)', () => {
               pendingCount: 0,
               pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
+              machineId: 'machine-integration-1',
               share: null,
             },
           }),
@@ -99,8 +133,10 @@ describe('happier session plan start (integration)', () => {
         const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted.intent).toBe('plan');
-        expect(decrypted.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
-        expect(decrypted.intentInput?.backendTargetKey).toBe('agent:claude');
+        expect(decrypted.backendTarget).toEqual({
+          kind: 'builtInAgent',
+          agentId: decrypted.intentInput?.backendTargetKey?.replace(/^(?:agent|backend):/, ''),
+        });
 
         callIdx += 1;
         const resultPayload = { runId: `run_${callIdx}`, callId: `call_${callIdx}`, sidechainId: `call_${callIdx}` };
@@ -161,12 +197,16 @@ describe('happier session plan start (integration)', () => {
       );
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       expect(parsed.kind).toBe('session_plan_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_plan_start_123');
       expect(parsed.data?.results?.length).toBe(2);
-      expect(parsed.data?.results?.[0]?.key).toBe('agent:claude');
-      expect(parsed.data?.results?.[1]?.key).toBe('agent:codex');
+      expect(parsed.data?.results?.[0]?.key).toBe('backend:claude');
+      expect(parsed.data?.results?.[1]?.key).toBe('backend:codex');
+      expect(
+        parsed.data?.results?.every((result: { ok?: boolean }) => result.ok === true),
+        JSON.stringify(parsed),
+      ).toBe(true);
     } finally {
       output.restore();
     }

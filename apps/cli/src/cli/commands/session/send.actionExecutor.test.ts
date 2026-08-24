@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ok } from '@happier-dev/cli-common/output';
 
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
+import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
@@ -204,7 +205,7 @@ describe('happier session send (action executor)', () => {
         kind: 'session_send',
         error: {
           code: 'invalid_arguments',
-          message: 'Usage: happier session send <session-id-or-prefix> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--provider-connection <id|native>] [--local-id <id>] [--wait] [--timeout <seconds>] [--json]',
+          message: `Usage: ${SESSION_HELP_LINES.send}`,
         },
       });
       expect(execute).not.toHaveBeenCalled();
@@ -364,6 +365,35 @@ describe('happier session send (action executor)', () => {
       ['send', 'sess-1', 'Hello', '--provider-connection', 'pc_work'],
       credentials,
     )).rejects.toThrow(/--provider-connection requires --model/u);
+
+    // `native` is a source selection too: the Action refuses it without a
+    // model override because there is no selection to apply it to. Refuse it
+    // here with the same named reason instead of shipping an input the Action
+    // rejects as an opaque `invalid_parameters`.
+    execute.mockClear();
+    await expect(handleSessionCommand(
+      ['send', 'sess-1', 'Hello', '--provider-connection', 'native'],
+      credentials,
+    )).rejects.toThrow(/--provider-connection requires --model/u);
+    expect(execute).not.toHaveBeenCalled();
+
+    // The reset sentinel IS a model override, so native plus `--model default`
+    // stays accepted and still reaches the Action.
+    execute.mockResolvedValueOnce(success);
+    output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['send', 'sess-1', 'Hello', '--model', 'default', '--provider-connection', 'native', '--json'],
+        credentials,
+      );
+    } finally {
+      output.restore();
+    }
+    expect(execute).toHaveBeenLastCalledWith(
+      'session.message.send',
+      expect.objectContaining({ modelOverride: null, providerConnectionId: null }),
+      { surface: 'cli', defaultSessionId: null },
+    );
   });
 
   it('prints the durable local id so a human retry can rejoin the same input', async () => {
@@ -386,6 +416,52 @@ describe('happier session send (action executor)', () => {
     }
 
     expect(text.text()).toContain('local-42');
+  });
+
+  it('names the durable retry identity when a send fails ambiguously', async () => {
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const credentials = {
+      readCredentialsFn: async () => ({
+        token: 'token_test',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+      }),
+    };
+    const ambiguous = {
+      ok: true,
+      result: {
+        ok: false,
+        code: 'timeout',
+        message: 'Could not confirm whether the exact pending Session input remains in custody',
+      },
+    };
+
+    // Human path: the id the send actually used must be nameable, or the only
+    // safe retry is unavailable to a caller who did not pre-supply one.
+    execute.mockResolvedValueOnce(ambiguous);
+    const thrown = await handleSessionCommand(['send', 'sess-1', 'Hello'], credentials)
+      .then(() => null, (error: unknown) => error);
+    const humanInput = execute.mock.calls.at(-1)?.[1] as { localId?: unknown };
+    expect(typeof humanInput.localId).toBe('string');
+    expect(String((thrown as Error | null)?.message))
+      .toContain(`--local-id ${String(humanInput.localId)}`);
+
+    // JSON path: the same identity is machine-readable on the failure envelope.
+    execute.mockReset();
+    execute.mockResolvedValueOnce(ambiguous);
+    const output = captureConsoleJsonOutput();
+    let parsed: unknown;
+    try {
+      await handleSessionCommand(['send', 'sess-1', 'Hello', '--json'], credentials);
+      parsed = output.json();
+    } finally {
+      output.restore();
+    }
+    const jsonInput = execute.mock.calls.at(-1)?.[1] as { localId?: unknown };
+    expect(parsed).toEqual(expect.objectContaining({
+      ok: false,
+      kind: 'session_send',
+      error: expect.objectContaining({ code: 'timeout', localId: jsonInput.localId }),
+    }));
   });
 
 });

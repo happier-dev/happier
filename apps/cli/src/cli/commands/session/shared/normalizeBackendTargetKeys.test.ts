@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  hasBackendTargetSelectionFromCsv,
   normalizeBackendTargetKeysFromCsv,
   parseSingleBackendTargetFromFlag,
 } from './normalizeBackendTargetKeys';
@@ -23,5 +24,9 @@ describe('normalizeBackendTargetKeysFromCsv', () => {
   it('preserves explicit V2 backend target keys', () => {
     expect(normalizeBackendTargetKeysFromCsv('backend:opencode')).toEqual(['backend:opencode']);
     expect(normalizeBackendTargetKeysFromCsv('backend:plugin-review-bot')).toEqual(['backend:plugin-review-bot']);
+  });
+
+  it('does not treat separator-only values as a backend selection', () => {
+    expect(hasBackendTargetSelectionFromCsv(' , , ')).toBe(false);
   });
 });

@@ -43,7 +43,7 @@ vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
   fetchAccountEncryptionCurrentness,
 }));
 
-describe('happier session plan start command', () => {
+describe('happier session voice-agent start command', () => {
   beforeEach(() => {
     execute.mockReset();
     createCliActionExecutor.mockClear();
@@ -54,51 +54,46 @@ describe('happier session plan start command', () => {
     ensureCliActionPolicySettings.mockReset();
     fetchAccountEncryptionCurrentness.mockReset();
 
-    resolveSessionIdOrPrefix.mockResolvedValue({ ok: true, sessionId: 'sess-plan-1' });
-    resolveSessionTarget.mockResolvedValue({ ok: true, sessionId: 'sess-plan-1' });
+    resolveSessionIdOrPrefix.mockResolvedValue({ ok: true, sessionId: 'sess-voice-1' });
+    resolveSessionTarget.mockResolvedValue({ ok: true, sessionId: 'sess-voice-1' });
     fetchSessionById.mockResolvedValue({
-      id: 'sess-plan-1',
+      id: 'sess-voice-1',
       dataEncryptionKey: null,
     });
     fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain' });
   });
 
-  it('prints a failure envelope when the action executor returns a nested failure payload', async () => {
+  it('resolves the requested backend through the voice action options source', async () => {
     execute.mockImplementation(async (actionId: string) => {
       if (actionId === 'action.options.resolve') {
         return {
           ok: true,
           result: {
-            actionId: 'subagents.plan.start',
+            actionId: 'voice_agent.start',
             fieldPath: 'backendTargetKeys',
             optionsSourceId: 'execution.backends.enabled',
-            options: [{ value: 'agent:claude', label: 'Claude' }],
+            options: [{ value: 'agent:com.acme.agent/acme', label: 'Acme Agent' }],
           },
         };
       }
       return {
         ok: true,
-        result: {
-          ok: false,
-          errorCode: 'execution_run_failed',
-          message: 'execution run failed before start',
-        },
+        result: { results: [{ key: 'agent:com.acme.agent/acme' }] },
       };
     });
 
-    const { cmdSessionPlanStart } = await import('./start');
-
+    const { cmdSessionVoiceAgentStart } = await import('./start');
     const output = captureConsoleJsonOutput();
     try {
-      await cmdSessionPlanStart(
+      await cmdSessionVoiceAgentStart(
         [
-          'plan',
+          'voice-agent',
           'start',
-          'sess-plan',
+          'sess-voice',
           '--backends',
-          'claude',
+          'Acme Agent',
           '--instructions',
-          'Plan.',
+          'Voice.',
           '--json',
         ],
         {
@@ -110,42 +105,37 @@ describe('happier session plan start command', () => {
         },
       );
 
-      expect(output.json()).toEqual({
-        v: 1,
-        ok: false,
-        kind: 'session_plan_start',
-        error: {
-          code: 'execution_run_failed',
-          message: 'execution run failed before start',
-        },
-      });
       expect(execute).toHaveBeenNthCalledWith(
         1,
         'action.options.resolve',
         {
-          actionId: 'subagents.plan.start',
+          actionId: 'voice_agent.start',
           fieldPath: 'backendTargetKeys',
           optionsSourceId: 'execution.backends.enabled',
-          sessionId: 'sess-plan-1',
+          sessionId: 'sess-voice-1',
           includeDisabled: true,
         },
-        { surface: 'cli', defaultSessionId: 'sess-plan-1' },
+        { surface: 'cli', defaultSessionId: 'sess-voice-1' },
       );
       expect(execute).toHaveBeenNthCalledWith(
         2,
-        'subagents.plan.start',
+        'voice_agent.start',
         {
-          backendTargetKeys: ['agent:claude'],
-          instructions: 'Plan.',
+          backendTargetKeys: ['agent:com.acme.agent/acme'],
+          instructions: 'Voice.',
         },
-        { defaultSessionId: 'sess-plan-1' },
+        { defaultSessionId: 'sess-voice-1' },
       );
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
-      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-plan');
+      expect(resolveSessionTarget).toHaveBeenCalledWith('sess-voice');
       expect(createCliActionExecutor).not.toHaveBeenCalled();
       expect(ensureCliActionPolicySettings).not.toHaveBeenCalled();
       expect(resolveSessionIdOrPrefix).not.toHaveBeenCalled();
       expect(fetchSessionById).not.toHaveBeenCalled();
+      expect(output.json()).toEqual(expect.objectContaining({
+        ok: true,
+        kind: 'session_voice_agent_start',
+      }));
     } finally {
       output.restore();
     }

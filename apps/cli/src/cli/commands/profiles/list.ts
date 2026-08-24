@@ -7,7 +7,7 @@ import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfile
 import { mapProfileToListItem, type ProfilesListItem } from '@/settings/profiles/profileListProjection';
 
 function printProfilesHuman(profiles: ReadonlyArray<ProfilesListItem>, authenticated: boolean): void {
-  console.log(sectionTitle(`Backend profiles (${profiles.length})`));
+  console.log(sectionTitle(`Agent profiles (${profiles.length})`));
   for (const profile of profiles) {
     const suffix = profile.isBuiltIn ? gray('built-in') : cyan('custom');
     console.log(`- ${emphasis(profile.id)} (${profile.name}) ${gray(`[${suffix}]`)}`);

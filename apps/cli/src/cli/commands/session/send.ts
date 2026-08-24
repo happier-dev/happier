@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import chalk from 'chalk';
 
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
@@ -15,8 +17,9 @@ import {
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 import { assertSessionCommandArguments } from './shared/assertSessionCommandArguments';
 import { readProviderConnectionFlag } from './shared/readProviderConnectionFlag';
+import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 
-const SESSION_SEND_USAGE = 'Usage: happier session send <session-id-or-prefix> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--provider-connection <id|native>] [--local-id <id>] [--wait] [--timeout <seconds>] [--json]';
+const SESSION_SEND_USAGE = `Usage: ${SESSION_HELP_LINES.send}`;
 const AMBIGUOUS_MESSAGE_USAGE = 'Provide the message either positionally or with --message/--prompt, not both.';
 
 function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
@@ -82,11 +85,15 @@ export async function cmdSessionSend(
   const hasModelFlag = modelFlagRaw !== null;
   const modelFlag = typeof modelFlagRaw === 'string' ? modelFlagRaw.trim() : '';
   const providerConnectionId = readProviderConnectionFlag(argv);
-  // The durable input identity a caller retains across an ambiguous send. The
-  // pending queue is keyed by it, so resubmitting rejoins the existing input
-  // instead of queueing a second message. `assertSessionCommandArguments`
-  // already rejected a missing or flag-shaped value above.
-  const localIdFlag = readFlagValueUnlessFlagToken(argv, '--local-id');
+  // The durable input identity for this send. The pending queue is keyed by it,
+  // so resubmitting rejoins the existing input instead of queueing a second
+  // message. The CLI retains one even when the caller did not supply it, the
+  // same way `session create` retains its spawn attempt id: an ambiguous
+  // failure must be able to name the exact identity to retry with, and an
+  // identity minted out of reach downstream cannot be named.
+  // `assertSessionCommandArguments` already rejected a missing or flag-shaped
+  // value above.
+  const localId = readFlagValueUnlessFlagToken(argv, '--local-id') ?? randomUUID();
   const timeoutSeconds =
     typeof timeoutSecondsRaw === 'number' && Number.isFinite(timeoutSecondsRaw) && timeoutSecondsRaw > 0
       ? Math.min(3600, timeoutSecondsRaw)
@@ -120,11 +127,14 @@ export async function cmdSessionSend(
           return modelFlag === 'default' ? null : modelFlag;
         })()
       : undefined;
-  // The Action contract binds an exact Provider connection only to a concrete
-  // model id; refuse locally instead of sending an input the Action rejects.
+  // The Action contract applies a Provider connection only together with the
+  // model selection it sources: any connection — including the explicit native
+  // `null` — needs a model override, and an exact connection needs a concrete
+  // model id. Refuse locally with the named reason instead of sending an input
+  // the Action rejects as an opaque `invalid_parameters`.
   if (providerConnectionId !== undefined
-    && providerConnectionId !== null
-    && typeof modelOverride !== 'string') {
+    && (modelOverride === undefined
+      || (providerConnectionId !== null && typeof modelOverride !== 'string'))) {
     const err = new Error('--provider-connection requires --model <model-id>');
     (err as any).code = 'invalid_arguments';
     throw err;
@@ -139,7 +149,7 @@ export async function cmdSessionSend(
       ...(permissionModeOverride ? { permissionModeOverride } : {}),
       ...(modelOverride !== undefined ? { modelOverride } : {}),
       ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
-      ...(localIdFlag ? { localId: localIdFlag } : {}),
+      localId,
       ...(wait ? { wait: true } : {}),
       ...(timeoutSeconds ? { timeoutSeconds } : {}),
     },
@@ -153,13 +163,18 @@ export async function cmdSessionSend(
         kind: 'session_send',
         error: {
           code: normalized.errorCode,
+          localId,
           ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
           ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
         },
       });
       return;
     }
-    throw new Error(normalized.errorMessage ?? normalized.errorCode);
+    // The identity this send used is the only safe retry: resubmitting it
+    // rejoins the same durable input instead of queueing a second message.
+    throw new Error(
+      `${normalized.errorMessage ?? normalized.errorCode} Retry with --local-id ${localId} to rejoin this exact input.`,
+    );
   }
 
   const result = unwrapCliActionSuccessPayload(normalized.data);

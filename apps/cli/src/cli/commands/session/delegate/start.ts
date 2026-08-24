@@ -1,13 +1,14 @@
 import chalk from 'chalk';
 
 import type { StoredCredentials } from '@/persistence';
-import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { normalizeBackendTargetKeysFromCsv } from '../shared/normalizeBackendTargetKeys';
-import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
+import {
+  hasBackendTargetSelectionFromCsv,
+  resolveBackendTargetKeysFromCsv,
+} from '../shared/normalizeBackendTargetKeys';
 import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
 import { normalizeSessionStartActionResults } from '../shared/sessionStartActionResults';
 import { assertSessionCommandArguments } from '../shared/assertSessionCommandArguments';
@@ -35,7 +36,6 @@ export async function cmdSessionDelegateStart(
   const backendsRaw = readFlagValue(argv, '--backends')
     ?? readFlagValue(argv, '--backend')
     ?? readFlagValue(argv, '--agent');
-  const backendTargetKeys = normalizeBackendTargetKeysFromCsv(backendsRaw);
   const explicitInstructions = readFlagValue(argv, '--instructions') ?? '';
   if (explicitInstructions && positionalInstructions) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.delegateStart}`);
@@ -47,18 +47,9 @@ export async function cmdSessionDelegateStart(
   const runClass = readFlagValue(argv, '--run-class') ?? undefined;
   const ioMode = readFlagValue(argv, '--io-mode') ?? undefined;
 
-  if (backendTargetKeys.length === 0 || !instructions.trim()) {
+  if (!hasBackendTargetSelectionFromCsv(backendsRaw) || !instructions.trim()) {
     throw new Error(`Usage: ${SESSION_HELP_LINES.delegateStart}`);
   }
-
-  const input = {
-    backendTargetKeys,
-    instructions,
-    ...(permissionMode ? { permissionMode } : null),
-    ...(retentionPolicy ? { retentionPolicy } : null),
-    ...(runClass ? { runClass } : null),
-    ...(ioMode ? { ioMode } : null),
-  };
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -70,9 +61,8 @@ export async function cmdSessionDelegateStart(
     process.exit(1);
   }
 
-  await ensureCliActionPolicySettings(credentials);
-
-  const sessionTarget = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  const executor = createCliActionExecutorFromCredentials({ credentials });
+  const sessionTarget = await executor.resolveSessionTarget(idOrPrefix);
   if (!sessionTarget.ok) {
     if (json) {
       await printJsonEnvelope({
@@ -86,21 +76,20 @@ export async function cmdSessionDelegateStart(
   }
   const { sessionId } = sessionTarget;
 
-  const executor = sessionTarget.mode === 'plain'
-    ? createCliActionExecutor({
-        token: credentials.token,
-        credentials,
-        sessionId,
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-      })
-    : createCliActionExecutor({
-        token: credentials.token,
-        credentials,
-        sessionId,
-        mode: sessionTarget.mode,
-        ctx: sessionTarget.ctx,
-      });
+  const backendTargetKeys = await resolveBackendTargetKeysFromCsv({
+    value: backendsRaw,
+    actionId: 'subagents.delegate.start',
+    sessionId,
+    executor,
+  });
+  const input = {
+    backendTargetKeys,
+    instructions,
+    ...(permissionMode ? { permissionMode } : null),
+    ...(retentionPolicy ? { retentionPolicy } : null),
+    ...(runClass ? { runClass } : null),
+    ...(ioMode ? { ioMode } : null),
+  };
   const started = await executor.execute('subagents.delegate.start', input, { defaultSessionId: sessionId });
   const normalized = normalizeSessionStartActionResults(started);
 

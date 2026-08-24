@@ -7,13 +7,16 @@ import { createCliActionExecutorFromCredentials } from '@/session/actions/create
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 import { assertSessionCommandArguments } from './shared/assertSessionCommandArguments';
+import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
+
+const SESSION_STOP_USAGE = `Usage: ${SESSION_HELP_LINES.stop}`;
 
 export async function cmdSessionStop(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<StoredCredentials | null> }>,
 ): Promise<void> {
   assertSessionCommandArguments(argv, {
-    usage: 'Usage: happier session stop <session-id-or-prefix> [--json]',
+    usage: SESSION_STOP_USAGE,
     startIndex: 1,
     booleanFlags: ['--json'],
     maxPositionals: 1,
@@ -21,7 +24,7 @@ export async function cmdSessionStop(
   const json = wantsJson(argv);
   const [idOrPrefix = ''] = readCommandPositionals(argv, { startIndex: 1 });
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session stop <session-id-or-prefix> [--json]');
+    throw new Error(SESSION_STOP_USAGE);
   }
 
   const credentials = await deps.readCredentialsFn();

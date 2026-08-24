@@ -16,15 +16,15 @@ describe('handleSessionCommand help output', () => {
       expect(output.text()).toContain('happier session status <session-id-or-prefix-or-tag> [--live] [--json]');
       expect(output.text()).toContain(SESSION_HELP_LINES.create);
       expect(output.text()).toContain('happier session create [options]\n\nOptions:\n  [--path <path>]');
-      expect(output.text()).toContain('happier session send <session-id-or-prefix-or-tag> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
+      expect(output.text()).toContain(SESSION_HELP_LINES.send);
       expect(output.text()).toContain('happier session wait <session-id-or-prefix-or-tag> [--timeout <seconds>] [--json]');
       expect(output.text()).toContain('happier session stop <session-id-or-prefix-or-tag> [--json]');
       expect(output.text()).toContain('happier session set-title <session-id-or-prefix-or-tag> <title> [--json]');
       expect(output.text()).toContain('happier session set-permission-mode <session-id-or-prefix-or-tag> <mode> [--json]');
-      expect(output.text()).toContain('happier session set-model <session-id-or-prefix-or-tag> <model-id> [--json]');
+      expect(output.text()).toContain(SESSION_HELP_LINES.setModel);
       expect(output.text()).toContain('happier session archive <session-id-or-prefix-or-tag> [--json]');
       expect(output.text()).toContain('happier session unarchive <session-id-or-prefix-or-tag> [--json]');
-      expect(output.text()).toContain('happier session history <session-id-or-prefix-or-tag> [--tail N|--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json]');
+      expect(output.text()).toContain(SESSION_HELP_LINES.history);
       expect(output.text()).toContain('happier session actions list [--json]');
       expect(output.text()).toContain('happier session actions describe <action-id> [--json]');
       expect(output.text()).toContain(SESSION_HELP_LINES.actionsExecute);
@@ -40,18 +40,44 @@ describe('handleSessionCommand help output', () => {
   });
 
   it.each([
+    [['--help', '--json'], 'session_help'],
+    [['help', '--json'], 'session_help'],
+    [['list', '--help', '--json'], 'session_list'],
+    [['run', 'start', '--help', '--json'], 'session_run_start'],
+  ] as const)('keeps stdout parseable JSON for `%s`', async (argv, expectedKind) => {
+    // `--json` is a machine-output contract, so everything stdout carries must
+    // parse. Printing usage prose there breaks the caller's parser on the one
+    // invocation shape a script is most likely to probe with.
+    const output = captureConsoleText();
+    const readCredentialsFn = vi.fn(async () => {
+      throw new Error('readCredentialsFn should not be called for session help');
+    });
+
+    try {
+      await handleSessionCommand([...argv], { readCredentialsFn });
+
+      const parsed = JSON.parse(output.text().trim()) as Record<string, unknown>;
+      expect(parsed).toMatchObject({ v: 1, ok: true, kind: expectedKind });
+      expect(String((parsed.data as Record<string, unknown>).help)).toContain('happier session');
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+    } finally {
+      output.restore();
+    }
+  });
+
+  it.each([
     ['list', 'happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]'],
     ['status', 'happier session status <session-id-or-prefix-or-tag> [--live] [--json]'],
     ['create', SESSION_HELP_LINES.create],
-    ['send', 'happier session send <session-id-or-prefix-or-tag> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]'],
+    ['send', SESSION_HELP_LINES.send],
     ['wait', 'happier session wait <session-id-or-prefix-or-tag> [--timeout <seconds>] [--json]'],
     ['stop', 'happier session stop <session-id-or-prefix-or-tag> [--json]'],
     ['archive', 'happier session archive <session-id-or-prefix-or-tag> [--json]'],
     ['unarchive', 'happier session unarchive <session-id-or-prefix-or-tag> [--json]'],
-    ['history', 'happier session history <session-id-or-prefix-or-tag> [--tail N|--limit N] [--format compact|raw] [--raw] [--include-meta] [--include-structured-payload] [--json]'],
+    ['history', SESSION_HELP_LINES.history],
     ['set-title', 'happier session set-title <session-id-or-prefix-or-tag> <title> [--json]'],
     ['set-permission-mode', 'happier session set-permission-mode <session-id-or-prefix-or-tag> <mode> [--json]'],
-    ['set-model', 'happier session set-model <session-id-or-prefix-or-tag> <model-id> [--json]'],
+    ['set-model', SESSION_HELP_LINES.setModel],
   ] as const)('prints usage for `%s --help` without prompting for credentials', async (subcommand, expectedUsage) => {
     const output = captureConsoleText();
     const readCredentialsFn = vi.fn(async () => {

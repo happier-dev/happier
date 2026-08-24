@@ -153,7 +153,11 @@ async function followSessionHistory(params: Readonly<{
         includeStructuredPayload: params.includeStructuredPayload,
       });
       for (const message of result.messages) {
-        await writeJsonStdout(message, { pretty: !params.jsonl && process.stdout.isTTY === true });
+        if (params.jsonl || params.format === 'raw') {
+          await writeJsonStdout(message, { pretty: !params.jsonl && process.stdout.isTTY === true });
+        } else {
+          console.log(formatCompactHistoryMessage(message));
+        }
       }
     },
   });

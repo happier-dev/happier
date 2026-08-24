@@ -9,7 +9,7 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
-import { actionAcceptsContextualSessionId, type ActionId } from '@happier-dev/protocol';
+import { getActionContextualDefaults, type ActionId } from '@happier-dev/protocol';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import {
   normalizeActionExecuteResult,
@@ -18,6 +18,18 @@ import {
 
 type CliActionExecutorLike = Pick<ReturnType<typeof createCliActionExecutor>, 'execute'>;
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
+
+function withResolvedSessionInput(actionId: string, input: unknown, sessionId: string): unknown {
+  if (
+    getActionContextualDefaults(actionId)?.sessionId !== 'current_session'
+    || !input
+    || typeof input !== 'object'
+    || Array.isArray(input)
+  ) {
+    return input;
+  }
+  return { ...input, sessionId };
+}
 
 function parseInputJsonOrThrow(raw: string | null): unknown {
   const trimmed = (raw ?? '').trim();
@@ -39,18 +51,6 @@ function hasSpawnNonce(details: unknown): boolean {
     && (details as { accepted?: unknown }).accepted === true
     && typeof (details as { spawnNonce?: unknown }).spawnNonce === 'string'
     && (details as { spawnNonce: string }).spawnNonce.trim());
-}
-
-function isInputRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function withResolvedSessionInput(actionId: string, input: unknown, sessionId: string): unknown {
-  if (!actionAcceptsContextualSessionId(actionId) || !isInputRecord(input)) return input;
-  return {
-    ...input,
-    sessionId,
-  };
 }
 
 export async function cmdSessionActionsExecute(

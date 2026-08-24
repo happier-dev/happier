@@ -84,7 +84,11 @@ describe('dispatchCli API Token globals', () => {
         terminalRuntime: null,
       });
 
-      expect(observedCredentials).toEqual({ token: flagToken, encryption: null });
+      expect(observedCredentials).toEqual({
+        token: flagToken,
+        encryption: null,
+        credentialProvenance: 'api_token',
+      });
       expect(observedRawArgv).toEqual(['happier', '--api-token', '<redacted>', probeCommand]);
       await vi.waitFor(() => expect(debugSpy).toHaveBeenCalled());
       expect(JSON.stringify(debugSpy.mock.calls)).not.toContain(flagToken);
@@ -120,6 +124,7 @@ describe('dispatchCli API Token globals', () => {
       expect(observedCredentials).toEqual({
         token: 'hap_v1_flagtoken_flagsecret',
         encryption: null,
+        credentialProvenance: 'api_token',
       });
     });
   });
@@ -154,8 +159,16 @@ describe('dispatchCli API Token globals', () => {
       });
 
       expect(observedCredentials).toEqual([
-        { token: 'hap_v1_flagtoken_flagsecret', encryption: null },
-        { token: 'stored-session-bearer', encryption: null },
+        {
+          token: 'hap_v1_flagtoken_flagsecret',
+          encryption: null,
+          credentialProvenance: 'api_token',
+        },
+        {
+          token: 'stored-session-bearer',
+          encryption: null,
+          credentialProvenance: 'stored_session',
+        },
       ]);
     });
   });
@@ -186,8 +199,16 @@ describe('dispatchCli API Token globals', () => {
       await dispatchCli({ args: [probeCommand], rawArgv: ['happier', probeCommand], terminalRuntime: null });
 
       expect(observedCredentials).toEqual([
-        { token: 'hap_v1_flag_token_secret', encryption: null },
-        { token: 'stored-session-bearer', encryption: null },
+        {
+          token: 'hap_v1_flag_token_secret',
+          encryption: null,
+          credentialProvenance: 'api_token',
+        },
+        {
+          token: 'stored-session-bearer',
+          encryption: null,
+          credentialProvenance: 'stored_session',
+        },
       ]);
     });
   });

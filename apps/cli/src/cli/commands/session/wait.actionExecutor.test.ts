@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ok } from '@happier-dev/cli-common/output';
 
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
+import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
@@ -75,6 +76,16 @@ describe('happier session wait (action executor)', () => {
 
     await expect(cmdSessionWait(['wait', 'sess-1', '--timeout', '0'], { readCredentialsFn }))
       .rejects.toMatchObject({ code: 'invalid_arguments' });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+  });
+
+  it('uses the canonical selector wording when a session selector is missing', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+    const { cmdSessionWait } = await import('./wait');
+
+    await expect(cmdSessionWait(['wait'], { readCredentialsFn }))
+      .rejects.toThrow(`Usage: ${SESSION_HELP_LINES.wait}`);
 
     expect(readCredentialsFn).not.toHaveBeenCalled();
   });

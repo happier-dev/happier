@@ -83,6 +83,12 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
+    command: 'profiles',
+    rootHelpLabel: 'happier profiles',
+    rootHelpDescription: 'Manage Agent launch profiles',
+    allowTmux: false,
+  },
+  {
     command: 'provider',
     allowTmux: false,
     // Deprecated 2026-08-22 (D11); removal is intentionally unscheduled.
@@ -120,6 +126,20 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   },
   {
     command: 'daemon',
+    rootHelpLabel: 'happier daemon',
+    rootHelpDescription: 'Manage daemon status and sessions',
+    allowTmux: false,
+  },
+  {
+    command: 'machine',
+    rootHelpLabel: 'happier machine',
+    rootHelpDescription: 'Set up remote machines over SSH',
+    allowTmux: false,
+  },
+  {
+    command: 'relay',
+    rootHelpLabel: 'happier relay',
+    rootHelpDescription: 'Configure relay access and local runtimes',
     allowTmux: false,
   },
   {
@@ -189,6 +209,8 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   },
   {
     command: 'server',
+    rootHelpLabel: 'happier server',
+    rootHelpDescription: 'Manage Happier server profiles',
     allowTmux: false,
   },
 ];

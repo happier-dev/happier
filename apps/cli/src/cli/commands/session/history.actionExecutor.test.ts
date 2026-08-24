@@ -142,6 +142,108 @@ describe('happier session history (action executor)', () => {
     }
   });
 
+  it('renders default follow messages through the compact human formatter', async () => {
+    execute
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-1', items: [], nextCursor: 'cursor-1', truncated: false },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, session: { id: 'sess-1', active: false } },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          ok: true,
+          leaseId: 'lease-1',
+          items: [{
+            id: 'row-1',
+            seq: 1,
+            createdAt: 123,
+            role: 'assistant',
+            kind: 'assistant_message',
+            raw: { role: 'agent', content: { type: 'text', text: 'final message' } },
+          }],
+          nextCursor: 'cursor-2',
+          truncated: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-1', items: [], nextCursor: 'cursor-2', truncated: false },
+      })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
+
+    const output = captureConsoleText();
+    try {
+      await cmdSessionHistory(['history', 'sess-1', '--follow'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.text()).toBe('agent: final message');
+      expect(output.text()).not.toContain('"role"');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('keeps explicit raw follow output as one JSON record', async () => {
+    execute
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-1', items: [], nextCursor: 'cursor-1', truncated: false },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, session: { id: 'sess-1', active: false } },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          ok: true,
+          leaseId: 'lease-1',
+          items: [{
+            id: 'row-1',
+            seq: 1,
+            createdAt: 123,
+            role: 'assistant',
+            kind: 'assistant_message',
+            raw: { role: 'agent', content: { type: 'text', text: 'final message' } },
+          }],
+          nextCursor: 'cursor-2',
+          truncated: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-1', items: [], nextCursor: 'cursor-2', truncated: false },
+      })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await cmdSessionHistory(['history', 'sess-1', '--follow', '--raw'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.logs).toHaveLength(1);
+      expect(output.json()).toEqual(expect.objectContaining({
+        id: 'row-1',
+        role: 'agent',
+        raw: { role: 'agent', content: { type: 'text', text: 'final message' } },
+      }));
+    } finally {
+      output.restore();
+    }
+  });
+
   it('maps a follow failure to one JSONL family envelope and releases the lease once', async () => {
     execute
       .mockResolvedValueOnce({

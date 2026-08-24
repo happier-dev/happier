@@ -1,13 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AGENT_PERMISSION_INTENTS_V1 } from '@happier-dev/protocol';
 
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
+import { FIRST_CLASS_SESSION_COMMANDS } from '@/cli/firstClassSessionCommands';
 import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 import { handleSessionCommand } from './handleSessionCommand';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
-const { readSettings, readAgentCatalogSnapshot } = vi.hoisted(() => ({
+const { readStoredCredentials, readSettings, readAgentCatalogSnapshot } = vi.hoisted(() => ({
+  readStoredCredentials: vi.fn(),
   readSettings: vi.fn(),
   readAgentCatalogSnapshot: vi.fn(),
 }));
@@ -31,6 +33,7 @@ vi.mock('@/persistence', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/persistence')>();
   return {
     ...actual,
+    readStoredCredentials,
     readSettings,
   };
 });
@@ -39,9 +42,18 @@ vi.mock('@/agent/catalog/snapshot', () => ({
   readAgentCatalogSnapshot,
 }));
 
+let previousExitCode: typeof process.exitCode;
+
 beforeEach(() => {
+  previousExitCode = process.exitCode;
+  process.exitCode = undefined;
   execute.mockReset();
   createCliActionExecutorFromCredentials.mockClear();
+  readStoredCredentials.mockReset();
+  readStoredCredentials.mockResolvedValue({
+    token: 'token_test',
+    encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+  });
   readSettings.mockReset();
   readSettings.mockResolvedValue({ machineId: 'machine-1' });
   readAgentCatalogSnapshot.mockReset();
@@ -56,7 +68,20 @@ beforeEach(() => {
         identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
       }],
     ]),
+    catalogEntriesById: {
+      claude: { id: 'claude', cliSubcommand: 'claude' },
+      codex: {
+        id: 'codex',
+        cliSubcommand: 'codex',
+        connectedServiceIds: ['openai-codex', 'openai'],
+      },
+    },
+    executionRunProfiles: [],
   });
+});
+
+afterEach(() => {
+  process.exitCode = previousExitCode;
 });
 
 function sessionSpawnSuccess(sessionId: string) {
@@ -141,6 +166,85 @@ describe('happier session create (action executor)', () => {
       }));
     } finally {
       output.restore();
+    }
+  });
+
+  it('keeps the creation envelope when --wait delays its JSON serialization', async () => {
+    execute
+      .mockResolvedValueOnce(sessionSpawnSuccess('sess-wait'))
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, sessionId: 'sess-wait', observedAt: 123 },
+      });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['create', '--path', '/tmp', '--wait', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(execute).toHaveBeenLastCalledWith(
+        'session.wait.idle',
+        { sessionId: 'sess-wait', timeoutSeconds: 300 },
+        { surface: 'cli', defaultSessionId: null },
+      );
+      expect(output.json()).toEqual({
+        v: 1,
+        ok: true,
+        kind: 'session_create',
+        data: { created: true, session: { id: 'sess-wait' } },
+      });
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('keeps top-level spawn --wait JSON byte-identical to session create', async () => {
+    execute
+      .mockResolvedValueOnce(sessionSpawnSuccess('sess-parity'))
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, sessionId: 'sess-parity', observedAt: 123 },
+      });
+
+    const nestedOutput = captureConsoleJsonOutput();
+    let nestedLogs: string[] = [];
+    try {
+      await handleSessionCommand(['create', '--path', '/tmp', '--wait', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+      nestedLogs = [...nestedOutput.logs];
+    } finally {
+      nestedOutput.restore();
+    }
+
+    execute.mockReset();
+    execute
+      .mockResolvedValueOnce(sessionSpawnSuccess('sess-parity'))
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { ok: true, sessionId: 'sess-parity', observedAt: 123 },
+      });
+    const spawn = FIRST_CLASS_SESSION_COMMANDS.find((command) => command.command === 'spawn');
+    expect(spawn).toBeDefined();
+
+    const topLevelOutput = captureConsoleJsonOutput();
+    try {
+      await spawn!.handler({
+        args: ['spawn', '--path', '/tmp', '--wait', '--json'],
+        rawArgv: ['happier', 'spawn', '--path', '/tmp', '--wait', '--json'],
+        terminalRuntime: null,
+      });
+
+      expect(topLevelOutput.logs).toEqual(nestedLogs);
+    } finally {
+      topLevelOutput.restore();
     }
   });
 

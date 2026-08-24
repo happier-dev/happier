@@ -19,8 +19,79 @@ function normalizeIdOrPrefix(value: string): string {
   return value.trim();
 }
 
-function isFullSessionId(value: string): boolean {
+export function isFullSessionId(value: string): boolean {
   return /^c[a-z0-9]{24}$/.test(value);
+}
+
+export type SessionSelectorListPage = Readonly<{
+  sessions: readonly Readonly<{ id: string; tag?: string }>[];
+  nextCursor: string | null;
+  hasNext: boolean;
+}>;
+
+export async function resolveSessionIdOrPrefixFromSessionList(params: Readonly<{
+  idOrPrefix: string;
+  listPage: (input: Readonly<{
+    cursor?: string;
+    limit: number;
+    archivedOnly: boolean;
+  }>) => Promise<SessionSelectorListPage>;
+  signal?: AbortSignal;
+}>): Promise<ResolveSessionIdResult> {
+  params.signal?.throwIfAborted();
+  const input = normalizeIdOrPrefix(params.idOrPrefix);
+  if (!input) return { ok: false, code: 'session_not_found' };
+  if (isFullSessionId(input)) return { ok: true, sessionId: input };
+
+  const maxPagesRaw = (process.env.HAPPIER_SESSION_ID_PREFIX_SCAN_MAX_PAGES ?? '').trim();
+  const maxPagesParsed = maxPagesRaw ? Number.parseInt(maxPagesRaw, 10) : NaN;
+  const maxPages = Number.isFinite(maxPagesParsed) && maxPagesParsed > 0 ? Math.min(50, maxPagesParsed) : 10;
+  const prefixMatches = new Set<string>();
+  const tagMatches = new Set<string>();
+
+  for (const archivedOnly of [false, true]) {
+    let cursor: string | undefined;
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+      params.signal?.throwIfAborted();
+      const page = await params.listPage({
+        limit: 200,
+        archivedOnly,
+        ...(cursor ? { cursor } : {}),
+      });
+      params.signal?.throwIfAborted();
+      for (const session of page.sessions) {
+        const id = session.id.trim();
+        if (!id) continue;
+        // Preserve the existing resolver's exact-match precedence for long
+        // selectors while full canonical ids avoid lookup altogether.
+        if (id === input) return { ok: true, sessionId: id };
+        if (id.startsWith(input)) prefixMatches.add(id);
+        if (session.tag?.trim() === input) tagMatches.add(id);
+      }
+      if (!page.hasNext || !page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+  }
+
+  if (tagMatches.size === 1) {
+    return { ok: true, sessionId: Array.from(tagMatches)[0]! };
+  }
+  if (tagMatches.size > 1) {
+    return {
+      ok: false,
+      code: 'session_id_ambiguous',
+      candidates: Array.from(tagMatches).slice(0, 10),
+    };
+  }
+  if (prefixMatches.size === 1) {
+    return { ok: true, sessionId: Array.from(prefixMatches)[0]! };
+  }
+  if (prefixMatches.size === 0) return { ok: false, code: 'session_not_found' };
+  return {
+    ok: false,
+    code: 'session_id_ambiguous',
+    candidates: Array.from(prefixMatches).slice(0, 10),
+  };
 }
 
 async function resolveSessionIdOrPrefixWithSignal(params: Readonly<{

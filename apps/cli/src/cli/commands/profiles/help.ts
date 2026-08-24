@@ -2,7 +2,7 @@ import chalk from 'chalk';
 
 export function showProfilesHelp(): void {
   console.log(`
-${chalk.bold('happier profiles')} - Backend profiles
+${chalk.bold('happier profiles')} - Agent profiles
 
 ${chalk.bold('Usage:')}
   happier profiles list [--refresh-settings] [--json]
@@ -15,4 +15,3 @@ ${chalk.bold('Notes:')}
   - Run "happier auth login" to see custom profiles saved in your account settings.
 `);
 }
-

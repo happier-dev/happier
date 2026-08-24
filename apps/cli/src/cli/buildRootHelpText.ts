@@ -32,7 +32,7 @@ ${bold('Examples:')}
   happier --no-chrome        Disable Chrome even if default is on
   happier --js-runtime bun   Use bun instead of node to spawn JavaScript-backed CLIs
   happier auth login --force Authenticate
-  happier profiles list      List available backend profiles
+  happier profiles list      List available Agent profiles
   happier doctor             Run diagnostics
 
 ${bold('Server selection (global flags; prefix-only; no persistence):')}

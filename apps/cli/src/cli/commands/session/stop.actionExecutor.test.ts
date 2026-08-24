@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { SESSION_HELP_LINES } from './shared/sessionCommandUsage';
 
 const execute = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
@@ -24,6 +25,15 @@ vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
 const { handleSessionCommand } = await import('./handleSessionCommand');
 
 describe('happier session stop (action executor)', () => {
+  it('uses the canonical selector wording when a session selector is missing', async () => {
+    const readCredentialsFn = vi.fn(async () => null);
+
+    await expect(handleSessionCommand(['stop'], { readCredentialsFn }))
+      .rejects.toThrow(`Usage: ${SESSION_HELP_LINES.stop}`);
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+  });
+
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
