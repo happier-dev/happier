@@ -7432,6 +7432,8 @@ export {
   sealPluginCollectionPrivatePayloadV1,
   splitPluginCollectionCandidatePreparationStageRequestsForKnownLimitsV1,
   PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1,
+  PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+  PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
   validatePluginCollectionUiQueryParametersV1,
   validatePluginCollectionUiQueryResultV1,
   type NormalizedPluginAccountCollectionContractV1,

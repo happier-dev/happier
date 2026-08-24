@@ -259,6 +259,10 @@
       "types": "./dist/plugins/manifest/declaration.d.ts",
       "default": "./dist/plugins/manifest/declaration.js"
     },
+    "./plugins/data/collectionLimitsV1": {
+      "types": "./dist/plugins/data/collectionLimitsV1.d.ts",
+      "default": "./dist/plugins/data/collectionLimitsV1.js"
+    },
     "./plugins/availability": {
       "types": "./dist/plugins/availability/index.d.ts",
       "default": "./dist/plugins/availability/index.js"

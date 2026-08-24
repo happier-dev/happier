@@ -1,4 +1,8 @@
 export type { NormalizedPluginCollectionUiQueryDescriptorV1 } from '../collections.js';
+export {
+    PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+    PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+} from '../collections.js';
 export type { PluginAccountCollection } from '../collections.js';
 export type { PluginAccountCollectionContributionV1 } from '../collections.js';
 export type { PluginAccountCollectionDeclaration } from '../collections.js';

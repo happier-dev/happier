@@ -47,6 +47,14 @@ const protocolLeaves = [
             default: './dist/crypto/base64.js',
         },
     },
+    {
+        specifier: '@happier-dev/protocol/plugins/data/collectionLimitsV1',
+        source: '../../protocol/src/plugins/data/collectionLimitsV1.ts',
+        packageEntry: {
+            types: './dist/plugins/data/collectionLimitsV1.d.ts',
+            default: './dist/plugins/data/collectionLimitsV1.js',
+        },
+    },
 ] as const;
 
 const workspaceRequire = createRequire(pathToFileURL(resolve(
@@ -135,7 +143,14 @@ describe('SDK Protocol schema projection browser graph', () => {
     });
 
     it('resolves the exact canonical leaves from the workspace package entrypoints', async () => {
-        const [automationResultDelivery, machineOrigin, webhookEndpoint, webhookDelivery, base64] = await Promise.all(
+        const [
+            automationResultDelivery,
+            machineOrigin,
+            webhookEndpoint,
+            webhookDelivery,
+            base64,
+            collectionLimits,
+        ] = await Promise.all(
             protocolLeaves.map(async ({ specifier }) => import(pathToFileURL(
                 workspaceRequire.resolve(specifier),
             ).href)),
@@ -151,6 +166,8 @@ describe('SDK Protocol schema projection browser graph', () => {
         expect(webhookDelivery).toHaveProperty('PluginWebhookActionInputV1Schema');
         expect(webhookDelivery).toHaveProperty('PluginWebhookActionResultV1Schema');
         expect(base64).toHaveProperty('decodeBase64');
+        expect(collectionLimits).toHaveProperty('PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1');
+        expect(collectionLimits).toHaveProperty('PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1');
     }, 30_000);
 
     it('keeps the SDK schema projections out of Protocol root and Node-only browser reach', async () => {
@@ -186,6 +203,10 @@ describe('SDK Protocol schema projection browser graph', () => {
             '../../protocol/src/plugins/webhooks/deliveryV1.ts',
         ));
         expect(moduleIds).toContain(resolve(import.meta.dirname, '../../protocol/src/crypto/base64.ts'));
+        expect(moduleIds).toContain(resolve(
+            import.meta.dirname,
+            '../../protocol/src/plugins/data/collectionLimitsV1.ts',
+        ));
         expect(moduleIds).not.toContain(resolve(
             import.meta.dirname,
             '../../protocol/src/crypto/accountScopedCipherEnvelope.ts',

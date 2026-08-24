@@ -6,13 +6,21 @@ import {
     PluginAccountCollectionContributionV1Schema,
     PluginMachineExecutionOriginV1JsonSchema as canonicalPluginMachineExecutionOriginV1JsonSchema,
 } from '@happier-dev/protocol';
+import {
+    PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1 as canonicalPluginCollectionMutationBatchMaxRowsV1,
+    PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 as canonicalPluginCollectionQueryMaxRowsV1,
+} from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
 
 import { PluginIdJsonSchema } from './manifest.js';
 import {
     defineAccountCollection,
     PluginMachineExecutionOriginV1JsonSchema,
 } from './collections.js';
-import { defineAccountCollection as defineAccountCollectionFromPublicLeaf } from './collections/index.js';
+import {
+    defineAccountCollection as defineAccountCollectionFromPublicLeaf,
+    PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+    PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+} from './collections/index.js';
 import type {
     NormalizedPluginCollectionUiQueryDescriptorV1,
     PluginCollectionBatchAssert,
@@ -35,6 +43,13 @@ import type { JsonValue } from './identity.js';
 const inventoryIt = process.env.HAPPIER_PLUGIN_SDK_SOURCE_ONLY === '1' ? it.skip : it;
 
 describe('Account Collection declarations', () => {
+    it('projects the canonical Protocol Collection bounds through the public author leaf', () => {
+        expect(PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1)
+            .toBe(canonicalPluginCollectionMutationBatchMaxRowsV1);
+        expect(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1)
+            .toBe(canonicalPluginCollectionQueryMaxRowsV1);
+    });
+
     it('publishes the Account Collections author surface through its package subpath', async () => {
         const packageJson = JSON.parse(
             await readFile(new URL('../package.json', import.meta.url), 'utf8'),

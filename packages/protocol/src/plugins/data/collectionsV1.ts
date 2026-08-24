@@ -66,6 +66,8 @@ import {
 import {
   PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
   PLUGIN_COLLECTION_LIMITS_V1,
+  PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+  PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
 } from './collectionLimitsV1.js';
 import type {
   PluginDataCollectionsCapabilities,
@@ -127,6 +129,8 @@ export const PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1 = 2_318;
 export {
   PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
   PLUGIN_COLLECTION_LIMITS_V1,
+  PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+  PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
   PLUGIN_COLLECTION_SCHEMA_VERSION_MAX,
 } from './collectionLimitsV1.js';
 
@@ -500,12 +504,12 @@ export type PluginCollectionMutationConflictV1 = z.infer<typeof PluginCollection
 export const PluginCollectionMutationResultV1Schema = z.discriminatedUnion('status', [
   z.object({
     status: z.literal('updated'),
-    results: z.array(PluginCollectionMutationResultEntryV1Schema).min(1).max(100),
+    results: z.array(PluginCollectionMutationResultEntryV1Schema).min(1).max(PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1),
     changeCursor: z.number().int().nonnegative(),
   }).strict(),
   z.object({
     status: z.literal('conflict'),
-    conflicts: z.array(PluginCollectionMutationConflictV1Schema).min(1).max(100),
+    conflicts: z.array(PluginCollectionMutationConflictV1Schema).min(1).max(PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1),
   }).strict(),
 ]);
 export type PluginCollectionMutationResultV1 = z.infer<typeof PluginCollectionMutationResultV1Schema>;
@@ -557,7 +561,7 @@ export const PluginCollectionRelationRestrictionQueryV1Schema = z.object({
   indexId: PluginCollectionMemberNameV1Schema,
   prefix: z.array(PluginCollectionRowIdV1Schema).length(1),
   order: z.literal('asc'),
-  limit: z.number().int().min(1).max(200),
+  limit: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
 }).strict();
 export type PluginCollectionRelationRestrictionQueryV1 = z.infer<
   typeof PluginCollectionRelationRestrictionQueryV1Schema
@@ -595,7 +599,7 @@ export const PluginCollectionMutationErrorV1Schema = z.union([
   PluginCollectionQuotaIncompatibleErrorV1Schema,
   z.object({
     error: z.literal('collection_relation_restricted'),
-    dependentCount: z.number().int().min(1).max(200),
+    dependentCount: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
     continuation: PluginCollectionRelationRestrictionContinuationV1Schema,
   }).strict(),
 ]);
@@ -693,7 +697,7 @@ export const PLUGIN_COLLECTION_CANDIDATE_PREPARATION_RETIRE_HTTP_PATH_V1 =
 export const PluginCollectionCandidatePreparationSourcePageRequestV1Schema = z.object({
   binding: PluginCollectionCandidatePreparationBindingV1Schema,
   cursor: OpaqueCollectionCursorSchema.optional(),
-  limit: z.number().int().min(1).max(200).default(50),
+  limit: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1).default(50),
 }).strict();
 export type PluginCollectionCandidatePreparationSourcePageRequestV1 = z.infer<
   typeof PluginCollectionCandidatePreparationSourcePageRequestV1Schema
@@ -709,7 +713,7 @@ const PluginCollectionCandidatePreparationSourcePageRowV1Schema = PluginCollecti
 });
 
 export const PluginCollectionCandidatePreparationSourcePageResultV1Schema = z.object({
-  rows: z.array(PluginCollectionCandidatePreparationSourcePageRowV1Schema).max(200),
+  rows: z.array(PluginCollectionCandidatePreparationSourcePageRowV1Schema).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
   nextCursor: OpaqueCollectionCursorSchema.optional(),
 }).strict();
 export type PluginCollectionCandidatePreparationSourcePageResultV1 = z.infer<
@@ -885,12 +889,12 @@ export const PluginCollectionQueryRequestV1Schema = z.object({
   range: PluginCollectionQueryRangeV1Schema.optional(),
   order: z.enum(['asc', 'desc']),
   cursor: OpaqueCollectionCursorSchema.optional(),
-  limit: z.number().int().min(1).max(200).default(50),
+  limit: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1).default(50),
 }).strict();
 export type PluginCollectionQueryRequestV1 = z.infer<typeof PluginCollectionQueryRequestV1Schema>;
 
 export const PluginCollectionQueryResultV1Schema = z.object({
-  rows: z.array(PluginCollectionRowV1Schema).max(200),
+  rows: z.array(PluginCollectionRowV1Schema).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
   nextCursor: OpaqueCollectionCursorSchema.optional(),
   changeCursor: z.number().int().nonnegative(),
 }).strict();
@@ -934,7 +938,7 @@ export const NormalizedPluginCollectionUiQueryDescriptorV1Schema = z.object({
     upper: PluginCollectionUiQueryValueV1Schema.optional(),
   }).strict().refine((value) => value.lower !== undefined || value.upper !== undefined, 'A range needs a lower or upper bound.').optional(),
   order: z.enum(['asc', 'desc']),
-  pageSize: z.number().int().min(1).max(200),
+  pageSize: z.number().int().min(1).max(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
   projectedFields: z.array(PluginCollectionProjectedScalarFieldRefV1Schema).min(1).max(16),
 }).strict().superRefine((value, context) => {
   if (new Set(value.projectedFields.map((field) => field.field)).size !== value.projectedFields.length) {

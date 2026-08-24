@@ -32,3 +32,7 @@ export type { PluginCollectionUiQueryValueV1 } from '../collections.js';
 export type { PluginCollectionWatchQuery } from '../collections.js';
 export { PluginMachineExecutionOriginV1JsonSchema } from '../collections.js';
 export { defineAccountCollection } from '../collections.js';
+export {
+    PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+    PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+} from '../collections.js';
