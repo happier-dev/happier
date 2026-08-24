@@ -63,7 +63,7 @@ export function buildPiExtensionAskUserQuestionInput(request: PiBlockingExtensio
         question: request.title,
         header: 'Pi',
         multiSelect: false,
-        options: [...(request.options ?? [])],
+        options: (request.options ?? []).map((label) => ({ label, description: '' })),
       }],
     };
   }
@@ -74,7 +74,10 @@ export function buildPiExtensionAskUserQuestionInput(request: PiBlockingExtensio
         question: request.message ? `${request.title}\n\n${request.message}` : request.title,
         header: 'Pi',
         multiSelect: false,
-        options: ['Yes', 'No'],
+        options: [
+          { label: 'Yes', description: '' },
+          { label: 'No', description: '' },
+        ],
       }],
     };
   }
