@@ -55,7 +55,7 @@ import type {
     ManagedProviderRuntime,
     ProviderCatalogParser,
 } from '../../managed-services/contract.js';
-import type { VoiceProviderRuntime } from '../../voice/projections.js';
+import type { VoiceProvidersRegistrationApi } from '../../voice/projections.js';
 import {
     snapshotManagedProviderRuntime,
     snapshotPromptAssetDescriptor,
@@ -122,6 +122,8 @@ type PluginRuntimeRegistrationFor<TFamily extends PluginRegistrationFamily> = Re
     localId: string;
     value: PluginRegistrationValueByFamily[TFamily];
 }>;
+
+type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['register']>[1];
 
 type StagedAgentRuntimeRegistration = Readonly<{
     factory?: AgentRuntimeFactory;
@@ -580,7 +582,7 @@ function snapshotAgentRuntimeRegistration(
 
 function voiceRegistrationCorrespondenceError(
     right: PluginRegistrationRight,
-    runtime: VoiceProviderRuntime,
+    runtime: RegisteredVoiceProviderRuntime,
 ): string | null {
     const declaration = right.voiceProviderDeclaration;
     if (declaration === undefined) {
@@ -792,7 +794,7 @@ export function createPluginRegistrationScope(
 
     function assertVoiceRegistrationCorrespondence(
         right: PluginRegistrationRight,
-        runtime: VoiceProviderRuntime,
+        runtime: RegisteredVoiceProviderRuntime,
     ): void {
         let mismatch: string | null;
         try {
@@ -880,7 +882,7 @@ export function createPluginRegistrationScope(
         }
     }
 
-    function registerVoiceProvider(localId: string, runtime: VoiceProviderRuntime): void {
+    function registerVoiceProvider(localId: string, runtime: RegisteredVoiceProviderRuntime): void {
         register(REGISTRATION_FAMILY.voiceProviders, localId, runtime);
     }
 
@@ -1008,7 +1010,7 @@ export function createPluginRegistrationScope(
         },
     });
     const voiceProviders: PluginClientApi['voiceProviders'] = Object.freeze({
-        register: (id: string, runtime: VoiceProviderRuntime) =>
+        register: (id: string, runtime: RegisteredVoiceProviderRuntime) =>
             registerVoiceProvider(id, runtime),
     });
     const daemonApi: PluginApi = Object.freeze({
@@ -1198,7 +1200,7 @@ export function createPluginRegistrationScope(
                     mcpCleanupIndex += 1;
                 }
                 if (staged.family === REGISTRATION_FAMILY.voiceProviders) {
-                    const capturedVoice = capturedValue as VoiceProviderRuntime;
+                    const capturedVoice = capturedValue as RegisteredVoiceProviderRuntime;
                     const expectedKind = params.target.realm === 'daemon' ? 'speech' : 'conversation';
                     if (capturedVoice.kind !== expectedKind) {
                         fail(

@@ -12,6 +12,12 @@ import type { VoiceCredentialAccess } from './projections.js';
 import type { HttpService } from '../services/io.js';
 
 export type { VoiceProviderCatalogItem };
+export type {
+    VoiceSpeechCatalogDeclaration,
+    VoiceSpeechInputMimeType,
+    VoiceSpeechProviderLimits,
+    VoiceSpeechProviderRole,
+} from '@happier-dev/protocol/plugins/contributions/voice';
 
 /** Speech runtimes receive only the request authority their V1 contract declares. */
 export type VoiceSpeechOperationContext = ProtocolVoiceSpeechOperationContext<

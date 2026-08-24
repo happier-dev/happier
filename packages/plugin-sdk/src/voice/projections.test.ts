@@ -63,12 +63,21 @@ import type {
 import type {
     VoiceAccountOperationService as CurrentVoiceAccountOperationService,
     VoiceCredentialAccess as CurrentVoiceCredentialAccess,
-    VoiceProviderRuntime as CurrentVoiceProviderRuntime,
-    VoiceProvidersRegistrationApi as CurrentVoiceProvidersRegistrationApi,
     VoiceRawCredentialAccess as CurrentVoiceRawCredentialAccess,
     VoiceSettingsActionContext as CurrentVoiceSettingsActionContext,
 } from './index.js';
-import { VoiceRealtimeJsonValueSchema } from './client.js';
+import {
+    VoiceRealtimeJsonValueSchema,
+    type RealtimeVoiceProviderRuntime,
+    type VoiceConversationCapabilities,
+    type VoiceConversationProviderRole,
+    type VoiceConversationToolCapabilities,
+    type VoiceConversationToolEffectCalls,
+    type VoiceRealtimeJsonValue,
+    type VoiceRealtimeToolCall,
+    type VoiceRealtimeToolResult,
+    type VoiceTranscriptCanonicalEvent,
+} from './client.js';
 import {
     createVoiceRecordSchema,
     VoiceCredentialSlotIdSchema,
@@ -89,8 +98,6 @@ import {
     type ConnectedAccountHttpHeadersRequest,
     type VoiceAccountOperationService,
     type VoiceAvailabilityPlatform,
-    type VoiceConversationCapabilities,
-    type VoiceConversationProviderRole,
     type VoiceCredentialAccess,
     type VoiceCredentialAccessPhase,
     type VoiceCredentialDeclaration,
@@ -108,32 +115,28 @@ import {
     type VoiceModelPackSupportArtifactV1,
     type VoiceModelPackTransducerArtifactsV1,
     type VoiceProviderContribution,
-    type VoiceProviderRuntime,
     type VoiceProviderSettings,
     type VoiceProvidersRegistrationApi,
     type VoiceRawCredentialAccess,
     type VoiceRawCredentialGrantDeclaration,
-    type VoiceRealtimeJsonValue,
-    type VoiceRealtimeToolCall,
-    type VoiceRealtimeToolResult,
     type VoiceSettingReadinessDeclaration,
     type VoiceSchema,
     type VoiceSettingsActionContext,
-    type VoiceSpeechCatalogDeclaration,
-    type VoiceSpeechInputMimeType,
-    type VoiceSpeechProviderLimits,
-    type VoiceSpeechProviderRole,
-    type VoiceTranscriptCanonicalEvent,
 } from './projections.js';
+import type {
+    SpeechProviderRuntime,
+    VoiceSpeechCatalogDeclaration,
+    VoiceSpeechInputMimeType,
+    VoiceSpeechProviderLimits,
+    VoiceSpeechProviderRole,
+} from './speech.js';
+
+type CurrentVoiceProvidersRegistrationApi = VoiceProvidersRegistrationApi;
 
 const APPROVED_ROOT_VOICE_PROJECTION_EXPORTS = [
     'ConnectedAccountHttpHeadersRequest',
     'VoiceAccountOperationService',
     'VoiceAvailabilityPlatform',
-    'VoiceConversationCapabilities',
-    'VoiceConversationProviderRole',
-    'VoiceConversationToolCapabilities',
-    'VoiceConversationToolEffectCalls',
     'VoiceCredentialAccess',
     'VoiceCredentialAccessPhase',
     'VoiceCredentialDeclaration',
@@ -165,22 +168,13 @@ const APPROVED_ROOT_VOICE_PROJECTION_EXPORTS = [
     'VoiceModelPackTransducerArtifactsV1Schema',
     'VoiceProviderContribution',
     'VoiceProviderContributionSchema',
-    'VoiceProviderRuntime',
     'VoiceProviderSettings',
     'VoiceProvidersRegistrationApi',
     'VoiceRawCredentialAccess',
     'VoiceRawCredentialGrantDeclaration',
     'VoiceSchema',
-    'VoiceRealtimeJsonValue',
-    'VoiceRealtimeToolCall',
-    'VoiceRealtimeToolResult',
     'VoiceSettingReadinessDeclaration',
     'VoiceSettingsActionContext',
-    'VoiceSpeechCatalogDeclaration',
-    'VoiceSpeechInputMimeType',
-    'VoiceSpeechProviderLimits',
-    'VoiceSpeechProviderRole',
-    'VoiceTranscriptCanonicalEvent',
     'classifyVoiceProviderHttpFailure',
 ] as const;
 
@@ -266,7 +260,6 @@ const SDK_OWNED_VOICE_PROJECTION_TYPE_ALIASES = [
     'VoiceRawCredentialAccess',
     'VoiceCredentialAccess',
     'VoiceSettingsActionContext',
-    'VoiceProviderRuntime',
     'VoiceProvidersRegistrationApi',
 ] as const;
 
@@ -368,17 +361,44 @@ function moduleExportNames(program: ts.Program, relativePath: string): readonly 
         .sort();
 }
 
+function assignedVoiceSdkEntrypoint(publicName: string): string {
+    if ([
+        'VoiceConversationCapabilities',
+        'VoiceConversationProviderRole',
+        'VoiceConversationToolCapabilities',
+        'VoiceConversationToolEffectCalls',
+        'VoiceRealtimeJsonValue',
+        'VoiceRealtimeToolCall',
+        'VoiceRealtimeToolResult',
+        'VoiceTranscriptCanonicalEvent',
+    ].includes(publicName)) {
+        return 'src/voice/client/index.ts';
+    }
+    if ([
+        'VoiceSpeechCatalogDeclaration',
+        'VoiceSpeechInputMimeType',
+        'VoiceSpeechProviderLimits',
+        'VoiceSpeechProviderRole',
+    ].includes(publicName)) {
+        return 'src/voice/speech/index.ts';
+    }
+    return 'src/voice/index.ts';
+}
+
 describe('Voice package-local publication projection', () => {
     it('projects every Voice DTO through its assigned SDK boundary', () => {
         const program = createSdkProgram();
         for (const projection of PROTOCOL_OWNED_VOICE_DTO_PROJECTIONS) {
-            const owner = exportedSymbol(program, 'src/voice/projections.ts', projection.publicName);
+            const owner = exportedSymbol(
+                program,
+                assignedVoiceSdkEntrypoint(projection.publicName),
+                projection.publicName,
+            );
             expect(owner).toBe(protocolOwnerSymbol(
                 program,
                 projection.ownerModule,
                 projection.ownerName,
             ));
-            expect(exportedSymbol(program, 'src/voice/index.ts', projection.publicName)).toBe(owner);
         }
     }, 120_000);
 
@@ -565,8 +585,8 @@ describe('Voice package-local publication projection', () => {
             CurrentVoiceCredentialAccess<'prepare'>
         >>().toEqualTypeOf<true>();
         expectTypeOf<IsMutuallyAssignable<
-            VoiceProviderRuntime,
-            CurrentVoiceProviderRuntime
+            Parameters<VoiceProvidersRegistrationApi['register']>[1],
+            RealtimeVoiceProviderRuntime | SpeechProviderRuntime
         >>().toEqualTypeOf<true>();
         expectTypeOf<IsMutuallyAssignable<
             VoiceProvidersRegistrationApi,

@@ -34,7 +34,7 @@ import type {
   PluginTestkitRegistrationByFamily,
 } from './types.js';
 import type { ProvidersService } from '../providers.js';
-import type { VoiceProviderRuntime } from '../voice/index.js';
+import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 import type {
   VoiceSpeechSynthesizeRequest,
   VoiceSpeechTranscribeRequest,
@@ -47,6 +47,8 @@ import {
   defineProtocolString,
   defineProtocolUnion,
 } from '../protocol/protocolFacade.js';
+
+type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['register']>[1];
 
 const manifest = {
   schemaVersion: 2,
@@ -307,7 +309,7 @@ const voiceManifest = {
   },
 } satisfies PluginManifest;
 
-function voiceRuntime(includeTranscribe = false): VoiceProviderRuntime {
+function voiceRuntime(includeTranscribe = false): RegisteredVoiceProviderRuntime {
   return {
     kind: 'speech',
     synthesize: async (request: VoiceSpeechSynthesizeRequest) => ({

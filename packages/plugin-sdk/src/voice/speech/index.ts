@@ -1,6 +1,10 @@
 export type { SpeechProviderRuntime } from '../speech.js';
 export type { VoiceProviderCatalogItem } from '../speech.js';
+export type { VoiceSpeechCatalogDeclaration } from '../speech.js';
+export type { VoiceSpeechInputMimeType } from '../speech.js';
 export type { VoiceSpeechOperationContext } from '../speech.js';
+export type { VoiceSpeechProviderLimits } from '../speech.js';
+export type { VoiceSpeechProviderRole } from '../speech.js';
 export type { VoiceSpeechSynthesizeRequest } from '../speech.js';
 export type { VoiceSpeechSynthesizeResult } from '../speech.js';
 export type { VoiceSpeechTranscribeRequest } from '../speech.js';

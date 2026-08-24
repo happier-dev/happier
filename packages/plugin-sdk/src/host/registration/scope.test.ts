@@ -13,13 +13,15 @@ import type {
 } from '../../activation.js';
 import type { PromptAssetAdapter } from '../../resources.js';
 import type { ManagedProviderRuntime } from '../../managed-services/contract.js';
-import type { VoiceProviderRuntime } from '../../voice/index.js';
+import type { VoiceProvidersRegistrationApi } from '../../voice/projections.js';
 import type {
     SpeechProviderRuntime,
     VoiceSpeechOperationContext,
     VoiceSpeechSynthesizeRequest,
     VoiceSpeechTranscribeRequest,
 } from '../../voice/speech.js';
+
+type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['register']>[1];
 
 const clientTarget = Object.freeze({
     realm: 'client' as const,
@@ -105,7 +107,7 @@ function speechRuntime(input: Readonly<{
     synthesize?: boolean;
     catalog?: boolean;
     settingsActions?: boolean;
-}>): VoiceProviderRuntime {
+}>): RegisteredVoiceProviderRuntime {
     return Object.freeze({
         kind: 'speech' as const,
         ...(input.transcribe
@@ -234,7 +236,7 @@ describe('plugin registration scope targets', () => {
                 bytes: new Uint8Array(),
                 mimeType: 'audio/wav' as const,
             }),
-        } satisfies VoiceProviderRuntime);
+        } satisfies RegisteredVoiceProviderRuntime);
 
         expect(Object.keys(scope.api.voiceProviders)).toEqual(['register']);
         expect(scope.api.voiceProviders.register('speech', runtime)).toBeUndefined();
@@ -272,7 +274,7 @@ describe('plugin registration scope targets', () => {
                 encodeContextUpdate() { return []; },
                 microphoneMode: 'host_webrtc' as const,
                 encodeTextTurn() { return []; },
-            }) as unknown as VoiceProviderRuntime,
+            }) as unknown as RegisteredVoiceProviderRuntime,
         );
         expect(() => wrongRealm.commit()).toThrow(/Voice.*realm/i);
     });
@@ -303,7 +305,7 @@ describe('plugin registration scope targets', () => {
             encodeTextTurn(this: Readonly<{ kind: 'conversation' }>, text: string) {
                 return [{ kind: this.kind, text }];
             },
-        } as unknown as VoiceProviderRuntime;
+        } as unknown as RegisteredVoiceProviderRuntime;
 
         scope.api.voiceProviders.register('conversation', runtime);
         const [registration] = scope.commit();
@@ -346,7 +348,7 @@ describe('plugin registration scope targets', () => {
                 encodeContextUpdate() { return []; },
                 encodeTextTurn() { return []; },
                 [field]: invalidValue,
-            } as unknown as VoiceProviderRuntime;
+            } as unknown as RegisteredVoiceProviderRuntime;
 
             scope.api.voiceProviders.register('conversation', runtime);
             expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/conversation' runtime/i);
@@ -469,7 +471,7 @@ describe('plugin registration scope targets', () => {
             kind: 'speech';
             transcribe?: SpeechProviderRuntime['transcribe'];
             catalog?: { list: NonNullable<SpeechProviderRuntime['catalog']>['list'] };
-            settingsActions?: { execute: NonNullable<VoiceProviderRuntime['settingsActions']>['execute'] };
+            settingsActions?: { execute: NonNullable<RegisteredVoiceProviderRuntime['settingsActions']>['execute'] };
         } = {
             kind: 'speech',
             transcribe,
@@ -477,7 +479,7 @@ describe('plugin registration scope targets', () => {
             settingsActions: { execute: executeSettingsAction },
         };
 
-        scope.api.voiceProviders.register('speech', runtime as VoiceProviderRuntime);
+        scope.api.voiceProviders.register('speech', runtime as RegisteredVoiceProviderRuntime);
         expect(Object.isFrozen(runtime)).toBe(false);
         expect(Object.isFrozen(runtime.catalog)).toBe(false);
         expect(Object.isFrozen(runtime.settingsActions)).toBe(false);
@@ -544,7 +546,7 @@ describe('plugin registration scope targets', () => {
         const runtime = {
             ...speechRuntime({ transcribe: true }),
             undeclared() {},
-        } as unknown as VoiceProviderRuntime;
+        } as unknown as RegisteredVoiceProviderRuntime;
 
         scope.api.voiceProviders.register('speech', runtime);
         const [registration] = scope.commit();
@@ -571,7 +573,7 @@ describe('plugin registration scope targets', () => {
                 list: async () => Object.freeze([]),
                 undeclared() {},
             },
-        } as unknown as VoiceProviderRuntime;
+        } as unknown as RegisteredVoiceProviderRuntime;
 
         scope.api.voiceProviders.register('speech', runtime);
         const [registration] = scope.commit();
@@ -606,7 +608,7 @@ describe('plugin registration scope targets', () => {
 
         expect(scope.api.voiceProviders.register(
             'speech',
-            runtime as VoiceProviderRuntime,
+            runtime as RegisteredVoiceProviderRuntime,
         )).toBeUndefined();
         expect(getterCalls).toBe(0);
         const [registration] = scope.commit();
@@ -636,7 +638,7 @@ describe('plugin registration scope targets', () => {
         const runtime = {
             ...speechRuntime({ transcribe: true }),
             catalog,
-        } as VoiceProviderRuntime;
+        } as RegisteredVoiceProviderRuntime;
 
         expect(scope.api.voiceProviders.register('speech', runtime)).toBeUndefined();
         expect(getterCalls).toBe(0);
@@ -656,7 +658,7 @@ describe('plugin registration scope targets', () => {
         const runtime = {
             ...speechRuntime({ synthesize: true }),
             [Symbol('undeclared')]: true,
-        } as VoiceProviderRuntime;
+        } as RegisteredVoiceProviderRuntime;
 
         scope.api.voiceProviders.register('speech', runtime);
         expect(scope.commit()).toEqual([{
@@ -683,7 +685,7 @@ describe('plugin registration scope targets', () => {
         }
         const scope = createSpeechScope(speechDeclaration({ roles: ['conversation_tts'] }));
         const runtime = new SpeechRuntime();
-        scope.api.voiceProviders.register('speech', runtime as VoiceProviderRuntime);
+        scope.api.voiceProviders.register('speech', runtime as RegisteredVoiceProviderRuntime);
 
         const [registration] = scope.commit();
         if (registration?.family !== 'voiceProviders' || registration.value.kind !== 'speech') {
@@ -717,7 +719,7 @@ describe('plugin registration scope targets', () => {
         }],
     ])('rejects %s before publication', (_label, createRuntime) => {
         const scope = createSpeechScope(speechDeclaration({ roles: ['conversation_tts'] }));
-        scope.api.voiceProviders.register('speech', createRuntime() as VoiceProviderRuntime);
+        scope.api.voiceProviders.register('speech', createRuntime() as RegisteredVoiceProviderRuntime);
 
         expect(() => scope.commit()).toThrow(/invalid 'voiceProviders\/speech' runtime/);
         expect(scope.registrations()).toEqual([]);
@@ -733,7 +735,7 @@ describe('plugin registration scope targets', () => {
             writable: true,
         });
 
-        scope.api.voiceProviders.register('speech', runtime as VoiceProviderRuntime);
+        scope.api.voiceProviders.register('speech', runtime as RegisteredVoiceProviderRuntime);
         const [registration] = scope.commit();
         if (registration?.family !== 'voiceProviders' || registration.value.kind !== 'speech') {
             throw new Error('Expected committed speech registration');

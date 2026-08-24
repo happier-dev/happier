@@ -78,7 +78,7 @@ import type { AgentExternalSessionsContribution } from './externalSessions.js';
 import type { AgentExternalSessionHooksContribution } from './externalSessionHooks.js';
 import type { AgentExternalSessionObservationContribution } from './externalSessionObservation.js';
 import type { AgentExternalSessionTakeoverContribution } from './sessions/externalSessionTakeover.js';
-import type { VoiceProviderContribution, VoiceProviderRuntime } from './voice/projections.js';
+import type { VoiceProviderContribution, VoiceProvidersRegistrationApi } from './voice/projections.js';
 import {
     type PluginManifest,
     type PluginLocalizedStringV2,
@@ -686,7 +686,7 @@ export type PluginVoiceProviderDefinition =
                 : never,
             { kind: 'conversation' }
         >;
-        runtime: Extract<VoiceProviderRuntime, { kind: 'conversation' }>;
+        runtime: Extract<Parameters<VoiceProvidersRegistrationApi['register']>[1], { kind: 'conversation' }>;
     }>
     | Readonly<{
         /**
@@ -712,7 +712,7 @@ export type PluginVoiceProviderDefinition =
                 : never,
             { kind: 'speech' }
         >;
-        runtime: Extract<VoiceProviderRuntime, { kind: 'speech' }>;
+        runtime: Extract<Parameters<VoiceProvidersRegistrationApi['register']>[1], { kind: 'speech' }>;
     }>;
 
 type PluginStructuredContributionDefinitions<

@@ -58,8 +58,8 @@ import {
 } from '../manifest.js';
 import type {
     VoiceAccountOperationService,
-    VoiceProviderRuntime,
 } from '../voice/index.js';
+import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 import type { SpeechProviderRuntime } from '../voice/speech.js';
 import {
     createPluginTestkit,
@@ -67,6 +67,8 @@ import {
     type PluginUiSemanticSurfaceAdapter,
 } from '../testing/index.js';
 import { createSurfaceContextFixture } from '../ui/surfaceContext.fixture.js';
+
+type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['register']>[1];
 
 // This is the source-authoring harness: the public example entry must resolve
 // against the current source SDK rather than an independently built package
@@ -1276,7 +1278,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             activate(api: Pick<PluginClientApi, 'actions' | 'voiceProviders'>): void;
         }>;
         const clientActions = new Map<string, unknown>();
-        const voiceProviders = new Map<string, VoiceProviderRuntime>();
+        const voiceProviders = new Map<string, RegisteredVoiceProviderRuntime>();
 
         clientModule.activate({
             actions: {
@@ -1449,8 +1451,9 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(publicAuthoringVoice).not.toMatch(
             /\btype Voice(?:ClientAuthArtifact|CatalogItem)\b/u,
         );
-        expect(publicAuthoringSpeech).toContain("from '@happier-dev/plugin-sdk/voice'");
+        expect(publicAuthoringSpeech).toContain("from '@happier-dev/plugin-sdk'");
         expect(publicAuthoringSpeech).toContain("from '@happier-dev/plugin-sdk/voice/speech'");
+        expect(publicAuthoringSpeech).not.toContain("from '@happier-dev/plugin-sdk/voice'");
         expect(`${publicAuthoringVoice}\n${publicAuthoringSpeech}`).not.toMatch(
             /@happier-dev\/plugin-sdk\/(?:runtime|ui\/client)|registerSpeech|PluginVoice|accountMediation|speechProviderIds|catalogProviders/u,
         );
@@ -2429,7 +2432,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         ).href) as Readonly<{
             activate(api: Pick<PluginClientApi, 'actions' | 'voiceProviders'>): void;
         }>;
-        const captured = new Map<string, VoiceProviderRuntime>();
+        const captured = new Map<string, RegisteredVoiceProviderRuntime>();
         voiceModule.activate({
             actions: { register() {} },
             voiceProviders: {
@@ -2610,11 +2613,11 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             manifest,
             module: publicAuthoringEntry,
         });
-        const captured = new Map<string, VoiceProviderRuntime>();
+        const captured = new Map<string, RegisteredVoiceProviderRuntime>();
         const api = {
             actions: { register() {} },
             voiceProviders: {
-                register(localId: string, runtime: VoiceProviderRuntime) {
+                register(localId: string, runtime: RegisteredVoiceProviderRuntime) {
                     captured.set(localId, runtime);
                 },
             },

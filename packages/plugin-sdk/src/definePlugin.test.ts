@@ -94,8 +94,10 @@ import type {
 import type { AgentExternalSessionsContribution } from './externalSessions.js';
 import type { ManagedProviderRuntime } from './providers/index.js';
 import { createPluginRegistrationScope } from './host/registration/index.js';
-import type { VoiceProviderRuntime } from './voice/index.js';
+import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { SpeechProviderRuntime, VoiceSpeechSynthesizeRequest } from './voice/speech.js';
+
+type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['register']>[1];
 
 const executionOnlyFactory: AgentRuntimeFactory = () => Object.freeze({
     executionRuns: Object.freeze({
@@ -977,7 +979,7 @@ describe('definePlugin', () => {
             voiceProviders: {
                 speech: {
                     declaration: authoredDeclaration,
-                    runtime: Object.freeze({ kind: 'conversation' }) as VoiceProviderRuntime,
+                    runtime: Object.freeze({ kind: 'conversation' }) as RegisteredVoiceProviderRuntime,
                 },
             },
         });

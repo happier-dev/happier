@@ -3,6 +3,12 @@ export { HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE } from '../client.js';
 export type { PluginVoiceAgentSessionRealtimeService } from '../client.js';
 export type { RealtimeVoiceProviderProtocol } from '../client.js';
 export type { RealtimeVoiceProviderRuntime } from '../client.js';
+export type {
+  VoiceConversationCapabilities,
+  VoiceConversationProviderRole,
+  VoiceConversationToolCapabilities,
+  VoiceConversationToolEffectCalls,
+} from '../client.js';
 export type { RealtimeVoiceProviderSettingsOperations } from '../client.js';
 export type { VoiceClientAuthArtifact } from '../client.js';
 export type { VoiceClientToolAgentPromptOptions } from '../client.js';
@@ -18,6 +24,12 @@ export type { VoiceProviderExecutionAuthority } from '../client.js';
 export type { VoiceRealtimeCanonicalEvent } from '../client.js';
 export type { VoiceRealtimeConnection } from '../client.js';
 export type { VoiceRealtimeConnectionCloseReason } from '../client.js';
+export type {
+  VoiceRealtimeJsonValue,
+  VoiceRealtimeToolCall,
+  VoiceRealtimeToolResult,
+  VoiceTranscriptCanonicalEvent,
+} from '../client.js';
 export { VoiceRealtimeJsonValueSchema } from '../client.js';
 export type { VoiceRealtimePreflight } from '../client.js';
 export type { VoiceRealtimePreparation } from '../client.js';

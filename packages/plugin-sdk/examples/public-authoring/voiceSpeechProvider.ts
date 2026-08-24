@@ -1,5 +1,5 @@
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
-import type { VoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
     SpeechProviderRuntime,
     VoiceSpeechSynthesizeRequest,
@@ -21,7 +21,9 @@ export const speechToTextRuntime: SpeechProviderRuntime = {
     },
 };
 
-export const textToSpeechRuntime: SpeechProviderRuntime & Pick<VoiceProviderRuntime, 'settingsActions'> = {
+type RegisteredVoiceProviderRuntime = Parameters<PluginApi['voiceProviders']['register']>[1];
+
+export const textToSpeechRuntime: SpeechProviderRuntime & Pick<RegisteredVoiceProviderRuntime, 'settingsActions'> = {
     kind: 'speech',
     catalog: {
         async list({ catalog }, context) {

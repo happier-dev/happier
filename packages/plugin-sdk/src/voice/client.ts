@@ -21,7 +21,19 @@ import type {
     VoiceGuidanceAvailability,
 } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
 export type { VoiceGuidanceAvailability } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
-import type { VoiceTranscriptLadderMapper } from '@happier-dev/protocol/voice/realtime';
+export type {
+    VoiceConversationCapabilities,
+    VoiceConversationProviderRole,
+    VoiceConversationToolCapabilities,
+    VoiceConversationToolEffectCalls,
+} from '@happier-dev/protocol/plugins/contributions/voice';
+import type {
+    VoiceRealtimeJsonValue,
+    VoiceRealtimeToolCallV1 as VoiceRealtimeToolCall,
+    VoiceRealtimeToolResultV1 as VoiceRealtimeToolResult,
+    VoiceTranscriptCanonicalEventV1 as VoiceTranscriptCanonicalEvent,
+    VoiceTranscriptLadderMapper,
+} from '@happier-dev/protocol/voice/realtime';
 import {
     createVoiceTranscriptLadderMapper as canonicalCreateVoiceTranscriptLadderMapper,
     VoiceRealtimeJsonValueSchema as canonicalVoiceRealtimeJsonValueSchema,
@@ -33,16 +45,7 @@ import {
     HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE as canonicalHappierVoiceBindingNonceDynamicVariable,
     HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE as canonicalHappierVoiceLeaseIdDynamicVariable,
 } from '@happier-dev/protocol/voice/sessionBinding';
-import type { VoiceCredentialAccess } from './projections.js';
-import type {
-    VoiceRealtimeJsonValue,
-    VoiceSchema,
-    VoiceTranscriptCanonicalEvent,
-} from './projections.js';
-import type {
-    VoiceRealtimeToolCall,
-    VoiceRealtimeToolResult,
-} from './projections.js';
+import type { VoiceCredentialAccess, VoiceSchema } from './projections.js';
 
 export const describeActionForVoiceTool: (
     spec: Pick<ActionSpec, 'title' | 'description' | 'inputHints'>,
@@ -122,7 +125,12 @@ export const HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE: string =
     canonicalHappierVoiceLeaseIdDynamicVariable;
 export const VoiceTranscriptCanonicalEventV1Schema: VoiceSchema<VoiceTranscriptCanonicalEvent> =
     canonicalVoiceTranscriptCanonicalEventV1Schema;
-export type { VoiceRealtimeJsonValue };
+export type {
+    VoiceRealtimeJsonValue,
+    VoiceRealtimeToolCallV1 as VoiceRealtimeToolCall,
+    VoiceRealtimeToolResultV1 as VoiceRealtimeToolResult,
+    VoiceTranscriptCanonicalEventV1 as VoiceTranscriptCanonicalEvent,
+} from '@happier-dev/protocol/voice/realtime';
 export type VoiceTranscriptCanonicalEventV1 = VoiceTranscriptCanonicalEvent;
 export type VoiceRealtimeToolResultV1 = VoiceRealtimeToolResult;
 

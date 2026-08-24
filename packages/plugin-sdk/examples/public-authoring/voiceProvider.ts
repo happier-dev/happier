@@ -1,10 +1,7 @@
-import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginApi, PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
-import type {
-    VoiceAccountOperationService,
-    VoiceProviderRuntime,
-} from '@happier-dev/plugin-sdk/voice';
+import type { VoiceAccountOperationService } from '@happier-dev/plugin-sdk/voice';
 import type {
     RealtimeVoiceProviderRuntime,
     VoiceClientAuthArtifact,
@@ -16,6 +13,7 @@ const VOICE_CATALOG_URL = 'https://voice.example.test/v1/catalog';
 const VOICE_CLIENT_AUTH_RESPONSE_MAX_BYTES = 32_768;
 const VOICE_CATALOG_RESPONSE_MAX_BYTES = 2_097_152;
 const REVIEW_SESSION_STATUS_VIEW_ID = 'review-session-status-details';
+type RegisteredVoiceProviderRuntime = Parameters<PluginApi['voiceProviders']['register']>[1];
 
 async function* emptyEvents<T>(): AsyncIterable<T> {
     return;
@@ -221,7 +219,7 @@ const accountMediatedBrowserRuntime = {
     encodeContextUpdate: () => [],
     encodeTextTurn: () => [],
     outputLevelMeter: 'unavailable',
-} satisfies VoiceProviderRuntime;
+} satisfies RegisteredVoiceProviderRuntime;
 
 const rawBrowserRuntime = {
     kind: 'conversation',

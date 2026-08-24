@@ -7,10 +7,6 @@ import {
 } from '@happier-dev/protocol/plugins/contributions/voice';
 import type {
     VoiceAvailabilityPlatform,
-    VoiceConversationCapabilities,
-    VoiceConversationProviderRole,
-    VoiceConversationToolCapabilities,
-    VoiceConversationToolEffectCalls,
     VoiceCredentialAccessPhase,
     VoiceCredentialDeclaration,
     VoiceCredentialOperationProjection,
@@ -19,10 +15,6 @@ import type {
     VoiceProviderSettings,
     VoiceRawCredentialGrantDeclaration,
     VoiceSettingReadinessDeclaration,
-    VoiceSpeechCatalogDeclaration,
-    VoiceSpeechInputMimeType,
-    VoiceSpeechProviderLimits,
-    VoiceSpeechProviderRole,
 } from '@happier-dev/protocol/plugins/contributions/voice';
 import {
     VoiceModelPackContributionV1Schema as canonicalVoiceModelPackContributionV1Schema,
@@ -53,9 +45,6 @@ import type {
 } from '@happier-dev/protocol/voice/modelPacks/contributionV1';
 import type {
     VoiceRealtimeJsonValue,
-    VoiceRealtimeToolCallV1,
-    VoiceRealtimeToolResultV1,
-    VoiceTranscriptCanonicalEventV1,
 } from '@happier-dev/protocol/voice/realtime';
 
 import type { PluginCancellationOptions } from '../lifecycle.js';
@@ -163,10 +152,6 @@ export function withVoiceSchemaField(
 
 export type {
     VoiceAvailabilityPlatform,
-    VoiceConversationCapabilities,
-    VoiceConversationProviderRole,
-    VoiceConversationToolCapabilities,
-    VoiceConversationToolEffectCalls,
     VoiceCredentialAccessPhase,
     VoiceCredentialDeclaration,
     VoiceCredentialOperationProjection,
@@ -175,10 +160,6 @@ export type {
     VoiceProviderSettings,
     VoiceRawCredentialGrantDeclaration,
     VoiceSettingReadinessDeclaration,
-    VoiceSpeechCatalogDeclaration,
-    VoiceSpeechInputMimeType,
-    VoiceSpeechProviderLimits,
-    VoiceSpeechProviderRole,
 } from '@happier-dev/protocol/plugins/contributions/voice';
 
 export type {
@@ -194,13 +175,6 @@ export type {
     VoiceModelPackSupportArtifactV1,
     VoiceModelPackTransducerArtifactsV1,
 } from '@happier-dev/protocol/voice/modelPacks/contributionV1';
-export type {
-    VoiceRealtimeJsonValue,
-    VoiceRealtimeToolCallV1 as VoiceRealtimeToolCall,
-    VoiceRealtimeToolResultV1 as VoiceRealtimeToolResult,
-    VoiceTranscriptCanonicalEventV1 as VoiceTranscriptCanonicalEvent,
-} from '@happier-dev/protocol/voice/realtime';
-
 export const classifyVoiceProviderHttpFailure: (
     status: number,
 ) => 'credential_unavailable' | 'provider_response_invalid' | null = canonicalClassifyVoiceProviderHttpFailure;
@@ -252,16 +226,14 @@ export type VoiceSettingsActionContext = Readonly<{
     tools: readonly VoiceClientToolDefinition[];
 }>;
 
-export type VoiceProviderRuntime = (
-    | RealtimeVoiceProviderRuntime
-    | SpeechProviderRuntime
-) & Readonly<{
-    settingsActions?: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
-}>;
-
 export type VoiceProvidersRegistrationApi = Readonly<{
     register(
         localId: PluginContributionLocalId,
-        runtime: VoiceProviderRuntime,
+        runtime: (
+            | RealtimeVoiceProviderRuntime
+            | SpeechProviderRuntime
+        ) & Readonly<{
+            settingsActions?: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
+        }>,
     ): void;
 }>;

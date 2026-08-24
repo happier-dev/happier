@@ -20,9 +20,11 @@ import {
 import type { PromptAssetAdapter } from '../../resources.js';
 import type { PluginDynamicResourceRuntime } from '../../services/resources.js';
 import type { PluginConnectedAccountRuntime } from '../../services/index.js';
-import type { VoiceProviderRuntime } from '../../voice/projections.js';
+import type { VoiceProvidersRegistrationApi } from '../../voice/projections.js';
 
 export { captureStaticRegistrationMethod };
+
+type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['register']>[1];
 
 function readMember(receiver: object, key: PropertyKey): unknown {
     return Reflect.get(receiver, key);
@@ -127,8 +129,8 @@ function snapshotMethodGroup(
 }
 
 export function captureVoiceProviderRuntimeKind(
-    runtime: VoiceProviderRuntime,
-): VoiceProviderRuntime['kind'] {
+    runtime: RegisteredVoiceProviderRuntime,
+): RegisteredVoiceProviderRuntime['kind'] {
     const receiver = requireObject(runtime, 'Voice provider runtime');
     const kind = readVoiceRuntimeMember(receiver, 'kind', 'Voice provider runtime.kind', true);
     if (kind !== 'speech' && kind !== 'conversation') {
@@ -138,20 +140,20 @@ export function captureVoiceProviderRuntimeKind(
 }
 
 function snapshotSettingsActions(
-    value: NonNullable<VoiceProviderRuntime['settingsActions']>,
-): NonNullable<VoiceProviderRuntime['settingsActions']> {
+    value: NonNullable<RegisteredVoiceProviderRuntime['settingsActions']>,
+): NonNullable<RegisteredVoiceProviderRuntime['settingsActions']> {
     const receiver = requireObject(value, 'Voice settings-action runtime');
     return Object.freeze({
         execute: captureStaticRegistrationMethod<
-            NonNullable<VoiceProviderRuntime['settingsActions']>['execute']
+            NonNullable<RegisteredVoiceProviderRuntime['settingsActions']>['execute']
         >(receiver, 'execute', 'Voice settings-action runtime.execute', true)!,
     });
 }
 
 export function snapshotVoiceProviderRuntime(
-    runtime: VoiceProviderRuntime,
-    capturedKind?: VoiceProviderRuntime['kind'],
-): VoiceProviderRuntime {
+    runtime: RegisteredVoiceProviderRuntime,
+    capturedKind?: RegisteredVoiceProviderRuntime['kind'],
+): RegisteredVoiceProviderRuntime {
     const actualKind = captureVoiceProviderRuntimeKind(runtime);
     if (capturedKind !== undefined && capturedKind !== actualKind) {
         throw new TypeError('Voice provider runtime.kind is invalid');
@@ -167,7 +169,7 @@ export function snapshotVoiceProviderRuntime(
     const settingsActions = settingsActionsValue === undefined
         ? undefined
         : snapshotSettingsActions(
-            settingsActionsValue as NonNullable<VoiceProviderRuntime['settingsActions']>,
+            settingsActionsValue as NonNullable<RegisteredVoiceProviderRuntime['settingsActions']>,
         );
 
     if (kind === 'speech') {
@@ -183,7 +185,7 @@ export function snapshotVoiceProviderRuntime(
                 const catalogReceiver = requireObject(catalogValue, 'Voice speech catalog runtime');
                 return Object.freeze({
                     list: captureStaticRegistrationMethod<NonNullable<Extract<
-                        VoiceProviderRuntime,
+                        RegisteredVoiceProviderRuntime,
                         Readonly<{ kind: 'speech' }>
                     >['catalog']>['list']>(
                         catalogReceiver,
@@ -211,7 +213,7 @@ export function snapshotVoiceProviderRuntime(
             ...(transcribe ? { transcribe } : {}),
             ...(synthesize ? { synthesize } : {}),
             ...(settingsActions ? { settingsActions } : {}),
-        }) as VoiceProviderRuntime;
+        }) as RegisteredVoiceProviderRuntime;
     }
 
     const protocolReceiver = requireObject(
@@ -357,7 +359,7 @@ export function snapshotVoiceProviderRuntime(
         microphoneMode,
         ...(outputLevelMeter === undefined ? {} : { outputLevelMeter }),
         ...(settingsActions ? { settingsActions } : {}),
-    }) as VoiceProviderRuntime;
+    }) as RegisteredVoiceProviderRuntime;
 }
 
 const MCP_SERVER_METHODS = Object.freeze([
@@ -827,7 +829,7 @@ export function snapshotStaticRegistrationValue<
             ) as PluginRegistrationValueByFamily[TFamily];
         case 'voiceProviders':
             return snapshotVoiceProviderRuntime(
-                value as VoiceProviderRuntime,
+                value as RegisteredVoiceProviderRuntime,
             ) as PluginRegistrationValueByFamily[TFamily];
         case 'promptAssets':
             return snapshotPromptAssetAdapter(value as PromptAssetAdapter) as PluginRegistrationValueByFamily[TFamily];

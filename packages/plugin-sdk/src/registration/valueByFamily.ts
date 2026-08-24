@@ -29,7 +29,7 @@ import type {
     ManagedProviderRuntime,
     ProviderCatalogParser,
 } from '../managed-services/contract.js';
-import type { VoiceProviderRuntime } from '../voice/projections.js';
+import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 
 /**
  * A committed Action registration has no independently callable realm. The
@@ -72,7 +72,7 @@ export interface PluginRegistrationValueByFamily {
     'mcp.servers': PluginMcpServerRuntime;
     'mcp.discoverySources': PluginMcpDiscoveryHandler;
     requestInterceptors: PluginRequestInterceptor;
-    voiceProviders: VoiceProviderRuntime;
+    voiceProviders: Parameters<VoiceProvidersRegistrationApi['register']>[1];
     backgroundServices: BackgroundServiceRunner;
     promptAssets: PromptAssetAdapter;
     /**

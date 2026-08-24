@@ -65,7 +65,6 @@ import type {
   ConnectedAccountHttpHeadersRequest,
   PluginVoiceProviderDefinition,
   VoiceProviderContribution,
-  VoiceProviderRuntime,
   VoiceProvidersRegistrationApi,
   VoiceRawCredentialAccess,
   VoiceRawCredentialGrantDeclaration,
@@ -99,6 +98,11 @@ import type {
   VoiceSpeechTranscribeRequest,
   VoiceSpeechTranscribeResult,
 } from './speech.js';
+
+type RegisteredVoiceProviderRuntime =
+  (RealtimeVoiceProviderRuntime | SpeechProviderRuntime) & Readonly<{
+    settingsActions?: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
+  }>;
 
 describe('Voice author source contract', () => {
   it('publishes neutral Voice composition from the actual /voice package entry', () => {
@@ -135,6 +139,7 @@ describe('Voice author source contract', () => {
       'utf8',
     );
     const clientSource = readFileSync(new URL('./client.ts', import.meta.url), 'utf8');
+    const projectionsSource = readFileSync(new URL('./projections.ts', import.meta.url), 'utf8');
     const voiceSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(activationSource).not.toMatch(/\bexport type PluginVoiceRealtimeConnection\b/u);
     expect(activationSource).not.toMatch(/\bPluginVoice[A-Z]\w*/u);
@@ -142,7 +147,7 @@ describe('Voice author source contract', () => {
     expect(clientSource).not.toContain("from '@happier-dev/protocol/actions'");
     expect(clientSource).toContain("import type { ActionSpec } from '../actions/service.js';");
     expect(clientSource).toMatch(
-      /import type \{[^}]*VoiceRealtimeJsonValue[^}]*\} from '\.\/projections\.js';/u,
+      /import type \{[^}]*VoiceRealtimeJsonValue[^}]*\} from '@happier-dev\/protocol\/voice\/realtime';/u,
     );
     expect(clientSource).not.toMatch(/VoiceRealtimeJson(?:Array|Object)/u);
     expect(clientSource).not.toMatch(/\bactionSpecToElevenLabsClientToolParameters\b/u);
@@ -152,6 +157,75 @@ describe('Voice author source contract', () => {
     expect(clientSource).not.toMatch(/\bexport type Voice[A-Z]\w*\s*=\s*PluginVoice[A-Z]\w*/u);
     expect(voiceSource).not.toContain("from '../activation.js'");
     expect(voiceSource).not.toMatch(/\bVoiceAccountOperationService\s*=\s*PluginVoice/u);
+    expect(projectionsSource).not.toMatch(/\bexport type VoiceProviderRuntime\b/u);
+    for (const realmType of [
+      'VoiceProviderRuntime',
+      'VoiceRealtimeJsonValue',
+      'VoiceRealtimeToolCall',
+      'VoiceRealtimeToolResult',
+      'VoiceTranscriptCanonicalEvent',
+      'VoiceConversationCapabilities',
+      'VoiceConversationProviderRole',
+      'VoiceConversationToolCapabilities',
+      'VoiceConversationToolEffectCalls',
+      'VoiceSpeechCatalogDeclaration',
+      'VoiceSpeechInputMimeType',
+      'VoiceSpeechProviderLimits',
+      'VoiceSpeechProviderRole',
+    ]) {
+      expect(voiceSource, realmType).not.toMatch(
+        new RegExp(`export type \\{[^}]*\\b${realmType}\\b`, 'u'),
+      );
+    }
+  });
+
+  it('keeps realm-specific author declarations in their public barrels', () => {
+    const rootPublicSource = readFileSync(new URL('./index.public.ts', import.meta.url), 'utf8');
+    const clientPublicSource = readFileSync(new URL('./client/index.public.ts', import.meta.url), 'utf8');
+    const speechPublicSource = readFileSync(new URL('./speech/index.public.ts', import.meta.url), 'utf8');
+
+    for (const rootOnlyType of [
+      'VoiceProviderRuntime',
+      'VoiceConversationCapabilities',
+      'VoiceConversationProviderRole',
+      'VoiceConversationToolCapabilities',
+      'VoiceConversationToolEffectCalls',
+      'VoiceRealtimeJsonValue',
+      'VoiceRealtimeToolCall',
+      'VoiceRealtimeToolResult',
+      'VoiceTranscriptCanonicalEvent',
+      'VoiceSpeechCatalogDeclaration',
+      'VoiceSpeechInputMimeType',
+      'VoiceSpeechProviderLimits',
+      'VoiceSpeechProviderRole',
+    ]) {
+      expect(rootPublicSource, rootOnlyType).not.toMatch(new RegExp(`\\b${rootOnlyType}\\b`, 'u'));
+    }
+    expect(rootPublicSource).toMatch(/\bVoiceProvidersRegistrationApi\b/u);
+
+    for (const clientType of [
+      'VoiceConversationCapabilities',
+      'VoiceConversationProviderRole',
+      'VoiceConversationToolCapabilities',
+      'VoiceConversationToolEffectCalls',
+      'VoiceRealtimeJsonValue',
+      'VoiceRealtimeToolCall',
+      'VoiceRealtimeToolResult',
+      'VoiceTranscriptCanonicalEvent',
+    ]) {
+      expect(clientPublicSource, clientType).toMatch(new RegExp(`\\b${clientType}\\b`, 'u'));
+    }
+    expect(clientPublicSource).not.toMatch(/\bVoiceSpeechCatalogDeclaration\b/u);
+
+    for (const speechType of [
+      'VoiceSpeechCatalogDeclaration',
+      'VoiceSpeechInputMimeType',
+      'VoiceSpeechProviderLimits',
+      'VoiceSpeechProviderRole',
+    ]) {
+      expect(speechPublicSource, speechType).toMatch(new RegExp(`\\b${speechType}\\b`, 'u'));
+    }
+    expect(speechPublicSource).not.toMatch(/\bVoiceConversationCapabilities\b/u);
   });
 
   it('projects the definePlugin voice declaration type through /voice', () => {
@@ -168,7 +242,7 @@ describe('Voice author source contract', () => {
     expectTypeOf<Parameters<VoiceProvidersRegistrationApi['register']>[0]>()
       .toEqualTypeOf<PluginContributionLocalId>();
     expectTypeOf<Parameters<VoiceProvidersRegistrationApi['register']>[1]>()
-      .toEqualTypeOf<VoiceProviderRuntime>();
+      .toEqualTypeOf<RegisteredVoiceProviderRuntime>();
     expectTypeOf<RealtimeVoiceProviderRuntime['kind']>().toEqualTypeOf<'conversation'>();
     expectTypeOf<SpeechProviderRuntime['kind']>().toEqualTypeOf<'speech'>();
     expectTypeOf<keyof VoiceSpeechOperationContext>()
@@ -181,7 +255,7 @@ describe('Voice author source contract', () => {
     expectTypeOf<PluginApi['voiceProviders']>().toEqualTypeOf<VoiceProvidersRegistrationApi>();
     expectTypeOf<keyof PluginApi['voiceProviders']>().toEqualTypeOf<'register'>();
     expectTypeOf<PluginRegistrationValueByFamily['voiceProviders']>()
-      .toEqualTypeOf<VoiceProviderRuntime>();
+      .toEqualTypeOf<RegisteredVoiceProviderRuntime>();
     expectTypeOf<Parameters<PluginSettingsActionRuntime<VoiceSettingsActionContext>['execute']>>()
       .toEqualTypeOf<[PluginSettingsActionInput, VoiceSettingsActionContext]>();
     expectTypeOf<keyof VoiceSettingsActionContext>()
