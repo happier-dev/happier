@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
+  type ActionDefinitionV1,
   type ActionSpec,
   actionSpecToActionDefinitionV1,
   getActionSpec,
   listActionDefinitionsForCatalogSurface,
+  searchSerializedActionSpecsForSurface,
   searchSerializedActionSpecs,
   serializeActionSpec,
   SerializedActionDefinitionV1Schema,
@@ -104,16 +106,19 @@ describe('actionCatalog action-definition adapter', () => {
       version: 1,
       visibility: 'activity',
       progress: 'indeterminate',
+      presentation: { onStart: 'current' },
     });
     expect(getActionSpec('session.spawn_new').operation).toEqual({
       version: 1,
       visibility: 'activity',
       progress: 'reported',
+      presentation: { onStart: 'current' },
     });
     expect(getActionSpec('session.handoff').operation).toEqual({
       version: 1,
       visibility: 'activity',
       progress: 'reported',
+      presentation: { onStart: 'current' },
     });
     expect(getActionSpec('session.handoff.prepare_target').operation).toBeUndefined();
   });
@@ -164,6 +169,120 @@ describe('actionCatalog action-definition adapter', () => {
     for (const definition of definitions) {
       expect(SerializedActionDefinitionV1Schema.safeParse(definition).success).toBe(true);
     }
+  });
+
+  it('reuses immutable host projections while evaluating request-current search inputs', () => {
+    const hostSpec = getActionSpec('action.spec.get');
+    if (!hostSpec.outputSchema) throw new Error('Expected action.spec.get output schema');
+    const outputProjection = vi.spyOn(hostSpec.outputSchema, 'toJSONSchema');
+    const contributedDefinition = (id: string): ActionDefinitionV1 => ({
+      kindVersion: 1,
+      id,
+      title: id,
+      description: null,
+      safety: 'safe',
+      placements: [],
+      slash: null,
+      bindings: null,
+      examples: null,
+      surfaces: {
+        ui: false,
+        voice: false,
+        agent: false,
+        mcp: false,
+        cli: false,
+        rpc: false,
+        api: true,
+        plugin: false,
+      },
+      inputHints: null,
+      inputSchema: {},
+    });
+
+    const firstHostSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: hostSpec.id,
+      isActionEnabled: () => true,
+    });
+    const secondHostSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: hostSpec.id,
+      isActionEnabled: (id) => id !== hostSpec.id,
+    });
+    const firstContributedSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: 'fresh-contribution',
+      additionalDefinitions: [contributedDefinition('fresh-contribution-one')],
+    });
+    const secondContributedSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: 'fresh-contribution',
+      additionalDefinitions: [contributedDefinition('fresh-contribution-two')],
+    });
+
+    expect(firstHostSearch.map((definition) => definition.id)).toContain(hostSpec.id);
+    expect(secondHostSearch.map((definition) => definition.id)).not.toContain(hostSpec.id);
+    expect(firstContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-one']);
+    expect(secondContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-two']);
+    expect(outputProjection).toHaveBeenCalledTimes(1);
+  });
+
+  it('projects contributed Action summaries through named public fields', () => {
+    const contributed: ActionDefinitionV1 = {
+      kindVersion: 1,
+      id: 'com.acme.actions/actions/strictprojectionneedle9x',
+      title: 'Strictprojectionneedle9x',
+      description: null,
+      safety: 'safe',
+      placements: [],
+      slash: null,
+      bindings: null,
+      examples: null,
+      surfaces: {
+        ui: false,
+        voice: false,
+        agent: false,
+        mcp: false,
+        cli: true,
+        rpc: false,
+        api: true,
+        plugin: false,
+      },
+      inputHints: null,
+      inputSchema: {},
+      scopes: ['global'],
+      contributionSurfaces: ['cli'],
+      availability: undefined,
+      hostAccess: undefined,
+      priority: undefined,
+      dangerLevel: 'safe',
+    };
+
+    expect(searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: 'strictprojectionneedle9x',
+      additionalDefinitions: [contributed],
+    })).toEqual([{
+      id: 'com.acme.actions/actions/strictprojectionneedle9x',
+      title: 'Strictprojectionneedle9x',
+      description: null,
+      safety: 'safe',
+      placements: [],
+      slash: null,
+      bindings: null,
+      examples: null,
+      surfaces: {
+        ui: false,
+        voice: false,
+        agent: false,
+        mcp: false,
+        cli: true,
+        rpc: false,
+        api: true,
+        plugin: false,
+      },
+      inputHints: null,
+    }]);
   });
 
   it('preserves strict object semantics in exported input schemas', () => {

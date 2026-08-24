@@ -266,6 +266,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       summary: 'List sessions',
       createdBy: { surface: 'system' },
     }, {
+      surface: 'plugin',
       actionCaller: { kind: 'plugin', pluginId: 'plugin.example' },
     })).resolves.toMatchObject({
       ok: false,

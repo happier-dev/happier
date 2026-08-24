@@ -49,7 +49,7 @@ describe('createActionExecutor (session.handoff)', () => {
     const result = await executor.execute(
       'session.handoff',
       { sessionId: 'sess_1', targetMachineId: 'machine_2' },
-      { defaultSessionId: 'sess_1' },
+      { surface: 'ui', defaultSessionId: 'sess_1' },
     );
 
     expect(result).toEqual({
@@ -71,7 +71,7 @@ describe('createActionExecutor (session.handoff)', () => {
     const result = await executor.execute(
       'session.handoff',
       { targetMachineId: 'machine_2' },
-      { defaultSessionId: 'sess_1', signal },
+      { surface: 'ui', defaultSessionId: 'sess_1', signal },
     );
 
     expect(result.ok).toBe(true);
@@ -103,7 +103,7 @@ describe('createActionExecutor (session.handoff)', () => {
           ignoredIncludeGlobs: ['dist/**'],
         },
       },
-      { defaultSessionId: 'sess_1' },
+      { surface: 'ui', defaultSessionId: 'sess_1' },
     );
 
     expect(result.ok).toBe(true);
@@ -131,7 +131,7 @@ describe('createActionExecutor (session.handoff)', () => {
     const result = await executor.execute(
       'session.handoff',
       { sessionId: 'sess_1' },
-      { defaultSessionId: 'sess_1' },
+      { surface: 'ui', defaultSessionId: 'sess_1' },
     );
 
     expect(result).toEqual({

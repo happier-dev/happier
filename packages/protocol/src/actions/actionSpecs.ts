@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+import {
+  assertPublicActionSdkMethodNames,
+  resolveActionSdkMethodName,
+} from './actionSdkMethodNames.js';
+
+export { resolveActionSdkMethodName } from './actionSdkMethodNames.js';
+
 import { ActionOperationDeclarationV1Schema } from './operations/v1.js';
 import { AgentsBackendsListOutputSchema } from './agentBackendInventory.js';
 import {
@@ -148,6 +155,15 @@ import {
   ExecutionRunStopResponseSchema,
   ExecutionRunWaitResultSchema,
 } from '../execution/runs/responseSchemas.js';
+import {
+  ExecutionRunTurnStreamCancelResponseSchema,
+  ExecutionRunTurnStreamReadResponseSchema,
+  ExecutionRunTurnStreamStartResponseSchema,
+} from '../execution/runs/index.js';
+import {
+  ActionDefinitionSummaryV1Schema,
+  ActionDefinitionV1Schema,
+} from './actionDefinitionV1.js';
 import {
   ExecutionRunStartRequestBaseSchema,
   ExecutionRunStartRequestSchema,
@@ -1483,6 +1499,14 @@ const ActionSpecSearchInputSchema = z.object({
 const ActionSpecGetInputSchema = z.object({
   id: z.string().min(1),
 }).passthrough();
+
+const ActionSpecSearchResultSchema = z.object({
+  actionSpecs: z.array(ActionDefinitionSummaryV1Schema),
+}).strict();
+
+const ActionSpecGetResultSchema = z.object({
+  actionSpec: ActionDefinitionV1Schema,
+}).strict();
 
 const ActionOptionsResolveInputSchema = z.object({
   actionId: z.string().min(1).optional(),
@@ -3645,7 +3669,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'limit', title: 'Limit', description: 'Maximum number of action specs to return.', widget: 'text' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: ActionSpecSearchResultSchema,
     inputSchema: ActionSpecSearchInputSchema,
   },
   {
@@ -3674,7 +3698,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'id', title: 'Action id', description: 'The exact Happier action id.', widget: 'text', required: true },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: ActionSpecGetResultSchema,
     inputSchema: ActionSpecGetInputSchema,
   },
   {
@@ -3694,7 +3718,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       voice: true,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: false,
     },
     inputHints: {
@@ -4452,7 +4476,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'resume', title: 'Resume if needed', widget: 'boolean' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: ExecutionRunTurnStreamStartResponseSchema,
     inputSchema: ExecutionRunStreamStartInputSchema,
   },
   {
@@ -4481,7 +4505,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'maxEvents', title: 'Max events', widget: 'text' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: ExecutionRunTurnStreamReadResponseSchema,
     inputSchema: ExecutionRunStreamReadInputSchema,
   },
   {
@@ -4508,7 +4532,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'streamId', title: 'Stream id', widget: 'text', required: true },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: ExecutionRunTurnStreamCancelResponseSchema,
     inputSchema: ExecutionRunStreamCancelInputSchema,
   },
   {
@@ -8403,11 +8427,9 @@ export function isPluginProvenanceOnlyActionId(actionId: string): actionId is Pl
  * cannot exist. Extend this map rather than adding a second plugin-surface
  * decision-maker.
  *
- * `session.permission.respond` settles an authenticated Account person's own
- * decision: the present-user authority gate always rejects a plugin caller,
- * and publishing it would let the projection read as if a plugin decision
- * were a human one. The plugin-provenance `session.permission.remote.respond`
- * owns the mediated arm.
+ * Present-user Actions remain discoverable to trusted plugins. The canonical
+ * executor, not this projection, rejects account-automation callers with a
+ * typed `present_user_required` result.
  *
  * The External Session rows are host-scoped rather than present-user: their
  * canonical owner selects machine, source, link and contribution-generation
@@ -8417,7 +8439,6 @@ export function isPluginProvenanceOnlyActionId(actionId: string): actionId is Pl
  * serves these only for a host caller.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
-  'session.permission.respond': 'Permission approval records an authenticated Account actor; plugins mediate through session.permission.remote.respond.',
   'sessions.external.candidates.list': 'Machine/source-scoped discovery seam; authors use SessionsService.external.list, which delegates to this same candidate-query owner.',
   'sessions.external.link.ensure': 'Machine/source-scoped linking seam; authors use SessionsService.external.attach, which delegates to this same idempotent link operation.',
   'sessions.external.transcript.page': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
@@ -9383,61 +9404,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze(
   }),
 );
 
-const SDK_METHOD_RESERVED_ROOTS = new Set(['execute', 'search', 'invoke']);
-const SDK_METHOD_OBJECT_HAZARD_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
-const SDK_METHOD_SEGMENT_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
-
-function normalizeActionIdSegmentForSdkMethod(segment: string): string {
-  return segment.replace(/_([a-z0-9])/gu, (_match, character: string) => character.toUpperCase());
-}
-
-/**
- * Canonical generated-SDK method path. `bindings.sdkMethod` remains the one
- * owner-local exception seam; normal Action ids require no hand-written name
- * table.
- */
-export function resolveActionSdkMethodName(spec: Pick<ActionSpec, 'id' | 'bindings'>): string {
-  const override = spec.bindings?.sdkMethod;
-  if (override) return override;
-  return spec.id.split('.').map(normalizeActionIdSegmentForSdkMethod).join('.');
-}
-
-function assertPublicActionSdkMethodNames(specs: readonly ActionSpec[]): void {
-  const ownerByMethodName = new Map<string, ActionId>();
-  for (const spec of specs) {
-    if (isInternalActionId(spec.id)) continue;
-    const methodName = resolveActionSdkMethodName(spec);
-    const segments = methodName.split('.');
-    if (
-      segments.length === 0
-      || SDK_METHOD_RESERVED_ROOTS.has(segments[0] ?? '')
-      || segments.some((segment) => (
-        !SDK_METHOD_SEGMENT_PATTERN.test(segment)
-        || SDK_METHOD_OBJECT_HAZARD_SEGMENTS.has(segment)
-      ))
-    ) {
-      throw new Error(`Public Action ${spec.id} has an invalid SDK method path: ${methodName}`);
-    }
-    const existing = ownerByMethodName.get(methodName);
-    if (existing) {
-      throw new Error(`Public Actions ${existing} and ${spec.id} share SDK method path ${methodName}`);
-    }
-    ownerByMethodName.set(methodName, spec.id);
-  }
-
-  const methodNames = [...ownerByMethodName.keys()].sort();
-  for (let index = 1; index < methodNames.length; index += 1) {
-    const previous = methodNames[index - 1] as string;
-    const current = methodNames[index] as string;
-    if (current.startsWith(`${previous}.`)) {
-      throw new Error(
-        `Public Actions ${ownerByMethodName.get(previous)} and ${ownerByMethodName.get(current)} conflict at SDK namespace ${previous}`,
-      );
-    }
-  }
-}
-
-assertPublicActionSdkMethodNames(ACTION_SPECS);
+assertPublicActionSdkMethodNames(ACTION_SPECS, PUBLIC_ACTION_ID_SET);
 
 export function listActionSpecs(): readonly ActionSpec[] {
   return ACTION_SPECS;

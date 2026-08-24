@@ -10,8 +10,11 @@ import {
   ExecutionRunSendResponseSchema,
   ExecutionRunStartResponseSchema,
   ExecutionRunStopResponseSchema,
+  ExecutionRunTurnStreamCancelResponseSchema,
+  ExecutionRunTurnStreamReadResponseSchema,
+  ExecutionRunTurnStreamStartResponseSchema,
 } from '../execution/runs/index.js';
-import { serializeActionSpec } from './actionCatalog.js';
+import { actionSpecToActionDefinitionV1, serializeActionSpec } from './actionCatalog.js';
 import { ActionInputHintsSchema, ActionSpecSchema, PUBLIC_ACTION_IDS, PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SESSION_TRANSCRIPT_GET_MAX_LIMIT, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, getActionContextualDefaults, getActionSpec, isActionSpecSurfacedOn, isInternalActionId, isPluginProvenanceOnlyActionId, isPluginSurfaceExcludedActionId, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, projectSessionSpawnNewApiRequest, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
 import { resolveRuntimeActionSurfaces } from './surfaces.js';
 import type { ActionSpec } from './actionSpecs.js';
@@ -87,6 +90,8 @@ const RUNTIME_ACTION_IDS = [
   'browser.automation.focus',
   'browser.automation.select',
   'browser.automation.setValue',
+  'browser.automation.upload',
+  'browser.automation.drag',
   'browser.recording.start',
   'browser.recording.stop',
   'browser.recording.cancel',
@@ -816,7 +821,7 @@ describe('Action Spec Registry', () => {
       viewId: 'view-1',
       requesterRef: { kind: 'spoofed' },
     }).success).toBe(false);
-    expect(getActionSpec('browser.automation.cancelActive').requiredAuthority).toBe('present_user');
+    expect(getActionSpec('browser.automation.cancelActive').requiredAuthority).toBe('account_automation');
     expect(cancelActiveOutput?.safeParse({
       v: 1,
       outcome: 'canceled',
@@ -850,6 +855,8 @@ describe('Action Spec Registry', () => {
       'browser.automation.focus': 'focus',
       'browser.automation.select': 'select',
       'browser.automation.setValue': 'setValue',
+      'browser.automation.upload': 'upload',
+      'browser.automation.drag': 'drag',
     } as const;
 
     for (const [actionId, actionKind] of Object.entries(actionKinds)) {
@@ -1011,7 +1018,7 @@ describe('Action Spec Registry', () => {
         expect(spec.surfaces.plugin, spec.id).toBe(true);
       }
     }
-    expect(getActionSpec('session.permission.respond').surfaces.plugin).toBe(false);
+    expect(getActionSpec('session.permission.respond').surfaces.plugin).toBe(true);
     expect(getActionSpec('session.user_action.answer').surfaces.plugin).toBe(true);
   });
 
@@ -1038,7 +1045,7 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.permission.remote.grants.revoke').surfaces.api).toBe(true);
   });
 
-  it('keeps permission approval present-user-gated while retaining strict Plugin action schemas', () => {
+  it('keeps permission approval discoverable while present-user authority gates execution', () => {
     const permission = getActionSpec('session.permission.respond');
     const userAction = getActionSpec('session.user_action.answer');
     const permissionInput = permission.surfaceBindings?.plugin?.inputSchema;
@@ -1052,12 +1059,15 @@ describe('Action Spec Registry', () => {
       agent: false,
       mcp: false,
       voice: false,
-      plugin: false,
+      api: true,
+      plugin: true,
     });
     expect(permission.requiredAuthority).toBe('present_user');
-    expect(PluginInvocableActionIdSchema.safeParse('session.permission.respond').success).toBe(false);
-    expect(PLUGIN_INVOCABLE_ACTION_IDS).not.toContain('session.permission.respond');
-    expect(PLUGIN_ACTION_INPUT_SCHEMAS).not.toHaveProperty('session.permission.respond');
+    expect(PublicActionIdSchema.safeParse('session.permission.respond').success).toBe(true);
+    expect(PUBLIC_ACTION_IDS).toContain('session.permission.respond');
+    expect(PluginInvocableActionIdSchema.safeParse('session.permission.respond').success).toBe(true);
+    expect(PLUGIN_INVOCABLE_ACTION_IDS).toContain('session.permission.respond');
+    expect(PLUGIN_ACTION_INPUT_SCHEMAS).toHaveProperty('session.permission.respond');
 
     expect(userActionInput?.parse({
       requestId: 'question-1',
@@ -2989,6 +2999,23 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('execution.run.get').outputSchema).toBe(ExecutionRunGetResponseSchema);
     expect(getActionSpec('execution.run.send').outputSchema).toBe(ExecutionRunSendResponseSchema);
     expect(getActionSpec('execution.run.stop').outputSchema).toBe(ExecutionRunStopResponseSchema);
+    expect(getActionSpec('execution.run.stream.start').outputSchema).toBe(ExecutionRunTurnStreamStartResponseSchema);
+    expect(getActionSpec('execution.run.stream.read').outputSchema).toBe(ExecutionRunTurnStreamReadResponseSchema);
+    expect(getActionSpec('execution.run.stream.cancel').outputSchema).toBe(ExecutionRunTurnStreamCancelResponseSchema);
+  });
+
+  it('uses strict Action-definition envelopes for Action discovery results', () => {
+    const summary = serializeActionSpec(getActionSpec('session.list'));
+    const definition = actionSpecToActionDefinitionV1(getActionSpec('session.list'));
+
+    expect(getActionSpec('action.spec.search').outputSchema.safeParse({
+      actionSpecs: [summary],
+      unexpected: true,
+    }).success).toBe(false);
+    expect(getActionSpec('action.spec.get').outputSchema.safeParse({
+      actionSpec: definition,
+      unexpected: true,
+    }).success).toBe(false);
   });
 
   it('requires backendTargetKey when listing models for customAcp', () => {

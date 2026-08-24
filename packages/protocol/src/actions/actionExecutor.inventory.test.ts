@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecutor as createRawActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
+import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { SPAWN_SESSION_ERROR_CODES } from '../sessions/spawnSession.js';
 
 function createDeps(): ActionExecutorDeps {
@@ -45,6 +46,18 @@ function createDeps(): ActionExecutorDeps {
 
     resetGlobalVoiceAgent: vi.fn(),
     teleportVoiceAgentToSessionRoot: vi.fn(async () => ({ ok: true })),
+  };
+}
+
+function createActionExecutor(deps: ActionExecutorDeps): ReturnType<typeof createRawActionExecutor> {
+  const executor = createRawActionExecutor(deps);
+  return {
+    ...executor,
+    execute: (actionId, input, context) => executor.execute(
+      actionId,
+      input,
+      { surface: 'ui', ...context },
+    ),
   };
 }
 
@@ -893,7 +906,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
   it('discovers current contributed Action definitions through the shared catalog operations', async () => {
     const contributedAction: ActionDefinitionV1 = {
       kindVersion: 1,
-      id: 'acme.triage/refresh-issue',
+      id: 'acme.triage/actions/refresh-issue',
       title: 'Refresh issue',
       description: 'Refresh the selected issue.',
       safety: 'safe',
@@ -904,12 +917,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
       examples: null,
       surfaces: {
         ui: false,
-        voice: true,
+        voice: false,
         agent: false,
         mcp: false,
         cli: false,
         rpc: false,
-        api: false,
+        api: true,
         plugin: false,
       },
       inputHints: {
@@ -945,28 +958,42 @@ describe('createActionExecutor (inventory/discovery)', () => {
         additionalProperties: false,
       },
     };
+    const listContributedActionDefinitions = vi.fn(() => [contributedAction]);
     const executor = createActionExecutor({
       ...createDeps(),
-      listContributedActionDefinitions: () => [contributedAction],
+      listContributedActionDefinitions,
     } as ActionExecutorDeps);
 
-    await expect(executor.execute(
+    const searchResult = await executor.execute(
       'action.spec.search',
-      { query: 'refresh issue', limit: 5 },
-      { surface: 'voice' },
-    )).resolves.toMatchObject({
-      ok: true,
-      result: {
-        actionSpecs: [expect.objectContaining({
-          id: contributedAction.id,
-          title: contributedAction.title,
-        })],
+      { query: contributedAction.id, limit: 5 },
+      { surface: 'api' },
+    );
+    expect(listContributedActionDefinitions).toHaveBeenCalledTimes(1);
+    expect(searchResult.ok).toBe(true);
+    if (!searchResult.ok) throw new Error('Expected contributed Action search to succeed');
+    expect(searchResult.result.actionSpecs.map((definition) => definition.id)).toContain(contributedAction.id);
+    const approvalRequiredSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        [contributedAction.id]: {
+          approvalRequiredSurfaces: ['api'],
+        },
       },
     });
+    const approvalRequiredSearchResult = await executor.execute(
+      'action.spec.search',
+      { query: contributedAction.id, limit: 5 },
+      { surface: 'api', actionsSettings: approvalRequiredSettings },
+    );
+    expect(approvalRequiredSearchResult.ok).toBe(true);
+    if (!approvalRequiredSearchResult.ok) throw new Error('Expected approval-required Action search to succeed');
+    expect(approvalRequiredSearchResult.result.actionSpecs.map((definition) => definition.id))
+      .toContain(contributedAction.id);
     await expect(executor.execute(
       'action.spec.get',
       { id: contributedAction.id },
-      { surface: 'voice' },
+      { surface: 'api', actionsSettings: approvalRequiredSettings },
     )).resolves.toEqual({
       ok: true,
       result: { actionSpec: contributedAction },
@@ -974,7 +1001,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     await expect(executor.execute(
       'action.options.resolve',
       { actionId: contributedAction.id, fieldPath: 'depth', query: 'full' },
-      { surface: 'voice' },
+      { surface: 'api' },
     )).resolves.toEqual({
       ok: true,
       result: {
@@ -987,7 +1014,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     await expect(executor.execute(
       'action.options.resolve',
       { actionId: contributedAction.id, fieldPath: 'assignee' },
-      { surface: 'voice' },
+      { surface: 'api' },
     )).resolves.toEqual({
       ok: false,
       errorCode: 'unavailable',
@@ -996,11 +1023,45 @@ describe('createActionExecutor (inventory/discovery)', () => {
     await expect(executor.execute(
       'action.options.resolve',
       { actionId: contributedAction.id, fieldPath: 'schemaOnly' },
-      { surface: 'voice' },
+      { surface: 'api' },
     )).resolves.toEqual({
       ok: false,
       errorCode: 'unavailable',
       error: 'unavailable',
+    });
+
+    const disabledSettings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        [contributedAction.id]: {
+          disabledSurfaces: ['api'],
+        },
+      },
+    });
+    const disabledSearchResult = await executor.execute(
+      'action.spec.search',
+      { query: contributedAction.id, limit: 5 },
+      { surface: 'api', actionsSettings: disabledSettings },
+    );
+    expect(disabledSearchResult.ok).toBe(true);
+    if (!disabledSearchResult.ok) throw new Error('Expected disabled contributed Action search to succeed');
+    expect(disabledSearchResult.result.actionSpecs.map((definition) => definition.id))
+      .not.toContain(contributedAction.id);
+    await expect(executor.execute(
+      'action.spec.get',
+      { id: contributedAction.id },
+      { surface: 'api', actionsSettings: disabledSettings },
+    )).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'action_disabled',
+    });
+    await expect(executor.execute(
+      'action.options.resolve',
+      { actionId: contributedAction.id, fieldPath: 'depth' },
+      { surface: 'api', actionsSettings: disabledSettings },
+    )).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'action_disabled',
     });
   });
 

@@ -32,7 +32,12 @@ describe('createActionExecutor plugin caller policy', () => {
     for (const [actionId, requiredAuthority] of [
       ['plugins.scaffold', 'account_automation'],
       ['plugins.install', 'present_user'],
-      ['plugins.uninstall', 'account_automation'],
+      ['plugins.uninstall', 'present_user'],
+      ['plugins.sessionHooks.status.get', 'account_automation'],
+      ['plugins.sessionHooks.install', 'present_user'],
+      ['plugins.sessionHooks.disable', 'present_user'],
+      ['plugins.sessionHooks.enable', 'present_user'],
+      ['plugins.sessionHooks.uninstall', 'present_user'],
     ] as const) {
       expect(getActionSpec(actionId).surfaces.plugin).toBe(true);
       expect(getActionSpec(actionId).requiredAuthority).toBe(requiredAuthority);
@@ -53,6 +58,42 @@ describe('createActionExecutor plugin caller policy', () => {
         contributionLocalId: 'inspector-app',
       }],
     });
+  });
+
+  it('rejects plugin uninstall automation before side effects and admits an interactive present user', async () => {
+    const pluginsDevLoopAction = vi.fn(async () => ({
+      ok: true as const,
+      kind: 'plugins_uninstall',
+    }));
+    const executor = createExecutor({ pluginsDevLoopAction });
+
+    await expect(executor.execute('plugins.uninstall', {
+      pluginId: 'acme.author',
+    }, {
+      surface: 'api',
+      authority: 'account_automation',
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'present_user_required',
+      error: 'present_user_required',
+    });
+    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
+
+    await expect(executor.execute('plugins.uninstall', {
+      pluginId: 'acme.author',
+    }, {
+      surface: 'api',
+      authority: 'present_user',
+      actionCaller: { kind: 'host' },
+    })).resolves.toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        kind: 'plugins_uninstall',
+      },
+    });
+    expect(pluginsDevLoopAction).toHaveBeenCalledTimes(1);
   });
 
   it('allows a plugin to reload itself, propagating its host-stamped caller and cancellation signal', async () => {

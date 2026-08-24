@@ -86,18 +86,31 @@ function actionSearchText(spec: SearchableActionDefinition): string {
     .toLowerCase();
 }
 
-function actionSearchScore(spec: SearchableActionDefinition, query: string): number {
+type NormalizedActionSearchQuery = Readonly<{
+  text: string;
+  tokens: readonly string[];
+}>;
+
+function normalizeActionSearchQuery(query: string): NormalizedActionSearchQuery {
+  return {
+    text: normalizeText(query),
+    tokens: tokenize(query),
+  };
+}
+
+function actionSearchScore(
+  spec: SearchableActionDefinition,
+  query: NormalizedActionSearchQuery,
+): number {
   const haystack = actionSearchText(spec);
-  const normalizedQuery = normalizeText(query);
-  if (!normalizedQuery) return 1;
+  if (!query.text) return 1;
 
   let score = 0;
-  if (spec.id === normalizedQuery) score += 1000;
-  if (normalizeText(spec.title) === normalizedQuery) score += 500;
-  if (haystack.includes(normalizedQuery)) score += 100;
+  if (spec.id === query.text) score += 1000;
+  if (normalizeText(spec.title) === query.text) score += 500;
+  if (haystack.includes(query.text)) score += 100;
 
-  const tokens = tokenize(query);
-  for (const token of tokens) {
+  for (const token of query.tokens) {
     if (spec.id.includes(token)) score += 50;
     if (normalizeText(spec.title).includes(token)) score += 25;
     if (haystack.includes(token)) score += 10;
@@ -169,11 +182,12 @@ export function searchSerializedActionSpecs(
   params?: Readonly<{ query?: string | null; limit?: number | null }>,
 ): readonly SerializedActionSpec[] {
   const query = typeof params?.query === 'string' ? params.query.trim() : '';
+  const normalizedQuery = normalizeActionSearchQuery(query);
   const limitRaw = typeof params?.limit === 'number' && Number.isFinite(params.limit) ? Math.floor(params.limit) : 20;
   const limit = Math.max(1, Math.min(100, limitRaw));
 
   const ranked = specs
-    .map((spec) => ({ spec, score: actionSearchScore(spec, query) }))
+    .map((spec) => ({ spec, score: actionSearchScore(spec, normalizedQuery) }))
     .filter((entry) => (query ? entry.score > 0 : true))
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
@@ -186,8 +200,32 @@ export function searchSerializedActionSpecs(
 }
 
 function actionDefinitionToSummary(definition: ActionDefinitionV1): ActionDefinitionSummaryV1 {
-  const { kindVersion: _kindVersion, inputSchema: _inputSchema, ...summary } = definition;
-  return summary;
+  return {
+    id: definition.id,
+    title: definition.title,
+    description: definition.description,
+    safety: definition.safety,
+    placements: definition.placements,
+    slash: definition.slash,
+    bindings: definition.bindings,
+    examples: definition.examples,
+    surfaces: definition.surfaces,
+    inputHints: definition.inputHints,
+    ...(definition.approval === undefined ? {} : { approval: definition.approval }),
+    ...(definition.requiredAuthority === undefined
+      ? {}
+      : { requiredAuthority: definition.requiredAuthority }),
+    ...(definition.executionPlacement === undefined
+      ? {}
+      : { executionPlacement: definition.executionPlacement }),
+    ...(definition.toolExposure === undefined ? {} : { toolExposure: definition.toolExposure }),
+    ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
+    ...(definition.execution === undefined ? {} : { execution: definition.execution }),
+    ...(definition.sideEffectClass === undefined
+      ? {}
+      : { sideEffectClass: definition.sideEffectClass }),
+    ...(definition.operation === undefined ? {} : { operation: definition.operation }),
+  };
 }
 
 export function searchActionDefinitionSummaries(
@@ -195,10 +233,11 @@ export function searchActionDefinitionSummaries(
   params?: Readonly<{ query?: string | null; limit?: number | null }>,
 ): readonly ActionDefinitionSummaryV1[] {
   const query = typeof params?.query === 'string' ? params.query.trim() : '';
+  const normalizedQuery = normalizeActionSearchQuery(query);
   const limitRaw = typeof params?.limit === 'number' && Number.isFinite(params.limit) ? Math.floor(params.limit) : 20;
   const limit = Math.max(1, Math.min(100, limitRaw));
   return definitions
-    .map((definition) => ({ definition, score: actionSearchScore(definition, query) }))
+    .map((definition) => ({ definition, score: actionSearchScore(definition, normalizedQuery) }))
     .filter((entry) => (query ? entry.score > 0 : true))
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
@@ -216,6 +255,24 @@ export function listActionSpecsForCatalogSurface(params: Readonly<{
   return listActionSpecs().filter((spec) => (!params.surface || isActionSpecSurfacedOn(spec, params.surface)) && isActionEnabled(spec.id as ActionId));
 }
 
+const defaultHostActionSearchSummaries = new WeakMap<ActionSpec, SerializedActionSpec>();
+const apiHostActionSearchSummaries = new WeakMap<ActionSpec, SerializedActionSpec>();
+
+function serializeHostActionSpecForSearch(
+  spec: ActionSpec,
+  params: ActionCatalogSurfaceParams,
+): SerializedActionSpec {
+  const summaries = params.surface === 'api'
+    ? apiHostActionSearchSummaries
+    : defaultHostActionSearchSummaries;
+  const cached = summaries.get(spec);
+  if (cached) return cached;
+
+  const summary = Object.freeze(serializeActionSpec(spec, params));
+  summaries.set(spec, summary);
+  return summary;
+}
+
 export function searchSerializedActionSpecsForSurface(params: Readonly<{
   surface?: keyof ActionSurfaces | null;
   query?: string | null;
@@ -224,7 +281,7 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
   additionalDefinitions?: readonly ActionDefinitionV1[];
 }>): readonly SerializedActionSpec[] {
   const hostDefinitions = listActionSpecsForCatalogSurface(params)
-    .map((spec) => serializeActionSpec(spec, params));
+    .map((spec) => serializeHostActionSpecForSearch(spec, params));
   const hostIds = new Set(hostDefinitions.map((definition) => definition.id));
   const additionalDefinitions = (params.additionalDefinitions ?? [])
     .filter((definition) => (

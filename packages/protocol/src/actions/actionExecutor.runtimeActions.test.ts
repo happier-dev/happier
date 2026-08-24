@@ -137,7 +137,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
       kind: 'reload',
       browserSessionId: 'browser_session_1',
       viewId: 'view_1',
-    });
+    }, { surface: 'ui' });
 
     expect(result).toEqual({
       ok: false,

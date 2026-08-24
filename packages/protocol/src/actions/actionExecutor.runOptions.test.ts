@@ -37,6 +37,17 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
   };
 }
 
+/**
+ * DEC-2 / INV-1: Action surface resolution fails closed (see `actionSurfaceFailClosed.test.ts`),
+ * so a call site must stamp the caller it models. These execution-run tests model the present-user
+ * host that owns the executor — `apps/ui/sources/sync/ops/actions/defaultActionExecutor.ts` stamps
+ * `'ui'`. The internal envelope-normalization case below models the execution-run RPC dispatcher
+ * (`apps/cli/src/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction.ts` stamps `'agent'`),
+ * which is the only production caller of the agent-only `execution.run.ensure`.
+ */
+const UI_CALLER = { surface: 'ui' } as const;
+const RUN_DISPATCHER_CALLER = { surface: 'agent' } as const;
+
 const RUN_START_BASE = {
   sessionId: 's1',
   intent: 'delegate',
@@ -66,7 +77,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const res = await executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, modelId: 'gpt-5.5', sessionConfigOptionOverrides: overrides },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     );
 
     expect(res.ok).toBe(true);
@@ -86,13 +97,13 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await executor.execute('execution.run.start' as any, {
       ...RUN_START_BASE,
       sessionId: 'session_explicit',
-    }, { defaultSessionId: 'session_context' });
-    await executor.execute('execution.run.start' as any, startWithoutScope, { defaultSessionId: 'session_context' });
+    }, { ...UI_CALLER, defaultSessionId: 'session_context' });
+    await executor.execute('execution.run.start' as any, startWithoutScope, { ...UI_CALLER, defaultSessionId: 'session_context' });
     await executor.execute('execution.run.start' as any, {
       ...RUN_START_BASE,
       sessionId: null,
-    }, { defaultSessionId: 'session_context' });
-    await executor.execute('execution.run.start' as any, startWithoutScope, {});
+    }, { ...UI_CALLER, defaultSessionId: 'session_context' });
+    await executor.execute('execution.run.start' as any, startWithoutScope, { ...UI_CALLER });
 
     expect(executionRunStart.mock.calls.map(([scope]) => scope)).toEqual([
       'session_explicit',
@@ -116,7 +127,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: false,
       errorCode: 'action_failed',
@@ -134,7 +145,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const res = await executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, sessionId: '   ' },
-      { defaultSessionId: 'session_context', serverId: 'server_1' },
+      { ...UI_CALLER, defaultSessionId: 'session_context', serverId: 'server_1' },
     );
 
     expect(res).toEqual({
@@ -165,7 +176,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         waitForCompletion: true,
         waitTimeoutSeconds: 12,
       },
-      { defaultSessionId: 's1', serverId: 'server_1' },
+      { ...UI_CALLER, defaultSessionId: 's1', serverId: 'server_1' },
     );
 
     expect(res).toEqual({
@@ -218,7 +229,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, waitForCompletion: true },
-      { defaultSessionId: 's1', signal: caller.signal },
+      { ...UI_CALLER, defaultSessionId: 's1', signal: caller.signal },
     )).resolves.toEqual({
       ok: true,
       result: {
@@ -243,7 +254,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.wait' as any,
       { sessionId: 's1', runId: 'run_1' },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: true,
       result: EXECUTION_RUN_WAIT_SUCCEEDED,
@@ -257,7 +268,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.wait' as any,
       { sessionId: 's1', runId: 'run_1' },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({ ok: true, result: { ok: false, code: 'timeout' } });
   });
 
@@ -282,7 +293,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, waitForCompletion: true },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: true,
       result: {
@@ -311,7 +322,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: false,
       errorCode: 'execution_run_not_allowed',
@@ -335,7 +346,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toMatchObject({
       ok: true,
       result: {
@@ -359,7 +370,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: false,
       errorCode: 'execution_run_failed',
@@ -395,7 +406,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: true,
       result: {
@@ -407,7 +418,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: false,
       errorCode: 'execution_run_failed',
@@ -435,7 +446,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toMatchObject({
       ok: false,
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
@@ -443,7 +454,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toMatchObject({
       ok: false,
       details: { executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } },
@@ -465,7 +476,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, waitForCompletion: true },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: true,
       result: {
@@ -484,7 +495,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       RUN_START_BASE,
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: false,
       errorCode: 'execution_run_failed',
@@ -518,18 +529,22 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.list' as any,
       { sessionId: 's1' },
+      RUN_DISPATCHER_CALLER,
     )).resolves.toEqual({ ok: true, result: { runs: [] } });
     await expect(executor.execute(
       'execution.run.send' as any,
       { sessionId: 's1', runId: 'run_1', message: 'Continue' },
+      RUN_DISPATCHER_CALLER,
     )).resolves.toEqual({ ok: true, result: { ok: true } });
     await expect(executor.execute(
       'execution.run.ensure' as any,
       { sessionId: 's1', runId: 'run_1' },
+      RUN_DISPATCHER_CALLER,
     )).resolves.toEqual({ ok: true, result: { ok: true } });
     await expect(executor.execute(
       'execution.run.get' as any,
       { sessionId: 's1', runId: 'run_1' },
+      RUN_DISPATCHER_CALLER,
     )).resolves.toEqual({
       ok: false,
       errorCode: 'execution_run_not_allowed',
@@ -549,7 +564,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const res = await executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, sessionId: null, waitForCompletion: true },
-      { defaultSessionId: 's1', serverId: 'server_1' },
+      { ...UI_CALLER, defaultSessionId: 's1', serverId: 'server_1' },
     );
 
     expect(res).toEqual({
@@ -577,7 +592,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       await expect(executor.execute(
         'execution.run.start' as any,
         input,
-        { defaultSessionId: 's1', serverId: 'server_1' },
+        { ...UI_CALLER, defaultSessionId: 's1', serverId: 'server_1' },
       )).resolves.toEqual({
         ok: false,
         errorCode: 'execution_run_protocol_unsupported',
@@ -601,7 +616,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     await expect(executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, sessionId: null, waitForCompletion: true },
-      { defaultSessionId: 's1', serverId: 'server_1' },
+      { ...UI_CALLER, defaultSessionId: 's1', serverId: 'server_1' },
     )).resolves.toEqual(expect.objectContaining({ ok: true }));
 
     expect(executionRunStart).toHaveBeenCalledWith(
@@ -625,6 +640,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       'execution.run.start' as any,
       { ...RUN_START_BASE, sessionId: null },
       {
+        ...UI_CALLER,
         serverId: 'server_1',
         // The mount host, not Action input, vouches for this selection.
         executionRunTargetMachineId: 'machine_mounted',
@@ -650,7 +666,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const res = await executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, configOptions: { reasoning_effort: 'high' } },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     );
 
     expect(res.ok).toBe(true);
@@ -671,7 +687,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const res = await executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, sessionConfigOptionOverrides: overrides, configOptions: { reasoning_effort: 'high' } },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     );
 
     expect(res).toEqual({
@@ -697,7 +713,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         modelId: 'gpt-5.5',
         configOptions: { reasoning_effort: 'high' },
       },
-      { defaultSessionId: 's1', callerPermissionMode: 'workspace_write' },
+      { ...UI_CALLER, defaultSessionId: 's1', callerPermissionMode: 'workspace_write' },
     );
 
     expect(res.ok).toBe(true);
@@ -717,7 +733,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const res = await executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, connectedServices: 'openai-codex:group:happier' },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     );
 
     expect(res.ok).toBe(true);
@@ -735,7 +751,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const res = await executor.execute(
       'execution.run.start' as any,
       { ...RUN_START_BASE, connectedServices: 'not-a-service:bogus:x' },
-      { defaultSessionId: 's1' },
+      { ...UI_CALLER, defaultSessionId: 's1' },
     );
 
     expect(res).toEqual({
@@ -760,7 +776,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         permissionMode: 'read_only',
         connectedServicesByBackendTargetKey: { 'agent:codex': 'openai-codex:native' },
       },
-      { defaultSessionId: 's1', callerPermissionMode: 'workspace_write' },
+      { ...UI_CALLER, defaultSessionId: 's1', callerPermissionMode: 'workspace_write' },
     );
 
     expect(res.ok).toBe(true);

@@ -56,15 +56,15 @@ describe('createActionExecutor (prompt library actions)', () => {
     await expect(executor.execute('daemon.promptAssets.discover', {
       assetTypeId: 'agents.skill',
       scope: 'user',
-    }, { signal })).resolves.toEqual({ ok: true, result: { ok: true, items: [] } });
+    }, { surface: 'rpc', signal })).resolves.toEqual({ ok: true, result: { ok: true, items: [] } });
     await expect(executor.execute('daemon.promptAssets.delete', {
       assetTypeId: 'agents.skill',
       scope: 'user',
       externalRef: { path: 'skills/review' },
-    }, { signal })).resolves.toEqual({ ok: true, result: { ok: true } });
+    }, { surface: 'rpc', signal })).resolves.toEqual({ ok: true, result: { ok: true } });
     await expect(executor.execute('daemon.promptRegistry.scanSource', {
       sourceId: 'skills_sh:featured',
-    }, { signal })).resolves.toEqual({ ok: true, result: { ok: true, items: [] } });
+    }, { surface: 'rpc', signal })).resolves.toEqual({ ok: true, result: { ok: true, items: [] } });
     await expect(executor.execute('daemon.promptRegistry.install', {
       sourceId: 'skills_sh:featured',
       itemId: 'review',
@@ -73,7 +73,7 @@ describe('createActionExecutor (prompt library actions)', () => {
         scope: 'user',
         targetName: 'review',
       },
-    }, { signal })).resolves.toEqual({ ok: true, result: { ok: true, installed: true } });
+    }, { surface: 'rpc', signal })).resolves.toEqual({ ok: true, result: { ok: true, installed: true } });
 
     expect(daemonPromptAssetsDiscover).toHaveBeenCalledWith({
       request: { assetTypeId: 'agents.skill', scope: 'user' },
@@ -135,7 +135,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       title: 'Reviewer',
       skillMarkdown: '# Reviewer',
       folderId: 'folder-1',
-    });
+    }, { surface: 'ui' });
 
     expect(res).toEqual({ ok: true, result: { ok: true, artifactId: 'bundle-1' } });
     expect(promptBundleUpdate).toHaveBeenCalledWith({
@@ -157,7 +157,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       scope: 'user',
       targetPath: 'review.md',
       installMode: 'symlink',
-    });
+    }, { surface: 'ui' });
 
     expect(res).toEqual({ ok: true, result: { ok: true, artifactId: 'doc-1' } });
     expect(promptAssetExport).toHaveBeenCalledWith({
@@ -181,6 +181,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       scope: 'user',
       targetPath: 'review.md',
     }, {
+      surface: 'ui',
       serverId: 'server-1',
     });
 
@@ -205,7 +206,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       assetTypeId: 'claude.command',
       scope: 'user',
       targetPath: 'review.md',
-    });
+    }, { surface: 'ui' });
 
     expect(res).toEqual({ ok: false, errorCode: 'conflict', error: 'conflict' });
   });
@@ -226,7 +227,7 @@ describe('createActionExecutor (prompt library actions)', () => {
         targetName: 'frontend-design',
         installMode: 'symlink',
       },
-    });
+    }, { surface: 'ui' });
 
     expect(res).toEqual({ ok: true, result: { ok: true, artifactId: 'bundle-1', exported: true } });
     expect(promptRegistryInstall).toHaveBeenCalledWith({
@@ -254,6 +255,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       itemId: 'skills_sh:featured:item-1',
       configuredSources: [],
     }, {
+      surface: 'ui',
       serverId: 'server-1',
     });
 
@@ -276,7 +278,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       sourceId: 'skills_sh:featured',
       itemId: 'skills_sh:featured:item-1',
       configuredSources: [],
-    });
+    }, { surface: 'ui' });
 
     expect(res).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
   });

@@ -54,7 +54,7 @@ function createApprovalRequest(
 }
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
-  return createActionExecutor({
+  const executor = createActionExecutor({
     executionRunStart: async () => ({}),
     executionRunList: async () => ({}),
     executionRunGet: async () => ({}),
@@ -86,6 +86,18 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     resetGlobalVoiceAgent: async () => {},
     ...overrides,
   });
+  return {
+    ...executor,
+    execute: (
+      actionId: Parameters<typeof executor.execute>[0],
+      input: Parameters<typeof executor.execute>[1],
+      context: Parameters<typeof executor.execute>[2] = {
+        surface: 'ui',
+        authority: 'present_user',
+        actionCaller: { kind: 'host' },
+      },
+    ) => executor.execute(actionId, input, context),
+  };
 }
 
 describe('createActionExecutor (approvals)', () => {
@@ -103,7 +115,13 @@ describe('createActionExecutor (approvals)', () => {
       const result = await executor.execute(
         actionId as any,
         input,
-        { surface: 'agent' as any, bypassApprovals: true },
+        {
+          surface: 'agent' as any,
+          bypassApprovals: true,
+          ...(actionId === 'plugins.uninstall'
+            ? { authority: 'present_user' as const }
+            : {}),
+        },
       );
 
       expect(result).toEqual({
@@ -283,7 +301,7 @@ describe('createActionExecutor (approvals)', () => {
     const res = await executor.execute(
       'plugins.install' as any,
       { path: '/tmp/acme-dev-loop', dev: true },
-      { surface: 'agent' as any },
+      { surface: 'agent' as any, authority: 'present_user' },
     );
 
     expect(res.ok).toBe(true);
@@ -931,6 +949,7 @@ describe('createActionExecutor (approvals)', () => {
       summary: 'List sessions',
       createdBy: { surface: 'cli', pluginId: 'forged.plugin' },
     }, {
+      surface: 'plugin',
       actionCaller: {
         kind: 'plugin',
         pluginId: 'acme.plugin',
@@ -1028,6 +1047,7 @@ describe('createActionExecutor (approvals)', () => {
       summary: 'Send message',
       createdBy: { surface: 'system', sessionId: 's1' },
     }, {
+      surface: 'ui',
       serverId: 'server-a',
     });
 

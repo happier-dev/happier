@@ -23,7 +23,10 @@ import {
   resolveNearestPermissionModeAtOrBelow,
   type PermissionEscalationDecision,
 } from './permissionPrivilege.js';
-import type { ActionsSettingsV1 } from './actionSettings.js';
+import {
+  isActionEnabledByActionsSettings,
+  type ActionsSettingsV1,
+} from './actionSettings.js';
 import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
 import {
   ActionSurfaceSchema,
@@ -106,6 +109,11 @@ import {
   PluginContributionIdentityV1Schema,
   PluginContributionLocalIdSchema,
 } from '../plugins/contributionIdentity.js';
+import {
+  formatQualifiedPluginActionId,
+  parseQualifiedPluginActionId,
+  type QualifiedPluginActionId,
+} from '../plugins/actions/invocation.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import {
   PluginSessionInputSourceV1Schema,
@@ -1596,14 +1604,39 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return [];
     }
   };
+  const getContributedActionSettingsId = (
+    definition: ActionDefinitionV1,
+  ): QualifiedPluginActionId | null => {
+    const identity = parseQualifiedPluginActionId(definition.id);
+    return identity ? formatQualifiedPluginActionId(identity) : null;
+  };
+  const isContributedActionDefinitionSurfacedOn = (
+    definition: ActionDefinitionV1,
+    ctx: ActionExecutorContext,
+  ): boolean => {
+    const surface = parseActionSurfaceKey(ctx.surface);
+    return !surface || definition.surfaces[surface] === true;
+  };
+  const isContributedActionDefinitionEnabled = (
+    definition: ActionDefinitionV1,
+    ctx: ActionExecutorContext,
+  ): boolean => {
+    const actionId = getContributedActionSettingsId(definition);
+    return actionId !== null && (
+      !ctx.actionsSettings
+      || isActionEnabledByActionsSettings(actionId, ctx.actionsSettings, {
+        surface: parseActionSurfaceKey(ctx.surface),
+      })
+    );
+  };
   const getContributedActionDefinition = (
     id: string,
     ctx: ActionExecutorContext,
   ): ActionDefinitionV1 | null => {
     const definition = listContributedActionDefinitions().find((candidate) => candidate.id === id) ?? null;
-    if (!definition) return null;
-    const surface = parseActionSurfaceKey(ctx.surface);
-    return surface && definition.surfaces[surface] !== true ? null : definition;
+    return definition && isContributedActionDefinitionSurfacedOn(definition, ctx)
+      ? definition
+      : null;
   };
 
   function resolveAvailabilityForContext(spec: ActionSpec, ctx: ActionExecutorContext): ActionSurfaceAvailability | null {
@@ -2924,7 +2957,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 query: typeof data.query === 'string' ? data.query : '',
                 limit: typeof data.limit === 'number' ? data.limit : undefined,
                 isActionEnabled: (id) => isActionEnabled(getActionSpec(id), ctx),
-                additionalDefinitions: listContributedActionDefinitions(),
+                additionalDefinitions: listContributedActionDefinitions().filter((definition) => (
+                  isContributedActionDefinitionEnabled(definition, ctx)
+                )),
               }),
             },
           };
@@ -2948,9 +2983,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             };
           } catch {
             const contributedDefinition = getContributedActionDefinition(requestedId, ctx);
-            return contributedDefinition
+            if (!contributedDefinition) {
+              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            }
+            return isContributedActionDefinitionEnabled(contributedDefinition, ctx)
               ? { ok: true, result: { actionSpec: contributedDefinition } }
-              : { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+              : actionDisabled(null);
           }
         }
 
@@ -2971,6 +3009,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               }
             }
             if (contributedDefinition) {
+              if (!isContributedActionDefinitionEnabled(contributedDefinition, ctx)) {
+                return actionDisabled(null);
+              }
               const field = findActionInputFieldHint(contributedDefinition, fieldPath);
               if (!field) {
                 // Contributed JSON Schema does not define the Action options

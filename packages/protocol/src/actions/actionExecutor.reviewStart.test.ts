@@ -16,7 +16,7 @@ describe('createActionExecutor (review.start)', () => {
         instructions: 'Review this.',
         runLocation: 'current_session',
       },
-      { defaultSessionId: 's1' },
+      { surface: 'ui', defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: false,
       errorCode: 'invalid_action_output',
@@ -73,7 +73,7 @@ describe('createActionExecutor (review.start)', () => {
         changeType: 'uncommitted',
         base: { kind: 'none' },
       },
-      { defaultSessionId: 's1' },
+      { surface: 'ui', defaultSessionId: 's1' },
     )).resolves.toEqual({
       ok: true,
       result: { ok: true, reviewTurnId: 'turn-review-native' },
@@ -203,7 +203,7 @@ describe('createActionExecutor (review.start)', () => {
         profileId: 'review.coderabbit/review',
         profileGenerationId: 'generation-4',
       },
-      { defaultSessionId: 's1' },
+      { surface: 'ui', defaultSessionId: 's1' },
     );
 
     expect(res.ok).toBe(true);
@@ -268,7 +268,7 @@ describe('createActionExecutor (review.start)', () => {
         changeType: 'committed',
         base: { kind: 'none' },
       },
-      { defaultSessionId: 's1' },
+      { surface: 'ui', defaultSessionId: 's1' },
     );
 
     expect(res).toEqual({
@@ -334,7 +334,7 @@ describe('createActionExecutor (review.start)', () => {
         changeType: 'committed',
         base: { kind: 'none' },
       },
-      { defaultSessionId: 's1' },
+      { surface: 'ui', defaultSessionId: 's1' },
     );
 
     expect(executionRunStart).not.toHaveBeenCalled();

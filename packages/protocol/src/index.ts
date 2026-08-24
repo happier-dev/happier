@@ -6147,7 +6147,6 @@ export {
   DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
   applyCodingPromptBehaviorOverridesV1,
   isCodingPromptResponseOptionsEnabled,
-  isCodingPromptSessionTitleUpdatesEnabled,
   resolveCodingPromptBehaviorV1,
   resolveCodingPromptSessionTitleUpdatesModeV1,
   type CodingPromptBehaviorModeV1,

@@ -58,7 +58,7 @@ describe('createActionExecutor (session.rollback)', () => {
     const result = await executor.execute(
       'session.rollback' as any,
       { target: { type: 'latest_turn' } },
-      { defaultSessionId: 'sess_1', signal },
+      { surface: 'ui', defaultSessionId: 'sess_1', signal },
     );
 
     expect(result.ok).toBe(true);
@@ -79,7 +79,7 @@ describe('createActionExecutor (session.rollback)', () => {
     const result = await executor.execute(
       'session.rollback' as any,
       { target: { type: 'latest_turn' } },
-      {},
+      { surface: 'ui' },
     );
 
     expect(result).toEqual({
@@ -121,7 +121,7 @@ describe('createActionExecutor (session.checkpoint_code_rollback)', () => {
     const result = await executor.execute(
       'session.checkpoint_code_rollback',
       checkpointRollbackRequest,
-      { defaultSessionId: 'sess_1', signal },
+      { surface: 'ui', defaultSessionId: 'sess_1', signal },
     );
 
     expect(result.ok).toBe(true);
@@ -138,7 +138,7 @@ describe('createActionExecutor (session.checkpoint_code_rollback)', () => {
     const result = await executor.execute(
       'session.checkpoint_code_rollback',
       checkpointRollbackRequest,
-      { defaultSessionId: 'sess_1' },
+      { surface: 'ui', defaultSessionId: 'sess_1' },
     );
 
     expect(result).toEqual({
@@ -173,7 +173,7 @@ describe('createActionExecutor (session.checkpoint / session.restore)', () => {
     } as const;
 
     const signal = new AbortController().signal;
-    const result = await executor.execute('session.checkpoint' as any, request, { defaultSessionId: 'ignored', signal });
+    const result = await executor.execute('session.checkpoint' as any, request, { surface: 'ui', defaultSessionId: 'ignored', signal });
 
     expect(result.ok).toBe(true);
     expect(sessionCheckpoint).toHaveBeenCalledWith({
@@ -208,7 +208,7 @@ describe('createActionExecutor (session.checkpoint / session.restore)', () => {
     } as const;
 
     const signal = new AbortController().signal;
-    const result = await executor.execute('session.restore' as any, request, { signal });
+    const result = await executor.execute('session.restore' as any, request, { surface: 'ui', signal });
 
     expect(result.ok).toBe(true);
     expect(sessionRestore).toHaveBeenCalledWith({
@@ -230,7 +230,7 @@ describe('createActionExecutor (session.checkpoint / session.restore)', () => {
         checkpointRef: 'refs/happier/checkpoints/scope/turn-final/turn-1',
       },
       confirmation: { sourceChoiceConfirmed: true },
-    }, {});
+    }, { surface: 'ui' });
 
     expect(result).toEqual({
       ok: false,

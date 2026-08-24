@@ -1284,7 +1284,13 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('preserves cursor zero when reading execution-run streams', async () => {
-    const executionRunStreamRead = vi.fn(async () => ({ ok: true, events: [] }));
+    const executionRunStreamRead = vi.fn(async () => ({
+      ok: true,
+      events: [],
+      streamId: 'stream-1',
+      nextCursor: 0,
+      done: false,
+    }));
     const executor = createExecutor({
       executionRunStreamRead,
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
@@ -1302,7 +1308,16 @@ describe('createActionExecutor (session control)', () => {
       { surface: 'rpc', defaultSessionId: null },
     );
 
-    expect(res).toEqual({ ok: true, result: { ok: true, events: [] } });
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        events: [],
+        streamId: 'stream-1',
+        nextCursor: 0,
+        done: false,
+      },
+    });
     expect(executionRunStreamRead).toHaveBeenCalledWith(
       's1',
       {
@@ -1446,7 +1461,7 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionPermissionRemoteAction).not.toHaveBeenCalled();
   });
 
-  it.each(['plugin', 'agent', 'mcp'] as const)(
+  it.each(['api', 'plugin', 'agent', 'mcp'] as const)(
     'rejects %s automation from responding to session permissions',
     async (surface) => {
       const sessionPermissionRespond = vi.fn(async () => ({ ok: true }));
@@ -1457,8 +1472,13 @@ describe('createActionExecutor (session control)', () => {
         { sessionId: 's1', decision: 'allow' },
         {
           surface,
+          authority: 'account_automation',
           defaultSessionId: null,
-          ...(surface === 'plugin' ? { actionCaller: { kind: 'plugin', pluginId: 'acme.test' } } : {}),
+          ...(surface === 'api'
+            ? { actionCaller: { kind: 'host' } }
+            : surface === 'plugin'
+              ? { actionCaller: { kind: 'plugin', pluginId: 'acme.test' } }
+              : {}),
         } as any,
       );
 

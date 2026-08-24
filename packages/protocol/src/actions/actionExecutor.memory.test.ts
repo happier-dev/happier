@@ -50,7 +50,7 @@ describe('createActionExecutor (memory)', () => {
     const res = await executor.execute('memory.search', {
       machineId: 'm1',
       query: { v: 1, query: 'openclaw', scope: { type: 'global' }, mode: 'hints' },
-    });
+    }, { surface: 'ui' });
     expect(res.ok).toBe(true);
     expect(deps.daemonMemorySearch).toHaveBeenCalledWith({
       machineId: 'm1',

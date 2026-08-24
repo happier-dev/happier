@@ -7,6 +7,8 @@ import {
   INTERNAL_ACTION_IDS,
   INTERNAL_ACTION_REASONS,
   PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS,
+  PLUGIN_SURFACE_EXCLUSION_ACTION_IDS,
+  PLUGIN_SURFACE_EXCLUSION_REASONS,
   getActionSpec,
   listActionSpecs,
   resolveActionSdkMethodName,
@@ -199,25 +201,26 @@ describe('actionToolExposure', () => {
     }));
   });
 
-  it('keeps only reasoned internal Actions off public projections and provenance-only Actions off API', () => {
+  it('keeps only reasoned exclusions off public Action projections', () => {
     const internalActionIds = new Set(INTERNAL_ACTION_IDS);
     const pluginProvenanceOnlyActionIds = new Set(PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS);
+    const pluginSurfaceExcludedActionIds = new Set(PLUGIN_SURFACE_EXCLUSION_ACTION_IDS);
 
     expect(INTERNAL_ACTION_IDS).toContain('plugin.webhook.delivery.movePending');
     for (const actionId of INTERNAL_ACTION_IDS) {
       expect(INTERNAL_ACTION_REASONS[actionId]).toMatch(/\S/);
+    }
+    for (const actionId of PLUGIN_SURFACE_EXCLUSION_ACTION_IDS) {
+      expect(PLUGIN_SURFACE_EXCLUSION_REASONS[actionId]).toMatch(/\S/);
     }
 
     for (const spec of listActionSpecs()) {
       if (internalActionIds.has(spec.id)) {
         expect(spec.surfaces.api).toBe(false);
         expect(spec.surfaces.plugin).toBe(false);
-      } else if (pluginProvenanceOnlyActionIds.has(spec.id)) {
-        expect(spec.surfaces.api).toBe(false);
-        expect(spec.surfaces.plugin).toBe(true);
       } else {
-        expect(spec.surfaces.api).toBe(true);
-        expect(spec.surfaces.plugin).toBe(true);
+        expect(spec.surfaces.api).toBe(!pluginProvenanceOnlyActionIds.has(spec.id));
+        expect(spec.surfaces.plugin).toBe(!pluginSurfaceExcludedActionIds.has(spec.id));
       }
     }
   });
