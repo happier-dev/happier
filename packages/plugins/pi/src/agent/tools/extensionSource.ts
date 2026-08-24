@@ -66,7 +66,16 @@ function truncateToolOutput(value) {
   let content = lines.slice(0, TOOL_OUTPUT_MAX_LINES).join("\\n");
   const contentByteLimit = TOOL_OUTPUT_MAX_BYTES - TOOL_OUTPUT_NOTICE_RESERVE_BYTES;
   if (Buffer.byteLength(content, "utf8") > contentByteLimit) {
-    content = Buffer.from(content, "utf8").subarray(0, contentByteLimit).toString("utf8");
+    const bytes = Buffer.from(content, "utf8");
+    let end = contentByteLimit;
+    while (end > 0) {
+      try {
+        content = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end));
+        break;
+      } catch {
+        end -= 1;
+      }
+    }
   }
   const truncated = totalLines > TOOL_OUTPUT_MAX_LINES || totalBytes > Buffer.byteLength(content, "utf8");
   if (!truncated) return { content, truncated: false };
@@ -152,13 +161,25 @@ function invoke(config, toolName, args, callId, signal, cwd) {
     child.stdout?.on("data", (chunk) => stdout.append(chunk));
     child.stderr?.on("data", (chunk) => stderr.append(chunk));
     child.once("error", (error) => finish({ ok: false, error: { code: "bridge_spawn_failed", message: String(error?.message || error) } }));
-    child.once("close", () => {
+    child.once("close", (code) => {
       if (killed) {
         finish({ ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled" } });
         return;
       }
       if (stdout.limited || stderr.limited) {
         finish({ ok: false, error: { code: "bridge_output_limit", message: "Happier tools bridge output exceeded its bounded transport limit" } });
+        return;
+      }
+      if (!stdout.text().trim() && code !== 0) {
+        const diagnostic = stderr.text().trim().slice(0, 500);
+        const exit = code === null ? "unavailable" : String(code);
+        finish({
+          ok: false,
+          error: {
+            code: "bridge_process_failed",
+            message: "Happier tools bridge exited with code " + exit + (diagnostic ? ": " + diagnostic : ""),
+          },
+        });
         return;
       }
       finish(parseEnvelope(stdout.text()));
