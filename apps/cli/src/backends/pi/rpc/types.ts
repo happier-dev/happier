@@ -70,6 +70,7 @@ export type PiRpcModelsData = Readonly<{
 export type PiRpcCommandEntry = Readonly<{
   name?: string;
   description?: string;
+  source?: 'extension' | 'prompt' | 'skill';
 }>;
 
 export type PiRpcCommandsData = Readonly<{

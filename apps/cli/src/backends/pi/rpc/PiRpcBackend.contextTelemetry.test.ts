@@ -9,6 +9,7 @@ type PrivateContextTelemetryBackend = {
   process: unknown;
   latestContextTelemetry: { used: number; size: number } | null;
   lastPublishedUsageKey: string | null;
+  usageStatsPublishChain: Promise<void>;
   handleStderrLine(line: string): void;
   handleEvent(event: Record<string, unknown>): void;
   emitMessage(message: unknown): void;
@@ -198,12 +199,36 @@ describe('PiRpcBackend context telemetry markers', () => {
       type: 'message_end',
       message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'bash' }] },
     });
-    await priv.scheduleUsageStatsPublish();
+    await priv.usageStatsPublishChain;
 
     expect(emitSpy).toHaveBeenCalledTimes(1);
     const message = emitSpy.mock.calls[0][0] as Record<string, unknown>;
     expect(message.type).toBe('token-count');
     expect(message.tokens).toMatchObject({
+      context_used_tokens: 1234,
+      context_window_tokens: 128000,
+    });
+  });
+
+  it('publishes when the stderr telemetry marker follows assistant message_end', async () => {
+    const backend = createBackendForContextTelemetry();
+    const priv = backend as unknown as PrivateContextTelemetryBackend;
+    const emitSpy = vi.spyOn(priv, 'emitMessage');
+    priv.getSessionStats = async () => ({
+      sessionId: 'pi-session-1',
+      assistantMessages: 4,
+      tokens: { input: 100, output: 20 },
+    });
+
+    priv.handleEvent({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'bash' }] },
+    });
+    priv.handleStderrLine(`{"type":"${PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE}","used":1234,"size":128000}`);
+    await priv.usageStatsPublishChain;
+
+    expect(emitSpy).toHaveBeenCalledTimes(1);
+    expect((emitSpy.mock.calls[0][0] as Record<string, unknown>).tokens).toMatchObject({
       context_used_tokens: 1234,
       context_window_tokens: 128000,
     });

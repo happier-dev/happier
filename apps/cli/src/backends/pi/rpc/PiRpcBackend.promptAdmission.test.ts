@@ -25,7 +25,7 @@ type PiRpcBackendWithPromptAdmission = PiRpcBackend & {
 
 function makeFakePiRpcProcessScript(
   dir: string,
-  scenario: 'ack-before-turn' | 'command-without-turn' | 'negative-ack-then-turn' | 'response-loss' | 'turn-before-ack',
+  scenario: 'ack-before-turn' | 'command-without-turn' | 'command-ack-before-turn' | 'negative-ack-then-turn' | 'response-loss' | 'turn-before-ack',
 ): string {
   const scriptPath = join(dir, `fake-pi-rpc-${scenario}.js`);
   const script = `
@@ -68,11 +68,29 @@ rl.on('line', (line) => {
       });
       break;
     case 'get_commands':
-      out({ id: command.id, type: 'response', command: command.type, success: true, data: { commands: scenario === 'command-without-turn' ? [{ name: 'goal' }] : [] } });
+      out({
+        id: command.id,
+        type: 'response',
+        command: command.type,
+        success: true,
+        data: {
+          commands: scenario === 'command-without-turn'
+            ? [{ name: 'goal', source: 'extension' }]
+            : scenario === 'command-ack-before-turn'
+              ? [{ name: 'goal', source: 'extension' }]
+              : [],
+        },
+      });
       break;
     case 'prompt':
       if (scenario === 'command-without-turn') {
         out({ id: command.id, type: 'response', command: command.type, success: true });
+        break;
+      }
+      if (scenario === 'command-ack-before-turn') {
+        out({ id: command.id, type: 'response', command: command.type, success: true });
+        setTimeout(() => out({ type: 'agent_start' }), 100);
+        setTimeout(() => out({ type: 'agent_end' }), 140);
         break;
       }
       if (scenario === 'ack-before-turn') {
@@ -140,6 +158,7 @@ describe('PiRpcBackend prompt admission', () => {
     });
 
     await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(completionSettled).toBe(false);
     await expect(submission.completion).resolves.toBeUndefined();
   });
@@ -150,6 +169,21 @@ describe('PiRpcBackend prompt admission', () => {
     const submission = backend.sendPromptWithAdmission(sessionId, '/goal fix authentication');
 
     await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    await expect(submission.completion).resolves.toBeUndefined();
+  });
+
+  it('does not complete an extension command before its delayed agent turn starts', async () => {
+    const { backend, sessionId } = await startBackend('command-ack-before-turn');
+
+    const submission = backend.sendPromptWithAdmission(sessionId, '/goal fix authentication');
+    let completionSettled = false;
+    void submission.completion.finally(() => {
+      completionSettled = true;
+    });
+
+    await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(completionSettled).toBe(false);
     await expect(submission.completion).resolves.toBeUndefined();
   });
 

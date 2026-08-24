@@ -611,6 +611,7 @@ export class PiRpcBackend implements AgentBackend {
   private appendSystemPromptArtifact: ProtectedTempTextArtifact | null = null;
   private toolsBridgeConfigArtifact: ProtectedTempTextArtifact | null = null;
   private readonly availableCommandNames = new Set<string>();
+  private readonly availableExtensionCommandNames = new Set<string>();
   private stdoutLineReader: PiRpcJsonlLineReader | null = null;
   private stderrLineReader: PiRpcJsonlLineReader | null = null;
   private readonly messageHandlers = new Set<AgentMessageHandler>();
@@ -631,6 +632,7 @@ export class PiRpcBackend implements AgentBackend {
   private lastPublishedUsageKey: string | null = null;
   /** Latest live context telemetry parsed from the bridge extension's stderr markers, if any. */
   private latestContextTelemetry: PiContextTelemetry | null = null;
+  private assistantMessageEndAwaitingContextTelemetry = false;
   /** Serializes usage-stats publishes so overlapping triggers cannot double-emit. */
   private usageStatsPublishChain: Promise<void> = Promise.resolve();
   private readonly connectedServiceRuntimeAuthAdapter = createPiConnectedServiceRuntimeAuthAdapter();
@@ -942,10 +944,19 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   isProviderNativeCommand(prompt: string): boolean {
-    const trimmed = prompt.trimStart();
-    if (!trimmed.startsWith('/')) return false;
-    const name = trimmed.slice(1).split(/\s/u, 1)[0]?.trim().toLowerCase() ?? '';
+    const name = this.readProviderNativeCommandName(prompt);
     return name.length > 0 && this.availableCommandNames.has(name);
+  }
+
+  private isProviderExtensionCommand(prompt: string): boolean {
+    const name = this.readProviderNativeCommandName(prompt);
+    return name.length > 0 && this.availableExtensionCommandNames.has(name);
+  }
+
+  private readProviderNativeCommandName(prompt: string): string {
+    const trimmed = prompt.trimStart();
+    if (!trimmed.startsWith('/')) return '';
+    return trimmed.slice(1).split(/\s/u, 1)[0]?.trim().toLowerCase() ?? '';
   }
 
   async sendPromptWithEvidence(
@@ -1044,7 +1055,7 @@ export class PiRpcBackend implements AgentBackend {
       }
 
       await this.ensureConnectedBrokerReadyForProviderCommand();
-      const providerNativeCommand = this.isProviderNativeCommand(message);
+      const providerExtensionCommand = this.isProviderExtensionCommand(message);
       const turn = this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
       const pendingTurn = this.pendingTurn;
       providerSendAttempted = true;
@@ -1061,11 +1072,15 @@ export class PiRpcBackend implements AgentBackend {
       }
       settleAdmission({ status: 'accepted' });
       if (
-        providerNativeCommand
+        providerExtensionCommand
         && pendingTurn
         && this.pendingTurn === pendingTurn
         && !pendingTurn.agentStartObserved
       ) {
+        // Pi acknowledges an extension command after its handler returns, but a handler may
+        // schedule an Agent turn whose event follows the acknowledgement. Reuse the existing
+        // event-ordering grace before deciding that the command was handled without a turn.
+        await delay(this.getAgentEndSettleMs());
         const state = await this.getState().catch(() => null);
         if (
           this.pendingTurn === pendingTurn
@@ -1871,6 +1886,7 @@ export class PiRpcBackend implements AgentBackend {
     const normalizedEvent = this.normalizeCompactionLifecycleEvent(event);
     if (normalizedEvent.type === 'compaction_start' || normalizedEvent.type === 'compaction_end') {
       this.latestContextTelemetry = null;
+      this.assistantMessageEndAwaitingContextTelemetry = false;
     }
     this.notePendingTurnActivity(normalizedEvent);
 
@@ -1892,10 +1908,15 @@ export class PiRpcBackend implements AgentBackend {
     // telemetry being present: only Happier-bound sessions (extension markers flowing) get
     // the mid-turn publish; plain embedders keep the idle-time cadence without extra
     // mid-turn RPC traffic.
-    if (normalizedEvent.type === 'message_end' && this.latestContextTelemetry) {
+    if (normalizedEvent.type === 'message_end') {
       const message = asRecord(normalizedEvent.message);
       if (message?.role === 'assistant') {
-        this.scheduleUsageStatsPublish();
+        if (this.latestContextTelemetry) {
+          this.assistantMessageEndAwaitingContextTelemetry = false;
+          this.scheduleUsageStatsPublish();
+        } else {
+          this.assistantMessageEndAwaitingContextTelemetry = true;
+        }
       }
     }
 
@@ -2022,6 +2043,10 @@ export class PiRpcBackend implements AgentBackend {
     const contextTelemetry = parsePiContextTelemetryMarkerLine(trimmed);
     if (contextTelemetry) {
       this.latestContextTelemetry = contextTelemetry;
+      if (this.assistantMessageEndAwaitingContextTelemetry) {
+        this.assistantMessageEndAwaitingContextTelemetry = false;
+        this.scheduleUsageStatsPublish();
+      }
       return;
     }
     this.recentStderrLines.push(trimmed);
@@ -2602,7 +2627,7 @@ export class PiRpcBackend implements AgentBackend {
 
     if (pending.agentEndObserved) {
       this.resolvePendingTurn();
-      this.scheduleUsageStatsPublish();
+      void this.scheduleUsageStatsPublish();
       return;
     }
 
@@ -2665,7 +2690,7 @@ export class PiRpcBackend implements AgentBackend {
     }
 
     this.resolvePendingTurn();
-    this.scheduleUsageStatsPublish();
+    void this.scheduleUsageStatsPublish();
   }
 
   private schedulePendingTurnCompletionBusyGrace(pending: PendingTurn): void {
@@ -2769,7 +2794,7 @@ export class PiRpcBackend implements AgentBackend {
       });
     }
     this.resolvePendingTurn();
-    this.scheduleUsageStatsPublish();
+    void this.scheduleUsageStatsPublish();
   }
 
   private resolvePendingTurnAsCompactionPaused(pending: PendingTurn): void {
@@ -2799,7 +2824,7 @@ export class PiRpcBackend implements AgentBackend {
       },
     });
     this.resolvePendingTurn();
-    this.scheduleUsageStatsPublish();
+    void this.scheduleUsageStatsPublish();
   }
 
   private rejectAllPending(error: Error): void {
@@ -2893,6 +2918,7 @@ export class PiRpcBackend implements AgentBackend {
     });
 
     this.availableCommandNames.clear();
+    this.availableExtensionCommandNames.clear();
     try {
       const commands = await this.getCommands();
       const commandList = Array.isArray(commands.commands) ? commands.commands : [];
@@ -2902,22 +2928,29 @@ export class PiRpcBackend implements AgentBackend {
           const name = asNonEmptyString(item?.name);
           if (!name) return null;
           const description = asNonEmptyString(item?.description) ?? undefined;
+          const source = asNonEmptyString(item?.source);
           return {
             name: name.startsWith('/') ? name : `/${name}`,
             ...(description ? { description } : {}),
+            ...(source ? { source } : {}),
           };
         })
-        .filter((entry): entry is { name: string; description?: string } => entry !== null);
+        .filter((entry): entry is { name: string; description?: string; source?: string } => entry !== null);
 
       for (const command of availableCommands) {
         const name = command.name.slice(1).trim().toLowerCase();
-        if (name) this.availableCommandNames.add(name);
+        if (name) {
+          this.availableCommandNames.add(name);
+          if (command.source === 'extension') this.availableExtensionCommandNames.add(name);
+        }
       }
 
       this.emitMessage({
         type: 'event',
         name: 'available_commands_update',
-        payload: { availableCommands },
+        payload: {
+          availableCommands: availableCommands.map(({ name, description }) => ({ name, ...(description ? { description } : {}) })),
+        },
       });
     } catch {
       // Best-effort: commands introspection should not block session start/resume.
