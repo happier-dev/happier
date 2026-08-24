@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     compareVersions,
+    getVersionSupportState,
     isVersionSupported,
     parseVersion,
     MINIMUM_CLI_VERSION,
@@ -9,6 +10,14 @@ import {
 } from './versionUtils';
 
 describe('versionUtils', () => {
+    describe('getVersionSupportState', () => {
+        it('distinguishes opaque development identities from versions proven too old', () => {
+            expect(getVersionSupportState('0.2.10-dev.abcdef123', MINIMUM_CLI_VERSION)).toBe('unknown');
+            expect(getVersionSupportState('0.0.9', MINIMUM_CLI_VERSION)).toBe('unsupported');
+            expect(getVersionSupportState('0.1.0', MINIMUM_CLI_VERSION)).toBe('supported');
+        });
+    });
+
     describe('compareVersions', () => {
         it('should correctly compare versions', () => {
             expect(compareVersions('1.0.0', '1.0.0')).toBe(0);
