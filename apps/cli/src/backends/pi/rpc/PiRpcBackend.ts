@@ -3044,7 +3044,7 @@ export class PiRpcBackend implements AgentBackend {
         .filter((entry): entry is { name: string; description?: string; source?: string } => entry !== null);
 
       for (const command of availableCommands) {
-        const name = command.name.slice(1).trim().toLowerCase();
+        const name = command.name.slice(1).trim();
         if (name) {
           nextCommandNames.add(name);
           if (command.source === 'extension') nextExtensionCommandNames.add(name);

@@ -51,6 +51,7 @@ rl.on('line', (line) => {
         data: {
           commands: [
             { name: 'probe-template', description: 'Prompt template command', source: 'prompt' },
+            { name: 'Mixed-Case', description: 'Case-sensitive extension command', source: 'extension' },
             { name: 'skill:probe-skill', description: 'Skill command', source: 'skill' }
           ]
         }
@@ -106,9 +107,12 @@ describe('PiRpcBackend (command discovery)', () => {
 
     expect(payload?.availableCommands).toEqual([
       { name: '/probe-template', description: 'Prompt template command' },
+      { name: '/Mixed-Case', description: 'Case-sensitive extension command' },
       { name: '/skill:probe-skill', description: 'Skill command' },
     ]);
     expect(backend.isProviderNativeCommand('/probe-template describe this')).toBe(true);
+    expect(backend.isProviderNativeCommand('/Mixed-Case exact')).toBe(true);
+    expect(backend.isProviderNativeCommand('/mixed-case exact')).toBe(false);
     expect(backend.isProviderNativeCommand('/SKILL:PROBE-SKILL')).toBe(false);
     expect(backend.isProviderNativeCommand(' /probe-template describe this')).toBe(false);
     expect(backend.isProviderNativeCommand('/probe-template\tdescribe this')).toBe(false);
