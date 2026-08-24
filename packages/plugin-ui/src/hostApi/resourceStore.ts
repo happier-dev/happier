@@ -42,14 +42,11 @@ export type PluginUiResourceClient = Readonly<{
  * method, so a non-Surface contextual mount uses the same Resource owner.
  *
  * Watch admission is deliberately NOT sampled from `version().methods` here.
- * The mounted host API outlives a daemon reconnect and narrows/re-advertises
- * its daemon-owned methods live, so a method set read once at mount is a
- * snapshot of *current* availability, never a capability fact; caching its
- * negative turns an outage at mount time into a session-long loss of live
- * Resources. Only the member's own absence is structural, and the host decides
- * the rest at each open attempt — `unsupported_method` when it can never serve
- * the subscription, a retryable failure while it merely cannot serve it yet.
- * Both transports refuse an unadvertised method locally, so this costs no
+ * That list is the stable structural set admitted for the mount, while the
+ * method call itself owns transient daemon availability. The host therefore
+ * decides each open attempt: `unsupported_method` when the mount can never
+ * serve the subscription, or `unavailable` while the daemon cannot serve it
+ * yet. Both transports refuse an unadvertised method locally, so this costs no
  * round trip.
  */
 export function createPluginUiHostApiResourceClient(
