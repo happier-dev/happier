@@ -1,4 +1,5 @@
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata, PermissionMode, Session } from '@/api/types';
@@ -7,6 +8,17 @@ import type { V2SessionListResponse, V2SessionRecord } from '@happier-dev/protoc
 import { createTestMetadata } from './sessionMetadata';
 
 type RecordLike = Record<string, unknown>;
+const TEST_SESSION_ID = 'test-session-id';
+
+function createSessionRpcHandlerManagerFixture(): RpcHandlerManager {
+    return new RpcHandlerManager({
+        scopePrefix: TEST_SESSION_ID,
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'legacy',
+        logger: () => undefined,
+    });
+}
+
 export type SessionRecordFixture = V2SessionRecord;
 export type SessionListResponseFixture = V2SessionListResponse;
 export type PlainSessionFixture = Extract<Session, { encryptionMode: 'plain' }>;
@@ -107,6 +119,8 @@ export function createApiSessionClientFixture(options?: {
             : null);
 
     return {
+        sessionId: TEST_SESSION_ID,
+        rpcHandlerManager: createSessionRpcHandlerManagerFixture(),
         keepAlive() {},
         sendAgentMessage() {},
         async sendAgentMessageCommitted() {},
@@ -138,6 +152,8 @@ export function createMutableApiSessionClientFixture<TMetadata extends Record<st
             : null) as TMetadata | null);
 
     const fixture = {
+        sessionId: TEST_SESSION_ID,
+        rpcHandlerManager: createSessionRpcHandlerManagerFixture(),
         keepAlive() {},
         sendAgentMessage() {},
         async sendAgentMessageCommitted() {},

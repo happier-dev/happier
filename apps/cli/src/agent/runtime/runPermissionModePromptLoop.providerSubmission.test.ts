@@ -7,6 +7,8 @@ import {
 } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { PermissionMode } from '@/api/types';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 
 import { ProviderPromptSubmissionRejectedBeforeEffectError } from './providerPromptSubmission';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
@@ -39,26 +41,17 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
       prompt.onProviderPromptAccepted?.();
       shouldExit = true;
     });
+    const session = createMutableApiSessionClientFixture({ metadata });
+    const permissionHandler = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[Pi test]' });
 
     await runPermissionModePromptLoop({
       providerName: 'Pi',
       providerId: 'pi',
       agentMessageType: 'pi',
       explicitPermissionMode: 'default',
-      session: {
-        getMetadataSnapshot: () => metadata,
-        updateMetadata: vi.fn(),
-        ensureMetadataSnapshot: async () => metadata,
-        waitForMetadataUpdate: () => new Promise<boolean>(() => {}),
-        waitForPendingEligibilityUpdate: () => new Promise<void>(() => {}),
-        fetchLatestUserPermissionIntentFromTranscript: async () => null,
-        sendAgentMessage: vi.fn(),
-      } as any,
+      session,
       messageQueue: queue,
-      permissionHandler: {
-        setPermissionMode: vi.fn(),
-        reset: vi.fn(),
-      } as any,
+      permissionHandler,
       runtime: {
         beginTurn: vi.fn(),
         startOrLoad: vi.fn(async () => undefined),
