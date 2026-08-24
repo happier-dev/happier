@@ -128,14 +128,15 @@ function isRequiredDirectActionToolAvailable(params: Readonly<{
   isActionEnabled?: ActionEnabledPredicate;
   actionsSettings?: ActionsSettingsV1 | null;
 }>): boolean {
-  if (params.surface !== 'session_agent' || !params.requiredDirectActionIds?.includes(params.actionId)) {
+  const surface = params.surface ?? 'session_agent';
+  if (surface !== 'session_agent' || !params.requiredDirectActionIds?.includes(params.actionId)) {
     return false;
   }
   const explicitMode = params.actionsSettings?.actions?.[params.actionId]?.toolExposureModes?.session_agent;
   if (explicitMode === 'discoverable_only') return false;
   return isActionAvailableOnToolSurface({
     actionId: params.actionId,
-    surface: params.surface,
+    surface,
     isActionEnabled: params.isActionEnabled,
     actionsSettings: params.actionsSettings ?? null,
   });
