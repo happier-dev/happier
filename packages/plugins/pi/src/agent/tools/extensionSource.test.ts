@@ -152,6 +152,56 @@ describe('Pi Happier tools extension', () => {
     }
   });
 
+  it('terminates a bridge process that stays alive after exceeding the transport limit', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-tools-transport-limit-test-'));
+    try {
+      const extensionPath = join(root, 'extension.mjs');
+      const configPath = join(root, 'config.json');
+      writeFileSync(extensionPath, buildPiHappierToolsExtensionSource());
+      writeFileSync(configPath, JSON.stringify({
+        v: 1,
+        sessionId: 'session-1',
+        directory: root,
+        systemPrompt: '',
+        tools: [{
+          name: 'host_tool',
+          title: 'Host tool',
+          description: 'Host resolved',
+          inputSchema: { type: 'object', properties: {} },
+        }],
+        launch: {
+          executablePath: process.execPath,
+          argsPrefix: ['-e', 'process.stdout.write("x".repeat(2 * 1024 * 1024)); setInterval(() => {}, 1000)', '--'],
+        },
+      }));
+      const module = await import(`${pathToFileURL(extensionPath).href}?${Math.random()}`);
+      const handlers = new Map<string, Array<(event: unknown) => unknown>>();
+      const tools: Array<Readonly<{ execute: (...args: unknown[]) => Promise<unknown> }>> = [];
+      module.default({
+        registerFlag() {},
+        getFlag(name: string) {
+          return name === PI_HAPPIER_TOOLS_CONFIG_FLAG ? configPath : undefined;
+        },
+        registerTool(tool: (typeof tools)[number]) { tools.push(tool); },
+        on(name: string, handler: (event: unknown) => unknown) {
+          handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+        },
+      });
+      for (const handler of handlers.get('session_start') ?? []) await handler({});
+
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), 500);
+      try {
+        await expect(tools[0]?.execute('call-1', {}, controller.signal, undefined, { cwd: root }))
+          .rejects.toThrow('bridge_output_limit');
+      } finally {
+        clearTimeout(abortTimer);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('throws when the Happier bridge returns a failed tool envelope', async () => {
     const root = mkdtempSync(join(tmpdir(), 'happier-pi-tools-error-test-'));
     try {
@@ -235,8 +285,10 @@ describe('Pi Happier tools extension', () => {
       });
       for (const handler of handlers.get('session_start') ?? []) await handler({});
 
-      await expect(tools[0]?.execute('call-1', {}, undefined, undefined, { cwd: root }))
-        .rejects.toThrow('bridge_process_failed — Happier tools bridge exited with code 7: deterministic bridge diagnostic');
+      const processFailure = tools[0]?.execute('call-1', {}, undefined, undefined, { cwd: root });
+      await expect(processFailure).rejects.toThrow('code=bridge_process_failed');
+      await expect(processFailure).rejects.toThrow('code 7');
+      await expect(processFailure).rejects.toThrow('deterministic bridge diagnostic');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

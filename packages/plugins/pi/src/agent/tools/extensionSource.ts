@@ -158,16 +158,22 @@ function invoke(config, toolName, args, callId, signal, cwd) {
     };
     if (signal?.aborted) abort();
     else signal?.addEventListener?.("abort", abort, { once: true });
-    child.stdout?.on("data", (chunk) => stdout.append(chunk));
-    child.stderr?.on("data", (chunk) => stderr.append(chunk));
+    child.stdout?.on("data", (chunk) => {
+      stdout.append(chunk);
+      if (stdout.limited) abort();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr.append(chunk);
+      if (stderr.limited) abort();
+    });
     child.once("error", (error) => finish({ ok: false, error: { code: "bridge_spawn_failed", message: String(error?.message || error) } }));
     child.once("close", (code) => {
-      if (killed) {
-        finish({ ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled" } });
-        return;
-      }
       if (stdout.limited || stderr.limited) {
         finish({ ok: false, error: { code: "bridge_output_limit", message: "Happier tools bridge output exceeded its bounded transport limit" } });
+        return;
+      }
+      if (killed) {
+        finish({ ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled" } });
         return;
       }
       if (!stdout.text().trim() && code !== 0) {
