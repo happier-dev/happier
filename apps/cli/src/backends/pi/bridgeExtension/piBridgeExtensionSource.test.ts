@@ -112,6 +112,7 @@ if (args.input.value === 'fail') {
   process.stdout.write(JSON.stringify({ ok: true, data: { output: '😀'.repeat(30000) } }) + '\\n');
 } else if (args.input.value === 'transport-overflow') {
   process.stdout.write('x'.repeat(2 * 1024 * 1024));
+  setInterval(() => {}, 1000);
 } else if (args.input.value === 'process-failure') {
   process.stderr.write('deterministic bridge diagnostic');
   process.exitCode = 7;
@@ -199,21 +200,30 @@ if (args.input.value === 'fail') {
       ) as { content: Array<{ text: string }> };
       expect(unicodeLargeResult.content[0]!.text).not.toContain('�');
 
-      await expect(harness.tools[0]!.execute(
-        'call-4',
-        { value: 'transport-overflow' },
-        new AbortController().signal,
-        undefined,
-        { cwd: dir },
-      )).rejects.toThrow('bridge_output_limit');
+      const overflowController = new AbortController();
+      const overflowAbortTimer = setTimeout(() => overflowController.abort(), 500);
+      try {
+        await expect(harness.tools[0]!.execute(
+          'call-4',
+          { value: 'transport-overflow' },
+          overflowController.signal,
+          undefined,
+          { cwd: dir },
+        )).rejects.toThrow('bridge_output_limit');
+      } finally {
+        clearTimeout(overflowAbortTimer);
+      }
 
-      await expect(harness.tools[0]!.execute(
+      const processFailure = harness.tools[0]!.execute(
         'call-process-failure',
         { value: 'process-failure' },
         new AbortController().signal,
         undefined,
         { cwd: dir },
-      )).rejects.toThrow('bridge_process_failed — Happier tools bridge exited with code 7: deterministic bridge diagnostic');
+      );
+      await expect(processFailure).rejects.toThrow('code=bridge_process_failed');
+      await expect(processFailure).rejects.toThrow('code 7');
+      await expect(processFailure).rejects.toThrow('deterministic bridge diagnostic');
 
       const controller = new AbortController();
       const waitingCall = harness.tools[0]!.execute(

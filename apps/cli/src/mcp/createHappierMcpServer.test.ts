@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { callMachineRpc } = vi.hoisted(() => ({ callMachineRpc: vi.fn() }));
 
@@ -12,6 +12,11 @@ describe('createHappierMcpServer', () => {
     callMachineRpc.mockReset();
     process.env = { ...env };
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+  });
+
+  afterEach(() => {
+    vi.doUnmock('@happier-dev/protocol');
+    vi.resetModules();
   });
 
   it('routes an explicit non-session memory machine through account-scoped machine RPC', async () => {

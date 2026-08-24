@@ -173,8 +173,14 @@ function runChild(filePath, argv, options) {
       if (options.signal.aborted) killChild();
       else options.signal.addEventListener("abort", killChild, { once: true });
     }
-    child.stdout?.on("data", (data) => stdout.append(data));
-    child.stderr?.on("data", (data) => stderr.append(data));
+    child.stdout?.on("data", (data) => {
+      stdout.append(data);
+      if (stdout.limited) killChild();
+    });
+    child.stderr?.on("data", (data) => {
+      stderr.append(data);
+      if (stderr.limited) killChild();
+    });
     child.once("error", (error) => {
       stderr.append(String(error?.message ?? error));
       finish({ stdout: stdout.text(), stderr: stderr.text(), code: null, killed, outputLimited: stdout.limited || stderr.limited });
@@ -207,8 +213,8 @@ async function callHappierTool(config, toolName, args, toolCallId, signal, cwd) 
     env: { ...process.env, ...config.launch.env },
     signal,
   });
-  if (result.killed) return { ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled" } };
   if (result.outputLimited) return { ok: false, error: { code: "bridge_output_limit", message: "Happier tools bridge output exceeded its bounded transport limit" } };
+  if (result.killed) return { ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled" } };
   if (!result.stdout.trim() && result.code !== 0) {
     const diagnostic = result.stderr.trim().slice(0, 500);
     const exit = result.code === null ? "unavailable" : String(result.code);
