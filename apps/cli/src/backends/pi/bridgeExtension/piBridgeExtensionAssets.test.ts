@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -36,14 +36,14 @@ function baseParams(overrides?: Partial<PiBridgeExtensionSourceParams>): PiBridg
 
 describe('pi bridge extension assets', () => {
   it('resolves a deterministic, non-auto-discoverable path', () => {
-    expect(resolvePiBridgeExtensionDir('/agent')).toBe('/agent/extensions/happier-pi-tools-bridge');
+    expect(resolvePiBridgeExtensionDir('/agent')).toBe(join('/agent', 'extensions', 'happier-pi-tools-bridge'));
     expect(resolvePiBridgeExtensionPath('/agent')).toBe(
-      '/agent/extensions/happier-pi-tools-bridge/happier-pi-tools-bridge.js',
+      join('/agent', 'extensions', 'happier-pi-tools-bridge', 'happier-pi-tools-bridge.js'),
     );
     // Never an auto-discovered shape: not extensions/*.js and not extensions/SUBDIR/index.js.
     const base = resolvePiBridgeExtensionPath('/agent');
-    expect(base.split('/').at(-1)).not.toBe('index.js');
-    expect(base.startsWith('/agent/extensions/')).toBe(true);
+    expect(base.split(sep).at(-1)).not.toBe('index.js');
+    expect(base.startsWith(join('/agent', 'extensions') + sep)).toBe(true);
   });
 
   it('writes the generated extension and is idempotent on repeat ensures', async () => {

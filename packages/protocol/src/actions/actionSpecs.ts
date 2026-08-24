@@ -1072,7 +1072,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: false,
       session_agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
     },
     inputHints: {
       title: 'Search action specs',
@@ -1103,7 +1103,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       session_agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
     },
     inputHints: {
       title: 'Get action spec',
@@ -1132,7 +1132,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       session_agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
     },
     inputHints: {
       title: 'Resolve action options',
@@ -3534,7 +3534,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       session_agent: true,
       mcp: false,
-      cli: false,
+      cli: true,
     },
     examples: {
       voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },

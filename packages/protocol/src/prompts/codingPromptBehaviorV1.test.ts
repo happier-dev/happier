@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CodingPromptBehaviorOverrideV1Schema,
+  type CodingPromptBehaviorOverrideV1,
   resolveCodingPromptBehaviorV1WithOverride,
   applyCodingPromptBehaviorOverrideToSettings,
   DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
@@ -11,7 +12,7 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
   describe('resolveCodingPromptBehaviorV1WithOverride', () => {
     it('omitted field inherits global', () => {
       const settings = { codingPromptBehaviorV1: {} };
-      const override: any = {}; // empty override
+      const override: CodingPromptBehaviorOverrideV1 = {};
 
       const result = resolveCodingPromptBehaviorV1WithOverride({
         settingsLike: settings,
@@ -40,7 +41,7 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
     it('\'agent\' alias folds to \'ongoing\'', () => {
       const settings = { codingPromptBehaviorV1: {} };
       // Simulate parsing raw input through override schema first
-      const rawOverride = { sessionTitleUpdates: 'agent' as any };
+      const rawOverride = { sessionTitleUpdates: 'agent' as unknown as never };
       const parsedOverride = CodingPromptBehaviorOverrideV1Schema.parse(rawOverride);
 
       const result = resolveCodingPromptBehaviorV1WithOverride({
@@ -53,7 +54,7 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
 
     it('v always global (override v ignored)', () => {
       const settings = { codingPromptBehaviorV1: {} }; // global will be default with v=1
-      const override = { v: 999 as any, responseOptions: 'disabled' }; // override tries to set v
+      const override = { v: 999 as unknown as number, responseOptions: 'disabled' }; // override tries to set v
 
       const result = resolveCodingPromptBehaviorV1WithOverride({
         settingsLike: settings,
@@ -191,13 +192,13 @@ describe('codingPromptBehaviorV1 (overrides)', () => {
     });
 
     it('malformed override becomes minimal object with v=1 via .catch({ v: 1 })', () => {
-      const input = { sessionTitleUpdates: 'bogus' as any };
+      const input = { sessionTitleUpdates: 'bogus' as unknown as never };
       const result = CodingPromptBehaviorOverrideV1Schema.parse(input);
       expect(result).toEqual({ v: 1 });
     });
 
     it('accepts agent alias and folds to ongoing', () => {
-      const input = { sessionTitleUpdates: 'agent' as any };
+      const input = { sessionTitleUpdates: 'agent' as unknown as never };
       const result = CodingPromptBehaviorOverrideV1Schema.parse(input);
       expect(result.sessionTitleUpdates).toBe('ongoing');
     });

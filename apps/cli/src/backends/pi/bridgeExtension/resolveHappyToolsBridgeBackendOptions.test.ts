@@ -77,7 +77,17 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
     });
     expect(initial?.sessionRenameMode).toBe('initial');
     // The materialized asset does not change with config (one file for all configs).
-    expect(readFileSync(initial!.extensionPath, 'utf8')).toBe(readFileSync(resolved!.extensionPath, 'utf8'));
+    // Capture the first content BEFORE the second resolution so the comparison proves the
+    // second call did not rewrite the asset, not just that both reads agree after the fact.
+    const initialContent = readFileSync(initial!.extensionPath, 'utf8');
+    const second = await resolveHappyToolsBridgeBackendOptions({
+      agentDir,
+      settings: { codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'agent' } },
+      memoryRecallGuidanceEnabled: true,
+      memoryMachineId: 'machine-1',
+    });
+    expect(second?.sessionRenameMode).toBe('ongoing');
+    expect(readFileSync(second!.extensionPath, 'utf8')).toBe(initialContent);
   });
 
   it('binds memory to a machine id and disables it when guidance is off or no id is bound', async () => {

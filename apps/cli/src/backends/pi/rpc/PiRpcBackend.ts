@@ -647,7 +647,12 @@ export class PiRpcBackend implements AgentBackend {
       args: [...options.args],
       env: { ...(options.env ?? {}) },
       happierSessionId: asNonEmptyString(options.happierSessionId) ?? null,
-      appendSystemPromptText: asNonEmptyString(options.appendSystemPromptText) ?? null,
+      // Keep the exact prompt text (leading/trailing whitespace included): the artifact
+      // must byte-match the composed prompt. asNonEmptyString is only the blank detector.
+      appendSystemPromptText: typeof options.appendSystemPromptText === 'string'
+        && asNonEmptyString(options.appendSystemPromptText) !== null
+        ? options.appendSystemPromptText
+        : null,
     };
   }
 
@@ -1170,17 +1175,18 @@ export class PiRpcBackend implements AgentBackend {
     const child = this.process;
     this.process = null;
 
-    // Terminal path: remove the protected append-system-prompt artifact with the backend.
+    // Terminal path: remove the protected append-system-prompt artifact with the backend —
+    // in a finally so a failing process shutdown cannot leak it on disk.
     const artifact = this.appendSystemPromptArtifact;
     this.appendSystemPromptArtifact = null;
 
-    if (!child) {
+    try {
+      if (child) {
+        await stopPiRpcProcess(child);
+      }
+    } finally {
       await artifact?.cleanup();
-      return;
     }
-
-    await stopPiRpcProcess(child);
-    await artifact?.cleanup();
   }
 
   private async ensureProcess(): Promise<void> {
@@ -2497,7 +2503,7 @@ export class PiRpcBackend implements AgentBackend {
 
     if (pending.agentEndObserved) {
       this.resolvePendingTurn();
-      void this.publishUsageStatsBestEffort();
+      this.scheduleUsageStatsPublish();
       return;
     }
 
@@ -2560,7 +2566,7 @@ export class PiRpcBackend implements AgentBackend {
     }
 
     this.resolvePendingTurn();
-    void this.publishUsageStatsBestEffort();
+    this.scheduleUsageStatsPublish();
   }
 
   private schedulePendingTurnCompletionBusyGrace(pending: PendingTurn): void {
@@ -2664,7 +2670,7 @@ export class PiRpcBackend implements AgentBackend {
       });
     }
     this.resolvePendingTurn();
-    void this.publishUsageStatsBestEffort();
+    this.scheduleUsageStatsPublish();
   }
 
   private resolvePendingTurnAsCompactionPaused(pending: PendingTurn): void {
@@ -2694,7 +2700,7 @@ export class PiRpcBackend implements AgentBackend {
       },
     });
     this.resolvePendingTurn();
-    void this.publishUsageStatsBestEffort();
+    this.scheduleUsageStatsPublish();
   }
 
   private rejectAllPending(error: Error): void {
