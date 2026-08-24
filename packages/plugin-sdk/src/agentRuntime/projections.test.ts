@@ -394,6 +394,14 @@ describe('Agent runtime package-local publication projection', () => {
     }
   }, 120_000);
 
+  it('aliases the canonical Agent runtime event instead of copying its model', () => {
+    const program = createSdkProgram();
+
+    expect(exportedSymbol(program, 'src/agentRuntime/session.ts', 'AgentSessionRuntimeEvent')).toBe(
+      ownerSymbol(program, '@happier-dev/protocol/runtime', 'AgentSessionRuntimeEvent'),
+    );
+  }, 120_000);
+
   it('refines helper-only signatures without changing canonical runtime values or public shapes', () => {
     expect(agentRuntimeProjection.createAcpToolNameInferencePreset)
       .toBe(canonicalCreateAcpToolNameInferencePreset);
