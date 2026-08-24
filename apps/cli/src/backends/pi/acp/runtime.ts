@@ -29,6 +29,8 @@ export function createPiAcpRuntime(params: {
   onThinkingChange: (thinking: boolean) => void;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   memoryRecallGuidanceEnabled?: boolean;
+  /** Register the full session-agent tool surface in the pi bridge (off by default). */
+  sessionToolsEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
   providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
@@ -118,6 +120,8 @@ export function createPiAcpRuntime(params: {
           settings: mergedSettings,
           memoryRecallGuidanceEnabled,
           memoryMachineId: params.machineId,
+          // Full session-agent tool surface: opt-in per spawn while the surface rolls out.
+          sessionToolsEnabled: params.sessionToolsEnabled === true,
         });
         if (resolved) {
           happyToolsBridge = resolved;

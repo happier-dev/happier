@@ -5,22 +5,68 @@ import {
   HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
   HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
   HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1,
+  listActionSpecs,
+  type ActionSpec,
 } from '@happier-dev/protocol';
+
+import { actionExecuteToolInputSchema } from '@/agent/tools/happierTools/manualToolContracts';
 
 import {
   PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
   PI_BRIDGE_PROMPT_OPTIONS_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
   PI_BRIDGE_SESSION_RENAME_FLAG,
+  PI_BRIDGE_SESSION_TOOLS_FLAG,
   PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE,
 } from './piBridgeExtensionEnv';
+
+/**
+ * Serialized session-agent tool rows inlined into the generated asset. Built from the
+ * protocol action specs (same source the built-in tool catalog uses): every action
+ * declared on the `session_agent` surface with a direct `mcpToolName` binding becomes a
+ * row; spec-only actions (no binding) stay reachable through `action_execute` only.
+ *
+ * The zod input schemas serialize to JSON Schema via zod 4's native `toJSONSchema`;
+ * the generated extension converts JSON Schema back to typebox parameters at
+ * registration time (structural, no zod dependency inside pi).
+ */
+function buildSessionAgentToolDefs(): ReadonlyArray<Readonly<{
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}>> {
+  const rows = listActionSpecs()
+    .filter((spec: ActionSpec) => spec.surfaces.session_agent === true)
+    .map((spec) => ({
+      name: String(spec.bindings?.mcpToolName ?? '').trim(),
+      title: spec.title,
+      description: spec.description ?? spec.title,
+      inputSchema: spec.inputSchema.toJSONSchema({ unrepresentable: 'any' }) as Record<string, unknown>,
+    }))
+    .filter((row) => row.name.length > 0)
+    // The launch-flag-gated special cases register separately with curated parameter
+    // contracts and call-time handling; the table must not duplicate them.
+    .filter((row) => row.name !== 'change_title' && row.name !== 'memory_search' && row.name !== 'memory_get_window');
+
+  // The umbrella action_execute is a manual tool (no action-spec binding) but is the
+  // session-agent surface's route to spec-only actions; inline it from its manual
+  // contract, same source the built-in tool catalog uses.
+  rows.push({
+    name: 'action_execute',
+    title: 'Execute Action',
+    description: 'Execute a Happier action by action id with structured input (use for actions without a direct tool, e.g. machines.list, session.mode.set)',
+    inputSchema: actionExecuteToolInputSchema.toJSONSchema({ unrepresentable: 'any' }) as Record<string, unknown>,
+  });
+  return rows;
+}
 
 /**
  * Version of the Happier Pi tools-bridge extension. The generated file name stays
  * stable; bumping this version changes the emitted source so the write-if-changed
  * asset refresh replaces stale local copies.
  */
-export const PI_BRIDGE_EXTENSION_VERSION = '3';
+export const PI_BRIDGE_EXTENSION_VERSION = '4';
 
 export type PiBridgeExtensionSourceParams = Readonly<{
   /** Executable file path for launching the Happier CLI (from the subprocess launch spec). */
@@ -68,6 +114,7 @@ const SESSION_ID_FLAG = ${jsString(PI_BRIDGE_SESSION_ID_FLAG)};
 const SESSION_RENAME_FLAG = ${jsString(PI_BRIDGE_SESSION_RENAME_FLAG)};
 const PROMPT_OPTIONS_FLAG = ${jsString(PI_BRIDGE_PROMPT_OPTIONS_FLAG)};
 const MEMORY_MACHINE_ID_FLAG = ${jsString(PI_BRIDGE_MEMORY_MACHINE_ID_FLAG)};
+const SESSION_TOOLS_FLAG = ${jsString(PI_BRIDGE_SESSION_TOOLS_FLAG)};
 const TOKEN_COUNT_MARKER_TYPE = ${jsString(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)};
 const TOOL_CALL_TIMEOUT_MS = 120000;
 
@@ -77,6 +124,11 @@ const HAPPIER_CLI_ENV = ${JSON.stringify(params.launchEnv)};
 
 // Happier prompt blocks, inlined at generation time from @happier-dev/protocol
 // (single text owner — the daemon refreshes this asset on upgrade via write-if-changed).
+
+// Session-agent tool rows, inlined at generation time from the protocol action specs
+// (every session_agent-surfaced action with a direct tool binding; refreshed write-if-changed).
+// Registered only when the --${PI_BRIDGE_SESSION_TOOLS_FLAG} launch flag is passed.
+const SESSION_AGENT_TOOL_DEFS = ${JSON.stringify(buildSessionAgentToolDefs())};
 const SESSION_TITLE_INITIAL_BLOCK = ${JSON.stringify(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1)};
 const SESSION_TITLE_ONGOING_BLOCK = ${JSON.stringify(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_ONGOING_V1)};
 const RESPONSE_OPTIONS_BLOCK = ${JSON.stringify(HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1)};
@@ -98,6 +150,55 @@ function readFlagBool(pi, name) {
     return typeof pi.getFlag === "function" && pi.getFlag(name) === true;
   } catch {
     return false;
+  }
+}
+
+// Convert an inlined JSON Schema (draft 2020-12, produced by zod 4 toJSONSchema at
+// generation time) into a typebox parameter object for pi.registerTool. Covers the
+// shapes the protocol action input schemas use: object/anyOf/string/number/integer/
+// boolean/array plus the common constraints (enum, min/max, minLength/maxLength,
+// minimum/maximum, items, additionalProperties, description). Unknown constructs fall
+// back to Type.Any() so an exotic schema degrades to unconstrained, never breaks.
+function jsonSchemaToTypebox(schema) {
+  if (!schema || typeof schema !== "object") return Type.Any();
+  if (Array.isArray(schema.anyOf)) {
+    const variants = schema.anyOf.map((v) => jsonSchemaToTypebox(v));
+    // Optional-with-null unions (zod .nullable().optional()) become Type.Union with
+    // Type.Null(); optionality itself is handled by the property wrapper below.
+    return variants.length === 1 ? variants[0] : Type.Union(variants);
+  }
+  if (schema.enum) {
+    const values = schema.enum.filter((v) => v !== null);
+    return Type.Unsafe({ type: "string", enum: values });
+  }
+  const opts = {};
+  if (typeof schema.description === "string" && schema.description) opts.description = schema.description;
+  if (typeof schema.minimum === "number") opts.minimum = schema.minimum;
+  if (typeof schema.maximum === "number") opts.maximum = schema.maximum;
+  if (typeof schema.minLength === "number") opts.minLength = schema.minLength;
+  if (typeof schema.maxLength === "number") opts.maxLength = schema.maxLength;
+  switch (schema.type) {
+    case "string":
+      return Type.String(opts);
+    case "integer":
+      return Type.Integer(opts);
+    case "number":
+      return Type.Number(opts);
+    case "boolean":
+      return Type.Boolean(opts);
+    case "array":
+      return Type.Array(jsonSchemaToTypebox(schema.items), opts);
+    case "object": {
+      const props = {};
+      const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+      for (const [key, value] of Object.entries(schema.properties ?? {})) {
+        const converted = jsonSchemaToTypebox(value);
+        props[key] = required.has(key) ? converted : Type.Optional(converted);
+      }
+      return Type.Object(props, { additionalProperties: schema.additionalProperties === false ? false : true });
+    }
+    default:
+      return Type.Any(opts);
   }
 }
 
@@ -314,6 +415,11 @@ export default function HappierPiToolsBridgeExtension(pi) {
     description: "Happier daemon machine id binding the memory bridge tools",
     type: "string",
   });
+  pi.registerFlag(SESSION_TOOLS_FLAG, {
+    description: "Enable the full Happier session-agent tool surface (session_list, session_message_send, session_spawn_new, ...)",
+    type: "boolean",
+    default: false,
+  });
 
   let registered = false;
   pi.on("session_start", (_event, _ctx) => {
@@ -414,6 +520,25 @@ export default function HappierPiToolsBridgeExtension(pi) {
           return toolResult(await callHappierTool(pi, ctx, "memory_get_window", args));
         },
       });
+    }
+
+    // Full session-agent tool surface: opt-in via the SESSION_TOOLS_FLAG launch flag.
+    // Every row bridges 1:1 through the same 'happier tools call' path as the curated
+    // tools above; the only difference is that parameters are converted from the
+    // inlined JSON Schema (serialized from the protocol action specs at generation
+    // time) instead of being hand-written typebox objects.
+    if (readFlagBool(pi, SESSION_TOOLS_FLAG)) {
+      for (const def of SESSION_AGENT_TOOL_DEFS) {
+        pi.registerTool({
+          name: def.name,
+          label: def.title,
+          description: def.description,
+          parameters: jsonSchemaToTypebox(def.inputSchema),
+          async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+            return toolResult(await callHappierTool(pi, ctx, def.name, params));
+          },
+        });
+      }
     }
   });
 }

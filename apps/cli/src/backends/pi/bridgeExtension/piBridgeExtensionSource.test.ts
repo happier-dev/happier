@@ -16,6 +16,7 @@ import {
   PI_BRIDGE_PROMPT_OPTIONS_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
   PI_BRIDGE_SESSION_RENAME_FLAG,
+  PI_BRIDGE_SESSION_TOOLS_FLAG,
   PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE,
 } from './piBridgeExtensionEnv';
 
@@ -58,7 +59,33 @@ describe('buildPiBridgeExtensionSource', () => {
     expect(source).toContain('name: "change_title"');
     expect(source).toContain('name: "memory_search"');
     expect(source).toContain('name: "memory_get_window"');
-    expect(source.match(/pi\.registerTool\(/g)?.length).toBe(3);
+    expect(source.match(/pi\.registerTool\(/g)?.length).toBe(4);
+  });
+
+  it('inlines the session-agent tool table and gates it behind --happy-session-tools', () => {
+    const source = buildPiBridgeExtensionSource(baseParams());
+    // The flag contract is registered so Pi accepts it on the command line.
+    expect(source).toContain(`"${PI_BRIDGE_SESSION_TOOLS_FLAG}"`);
+    // The session-agent tool table is inlined from the protocol action specs — spot-check
+    // a cross-session tool, a spawn tool, and the umbrella from the canonical catalog.
+    expect(source).toContain('SESSION_AGENT_TOOL_DEFS');
+    expect(source).toContain('"session_list"');
+    expect(source).toContain('"session_message_send"');
+    expect(source).toContain('"session_wait_idle"');
+    expect(source).toContain('"session_spawn_new"');
+    expect(source).toContain('"action_execute"');
+    // Registration is gated on the flag; absent flag keeps the full set off.
+    expect(source).toMatch(/readFlagBool\(pi, SESSION_TOOLS_FLAG\)/);
+  });
+
+  it('excludes spec-only actions without tool bindings from the inlined table', () => {
+    const source = buildPiBridgeExtensionSource(baseParams());
+    // machines.list / paths.list_recent / servers.list / prompt_doc.update /
+    // session.mode.set / approval.request.create have no mcpToolName; they are only
+    // reachable through action_execute and must not appear as standalone rows.
+    expect(source.match(/"machines\.list"/g)).toBeNull();
+    expect(source.match(/"paths\.list_recent"/g)).toBeNull();
+    expect(source.match(/"session\.mode\.set"/g)).toBeNull();
   });
 
   it('stays inert without the session binding flag', () => {
@@ -131,15 +158,24 @@ describe('pi bridge extension context telemetry emission', () => {
 
 type ToolDef = {
   name: string;
+  label?: string;
+  description?: string;
+  parameters?: unknown;
   execute: (toolCallId: string, params: Record<string, unknown>, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<unknown>;
 };
 type EventHandler = (event: Record<string, unknown>, ctx: unknown) => unknown;
 
 const TYPEBOX_STUB = [
   'export const Type = {',
-  '  Object: (schema) => schema,',
+  '  Object: (properties, opts = {}) => ({ properties, ...opts }),',
   '  String: (opts = {}) => ({ type: "string", ...opts }),',
   '  Integer: (opts = {}) => ({ type: "integer", ...opts }),',
+  '  Number: (opts = {}) => ({ type: "number", ...opts }),',
+  '  Boolean: (opts = {}) => ({ type: "boolean", ...opts }),',
+  '  Array: (items, opts = {}) => ({ type: "array", items, ...opts }),',
+  '  Union: (variants) => ({ anyOf: variants }),',
+  '  Unsafe: (schema) => schema,',
+  '  Any: (opts = {}) => ({ ...opts }),',
   '  Optional: (schema) => ({ optional: true, ...schema }),',
   '};',
 ].join('\n');
@@ -219,7 +255,48 @@ describe('pi bridge extension behavior (generated artifact, exercised live)', ()
       PI_BRIDGE_SESSION_RENAME_FLAG,
       PI_BRIDGE_PROMPT_OPTIONS_FLAG,
       PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
+      PI_BRIDGE_SESSION_TOOLS_FLAG,
     ]);
+  });
+
+  it('registers the full session-agent tool surface only when --happy-session-tools is set', async () => {
+    // Without the flag: only the curated special cases (none active without their own flags).
+    const off = await driveExtension({ [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1' });
+    expect(off.harness.tools.map((t) => t.name)).toEqual([]);
+
+    // With the flag: the inlined session-agent table registers (48 action-bound rows +
+    // action_execute; the three curated special cases stay out of the table).
+    const on = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_SESSION_TOOLS_FLAG]: true,
+    });
+    const names = on.harness.tools.map((t) => t.name);
+    expect(names).toContain('session_list');
+    expect(names).toContain('session_message_send');
+    expect(names).toContain('session_wait_idle');
+    expect(names).toContain('session_spawn_new');
+    expect(names).toContain('action_execute');
+    // Curated special cases are absent from the table (they register via their own flags).
+    expect(names).not.toContain('change_title');
+    expect(names).not.toContain('memory_search');
+    // Spec-only actions (no tool binding) are not standalone rows.
+    expect(names).not.toContain('machines_list');
+    expect(names.length).toBe(49);
+  });
+
+  it('converts inlined JSON Schema parameters to typebox-compatible shapes', async () => {
+    const on = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_SESSION_TOOLS_FLAG]: true,
+    });
+    const sessionList = on.harness.tools.find((t) => t.name === 'session_list');
+    expect(sessionList).toBeDefined();
+    // The parameters object carries the converted properties (typebox objects expose [Kind]/'properties').
+    const params = sessionList?.parameters as Record<string, unknown>;
+    expect(params && typeof params === 'object').toBe(true);
+    const props = (params as { properties?: Record<string, unknown> }).properties;
+    expect(props && typeof props === 'object').toBe(true);
+    expect(Object.keys(props ?? {})).toContain('limit');
   });
 
   it('configures tools and appends the Happier prompt addition to the base system prompt', async () => {

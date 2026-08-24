@@ -37,6 +37,15 @@ export const PI_BRIDGE_PROMPT_OPTIONS_FLAG = 'happy-prompt-options';
 export const PI_BRIDGE_MEMORY_MACHINE_ID_FLAG = 'happy-memory-machine-id';
 
 /**
+ * Pi CLI flag enabling the full session-agent tool surface (session_list,
+ * session_message_send, session_spawn_new, … — every Happier built-in tool declared on
+ * the `session_agent` action surface). Absent (the default) keeps the surface off: only
+ * the launch-flag-gated change_title/memory tools register, preserving the conservative
+ * baseline while the surface is being rolled out.
+ */
+export const PI_BRIDGE_SESSION_TOOLS_FLAG = 'happy-session-tools';
+
+/**
  * Single-line JSON marker type the bridge extension writes to the Pi child's stderr after
  * each assistant message, carrying the live context usage (`used`, `size`). The Pi RPC
  * backend parses these markers off stderr and merges them into its per-turn token_count

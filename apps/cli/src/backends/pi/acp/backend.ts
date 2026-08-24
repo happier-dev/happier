@@ -6,6 +6,7 @@ import {
   PI_BRIDGE_PROMPT_OPTIONS_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
   PI_BRIDGE_SESSION_RENAME_FLAG,
+  PI_BRIDGE_SESSION_TOOLS_FLAG,
 } from '@/backends/pi/bridgeExtension';
 import {
   PI_BROKER_PROVIDERS,
@@ -46,6 +47,7 @@ export interface PiBackendOptions extends AgentFactoryOptions {
     sessionRenameMode: CodingPromptSessionTitleUpdatesModeV1;
     promptOptionsEnabled: boolean;
     memoryMachineId?: string | null;
+    sessionToolsEnabled?: boolean;
   }>;
 }
 
@@ -150,6 +152,7 @@ export function resolveHappyBridgeExtensionArgs(opts?: Readonly<{
     args.push(`--${PI_BRIDGE_SESSION_RENAME_FLAG}`, bridge.sessionRenameMode);
   }
   if (bridge.promptOptionsEnabled) args.push(`--${PI_BRIDGE_PROMPT_OPTIONS_FLAG}`);
+  if (bridge.sessionToolsEnabled) args.push(`--${PI_BRIDGE_SESSION_TOOLS_FLAG}`);
   if (typeof bridge.memoryMachineId === 'string' && bridge.memoryMachineId.trim()) {
     args.push(`--${PI_BRIDGE_MEMORY_MACHINE_ID_FLAG}`, bridge.memoryMachineId.trim());
   }

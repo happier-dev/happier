@@ -136,6 +136,7 @@ export type StandardAcpProviderConfig = {
     getAbortSignal: () => AbortSignal;
     setThinking: (value: boolean) => void;
     memoryRecallGuidanceEnabled: boolean;
+    sessionToolsEnabled?: boolean;
     pendingQueueDrainMaxPopPerWake?: number;
     providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
     turnAssistantPreviewTracker: TurnAssistantPreviewTracker;
@@ -498,6 +499,7 @@ export async function runStandardAcpProvider(
     getAbortSignal: () => abortController.signal,
     setThinking: setThinkingState,
     memoryRecallGuidanceEnabled,
+    sessionToolsEnabled: resolveCliFeatureDecision({ featureId: 'pi.sessionTools', env: process.env }).state === 'enabled',
     pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: providerInputConsumer as SessionProviderInputConsumer<unknown, unknown>,
     turnAssistantPreviewTracker,

@@ -28,6 +28,12 @@ export type HappyToolsBridgeBackendOptions = Readonly<{
    * be registered at all).
    */
   memoryMachineId: string | null;
+  /**
+   * Whether the full session-agent tool surface registers in the extension (the
+   * `--happy-session-tools` flag). Off by default while the surface rolls out; when
+   * enabled, every session_agent-surfaced built-in tool becomes available to the model.
+   */
+  sessionToolsEnabled: boolean;
 }>;
 
 /**
@@ -43,6 +49,7 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   settings: Record<string, unknown> | null | undefined;
   memoryRecallGuidanceEnabled: boolean;
   memoryMachineId?: string | null;
+  sessionToolsEnabled?: boolean;
 }>): Promise<HappyToolsBridgeBackendOptions | null> {
   if (!params.agentDir) return null;
 
@@ -53,6 +60,7 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     && params.memoryMachineId.trim()
     ? params.memoryMachineId.trim()
     : null;
+  const sessionToolsEnabled = params.sessionToolsEnabled === true;
 
   const launchSpec = buildHappyCliSubprocessLaunchSpec(['tools']);
   const argv = [...launchSpec.args];
@@ -65,5 +73,5 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     launchEnv: launchSpec.env ?? {},
   });
 
-  return { extensionPath, sessionRenameMode, promptOptionsEnabled, memoryMachineId };
+  return { extensionPath, sessionRenameMode, promptOptionsEnabled, memoryMachineId, sessionToolsEnabled };
 }
