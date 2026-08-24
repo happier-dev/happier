@@ -415,6 +415,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       environmentVariables: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-config',
         CODEX_HOME: '/tmp/codex-home',
+        CODEX_SQLITE_HOME: '/tmp/codex-sqlite-home',
         OPENAI_API_KEY: 'test-key',
         ANTHROPIC_AUTH_TOKEN: 'test-token',
       },
@@ -433,6 +434,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       environmentVariables: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-config',
         CODEX_HOME: '/tmp/codex-home',
+        CODEX_SQLITE_HOME: '/tmp/codex-sqlite-home',
       },
       connectedServices: {
         bindings: {
@@ -453,6 +455,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
     expect(opened?.value).toEqual({
       CLAUDE_CONFIG_DIR: '/tmp/claude-config',
       CODEX_HOME: '/tmp/codex-home',
+      CODEX_SQLITE_HOME: '/tmp/codex-sqlite-home',
       OPENAI_API_KEY: 'test-key',
       ANTHROPIC_AUTH_TOKEN: 'test-token',
     });
@@ -464,6 +467,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       environmentVariables: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-config',
         CODEX_HOME: '/tmp/codex-home',
+        CODEX_SQLITE_HOME: '/tmp/codex-sqlite-home',
         OPENAI_API_KEY: 'test-key',
         ANTHROPIC_AUTH_TOKEN: 'test-token',
       },
@@ -488,6 +492,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
         OPENAI_API_KEY: 'sk-openai',
         ANTHROPIC_AUTH_TOKEN: 'sk-anthropic',
         CODEX_HOME: '/tmp/codex-home',
+        CODEX_SQLITE_HOME: '/tmp/codex-sqlite-home',
       },
       extraEnvForChild: {
         CLAUDE_CONFIG_DIR: '/tmp/claude-config',
@@ -500,6 +505,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       OPENAI_API_KEY: 'sk-openai',
       ANTHROPIC_AUTH_TOKEN: 'sk-anthropic',
       CODEX_HOME: '/tmp/codex-home',
+      CODEX_SQLITE_HOME: '/tmp/codex-sqlite-home',
       CLAUDE_CONFIG_DIR: '/tmp/claude-config',
       [HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY]: materializationIdentityJson,
     });

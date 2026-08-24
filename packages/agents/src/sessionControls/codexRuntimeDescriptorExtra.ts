@@ -23,6 +23,7 @@ export type CodexRuntimeDescriptorProviderExtraRuntimeAffinity = Readonly<{
   connectedServiceProfileId: string | null;
   connectedServiceGroupId: string | null;
   homePath: string | null;
+  sqliteHomePath: string | null;
 }>;
 
 export type CodexRuntimeDescriptorProviderExtra = Readonly<{
@@ -35,6 +36,7 @@ export type CodexRuntimeDescriptorProviderExtra = Readonly<{
     connectedServiceProfileId?: string;
     connectedServiceGroupId?: string;
     homePath?: string;
+    sqliteHomePath?: string;
   }>;
 }>;
 
@@ -47,6 +49,7 @@ export function buildCodexRuntimeDescriptorProviderExtra(
     connectedServiceProfileId?: string | null;
     connectedServiceGroupId?: string | null;
     homePath?: string | null;
+    sqliteHomePath?: string | null;
   }>,
 ): CodexRuntimeDescriptorProviderExtra {
   const backendMode = normalizeCodexBackendMode(params.backendMode);
@@ -60,6 +63,7 @@ export function buildCodexRuntimeDescriptorProviderExtra(
     ? normalizeTrimmedString(params.connectedServiceGroupId)
     : null;
   const homePath = normalizeTrimmedString(params.homePath);
+  const sqliteHomePath = normalizeTrimmedString(params.sqliteHomePath);
 
   return {
     v: 1,
@@ -71,6 +75,7 @@ export function buildCodexRuntimeDescriptorProviderExtra(
       ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
       ...(connectedServiceGroupId ? { connectedServiceGroupId } : {}),
       ...(homePath ? { homePath } : {}),
+      ...(sqliteHomePath ? { sqliteHomePath } : {}),
     },
   };
 }
@@ -97,6 +102,7 @@ export function readCodexRuntimeDescriptorProviderExtra(
       ? normalizeTrimmedString(runtimeAffinity.connectedServiceGroupId)
       : null,
     homePath: normalizeTrimmedString(runtimeAffinity.homePath),
+    sqliteHomePath: normalizeTrimmedString(runtimeAffinity.sqliteHomePath),
   } satisfies CodexRuntimeDescriptorProviderExtraRuntimeAffinity;
 
   if (
@@ -104,6 +110,7 @@ export function readCodexRuntimeDescriptorProviderExtra(
     && !normalizedRuntimeAffinity.vendorSessionId
     && !normalizedRuntimeAffinity.home
     && !normalizedRuntimeAffinity.homePath
+    && !normalizedRuntimeAffinity.sqliteHomePath
   ) {
     return null;
   }
