@@ -19,7 +19,6 @@ import {
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
 import {
-    getSessionDraftSnapshot,
     subscribeSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
@@ -233,11 +232,17 @@ export function useSessionAgentInputComposerPersistence({
         if (!scope || owner?.kind !== 'session') return () => undefined;
         return subscribeSessionDraft(scope, { kind: 'session', sessionId: owner.sessionId }, listener);
     }, [owner, scope]);
-    const readSemanticDraftSnapshot = React.useCallback(() => {
-        if (!scope || owner?.kind !== 'session') return null;
-        return getSessionDraftSnapshot(scope, { kind: 'session', sessionId: owner.sessionId });
+    const readStructuredMentionsSignature = React.useCallback(() => {
+        if (!scope || owner?.kind !== 'session') return 'disabled';
+        return JSON.stringify(
+            existingSessionDraftSemanticValues.read(scope, owner.sessionId, 'structuredInput.mentions') ?? [],
+        );
     }, [owner, scope]);
-    React.useSyncExternalStore(subscribeToSemanticDraft, readSemanticDraftSnapshot, readSemanticDraftSnapshot);
+    React.useSyncExternalStore(
+        subscribeToSemanticDraft,
+        readStructuredMentionsSignature,
+        readStructuredMentionsSignature,
+    );
     const inputStateReadOptions = React.useMemo(() => ({ textLength, fontScale }), [fontScale, textLength]);
     const scopedStateReadOptions = React.useMemo(() => ({ text, textLength, fontScale }), [fontScale, text, textLength]);
     const previousOwnerRef = React.useRef<Readonly<{

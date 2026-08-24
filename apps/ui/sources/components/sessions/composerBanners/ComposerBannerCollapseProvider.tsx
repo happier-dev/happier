@@ -12,7 +12,8 @@ import type { SessionComposerBannerKind } from './composerBannerKinds';
 
 type ComposerBannerCollapseContextValue = Readonly<{
     collapsedKinds: ComposerBannerCollapseRecord;
-    toggle: (kind: SessionComposerBannerKind) => void;
+    ephemeralCollapsedKinds: ComposerBannerCollapseRecord;
+    toggle: (kind: SessionComposerBannerKind, persistence: 'preference' | 'ephemeral') => void;
 }>;
 
 const ComposerBannerCollapseContext = React.createContext<ComposerBannerCollapseContextValue | null>(null);
@@ -40,10 +41,10 @@ export function ComposerBannerCollapseProvider(props: Readonly<{ children: React
     // across collapse changes and reads the freshest inputs through refs instead of dependencies.
     const inputsRef = React.useRef({ remember, persisted, ephemeral });
     inputsRef.current = { remember, persisted, ephemeral };
-    const toggle = React.useCallback((kind: SessionComposerBannerKind) => {
+    const toggle = React.useCallback((kind: SessionComposerBannerKind, persistence: 'preference' | 'ephemeral') => {
         const inputs = inputsRef.current;
         const plan = planComposerBannerCollapseToggle({
-            remember: inputs.remember,
+            remember: persistence === 'preference' && inputs.remember,
             persisted: inputs.persisted,
             ephemeral: inputs.ephemeral,
             kind,
@@ -52,7 +53,7 @@ export function ComposerBannerCollapseProvider(props: Readonly<{ children: React
         if (plan.ephemeral) setEphemeral(plan.ephemeral);
     }, [setPersisted]);
 
-    const value = React.useMemo(() => ({ collapsedKinds, toggle }), [collapsedKinds, toggle]);
+    const value = React.useMemo(() => ({ collapsedKinds, ephemeralCollapsedKinds: ephemeral, toggle }), [collapsedKinds, ephemeral, toggle]);
 
     return (
         <ComposerBannerCollapseContext.Provider value={value}>
@@ -66,13 +67,20 @@ export type ComposerBannerCollapseState = Readonly<{
     toggle: () => void;
 }>;
 
-export function useComposerBannerCollapse(kind: SessionComposerBannerKind): ComposerBannerCollapseState {
+export function useComposerBannerCollapse(
+    kind: SessionComposerBannerKind,
+    options?: Readonly<{ persistence?: 'preference' | 'ephemeral' }>,
+): ComposerBannerCollapseState {
     const context = React.useContext(ComposerBannerCollapseContext);
-    const collapsed = isComposerBannerCollapsedInRecord(context?.collapsedKinds, kind);
+    const persistence = options?.persistence ?? 'preference';
+    const collapsed = isComposerBannerCollapsedInRecord(
+        persistence === 'ephemeral' ? context?.ephemeralCollapsedKinds : context?.collapsedKinds,
+        kind,
+    );
     const contextToggle = context?.toggle;
     const toggle = React.useCallback(() => {
-        contextToggle?.(kind);
-    }, [contextToggle, kind]);
+        contextToggle?.(kind, persistence);
+    }, [contextToggle, kind, persistence]);
 
     return React.useMemo(() => ({ collapsed, toggle }), [collapsed, toggle]);
 }

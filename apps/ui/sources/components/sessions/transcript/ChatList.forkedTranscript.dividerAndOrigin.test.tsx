@@ -206,7 +206,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         overrides: {
             storage: createStorageStoreMock(createStorageState()),
             useSession: () => sessionState,
-            useSessionTranscriptIds: () => ({ ids: ['c1'], isLoaded: true }),
+            useSessionTranscriptIds: () => ({ ids: ['c1'], isLoaded: true, hasRetainedContent: false }),
             useSessionMessagesById: () => ({
                 c1: { kind: 'agent-text', id: 'c1', localId: null, createdAt: 2, text: 'child', isThinking: false },
             }),

@@ -327,6 +327,9 @@ interface AgentInputProps {
         isPulsing?: boolean;
     };
     statusBadges?: ReadonlyArray<AgentInputStatusBadgeDescriptor>;
+    statusTrailingActions?: React.ReactNode;
+    /** Hosts with an editable permission chip may omit the repeated status-row label. */
+    showStatusPermissionMode?: boolean;
     activeStatusBadgeKey?: string | null;
     onActiveStatusBadgeKeyChange?: (key: string | null) => void;
     /** Eligible suggestion kinds for this composer host. Trigger characters follow from the kinds (INV-1). */
@@ -3393,7 +3396,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     testID="agent-input-command-menu"
                 />
                 {/* Connection status, context usage, and permission mode */}
-                {(props.connectionStatus || contextUsageState || props.providerUsageGauge || (props.statusBadges && props.statusBadges.length > 0)) && (
+                {(props.connectionStatus || contextUsageState || props.providerUsageGauge || props.statusTrailingActions || (props.statusBadges && props.statusBadges.length > 0)) && (
                     <View style={styles.statusContainer}>
                         <View style={styles.statusRow}>
                             {props.connectionStatus && (
@@ -3428,11 +3431,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             ))}
                         </View>
                         <View testID="agent-input-status-trailing" style={styles.statusTrailing}>
-                            <View style={[
-                                styles.permissionModeContainer,
-                                (contextUsageState || props.providerUsageGauge) ? { marginRight: 8 } : null,
-                            ]}>
-                                {shouldRenderPermissionChip(permissionChipLabel) ? (
+                            {props.statusTrailingActions}
+                            {props.showStatusPermissionMode !== false ? (
+                                <View style={[
+                                    styles.permissionModeContainer,
+                                    (contextUsageState || props.providerUsageGauge) ? { marginRight: 8 } : null,
+                                ]}>
+                                    {shouldRenderPermissionChip(permissionChipLabel) ? (
                                     <Text
                                         style={[
                                             styles.permissionModeText,
@@ -3449,8 +3454,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     >
                                         {permissionChipLabel}
                                     </Text>
-                                ) : null}
-                            </View>
+                                    ) : null}
+                                </View>
+                            ) : null}
                             {(() => {
                                 const showOnlyOneGauge = screenWidth < 375 && Boolean(contextUsageState && props.providerUsageGauge);
                                 const providerIsMoreUrgent = props.providerUsageGauge?.tone === 'critical'

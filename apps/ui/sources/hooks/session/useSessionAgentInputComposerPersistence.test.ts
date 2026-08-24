@@ -157,6 +157,10 @@ async function importExistingSessionDraftSemanticValues() {
     return await import('@/sync/domains/input/drafts/existingSessionDraftSemanticValues');
 }
 
+async function importSessionDraftRepository() {
+    return await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+}
+
 async function importLocalUiStatePersistence() {
     return await import('@/sync/domains/state/agentInputLocalUiStatePersistence');
 }
@@ -715,6 +719,42 @@ describe('useSessionAgentInputComposerPersistence', () => {
             'session-a',
             'structuredInput.mentions',
         )).toEqual([survivingMention]);
+    });
+
+    it('does not rerender composer persistence for unrelated draft text writes', async () => {
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        const repository = await importSessionDraftRepository();
+        let renderCount = 0;
+
+        function Harness() {
+            renderCount += 1;
+            useSessionAgentInputComposerPersistence({
+                sessionId: 'session-a',
+                text: '',
+                textLength: 0,
+                fontScale: 1,
+            });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Harness));
+        });
+        const settledRenderCount = renderCount;
+
+        await act(async () => {
+            repository.writeExistingSessionDraft({
+                scope: activeScopeState.value,
+                sessionId: 'session-a',
+                patch: { text: 'hello' },
+            });
+        });
+
+        expect(renderCount).toBe(settledRenderCount);
+        await act(async () => {
+            tree!.unmount();
+        });
     });
 
     it('persists structured mention changes for the session owner', async () => {

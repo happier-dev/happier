@@ -20,11 +20,11 @@ import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 
+import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
 import {
-    clearSessionDraftValue,
-    readSessionDraftValue,
-    writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+    getSessionDraftSnapshot,
+    subscribeSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type {
     SessionArmedAgentContinuation,
     SessionArmedAgentContinuationSubmission,
@@ -34,6 +34,7 @@ import {
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
     buildSessionAgentPickerDetailContent,
@@ -60,7 +61,39 @@ import {
  */
 type ArmedAgentContinuation = SessionArmedAgentContinuation;
 
-const ARMED_AGENT_CONTINUATION_FIELD_ID = 'routing.agentContinuation' as const;
+function readPersistedArmedContinuation(
+    scope: ServerAccountScope | null,
+    sessionId: string | null,
+): ArmedAgentContinuation | undefined {
+    return scope && sessionId
+        ? existingSessionDraftSemanticValues.read(scope, sessionId, 'routing.agentContinuation')
+        : undefined;
+}
+
+function writePersistedArmedContinuation(
+    scope: ServerAccountScope | null,
+    sessionId: string | null,
+    next: ArmedAgentContinuation,
+): void {
+    if (!scope || !sessionId) return;
+    existingSessionDraftSemanticValues.write(scope, sessionId, 'routing.agentContinuation', next);
+    fireAndForget(
+        existingSessionDraftSemanticValues.flush(scope, sessionId),
+        { tag: 'useInSessionAgentPickerControls.flushArm' },
+    );
+}
+
+function clearPersistedArmedContinuation(
+    scope: ServerAccountScope | null,
+    sessionId: string | null,
+): void {
+    if (!scope || !sessionId) return;
+    existingSessionDraftSemanticValues.clear(scope, sessionId, 'routing.agentContinuation');
+    fireAndForget(
+        existingSessionDraftSemanticValues.flush(scope, sessionId),
+        { tag: 'useInSessionAgentPickerControls.flushClearedArm' },
+    );
+}
 
 /**
  * The lifetime of one armed choice, as a key. Formed in one place so the value
@@ -79,13 +112,6 @@ function isSameArmedContinuation(
     return persisted?.backendTargetKey === expected.backendTargetKey
         && JSON.stringify(persisted.intent) === JSON.stringify(expected.intent)
         && JSON.stringify(persisted.submission) === JSON.stringify(expected.submission);
-}
-
-function isSameArmedContinuationSubmission(
-    actual: SessionArmedAgentContinuationSubmission | undefined,
-    expected: SessionArmedAgentContinuationSubmission,
-): boolean {
-    return actual !== undefined && JSON.stringify(actual) === JSON.stringify(expected);
 }
 
 type UseInSessionAgentPickerControlsParams = Readonly<{
@@ -264,8 +290,6 @@ export type InSessionAgentPickerControls = Readonly<{
      */
     armedContinuationSubmissionIntent: ArmedAgentContinuation['intent'] | null;
     clearArmedContinuation: () => void;
-    /** Clears exactly the persisted submission that canonical custody consumed. */
-    clearArmedContinuationSubmissionIfCurrent: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /** Captures the exact canonical user-message request before transition dispatch. */
     recordArmedContinuationSubmission: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /**
@@ -347,6 +371,15 @@ export function useInSessionAgentPickerControls(
     const featureDefinitelyDisabled = params.featureDecision?.state === 'disabled';
     const accountScopeKey = accountScope ? serverAccountScopeKeySuffix(accountScope) : 'local';
     const draftSessionId = sessionId.trim().length > 0 ? sessionId.trim() : null;
+    const subscribeToDraft = React.useCallback((listener: () => void) => {
+        if (!accountScope || !draftSessionId) return () => undefined;
+        return subscribeSessionDraft(accountScope, { kind: 'session', sessionId: draftSessionId }, listener);
+    }, [accountScope, draftSessionId]);
+    const readDraftSnapshot = React.useCallback(() => {
+        if (!accountScope || !draftSessionId) return null;
+        return getSessionDraftSnapshot(accountScope, { kind: 'session', sessionId: draftSessionId });
+    }, [accountScope, draftSessionId]);
+    const draftSnapshot = React.useSyncExternalStore(subscribeToDraft, readDraftSnapshot, readDraftSnapshot);
 
     const currentAgentAppliedStatus = resolveAppliedRuntimeStatus(params.currentAgentSessionActive);
     // Read once per mount rather than at module evaluation: this file is reached
@@ -356,7 +389,7 @@ export function useInSessionAgentPickerControls(
     const [armed, setArmed] = React.useState<ArmedAgentContinuation | null>(null);
     const persistedArmedContinuation = draftSessionId === null
         ? undefined
-        : readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+        : readPersistedArmedContinuation(accountScope, draftSessionId);
     // A submitted input remains custody even after the arm that promised a
     // next-message transition loses eligibility. It remains in the one existing
     // draft record until SessionView has reconciled canonical custody.
@@ -376,16 +409,16 @@ export function useInSessionAgentPickerControls(
             return;
         }
         if (next === null) {
-            const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
             if (persisted?.submission !== undefined) {
                 setArmed(null);
                 return;
             }
             setArmed(null);
-            clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            clearPersistedArmedContinuation(accountScope, draftSessionId);
         } else {
             setArmed(next);
-            writeSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID, next);
+            writePersistedArmedContinuation(accountScope, draftSessionId, next);
         }
     }, [accountScope, draftSessionId]);
     // Whether the composer's Agent picker is on screen. Its only job is to scope
@@ -587,18 +620,6 @@ export function useInSessionAgentPickerControls(
         persistArmedContinuation(null);
     }, [persistArmedContinuation]);
 
-    const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
-        expected: SessionArmedAgentContinuationSubmission,
-    ): boolean => {
-        if (draftSessionId === null) {
-            return isSameArmedContinuationSubmission(armed?.submission, expected);
-        }
-        const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
-        if (!isSameArmedContinuationSubmission(persisted?.submission, expected)) return false;
-        clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
-        return true;
-    }, [accountScope, armed?.submission, draftSessionId]);
-
     // The submission identity for the armed choice, derived from the choice
     // itself rather than minted at whichever affordance established it.
     //
@@ -656,26 +677,18 @@ export function useInSessionAgentPickerControls(
         if (invalidation !== null) {
             invalidatedArmRef.current = null;
             reconciledArmScopeKeyRef.current = armScopeKey;
-            const persisted = readSessionDraftValue(
-                invalidation.accountScope,
-                draftSessionId,
-                ARMED_AGENT_CONTINUATION_FIELD_ID,
-            );
+            const persisted = readPersistedArmedContinuation(invalidation.accountScope, draftSessionId);
             if (isSameArmedContinuation(persisted, invalidation.arm) && persisted?.submission === undefined) {
-                clearSessionDraftValue(
-                    invalidation.accountScope,
-                    draftSessionId,
-                    ARMED_AGENT_CONTINUATION_FIELD_ID,
-                );
+                clearPersistedArmedContinuation(invalidation.accountScope, draftSessionId);
             }
             return;
         }
 
         if (featureDefinitelyDisabled) {
             reconciledArmScopeKeyRef.current = armScopeKey;
-            const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
             if (persisted?.submission === undefined && typeof persisted !== 'undefined') {
-                clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+                clearPersistedArmedContinuation(accountScope, draftSessionId);
             }
             return;
         }
@@ -684,7 +697,7 @@ export function useInSessionAgentPickerControls(
         if (!featureEnabled || !railDecisionSettled || currentAgentId === null) return;
         if (armed !== null) return;
 
-        const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+        const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
         if (typeof persisted === 'undefined') return;
 
         const persistedTargetSelection = projectPersistedArmSelection(persisted);
@@ -720,13 +733,14 @@ export function useInSessionAgentPickerControls(
         }
         reconciledArmScopeKeyRef.current = armScopeKey;
         if (persisted.submission === undefined) {
-            clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            clearPersistedArmedContinuation(accountScope, draftSessionId);
         }
     }, [
         accountScope,
         armScopeKey,
         armed,
         currentAgentId,
+        draftSnapshot,
         draftSessionId,
         featureEnabled,
         featureDefinitelyDisabled,
@@ -980,7 +994,6 @@ export function useInSessionAgentPickerControls(
         armedContinuationSubmission: submissionArm?.submission ?? null,
         armedContinuationSubmissionIntent: submissionArm?.intent ?? null,
         clearArmedContinuation,
-        clearArmedContinuationSubmissionIfCurrent,
         recordArmedContinuationSubmission,
         onAgentPickerIntent: signalAgentPickerIntent,
         onAgentPickerVisibilityChange,

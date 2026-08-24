@@ -701,6 +701,7 @@ export async function createFlashListChatListStorageMock(
                 return {
                     ids: readMessageIds(),
                     isLoaded: flashListChatListHarnessState.sessionMessagesState.isLoaded,
+                    hasRetainedContent: false,
                 };
             },
             useSessionMessagesById: () => readMessagesById(),

@@ -1137,14 +1137,19 @@ describe('MultiTextInput', () => {
             });
             const input = tree!.root.findByType('textarea' as any);
 
-            for (const text of [firstEdit, secondEdit]) {
-                mockTextarea.value = text;
-                mockTextarea.selectionStart = text.length;
-                mockTextarea.selectionEnd = text.length;
-                await act(async () => {
-                    input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
-                });
-            }
+            mockTextarea.value = firstEdit;
+            mockTextarea.selectionStart = firstEdit.length;
+            mockTextarea.selectionEnd = firstEdit.length;
+            await act(async () => {
+                input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
+            });
+
+            mockTextarea.value = secondEdit;
+            mockTextarea.selectionStart = secondEdit.length;
+            mockTextarea.selectionEnd = secondEdit.length;
+            await act(async () => {
+                input.props.onChange({ target: mockTextarea, currentTarget: mockTextarea });
+            });
 
             await act(async () => {
                 tree!.update(

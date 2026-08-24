@@ -71,6 +71,24 @@ export type TranscriptRevealFlipDiagnosticEntry = Readonly<{
 }>;
 
 /**
+ * A transcript that was showing content stopped being able to show it.
+ *
+ * This blank is transient and rare enough that watching for it does not work — it has to be
+ * recorded when it happens. Every remaining producer of an empty transcript funnels through the
+ * SessionView mount gate, so the gate records the decision inputs here and the cause can be read
+ * back afterwards whatever wrote the empty state.
+ */
+export type TranscriptBlankDiagnosticEntry = Readonly<{
+    atMs: number;
+    committedMessagesCount: number;
+    hasRetainedContent: boolean;
+    isLoaded: boolean;
+    pendingMessagesCount: number;
+    reason: 'mount-gate-closed' | 'timeline-hidden';
+    sessionId: string;
+}>;
+
+/**
  * Why the physical-write ring is (not) observing anything.
  *
  * `physicalWrites: []` is ambiguous on its own and that ambiguity has already cost this
@@ -195,6 +213,7 @@ type DiagnosticsSink = {
     readPhysicalWriteCensus: () => TranscriptPhysicalWriteCensus;
     revealFlips: TranscriptRevealFlipDiagnosticEntry[];
     scrollSamples: TranscriptScrollSampleDiagnosticEntry[];
+    transcriptBlanks: TranscriptBlankDiagnosticEntry[];
     writes: TranscriptViewportWriteDiagnosticEntry[];
 };
 
@@ -299,6 +318,7 @@ function resolveSink(): DiagnosticsSink {
         existing.physicalWriteObserver ??= NEVER_ARMED_OBSERVER_STATE;
         existing.readPhysicalWriteCensus ??= readTranscriptPhysicalWriteCensus;
         existing.scrollSamples ??= [];
+        existing.transcriptBlanks ??= [];
         return existing;
     }
     const created: DiagnosticsSink = {
@@ -308,6 +328,7 @@ function resolveSink(): DiagnosticsSink {
         readPhysicalWriteCensus: readTranscriptPhysicalWriteCensus,
         revealFlips: [],
         scrollSamples: [],
+        transcriptBlanks: [],
         writes: [],
     };
     host.__happierViewportDiagnostics = created;
@@ -402,6 +423,23 @@ export function recordTranscriptScrollSample(
 ): void {
     if (!isTranscriptViewportDiagnosticsEnabled()) return;
     pushBounded(resolveSink().scrollSamples, {
+        ...params,
+        atMs: Date.now(),
+    });
+}
+
+/**
+ * Records a transcript losing its ability to show content, with the inputs that decided it.
+ *
+ * No-op unless diagnostics are enabled (`happier.debug.viewportWrites=1`), so this costs a
+ * single boolean read on the render path when it is off. Read the ring back from
+ * `__happierViewportDiagnostics.transcriptBlanks`.
+ */
+export function recordTranscriptBlank(
+    params: Omit<TranscriptBlankDiagnosticEntry, 'atMs'>,
+): void {
+    if (!isTranscriptViewportDiagnosticsEnabled()) return;
+    pushBounded(resolveSink().transcriptBlanks, {
         ...params,
         atMs: Date.now(),
     });

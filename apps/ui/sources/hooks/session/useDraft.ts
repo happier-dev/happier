@@ -459,6 +459,9 @@ export function useDraft(
         const targetSessionId = snapshot.sessionId.trim();
         if (!targetSessionId) return false;
         const targetAddress = { kind: 'session' as const, sessionId: targetSessionId };
+        if (lastSessionId.current === targetSessionId && latestValue.current !== snapshot.text) {
+            saveDraftForSession(snapshot.scope, targetSessionId, latestValue.current);
+        }
         fireAndForget(
             clearSessionDraftCurrentness({
                 scope: snapshot.scope,
@@ -475,7 +478,7 @@ export function useDraft(
             autosaveSkip.current = { sessionId: targetSessionId, value: remainingText };
         }
         return true;
-    }, [onChange]);
+    }, [onChange, saveDraftForSession]);
 
     return {
         clearDraft,

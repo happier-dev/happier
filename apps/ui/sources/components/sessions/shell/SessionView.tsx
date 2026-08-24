@@ -38,6 +38,7 @@ import {
 import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
 import { resolveSessionComposerSuggestions } from '@/components/sessions/agentInput/sessionComposerSuggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
+import { recordTranscriptBlank } from '@/components/sessions/transcript/viewport/driver/transcriptViewportWriteDiagnostics';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { SessionHeaderIconWithCount } from '@/components/sessions/actions/SessionHeaderIconWithCount';
@@ -63,6 +64,11 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
+import type { SessionDraftCurrentness } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import {
+    SessionDraftConflictResolution,
+    useSessionDraftConflictComposerBanner,
+} from '@/components/sessions/drafts/SessionDraftConflictResolution';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionAgentInputComposerPersistence } from '@/hooks/session/useSessionAgentInputComposerPersistence';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -79,6 +85,8 @@ import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/fi
 import { Modal } from '@/modal';
 import { useScmSessionAutoRefresh } from '@/scm/refresh/useScmSessionAutoRefresh';
 import { buildNewSessionSourceContextNavigation } from '@/components/sessions/new/navigation/newSessionSourceContextNavigation';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { sessionAbort, resumeSession } from '@/sync/ops';
 import { storage, useActiveServerAccountScope, useEndpointConnectivity, useIsDataReady, useLaunchSelectionMachines, useLocalSetting, useMachine, useOpenApprovalArtifactsForSession, useProfile, useRealtimeStatus, useSessionAutomationsEnabledCount, useSessionConnectedServiceAccountSwitchEvents, useSessionMessages, useSessionOrganizationProjection, useSessionPendingMessages, useSessionTranscriptIds, useSessionUsage, useSessionVisibleReadSeq, useSetting, useSettingMutable, useSettings, useSocketStatus, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { canContinueSessionWithFreshSpawn, canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
@@ -123,14 +131,8 @@ import {
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
-import {
-    clearSessionDraftValue,
-    clearSessionDraftValues,
-    flushSessionDraftValues,
-    readSessionDraftValue,
-    writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import type { SessionArmedAgentContinuationSubmission } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { AgentInputLocalUiStateV1 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
@@ -397,6 +399,27 @@ function readCanonicalOutboundHandoffForLocalId(
 function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: string | null): boolean {
     return readCanonicalOutboundHandoffForLocalId(sessionId, localId) !== 'absent';
 }
+
+const SESSION_COMPOSER_SEMANTIC_DRAFT_FIELD_IDS = [
+    'composer.mentions',
+    'routing.recipient',
+    'routing.executionRunDelivery',
+] as const;
+
+function areSessionDraftCurrentnessCapturesEqual(
+    left: SessionDraftCurrentness | null,
+    right: SessionDraftCurrentness | null,
+): boolean {
+    if (!left || !right || left.address.kind !== right.address.kind) return left === right;
+    if (left.address.kind === 'session') {
+        if (right.address.kind !== 'session' || left.address.sessionId !== right.address.sessionId) return false;
+    } else if (right.address.kind !== 'newSession' || left.address.draftId !== right.address.draftId) {
+        return false;
+    }
+    const leftEntries = Object.entries(left.mutationIds);
+    return leftEntries.length === Object.keys(right.mutationIds).length
+        && leftEntries.every(([fieldId, mutationId]) => right.mutationIds[fieldId] === mutationId);
+}
 import {
     isHiddenSystemSession,
     ConnectedServiceIdSchema,
@@ -412,6 +435,7 @@ import { resolveNextOptimisticAcpConfigOptionOverrides } from './resolveNextOpti
 import { useSessionViewShellSession, useSessionViewShellSessionSeq } from './sessionViewStableSession';
 import {
     isEmptyPendingMessageComposerSemanticDraftSnapshot,
+    readPendingMessageComposerSemanticDraftSnapshot,
     type PendingMessageComposerEditState,
     type PendingMessageComposerSemanticDraftSnapshot as ComposerSemanticDraftSnapshot,
 } from './pendingMessageComposerEditSnapshot';
@@ -1129,10 +1153,6 @@ function useStableAgentInputFileViewerPress(handler: AgentInputOnFileViewerPress
     handlerRef.current = handler;
 
     return React.useCallback<AgentInputOnFileViewerPress>(() => handlerRef.current(), []);
-}
-
-function areSemanticDraftValuesEqual(left: unknown, right: unknown): boolean {
-    return JSON.stringify(left) === JSON.stringify(right);
 }
 
 const EMPTY_AGENT_INPUT_REQUESTS: readonly PendingPermissionRequest[] = Object.freeze([]);
@@ -2002,9 +2022,14 @@ function useSessionTranscriptRenderState({
     isLocallyAttached,
     pendingMessagesCount,
 }: SessionTranscriptRenderStateInput) {
-    const { ids: committedMessageIds, isLoaded } = useSessionTranscriptIds(sessionId);
+    const { ids: committedMessageIds, isLoaded, hasRetainedContent } = useSessionTranscriptIds(sessionId);
     const shouldRenderChatTimeline = React.useMemo(() => {
         if (isEncryptedSessionLocked) return false;
+        // A `resetSessionMessages` -> refetch window empties the ids while the entry survives, but
+        // `useSessionMessages` keeps serving its cached rows through it. Treating that window as
+        // "no content" would unmount the transcript the reader is looking at and swap in the
+        // first-paint placeholder — the blank this window exists to avoid.
+        if (hasRetainedContent) return true;
         return shouldRenderChatTimelineForSession({
             committedMessagesCount: committedMessageIds.length,
             pendingMessagesCount,
@@ -2014,10 +2039,11 @@ function useSessionTranscriptRenderState({
             // still render the transcript so it can page backwards to find visible messages.
             forceRenderFooter: isForkedSessionV1 || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
         });
-    }, [committedMessageIds.length, isEncryptedSessionLocked, isForkedSessionV1, isLoaded, isLocallyAttached, pendingMessagesCount, session.seq]);
+    }, [committedMessageIds.length, hasRetainedContent, isEncryptedSessionLocked, isForkedSessionV1, isLoaded, isLocallyAttached, pendingMessagesCount, session.seq]);
 
     return {
         committedMessagesCount: committedMessageIds.length,
+        hasRetainedContent,
         isLoaded,
         shouldRenderChatTimeline,
     };
@@ -2115,7 +2141,7 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
         };
     }
 
-    const { committedMessagesCount, isLoaded, shouldRenderChatTimeline } = useSessionTranscriptRenderState({
+    const { committedMessagesCount, hasRetainedContent, isLoaded, shouldRenderChatTimeline } = useSessionTranscriptRenderState({
         sessionId,
         session,
         isEncryptedSessionLocked,
@@ -2169,7 +2195,39 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
             isLoaded === true
             || committedMessagesCount > 0
             || pendingMessagesCount > 0
+            // Retained rows are presentable content: covering them with the first-paint
+            // placeholder would blink a transcript the reader is already reading.
+            || hasRetainedContent
         );
+
+    // Opt-in rare-defect probe (no-op unless happier.debug.viewportWrites=1). This gate is the
+    // last choke point every empty-transcript producer funnels through, so recording the frame
+    // where it closes captures the cause of a blank that is too transient to catch by watching.
+    const transcriptWasMountableRef = React.useRef(false);
+    React.useEffect(() => {
+        if (transcriptCanMountWithoutDeferredWindow) {
+            transcriptWasMountableRef.current = true;
+            return;
+        }
+        if (!transcriptWasMountableRef.current) return;
+        transcriptWasMountableRef.current = false;
+        recordTranscriptBlank({
+            committedMessagesCount,
+            hasRetainedContent,
+            isLoaded: isLoaded === true,
+            pendingMessagesCount,
+            reason: shouldRenderChatTimeline ? 'mount-gate-closed' : 'timeline-hidden',
+            sessionId,
+        });
+    }, [
+        committedMessagesCount,
+        hasRetainedContent,
+        isLoaded,
+        pendingMessagesCount,
+        sessionId,
+        shouldRenderChatTimeline,
+        transcriptCanMountWithoutDeferredWindow,
+    ]);
 
     return (
         <Deferred enabled={transcriptCanMountWithoutDeferredWindow} fallback={transcriptDeferredFallback}>
@@ -3095,7 +3153,11 @@ function SessionViewLoaded({
                         void handleUsageLimitRecoveryAction(kind);
                     },
                     startFreshUnderSelectedAccount: () => {
-                        router.push('/new');
+                        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
+                        router.push({
+                            pathname: '/new',
+                            params: buildNewSessionLaunchRouteParams({ draftId }),
+                        });
                     },
                     resumeCurrentAccount: () => {},
                     openConnectedAccounts: () => {
@@ -4093,7 +4155,12 @@ function SessionViewLoaded({
         setDraftValue,
         restoreDraft,
         restoreComposerSnapshot,
+        captureDraftForOutboundHandoff,
+        clearDraftCurrentness,
+        draftSnapshot,
+        draftScope,
     } = useDraft(sessionId, message, setMessage);
+    const draftConflictBanner = useSessionDraftConflictComposerBanner(draftSnapshot?.conflict ?? null);
     const messageRef = React.useRef(message);
     React.useEffect(() => {
         messageRef.current = message;
@@ -4110,62 +4177,16 @@ function SessionViewLoaded({
     const inputComposerRestoreTransientStateRef = React.useRef<(state: AgentInputLocalUiStateV1 | null) => void>(
         noopInputComposerRestoreTransientState,
     );
-    const captureComposerSemanticDraftSnapshot = React.useCallback((): ComposerSemanticDraftSnapshot => ({
-        recipient: readSessionDraftValue(activeServerAccountScope, sessionId, 'routing.recipient'),
-        executionRunDelivery: readSessionDraftValue(activeServerAccountScope, sessionId, 'routing.executionRunDelivery'),
-        structuredInputMentions: readSessionDraftValue(activeServerAccountScope, sessionId, 'structuredInput.mentions'),
-    }), [activeServerAccountScope, sessionId]);
-    const isComposerSemanticDraftSnapshotCurrent = React.useCallback((snapshot: ComposerSemanticDraftSnapshot) => {
-        const current = captureComposerSemanticDraftSnapshot();
-        return areSemanticDraftValuesEqual(current, snapshot);
-    }, [captureComposerSemanticDraftSnapshot]);
-    const clearSemanticDraftValuesAfterOutboundHandoff = React.useCallback(() => {
-        clearSessionDraftValues(activeServerAccountScope, sessionId, {
-            lifecycle: 'outboundHandoff',
-        });
-    }, [activeServerAccountScope, sessionId]);
     const {
         armedContinuation: liveArmedContinuation,
         armedContinuationLocalId: liveArmedContinuationLocalId,
         armedContinuationSubmission: liveArmedContinuationSubmission,
         clearArmedContinuation,
-        clearArmedContinuationSubmissionIfCurrent: clearPersistedArmedContinuationSubmissionIfCurrent,
     } = inSessionAgentPicker;
-    // One compare-clear owner consumes both a live transition and the nested
-    // pre-RPC snapshot restored after remount. It clears only values that still
-    // match the exact submitted input, preserving every newer composer edit.
-    const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
+    const clearArmedContinuationNonDraftSubmissionIfCurrent = React.useCallback((
         submission: SessionArmedAgentContinuationSubmission,
-    ): boolean => {
+    ) => {
         const currentness = submission.currentness;
-        let didClearSemantic = false;
-        const didClearComposer = clearComposerAfterOutboundHandoff({
-            snapshot: {
-                sessionId,
-                text: currentness?.text ?? submission.input.text,
-            },
-            clearDraftForSessionIfCurrentValueMatches,
-            clearTransientInputState: inputComposerClearTransientStateRef.current,
-            ...(currentness
-                ? {
-                    clearSemanticDraftValues: () => {
-                        for (const [fieldId, expected] of [
-                            ['structuredInput.mentions', currentness.mentions],
-                        ] as const) {
-                            const actual = readSessionDraftValue(activeServerAccountScope, sessionId, fieldId);
-                            if (typeof actual === 'undefined' || JSON.stringify(actual) !== JSON.stringify(expected)) {
-                                continue;
-                            }
-                            clearSessionDraftValue(activeServerAccountScope, sessionId, fieldId, { flush: false });
-                            didClearSemantic = true;
-                        }
-                        if (didClearSemantic) flushSessionDraftValues(activeServerAccountScope);
-                    },
-                }
-                : {}),
-        });
-
-        let didClearAttachmentDrafts = false;
         if (currentness && currentness.attachmentDraftIds.length > 0) {
             const submittedAttachmentDraftIds = new Set(currentness.attachmentDraftIds);
             const currentAttachmentDrafts = attachmentDraftsSnapshotRef.current;
@@ -4174,35 +4195,22 @@ function SessionViewLoaded({
             ));
             if (nextAttachmentDrafts.length !== currentAttachmentDrafts.length) {
                 replaceSessionAttachmentDrafts(nextAttachmentDrafts);
-                didClearAttachmentDrafts = true;
             }
         }
 
-        let didClearReviewComments = false;
         const happierEnvelope = readObjectRecord(submission.input.meta.happier);
         const submittedReviewComments = happierEnvelope?.kind === 'review_comments.v1'
             ? parseReviewCommentsV1(happierEnvelope.payload)
             : null;
-        if (submittedReviewComments !== null) {
-            const currentReviewComments = buildReviewCommentsV1MetaPayload({
-                sessionId,
-                drafts: includedReviewCommentDrafts,
-            });
-            if (JSON.stringify(currentReviewComments) === JSON.stringify(submittedReviewComments)) {
-                clearSentReviewCommentDrafts();
-                didClearReviewComments = true;
-            }
+        if (submittedReviewComments === null) return;
+        const currentReviewComments = buildReviewCommentsV1MetaPayload({
+            sessionId,
+            drafts: includedReviewCommentDrafts,
+        });
+        if (JSON.stringify(currentReviewComments) === JSON.stringify(submittedReviewComments)) {
+            clearSentReviewCommentDrafts();
         }
-
-        return didClearComposer || didClearSemantic || didClearAttachmentDrafts || didClearReviewComments;
-    }, [
-        activeServerAccountScope,
-        clearDraftForSessionIfCurrentValueMatches,
-        clearSentReviewCommentDrafts,
-        includedReviewCommentDrafts,
-        replaceSessionAttachmentDrafts,
-        sessionId,
-    ]);
+    }, [clearSentReviewCommentDrafts, includedReviewCommentDrafts, replaceSessionAttachmentDrafts, sessionId]);
     const appliedArmedContinuationDraftClearRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         const outcome = activeArmedContinuationOutcome;
@@ -4213,8 +4221,7 @@ function SessionViewLoaded({
         const submission = liveArmedContinuationSubmission;
         if (submission?.localId !== outcome.localId) return;
         appliedArmedContinuationDraftClearRef.current = clearKey;
-        clearArmedContinuationSubmissionIfCurrent(submission);
-        clearPersistedArmedContinuationSubmissionIfCurrent(submission);
+        clearArmedContinuationNonDraftSubmissionIfCurrent(submission);
         // Draft currentness controls only whether this exact text can be removed.
         // Canonical custody still spends the submitted transition: otherwise a
         // rewritten draft would retain its prior localId and could collide with
@@ -4233,8 +4240,7 @@ function SessionViewLoaded({
         activeServerAccountScopeKey,
         armedContinuationDisposition,
         clearArmedContinuation,
-        clearPersistedArmedContinuationSubmissionIfCurrent,
-        clearArmedContinuationSubmissionIfCurrent,
+        clearArmedContinuationNonDraftSubmissionIfCurrent,
         liveArmedContinuationLocalId,
         liveArmedContinuation,
         liveArmedContinuationSubmission,
@@ -4259,8 +4265,7 @@ function SessionViewLoaded({
         const clearKey = `${activeServerAccountScopeKey}\u0000${submission.localId}`;
         if (appliedArmedContinuationDraftClearRef.current === clearKey) return;
         appliedArmedContinuationDraftClearRef.current = clearKey;
-        clearArmedContinuationSubmissionIfCurrent(submission);
-        clearPersistedArmedContinuationSubmissionIfCurrent(submission);
+        clearArmedContinuationNonDraftSubmissionIfCurrent(submission);
         if (
             liveArmedContinuation !== null
             && liveArmedContinuationLocalId === submission.localId
@@ -4272,59 +4277,39 @@ function SessionViewLoaded({
         activeServerAccountScopeKey,
         armedContinuationSubmissionCustody,
         clearArmedContinuation,
-        clearPersistedArmedContinuationSubmissionIfCurrent,
-        clearArmedContinuationSubmissionIfCurrent,
+        clearArmedContinuationNonDraftSubmissionIfCurrent,
         liveArmedContinuation,
         liveArmedContinuationLocalId,
         liveArmedContinuationSubmission,
     ]);
+    const captureComposerSemanticDraftSnapshot = React.useCallback((): ComposerSemanticDraftSnapshot => (
+        readPendingMessageComposerSemanticDraftSnapshot(draftSnapshot?.document ?? null)
+    ), [draftSnapshot]);
     const restoreSemanticDraftValuesFromSnapshot = React.useCallback((snapshot: ComposerSemanticDraftSnapshot) => {
-        if (typeof snapshot.recipient === 'undefined') {
-            clearSessionDraftValue(activeServerAccountScope, sessionId, 'routing.recipient', { flush: false });
-        } else {
-            writeSessionDraftValue(activeServerAccountScope, sessionId, 'routing.recipient', snapshot.recipient, { flush: false });
+        if (!draftScope) return;
+        for (const [fieldId, value] of [
+            ['routing.recipient', snapshot.recipient],
+            ['routing.executionRunDelivery', snapshot.executionRunDelivery],
+            ['structuredInput.mentions', snapshot.structuredInputMentions],
+        ] as const) {
+            if (typeof value === 'undefined') {
+                existingSessionDraftSemanticValues.clear(draftScope, sessionId, fieldId);
+            } else {
+                existingSessionDraftSemanticValues.write(draftScope, sessionId, fieldId, value);
+            }
         }
-
-        if (typeof snapshot.executionRunDelivery === 'undefined') {
-            clearSessionDraftValue(activeServerAccountScope, sessionId, 'routing.executionRunDelivery', { flush: false });
-        } else {
-            writeSessionDraftValue(
-                activeServerAccountScope,
-                sessionId,
-                'routing.executionRunDelivery',
-                snapshot.executionRunDelivery,
-                { flush: false },
-            );
-        }
-
-        if (typeof snapshot.structuredInputMentions === 'undefined') {
-            clearSessionDraftValue(activeServerAccountScope, sessionId, 'structuredInput.mentions', { flush: false });
-        } else {
-            writeSessionDraftValue(
-                activeServerAccountScope,
-                sessionId,
-                'structuredInput.mentions',
-                snapshot.structuredInputMentions,
-                { flush: false },
-            );
-        }
-
-        flushSessionDraftValues(activeServerAccountScope);
-    }, [activeServerAccountScope, sessionId]);
-    const clearSemanticDraftValuesAfterAcceptedComposerClear = React.useCallback(() => {
-        // `composerClear` consumes the whole composer decision. The catalog
-        // clears the persisted draft; the picker owns the mounted counterpart.
+        fireAndForget(
+            existingSessionDraftSemanticValues.flush(draftScope, sessionId),
+            { tag: 'SessionView.restorePendingEditSemanticDraft' },
+        );
+    }, [draftScope, sessionId]);
+    const clearMountedArmedContinuationAfterAcceptedComposerClear = React.useCallback(() => {
         if (inSessionAgentPicker.armedContinuation !== null) {
             inSessionAgentPicker.clearArmedContinuation();
         }
-        clearSessionDraftValues(activeServerAccountScope, sessionId, {
-            lifecycle: 'composerCleared',
-        });
     }, [
-        activeServerAccountScope,
         inSessionAgentPicker.armedContinuation,
         inSessionAgentPicker.clearArmedContinuation,
-        sessionId,
     ]);
     const restorePendingEditAttachmentDraftsIfSafe = React.useCallback((edit: PendingMessageComposerEditState) => {
         if (attachmentDraftsSnapshotRef.current.length !== 0) return;
@@ -4387,12 +4372,16 @@ function SessionViewLoaded({
             loadedText: editText,
         });
         replaceSessionAttachmentDrafts([]);
-        clearSemanticDraftValuesAfterAcceptedComposerClear();
+        const draftToClear = captureDraftForOutboundHandoff?.();
+        if (draftToClear) clearDraftCurrentness(draftToClear);
+        clearMountedArmedContinuationAfterAcceptedComposerClear();
         inputComposerClearTransientStateRef.current();
         setDraftValue(editText);
     }, [
         captureComposerSemanticDraftSnapshot,
-        clearSemanticDraftValuesAfterAcceptedComposerClear,
+        captureDraftForOutboundHandoff,
+        clearDraftCurrentness,
+        clearMountedArmedContinuationAfterAcceptedComposerClear,
         replaceSessionAttachmentDrafts,
         setDraftValue,
     ]);
@@ -4902,7 +4891,7 @@ function SessionViewLoaded({
                     { serverId });
                 },
                 appendNewSessionDraft: ({ promptText, sourceServerId }) => {
-                    appendTranscriptSelectionToNewSessionDraft({
+                    return appendTranscriptSelectionToNewSessionDraft({
                         promptText,
                         sourceServerId,
                         scope: activeServerAccountScope,
@@ -4911,8 +4900,11 @@ function SessionViewLoaded({
                 navigateToSession: ({ sessionId: destinationSessionId, serverId }) => {
                     void navigateToSession(destinationSessionId, { serverId });
                 },
-                navigateToNewSession: () => {
-                    router.push('/new');
+                navigateToNewSession: ({ draftId }) => {
+                    router.push({
+                        pathname: '/new',
+                        params: buildNewSessionLaunchRouteParams({ draftId }),
+                    });
                 },
             });
         } catch {
@@ -5057,6 +5049,7 @@ function SessionViewLoaded({
         const agentInputStatusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => [
             ...sessionStatusBadges,
             ...sessionConnectedServicesAuthSwitch.statusBadges,
+            ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
             ...(pendingMessageEdit
                 ? [{
                     key: 'pending-message-edit',
@@ -5072,6 +5065,7 @@ function SessionViewLoaded({
         ], [
             cancelPendingMessageEdit,
             pendingMessageEdit,
+            draftConflictBanner.statusBadge,
             sessionConnectedServicesAuthSwitch.statusBadges,
             sessionStatusBadges,
         ]);
@@ -5242,15 +5236,15 @@ function SessionViewLoaded({
             }
 
             const previousMessage = composerTextBeforeSend;
-            const sendSnapshot = { sessionId, text: previousMessage };
+            const sendSnapshot = captureDraftForOutboundHandoff?.() ?? { sessionId, text: previousMessage };
             const semanticDraftSnapshot = captureComposerSemanticDraftSnapshot();
-            let semanticDraftSnapshotAfterHandoffClear: ComposerSemanticDraftSnapshot | null = null;
             const transientInputStateHandoff = captureComposerTransientInputStateForOutboundHandoff({
                 captureTransientInputState: inputComposerCaptureTransientStateRef.current,
                 clearTransientInputState: inputComposerClearTransientStateRef.current,
                 restoreTransientInputState: inputComposerRestoreTransientStateRef.current,
             });
             let didClearAtOutboundHandoff = false;
+            let semanticDraftCurrentnessAfterHandoffClear: SessionDraftCurrentness | null = null;
             let outboundHandoffLocalId: string | null = null;
             let didRecordOutboundAccepted = false;
             const recordOutboundAccepted = () => {
@@ -5264,15 +5258,20 @@ function SessionViewLoaded({
                 // wake and provider delivery continue through their canonical session/Pending
                 // projections and must not keep the submit button in a local sending state.
                 setIsComposerSendPending(false);
-                const didClear = clearComposerAfterOutboundHandoff({
-                    snapshot: sendSnapshot,
-                    clearDraftForSessionIfCurrentValueMatches,
-                    clearTransientInputState: transientInputStateHandoff.clearTransientInputState,
-                    isSemanticSnapshotCurrent: () => isComposerSemanticDraftSnapshotCurrent(semanticDraftSnapshot),
-                    clearSemanticDraftValues: clearSemanticDraftValuesAfterOutboundHandoff,
-                });
+                const didClear = sendSnapshot.currentness
+                    ? clearDraftCurrentness(sendSnapshot)
+                    : clearComposerAfterOutboundHandoff({
+                        snapshot: sendSnapshot,
+                        clearDraftForSessionIfCurrentValueMatches,
+                        clearTransientInputState: transientInputStateHandoff.clearTransientInputState,
+                    });
+                if (sendSnapshot.currentness && didClear) {
+                    transientInputStateHandoff.clearTransientInputState();
+                }
                 if (didClear) {
-                    semanticDraftSnapshotAfterHandoffClear = captureComposerSemanticDraftSnapshot();
+                    semanticDraftCurrentnessAfterHandoffClear = captureDraftForOutboundHandoff?.(
+                        SESSION_COMPOSER_SEMANTIC_DRAFT_FIELD_IDS,
+                    )?.currentness ?? null;
                 }
                 didClearAtOutboundHandoff = didClearAtOutboundHandoff || didClear;
                 return didClear;
@@ -5288,12 +5287,12 @@ function SessionViewLoaded({
                         sessionId,
                         outboundHandoffLocalId,
                     ),
-                    isSemanticRestoreSafe: () =>
-                        semanticDraftSnapshotAfterHandoffClear !== null
-                        && isComposerSemanticDraftSnapshotCurrent(semanticDraftSnapshotAfterHandoffClear),
+                    isSemanticRestoreSafe: () => areSessionDraftCurrentnessCapturesEqual(
+                        semanticDraftCurrentnessAfterHandoffClear,
+                        captureDraftForOutboundHandoff?.(SESSION_COMPOSER_SEMANTIC_DRAFT_FIELD_IDS)?.currentness ?? null,
+                    ),
                     restoreDraftForSessionIfCurrentValueMatches,
                     restoreTransientInputState: transientInputStateHandoff.restoreTransientInputState,
-                    restoreSemanticDraftValues: () => restoreSemanticDraftValuesFromSnapshot(semanticDraftSnapshot),
                 });
                 if (didRestore && attachmentDraftsForRestore) {
                     restoreAttachmentDraftsFromSnapshot(attachmentDraftsForRestore);
@@ -5931,6 +5930,7 @@ function SessionViewLoaded({
             )
         ) {
             const previousMessage = composerMessage;
+            const composerClearSnapshot = captureDraftForOutboundHandoff?.();
             void executeSessionComposerResolution({
                 resolved,
                 sessionId,
@@ -5942,7 +5942,12 @@ function SessionViewLoaded({
                 setMessage: setDraftValue,
                 clearDraft,
                 clearTransientInputState: inputComposerClearTransientStateRef.current,
-                clearSemanticDraftValues: clearSemanticDraftValuesAfterAcceptedComposerClear,
+                clearSemanticDraftValues: () => {
+                    if (composerClearSnapshot) {
+                        clearDraftCurrentness(composerClearSnapshot);
+                    }
+                    clearMountedArmedContinuationAfterAcceptedComposerClear();
+                },
                 restoreDraft,
                 restoreComposerSnapshotIfCurrentValueMatches: restoreDraftForSessionIfCurrentValueMatches,
                 restoreComposerSnapshot,
@@ -6051,6 +6056,15 @@ function SessionViewLoaded({
                         actionAccessibilityLabel={visibleStaleSessionRunnerNoticePresentation.banner.primaryAction.accessibilityLabel}
                         disabled={visibleStaleSessionRunnerNoticePresentation.banner.primaryAction.disabled || !hasWriteAccess}
                         onActionPress={() => void handleStaleSessionRunnerRestart()}
+                    />
+                </ComposerAuxiliaryFrame>
+            ) : null}
+            {draftScope && draftSnapshot?.conflict && !draftConflictBanner.collapsed ? (
+                <ComposerAuxiliaryFrame>
+                    <SessionDraftConflictResolution
+                        scope={draftScope}
+                        address={{ kind: 'session', sessionId }}
+                        conflict={draftSnapshot.conflict}
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}
