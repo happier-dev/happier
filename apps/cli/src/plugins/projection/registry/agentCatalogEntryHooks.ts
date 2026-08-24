@@ -5,20 +5,18 @@ import { rm } from 'node:fs/promises';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { PluginPath } from '@happier-dev/plugin-sdk';
-import { getAgentCliRuntimeSpec, isBundledAgentId } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec } from '@happier-dev/agents/cli/runtime';
+import { isBundledAgentId } from '@happier-dev/agents/agent-ids';
 import {
     resolveConnectedAccountRequestAuthCapabilityPath,
 } from '@happier-dev/agents/request-auth';
-import {
-    ConnectedAccountRequestAuthUsesV1Schema,
-    ConnectedServiceIdSchema,
-    type InstallableDependencyDescriptor,
-    readConnectedServiceLimitCategoryV1,
-    resolveConnectedServicesProviderStateSharingPolicyV1,
-    type ConnectedServiceCredentialRecordV1,
-    type ConnectedServiceId,
-    type PluginSystemToolContributionV1,
-} from '@happier-dev/protocol';
+import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import { ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
+import { type ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { type InstallableDependencyDescriptor } from '@happier-dev/protocol/installables';
+import { type PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 
 import { resolveRuntimeActivityApplicability } from '@/agent/runtime/session/activity/runtimeActivityApplicability';
 import type {

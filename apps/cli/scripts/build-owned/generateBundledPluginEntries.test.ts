@@ -26,6 +26,25 @@ describe('generator workspace lock policy', () => {
   });
 });
 
+describe('CLI bundled plugin registry projection', () => {
+  it('emits the contribution-identity owner subpath instead of the Protocol root barrel', () => {
+    const registryRenderer = sourceBetween(
+      'function renderCliBundledPluginEntriesTs(',
+      'function renderCliBundledPluginArtifactsTs(',
+    );
+
+    expect(registryRenderer).toContain(
+      "@happier-dev/protocol/plugins/contribution-identity",
+    );
+    expect(registryRenderer).toContain(
+      "import type { PluginSourceSpecV1 } from '@happier-dev/protocol/plugins/source-spec';",
+    );
+    expect(registryRenderer).not.toContain(
+      "from '@happier-dev/protocol';",
+    );
+  });
+});
+
 describe('readExternalSessionSourceDeclaration', () => {
   it('projects every public external-session source-instance kind without narrowing', () => {
     const declaration = readExternalSessionSourceDeclaration({

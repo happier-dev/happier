@@ -1040,6 +1040,16 @@ function renderJsonLiteral(value: JsonValue, indent = 2): string {
   return JSON.stringify(deepSortJson(value), null, indent) ?? 'null';
 }
 
+/**
+ * Locator manifests are consumed as canonical data at daemon cold start. Keep
+ * their generated representation compact: pretty-printing every nested
+ * manifest inflated this one projection from 1,208 to more than 169,000 lines
+ * without changing the serialized data or its ingestion owner.
+ */
+function renderCompactJsonLiteral(value: JsonValue): string {
+  return JSON.stringify(deepSortJson(value)) ?? 'null';
+}
+
 async function importTypescriptModule(path: string): Promise<unknown> {
   const loaderPath = fileURLToPath(new URL('./readTypescriptModule.mjs', import.meta.url));
   const outputMarker = '__HAPPIER_GENERATOR_MODULE_JSON__';
@@ -5988,15 +5998,12 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push(' * GENERATED FILE CONTRACT (WS1.T3)');
   lines.push(' *');
   lines.push(' * Locator/provenance records and trusted implementation bindings only.');
-  lines.push(' * Contribution declarations are ingested from each PLUGIN_MANIFEST by the');
-  lines.push(' * same canonical path used for installed plugins.');
+  lines.push(' * Contribution declarations are ingested from generator-normalized manifest');
+  lines.push(' * data by the same canonical path used for installed plugins.');
   lines.push(' */');
   lines.push('');
-  lines.push("import { createPluginContributionIdentity } from '@happier-dev/protocol';");
-  lines.push("import type { PluginContributionIdentityV1, PluginSourceSpecV1 } from '@happier-dev/protocol';");
-  for (const pluginPackage of params.pluginPackages) {
-    lines.push(`import { PLUGIN_MANIFEST as ${toAgentConstPrefix(pluginPackage.pluginPackageId)}_PLUGIN_MANIFEST } from ${renderTsStringLiteral(`${pluginPackage.packageName}/manifest`)};`);
-  }
+  lines.push("import { createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';");
+  lines.push("import type { PluginSourceSpecV1 } from '@happier-dev/protocol/plugins/source-spec';");
   if (implementationSources.length > 0) {
     lines.push("import { createAgentRuntimeCatalogEntryHooks } from '../agentCatalogEntryHooks';");
   }
@@ -6045,10 +6052,9 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push('');
   lines.push('export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: readonly BundledFirstPartyPluginLocator[] = Object.freeze([');
   for (const entry of params.pluginPackages) {
-    const prefix = toAgentConstPrefix(entry.pluginPackageId);
     lines.push('  Object.freeze({');
     lines.push(`    pluginId: ${JSON.stringify(entry.pluginId)},`);
-    lines.push(`    manifest: ${prefix}_PLUGIN_MANIFEST,`);
+    lines.push(`    manifest: ${renderCompactJsonLiteral(entry.manifest)},`);
     lines.push(`    manifestPath: ${JSON.stringify(`bundled:${entry.pluginId}`)},`);
     lines.push(`    daemonEntryPath: ${manifestDeclaresDaemonEntrypoint(entry.manifest) ? JSON.stringify(entry.packageName) : 'null'},`);
     lines.push('    sourceSpec: Object.freeze({');
@@ -6094,8 +6100,7 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
       lines.push(`      contribution: ${source.importName},`);
     }
     if (source.systemTools.length > 0) {
-      const manifestPrefix = toAgentConstPrefix(pluginPackage.pluginPackageId);
-      lines.push(`      systemTools: ${manifestPrefix}_PLUGIN_MANIFEST.contributes.systemTools,`);
+      lines.push(`      systemTools: ${renderCompactJsonLiteral([...source.systemTools])},`);
     }
     lines.push('    }),');
     lines.push('  }),');
