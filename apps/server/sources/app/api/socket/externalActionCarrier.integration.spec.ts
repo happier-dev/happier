@@ -7,7 +7,10 @@ import { Server } from "socket.io";
 import {
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
+    EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES,
+    EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     ExternalActionDaemonDispatchRequestV1Schema,
+    measureExternalActionResponseEnvelopeUtf8BytesV1,
 } from "@happier-dev/protocol/actions";
 import {
     SOCKET_RPC_EVENTS,
@@ -26,6 +29,7 @@ import { registerExternalActionRoutes } from "../routes/actions/registerExternal
 const machineId = "machine-external-action-carrier";
 const expectedHttpBodyLimitBytes = 33_554_432;
 const expectedRequestCarrierLimitBytes = 34_603_008;
+const expectedResponseCarrierLimitBytes = 25_000_000;
 
 type RelayedRequestSummary = Readonly<{
     actionId: string;
@@ -66,6 +70,21 @@ function externalActionJsonPayloadWithByteLength(byteLength: number): string {
         throw new Error("External Action payload did not reach the requested byte length");
     }
     return payload;
+}
+
+function createExactLimitMultibyteResponseResult(): string {
+    const emptyResponse = {
+        v: 1,
+        actionId: "session.spawn_new",
+        requestId: "carrier-response-boundary",
+        execution: { ok: true, result: "" },
+    } as const;
+    const fixedBytes = measureExternalActionResponseEnvelopeUtf8BytesV1(emptyResponse);
+    const multibyteMarker = "é";
+    const markerBytes = Buffer.byteLength(multibyteMarker, "utf8");
+    return "a".repeat(
+        EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - fixedBytes - markerBytes,
+    ) + multibyteMarker;
 }
 
 function summarizeRelayedRequest(rawRequest: unknown): Readonly<{
@@ -117,9 +136,14 @@ describe("external Action server-to-daemon request carrier", () => {
         await harness.close();
     });
 
-    it("relays an exact multibyte request, rejects one extra byte, and keeps the real daemon socket usable", async () => {
+    it("keeps exact/+1 multibyte request and response boundaries usable through the real daemon socket", async () => {
         expect(EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES).toBe(expectedHttpBodyLimitBytes);
         expect(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE).toBe(expectedRequestCarrierLimitBytes);
+        expect(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES).toBe(24_000_000);
+        expect(EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES)
+            .toBe(expectedResponseCarrierLimitBytes);
+        expect(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE)
+            .toBeGreaterThanOrEqual(expectedResponseCarrierLimitBytes);
 
         const account = await db.account.create({
             data: { publicKey: "external-action-carrier-account" },
@@ -146,6 +170,7 @@ describe("external Action server-to-daemon request carrier", () => {
         });
         const method = machineId + ":" + EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1;
         const relayedRequests: RelayedRequestSummary[] = [];
+        let responseResult: unknown = { accepted: true };
         const daemonReady = new Promise<void>((resolve) => {
             io.on("connection", async (serverSocket) => {
                 serverSocket.data.clientType = "machine-scoped";
@@ -186,7 +211,7 @@ describe("external Action server-to-daemon request carrier", () => {
                     ...(relayed.dispatch.envelope.requestId === undefined
                         ? {}
                         : { requestId: relayed.dispatch.envelope.requestId }),
-                    execution: { ok: true, result: { accepted: true } },
+                    execution: { ok: true, result: responseResult },
                 },
             });
         });
@@ -276,6 +301,62 @@ describe("external Action server-to-daemon request carrier", () => {
 
             expect(postRejectionResponse.statusCode).toBe(200);
             expect(relayedRequests).toHaveLength(2);
+            expect(daemonSocket.connected).toBe(true);
+
+            const responseBoundaryRequest = {
+                method: "POST" as const,
+                url: "/v1/actions/session.spawn_new",
+                headers: {
+                    authorization: "Bearer carrier-test",
+                    "content-type": "application/json",
+                    "x-test-user-id": account.id,
+                    "x-test-auth-token-kind": "api_token",
+                    "x-test-api-token-account-id": account.id,
+                    "x-test-api-token-principal-id": "carrier-principal",
+                    "x-test-api-token-credential-id": "carrier-credential",
+                },
+                payload: {
+                    v: 1,
+                    requestId: "carrier-response-boundary",
+                    target: { kind: "machine", machineId },
+                    input: {},
+                },
+            };
+            const exactResponseResult = createExactLimitMultibyteResponseResult();
+            responseResult = exactResponseResult;
+            const exactResponse = await app.inject(responseBoundaryRequest);
+            expect(exactResponse.statusCode).toBe(200);
+            expect(Number(exactResponse.headers["content-length"]))
+                .toBe(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+            expect(Buffer.byteLength(exactResponse.body, "utf8"))
+                .toBe(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+            expect(exactResponse.body).toContain("é");
+            expect(relayedRequests).toHaveLength(3);
+            expect(daemonSocket.connected).toBe(true);
+
+            responseResult = exactResponseResult + "a";
+            const oversizedResponse = await app.inject(responseBoundaryRequest);
+            expect(oversizedResponse.statusCode).toBe(200);
+            expect(oversizedResponse.json()).toMatchObject({
+                execution: {
+                    ok: false,
+                    errorCode: "result_too_large",
+                    details: {
+                        executionCompleted: true,
+                        maxSerializedBytes: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+                    },
+                },
+            });
+            expect(relayedRequests).toHaveLength(4);
+            expect(daemonSocket.connected).toBe(true);
+
+            responseResult = { carrier: "response-still-usable" };
+            const postResponseRejection = await app.inject(responseBoundaryRequest);
+            expect(postResponseRejection.statusCode).toBe(200);
+            expect(postResponseRejection.json()).toMatchObject({
+                execution: { ok: true, result: { carrier: "response-still-usable" } },
+            });
+            expect(relayedRequests).toHaveLength(5);
             expect(daemonSocket.connected).toBe(true);
         } finally {
             daemonSocket.close();
