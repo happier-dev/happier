@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -53,6 +53,54 @@ afterEach(async () => {
 });
 
 describe('PiRpcBackend append-system-prompt artifact delivery', () => {
+  it('serializes concurrent first-process preparation into one spawn', async () => {
+    const candidate = new PiRpcBackend({
+      cwd: '/tmp',
+      command: process.execPath,
+      args: [],
+      appendSystemPromptText: 'SERIALIZE-ME',
+    });
+    backend = candidate;
+    const priv = candidate as unknown as {
+      process: unknown;
+      ensureProcess(): Promise<void>;
+      spawnRpcProcess(params: Readonly<{ args: string[] }>): void;
+    };
+    const spawnSpy = vi.spyOn(priv, 'spawnRpcProcess').mockImplementation(() => {
+      priv.process = { pid: 1 };
+    });
+
+    await Promise.all([priv.ensureProcess(), priv.ensureProcess()]);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    priv.process = null;
+  });
+
+  it('does not spawn when disposal wins during asynchronous artifact preparation', async () => {
+    const candidate = new PiRpcBackend({ cwd: '/tmp', command: process.execPath, args: [] });
+    backend = candidate;
+    const priv = candidate as unknown as {
+      ensureProcess(): Promise<void>;
+      resolveProtectedSpawnArtifactArgs(): Promise<string[]>;
+      spawnRpcProcess(params: Readonly<{ args: string[] }>): void;
+    };
+    let releasePreparation!: () => void;
+    const preparation = new Promise<void>((resolve) => { releasePreparation = resolve; });
+    vi.spyOn(priv, 'resolveProtectedSpawnArtifactArgs').mockImplementation(async () => {
+      await preparation;
+      return [];
+    });
+    const spawnSpy = vi.spyOn(priv, 'spawnRpcProcess').mockImplementation(() => undefined);
+
+    const ensuring = priv.ensureProcess();
+    await candidate.dispose();
+    backend = null;
+    releasePreparation();
+
+    await expect(ensuring).rejects.toThrow('disposed');
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
   it('passes a protected file path in argv instead of the literal prompt text', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'happier-pi-rpc-artifact-'));
     const argvOutPath = join(tempDir, 'argv.json');

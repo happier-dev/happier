@@ -19,6 +19,7 @@ import {
 } from '@/agent/acp/AcpBackend';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { materializeProtectedTempTextArtifact, type ProtectedTempTextArtifact } from '@/utils/fs/protectedTempTextArtifact';
+import { PI_BRIDGE_CONFIG_PATH_FLAG } from '@/backends/pi/bridgeExtension/piBridgeExtensionEnv';
 import { logger } from '@/ui/logger';
 import {
   HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,
@@ -592,6 +593,7 @@ export type PiRpcSpawnOptions = {
    * lifetime (process restarts reuse it), removed on disposal.
    */
   appendSystemPromptText?: string | null;
+  toolsBridgeConfigText?: string | null;
 };
 
 export class PiRpcBackend implements AgentBackend {
@@ -602,10 +604,12 @@ export class PiRpcBackend implements AgentBackend {
     env: Record<string, string>;
     happierSessionId: string | null;
     appendSystemPromptText: string | null;
+    toolsBridgeConfigText: string | null;
   }>;
 
   private process: ChildProcessWithoutNullStreams | null = null;
   private appendSystemPromptArtifact: ProtectedTempTextArtifact | null = null;
+  private toolsBridgeConfigArtifact: ProtectedTempTextArtifact | null = null;
   private stdoutLineReader: PiRpcJsonlLineReader | null = null;
   private stderrLineReader: PiRpcJsonlLineReader | null = null;
   private readonly messageHandlers = new Set<AgentMessageHandler>();
@@ -649,12 +653,8 @@ export class PiRpcBackend implements AgentBackend {
       args: [...options.args],
       env: { ...(options.env ?? {}) },
       happierSessionId: asNonEmptyString(options.happierSessionId) ?? null,
-      // Keep the exact prompt text (leading/trailing whitespace included): the artifact
-      // must byte-match the composed prompt. asNonEmptyString is only the blank detector.
-      appendSystemPromptText: typeof options.appendSystemPromptText === 'string'
-        && asNonEmptyString(options.appendSystemPromptText) !== null
-        ? options.appendSystemPromptText
-        : null,
+      appendSystemPromptText: asNonEmptyString(options.appendSystemPromptText) ?? null,
+      toolsBridgeConfigText: asNonEmptyString(options.toolsBridgeConfigText) ?? null,
     };
   }
 
@@ -1177,26 +1177,19 @@ export class PiRpcBackend implements AgentBackend {
     const child = this.process;
     this.process = null;
 
-    // Terminal path: remove the protected append-system-prompt artifact with the backend —
-    // in a finally so a failing process shutdown cannot leak it on disk.
-    const artifact = this.appendSystemPromptArtifact;
-    this.appendSystemPromptArtifact = null;
-
-    try {
-      if (child) {
-        await stopPiRpcProcess(child);
-      }
-    } finally {
-      await artifact?.cleanup();
+    // Terminal path: remove the protected append-system-prompt artifact with the backend.
+    if (!child) {
+      await this.cleanupProtectedSpawnArtifacts();
+      return;
     }
+
+    await stopPiRpcProcess(child);
+    await this.cleanupProtectedSpawnArtifacts();
   }
 
   private async ensureProcess(): Promise<void> {
     if (this.disposed) {
       throw new Error('Pi backend is disposed');
-    }
-    if (this.processTransitionInFlight) {
-      await this.processTransitionInFlight;
     }
     if (this.process) return;
     if (this.sessionId) {
@@ -1206,7 +1199,28 @@ export class PiRpcBackend implements AgentBackend {
       return;
     }
 
-    this.spawnRpcProcess({ args: [...this.options.args, ...(await this.resolveAppendSystemPromptArgs())] });
+    await this.runProcessTransition(async () => {
+      if (this.disposed) throw new Error('Pi backend is disposed');
+      if (this.process) return;
+      const protectedArgs = await this.resolveProtectedSpawnArtifactArgs();
+      if (this.disposed) {
+        await this.cleanupProtectedSpawnArtifacts();
+        throw new Error('Pi backend is disposed');
+      }
+      if (this.process) return;
+      this.spawnRpcProcess({ args: [...this.options.args, ...protectedArgs] });
+    });
+  }
+
+  private async cleanupProtectedSpawnArtifacts(): Promise<void> {
+    const appendSystemPromptArtifact = this.appendSystemPromptArtifact;
+    this.appendSystemPromptArtifact = null;
+    const toolsBridgeConfigArtifact = this.toolsBridgeConfigArtifact;
+    this.toolsBridgeConfigArtifact = null;
+    await Promise.all([
+      appendSystemPromptArtifact?.cleanup(),
+      toolsBridgeConfigArtifact?.cleanup(),
+    ]);
   }
 
   /**
@@ -1225,6 +1239,25 @@ export class PiRpcBackend implements AgentBackend {
       });
     }
     return ['--append-system-prompt', this.appendSystemPromptArtifact.path];
+  }
+
+  private async resolveToolsBridgeConfigArgs(): Promise<string[]> {
+    const text = this.options.toolsBridgeConfigText;
+    if (!text) return [];
+    if (!this.toolsBridgeConfigArtifact) {
+      this.toolsBridgeConfigArtifact = await materializeProtectedTempTextArtifact({
+        prefix: 'happier-pi-tools-bridge-config-',
+        contents: text,
+      });
+    }
+    return [`--${PI_BRIDGE_CONFIG_PATH_FLAG}`, this.toolsBridgeConfigArtifact.path];
+  }
+
+  private async resolveProtectedSpawnArtifactArgs(): Promise<string[]> {
+    return [
+      ...(await this.resolveToolsBridgeConfigArgs()),
+      ...(await this.resolveAppendSystemPromptArgs()),
+    ];
   }
 
   private spawnRpcProcess(params: Readonly<{ args: string[] }>): void {
@@ -1309,6 +1342,7 @@ export class PiRpcBackend implements AgentBackend {
       stderrLineReader.close();
       if (this.stdoutLineReader === stdoutLineReader) this.stdoutLineReader = null;
       if (this.stderrLineReader === stderrLineReader) this.stderrLineReader = null;
+      void this.cleanupProtectedSpawnArtifacts();
     });
   }
 
@@ -1482,10 +1516,15 @@ export class PiRpcBackend implements AgentBackend {
     lifecycle?: PiRpcSessionOpenLifecycle;
   }>): Promise<PiRpcStateData> {
     await this.stopRpcProcessForRestart();
+    const protectedArgs = await this.resolveProtectedSpawnArtifactArgs();
+    if (this.disposed) {
+      await this.cleanupProtectedSpawnArtifacts();
+      throw new Error('Pi backend is disposed');
+    }
     this.spawnRpcProcess({
       args: [
         ...this.options.args,
-        ...(await this.resolveAppendSystemPromptArgs()),
+        ...protectedArgs,
         '--session',
         params.sessionArg,
       ],
@@ -1804,6 +1843,9 @@ export class PiRpcBackend implements AgentBackend {
 
   private handleEvent(event: Record<string, unknown>): void {
     const normalizedEvent = this.normalizeCompactionLifecycleEvent(event);
+    if (normalizedEvent.type === 'compaction_start' || normalizedEvent.type === 'compaction_end') {
+      this.latestContextTelemetry = null;
+    }
     this.notePendingTurnActivity(normalizedEvent);
 
     const mappedMessages = mapPiRpcEventToAgentMessages(normalizedEvent);
@@ -1906,7 +1948,9 @@ export class PiRpcBackend implements AgentBackend {
       // for compaction); fall back to the bridge extension's stderr marker when stats lack
       // it (older pi builds). The suffix lets a changed live-context value re-publish even
       // when the assistant-message counter has not advanced (compaction, retries).
-      const contextTelemetry = parsePiContextTelemetryFromSessionStats(stats) ?? this.latestContextTelemetry;
+      const contextTelemetry = Object.prototype.hasOwnProperty.call(stats, 'contextUsage')
+        ? parsePiContextTelemetryFromSessionStats(stats)
+        : this.latestContextTelemetry;
       const rawKey = (assistantMessages !== null ? `${sessionId}:${assistantMessages}` : sessionId)
         + (contextTelemetry ? buildPiContextTelemetryKeySuffix(contextTelemetry) : '');
       if (this.lastPublishedUsageKey === rawKey) return;

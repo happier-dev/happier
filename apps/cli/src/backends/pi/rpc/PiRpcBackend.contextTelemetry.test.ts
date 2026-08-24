@@ -137,7 +137,7 @@ describe('PiRpcBackend context telemetry markers', () => {
     });
   });
 
-  it('ignores null/absent stats.contextUsage (post-compaction) and falls back to the marker', async () => {
+  it('treats explicit null stats.contextUsage as authoritative while absent usage may use the marker', async () => {
     expect(parsePiContextTelemetryFromSessionStats({ contextUsage: { tokens: null, contextWindow: 200000 } })).toBeNull();
     expect(parsePiContextTelemetryFromSessionStats({})).toBeNull();
     expect(parsePiContextTelemetryFromSessionStats({ contextUsage: { tokens: 5, contextWindow: 0 } })).toBeNull();
@@ -155,9 +155,28 @@ describe('PiRpcBackend context telemetry markers', () => {
 
     await priv.publishUsageStatsBestEffort();
 
-    expect((emitSpy.mock.calls[0][0] as Record<string, unknown>).tokens).toMatchObject({
+    expect((emitSpy.mock.calls[0][0] as Record<string, unknown>).tokens).toEqual({ input: 50 });
+
+    priv.lastPublishedUsageKey = null;
+    priv.getSessionStats = async () => ({
+      sessionId: 'pi-session-1',
+      assistantMessages: 4,
+      tokens: { input: 51 },
+    });
+    await priv.publishUsageStatsBestEffort();
+    expect((emitSpy.mock.calls[1][0] as Record<string, unknown>).tokens).toMatchObject({
       context_used_tokens: 777,
     });
+  });
+
+  it('invalidates cached bridge telemetry when compaction starts', () => {
+    const backend = createBackendForContextTelemetry();
+    const priv = backend as unknown as PrivateContextTelemetryBackend;
+    priv.handleStderrLine(`{"type":"${PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE}","used":777,"size":200000}`);
+
+    priv.handleEvent({ type: 'compaction_start', reason: 'manual' });
+
+    expect(priv.latestContextTelemetry).toBeNull();
   });
 
   it('publishes immediately at assistant message_end (before tool calls run), not only at idle', async () => {
