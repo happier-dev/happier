@@ -2,6 +2,7 @@ import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent
 import type { PermissionMode } from '@/api/types';
 import type { CodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol';
 import {
+  PI_BRIDGE_DISABLED_ACTION_IDS_FLAG,
   PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
   PI_BRIDGE_PROMPT_OPTIONS_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
@@ -48,6 +49,7 @@ export interface PiBackendOptions extends AgentFactoryOptions {
     promptOptionsEnabled: boolean;
     memoryMachineId?: string | null;
     sessionToolsEnabled?: boolean;
+    disabledActionIds?: readonly string[];
   }>;
 }
 
@@ -153,6 +155,14 @@ export function resolveHappyBridgeExtensionArgs(opts?: Readonly<{
   }
   if (bridge.promptOptionsEnabled) args.push(`--${PI_BRIDGE_PROMPT_OPTIONS_FLAG}`);
   if (bridge.sessionToolsEnabled) args.push(`--${PI_BRIDGE_SESSION_TOOLS_FLAG}`);
+  const disabledActionIds = Array.from(new Set(
+    (bridge.disabledActionIds ?? [])
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b));
+  if (disabledActionIds.length > 0) {
+    args.push(`--${PI_BRIDGE_DISABLED_ACTION_IDS_FLAG}`, JSON.stringify(disabledActionIds));
+  }
   if (typeof bridge.memoryMachineId === 'string' && bridge.memoryMachineId.trim()) {
     args.push(`--${PI_BRIDGE_MEMORY_MACHINE_ID_FLAG}`, bridge.memoryMachineId.trim());
   }

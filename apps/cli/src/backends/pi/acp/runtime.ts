@@ -31,6 +31,8 @@ export function createPiAcpRuntime(params: {
   memoryRecallGuidanceEnabled?: boolean;
   /** Register the full session-agent tool surface in the pi bridge (off by default). */
   sessionToolsEnabled?: boolean;
+  /** Daemon-resolved action ids disabled for the `session_agent` surface. */
+  disabledSessionAgentActionIds?: readonly string[];
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
   providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
@@ -122,6 +124,7 @@ export function createPiAcpRuntime(params: {
           memoryMachineId: params.machineId,
           // Full session-agent tool surface: opt-in per spawn while the surface rolls out.
           sessionToolsEnabled: params.sessionToolsEnabled === true,
+          disabledActionIds: params.disabledSessionAgentActionIds,
         });
         if (resolved) {
           happyToolsBridge = resolved;

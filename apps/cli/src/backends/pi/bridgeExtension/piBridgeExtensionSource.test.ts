@@ -12,6 +12,7 @@ import {
   type PiBridgeExtensionSourceParams,
 } from './piBridgeExtensionSource';
 import {
+  PI_BRIDGE_DISABLED_ACTION_IDS_FLAG,
   PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
   PI_BRIDGE_PROMPT_OPTIONS_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
@@ -256,6 +257,7 @@ describe('pi bridge extension behavior (generated artifact, exercised live)', ()
       PI_BRIDGE_PROMPT_OPTIONS_FLAG,
       PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
       PI_BRIDGE_SESSION_TOOLS_FLAG,
+      PI_BRIDGE_DISABLED_ACTION_IDS_FLAG,
     ]);
   });
 
@@ -282,6 +284,57 @@ describe('pi bridge extension behavior (generated artifact, exercised live)', ()
     // Spec-only actions (no tool binding) are not standalone rows.
     expect(names).not.toContain('machines_list');
     expect(names.length).toBe(49);
+  });
+
+  it('honors the daemon-projected disabled action ids for direct and umbrella tools', async () => {
+    const on = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_SESSION_TOOLS_FLAG]: true,
+      [PI_BRIDGE_SESSION_RENAME_FLAG]: 'ongoing',
+      [PI_BRIDGE_MEMORY_MACHINE_ID_FLAG]: 'machine-1',
+      [PI_BRIDGE_DISABLED_ACTION_IDS_FLAG]: JSON.stringify([
+        'session.message.send',
+        'session.title.set',
+        'memory.search',
+      ]),
+    });
+    const names = on.harness.tools.map((tool) => tool.name);
+    expect(names).toContain('session_list');
+    expect(names).not.toContain('session_message_send');
+    expect(names).not.toContain('change_title');
+    expect(names).not.toContain('memory_search');
+    expect(names).toContain('memory_get_window');
+    const systemPrompt = (on.beforeAgentStartResult as { systemPrompt?: string } | undefined)?.systemPrompt ?? '';
+    expect(systemPrompt).not.toContain('# Session title');
+    expect(systemPrompt).not.toContain('# Memory recall');
+
+    const actionExecute = on.harness.tools.find((tool) => tool.name === 'action_execute');
+    expect(actionExecute).toBeDefined();
+    const result = await actionExecute!.execute(
+      'tool-call-1',
+      { actionId: 'session.message.send', input: {} },
+      undefined,
+      undefined,
+      { cwd: '/tmp/repo' },
+    );
+    expect(result).toMatchObject({
+      isError: true,
+      details: {
+        envelope: {
+          ok: false,
+          error: { code: 'action_disabled' },
+        },
+      },
+    });
+  });
+
+  it('fails closed on malformed disabled-action flag values', async () => {
+    const on = await driveExtension({
+      [PI_BRIDGE_SESSION_ID_FLAG]: 'happy-session-1',
+      [PI_BRIDGE_SESSION_TOOLS_FLAG]: true,
+      [PI_BRIDGE_DISABLED_ACTION_IDS_FLAG]: 'not-json',
+    });
+    expect(on.harness.tools.map((tool) => tool.name)).toEqual([]);
   });
 
   it('converts inlined JSON Schema parameters to typebox-compatible shapes', async () => {

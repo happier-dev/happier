@@ -34,6 +34,8 @@ export type HappyToolsBridgeBackendOptions = Readonly<{
    * enabled, every session_agent-surfaced built-in tool becomes available to the model.
    */
   sessionToolsEnabled: boolean;
+  /** Daemon-resolved action ids disabled for the `session_agent` surface. */
+  disabledActionIds: readonly string[];
 }>;
 
 /**
@@ -50,6 +52,7 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   memoryRecallGuidanceEnabled: boolean;
   memoryMachineId?: string | null;
   sessionToolsEnabled?: boolean;
+  disabledActionIds?: readonly string[];
 }>): Promise<HappyToolsBridgeBackendOptions | null> {
   if (!params.agentDir) return null;
 
@@ -61,6 +64,20 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     ? params.memoryMachineId.trim()
     : null;
   const sessionToolsEnabled = params.sessionToolsEnabled === true;
+  const disabledActionIdSet = new Set(
+    (params.disabledActionIds ?? [])
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean),
+  );
+  // These launch-config decisions also disable their corresponding actions. Include
+  // them in the same daemon-owned projection so direct rows and action_execute cannot
+  // bypass the curated tool gates inside the extension.
+  if (sessionRenameMode === 'disabled') disabledActionIdSet.add('session.title.set');
+  if (!memoryMachineId) {
+    disabledActionIdSet.add('memory.search');
+    disabledActionIdSet.add('memory.get_window');
+  }
+  const disabledActionIds = Array.from(disabledActionIdSet).sort((a, b) => a.localeCompare(b));
 
   const launchSpec = buildHappyCliSubprocessLaunchSpec(['tools']);
   const argv = [...launchSpec.args];
@@ -73,5 +90,12 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     launchEnv: launchSpec.env ?? {},
   });
 
-  return { extensionPath, sessionRenameMode, promptOptionsEnabled, memoryMachineId, sessionToolsEnabled };
+  return {
+    extensionPath,
+    sessionRenameMode,
+    promptOptionsEnabled,
+    memoryMachineId,
+    sessionToolsEnabled,
+    disabledActionIds,
+  };
 }

@@ -54,3 +54,11 @@ export const PI_BRIDGE_SESSION_TOOLS_FLAG = 'happy-session-tools';
  * markers already ride it) and does not pollute the LLM context.
  */
 export const PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE = 'happy-pi-token-count';
+
+/**
+ * Pi CLI flag carrying the daemon-resolved action ids disabled for the
+ * `session_agent` surface. The value is a JSON string array. The generated extension
+ * uses this projection to filter native tool registration and to guard
+ * `action_execute`, while the daemon remains the actions-policy owner.
+ */
+export const PI_BRIDGE_DISABLED_ACTION_IDS_FLAG = 'happy-session-disabled-actions';

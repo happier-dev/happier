@@ -26,7 +26,7 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
     machineMetadata: initialMachineMetadata,
     terminalDisplay: PiTerminalDisplay,
     resolvePermissionModeQueueKey: (permissionMode) => buildPiToolsForPermissionMode(permissionMode)?.join(',') ?? 'native',
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, getAbortSignal, memoryRecallGuidanceEnabled, sessionToolsEnabled, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) =>
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, getAbortSignal, memoryRecallGuidanceEnabled, sessionToolsEnabled, disabledSessionAgentActionIds, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) =>
       createPiAcpRuntime({
         directory,
         machineId,
@@ -38,6 +38,7 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
         getSessionOpenAbortSignal: getAbortSignal,
         memoryRecallGuidanceEnabled,
         sessionToolsEnabled,
+        disabledSessionAgentActionIds,
         getPermissionMode,
         pendingQueueDrainMaxPopPerWake,
         providerInputConsumer,

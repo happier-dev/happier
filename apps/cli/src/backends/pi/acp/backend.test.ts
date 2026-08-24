@@ -235,6 +235,20 @@ describe('happy tools bridge extension args', () => {
     ]);
   });
 
+  it('passes the daemon-projected disabled action ids as a deterministic JSON flag', () => {
+    const args = resolveHappyBridgeExtensionArgs({
+      happierSessionId: 'happy-session-1',
+      happyToolsBridge: {
+        ...baseBridge,
+        disabledActionIds: ['session.title.set', 'memory.search'],
+      },
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      '--happy-session-disabled-actions',
+      JSON.stringify(['memory.search', 'session.title.set']),
+    ]));
+  });
+
   it('passes the initial rename mode verbatim', () => {
     const args = resolveHappyBridgeExtensionArgs({
       happierSessionId: 'happy-session-1',

@@ -12,6 +12,7 @@ import {
 import { actionExecuteToolInputSchema } from '@/agent/tools/happierTools/manualToolContracts';
 
 import {
+  PI_BRIDGE_DISABLED_ACTION_IDS_FLAG,
   PI_BRIDGE_MEMORY_MACHINE_ID_FLAG,
   PI_BRIDGE_PROMPT_OPTIONS_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
@@ -30,15 +31,19 @@ import {
  * the generated extension converts JSON Schema back to typebox parameters at
  * registration time (structural, no zod dependency inside pi).
  */
-function buildSessionAgentToolDefs(): ReadonlyArray<Readonly<{
+type SessionAgentToolDef = Readonly<{
+  actionId: string | null;
   name: string;
   title: string;
   description: string;
   inputSchema: Record<string, unknown>;
-}>> {
-  const rows = listActionSpecs()
+}>;
+
+function buildSessionAgentToolDefs(): readonly SessionAgentToolDef[] {
+  const rows: SessionAgentToolDef[] = listActionSpecs()
     .filter((spec: ActionSpec) => spec.surfaces.session_agent === true)
     .map((spec) => ({
+      actionId: spec.id,
       name: String(spec.bindings?.mcpToolName ?? '').trim(),
       title: spec.title,
       description: spec.description ?? spec.title,
@@ -53,6 +58,7 @@ function buildSessionAgentToolDefs(): ReadonlyArray<Readonly<{
   // session-agent surface's route to spec-only actions; inline it from its manual
   // contract, same source the built-in tool catalog uses.
   rows.push({
+    actionId: null,
     name: 'action_execute',
     title: 'Execute Action',
     description: 'Execute a Happier action by action id with structured input (use for actions without a direct tool, e.g. machines.list, session.mode.set)',
@@ -66,7 +72,7 @@ function buildSessionAgentToolDefs(): ReadonlyArray<Readonly<{
  * stable; bumping this version changes the emitted source so the write-if-changed
  * asset refresh replaces stale local copies.
  */
-export const PI_BRIDGE_EXTENSION_VERSION = '4';
+export const PI_BRIDGE_EXTENSION_VERSION = '5';
 
 export type PiBridgeExtensionSourceParams = Readonly<{
   /** Executable file path for launching the Happier CLI (from the subprocess launch spec). */
@@ -115,6 +121,7 @@ const SESSION_RENAME_FLAG = ${jsString(PI_BRIDGE_SESSION_RENAME_FLAG)};
 const PROMPT_OPTIONS_FLAG = ${jsString(PI_BRIDGE_PROMPT_OPTIONS_FLAG)};
 const MEMORY_MACHINE_ID_FLAG = ${jsString(PI_BRIDGE_MEMORY_MACHINE_ID_FLAG)};
 const SESSION_TOOLS_FLAG = ${jsString(PI_BRIDGE_SESSION_TOOLS_FLAG)};
+const DISABLED_ACTION_IDS_FLAG = ${jsString(PI_BRIDGE_DISABLED_ACTION_IDS_FLAG)};
 const TOKEN_COUNT_MARKER_TYPE = ${jsString(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)};
 const TOOL_CALL_TIMEOUT_MS = 120000;
 
@@ -150,6 +157,18 @@ function readFlagBool(pi, name) {
     return typeof pi.getFlag === "function" && pi.getFlag(name) === true;
   } catch {
     return false;
+  }
+}
+
+function readDisabledActionIds(pi) {
+  const raw = readFlagString(pi, DISABLED_ACTION_IDS_FLAG);
+  if (!raw) return new Set();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return new Set(parsed.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()));
+  } catch {
+    return null;
   }
 }
 
@@ -420,6 +439,10 @@ export default function HappierPiToolsBridgeExtension(pi) {
     type: "boolean",
     default: false,
   });
+  pi.registerFlag(DISABLED_ACTION_IDS_FLAG, {
+    description: "JSON array of action ids disabled by the daemon for the session_agent surface",
+    type: "string",
+  });
 
   let registered = false;
   pi.on("session_start", (_event, _ctx) => {
@@ -427,8 +450,13 @@ export default function HappierPiToolsBridgeExtension(pi) {
     if (!readFlagString(pi, SESSION_ID_FLAG)) return; // Not launched by Happier: stay inert.
     registered = true;
 
-    const renameMode = readSessionRenameMode(pi);
-    const memoryMachineId = readMemoryMachineId(pi);
+    const disabledActionIdsOrNull = readDisabledActionIds(pi);
+    const actionPolicyValid = disabledActionIdsOrNull !== null;
+    const disabledActionIds = disabledActionIdsOrNull ?? new Set();
+    const renameMode = !actionPolicyValid || disabledActionIds.has("session.title.set")
+      ? "disabled"
+      : readSessionRenameMode(pi);
+    const memoryMachineId = actionPolicyValid ? readMemoryMachineId(pi) : null;
 
     // Context telemetry rides the session binding (never the per-tool config flags): the
     // live context badge is core session UX, not an advertised tool.
@@ -443,9 +471,9 @@ export default function HappierPiToolsBridgeExtension(pi) {
     // config that gates the tools below, so prompt and tool inventory never drift.
     pi.on("before_agent_start", async (event) => {
       const addition = buildHappierPromptAddition(
-        readSessionRenameMode(pi),
+        renameMode,
         readFlagBool(pi, PROMPT_OPTIONS_FLAG),
-        readMemoryMachineId(pi),
+        disabledActionIds.has("memory.search") ? null : memoryMachineId,
       );
       if (!addition) return undefined;
       const base = event && typeof event.systemPrompt === "string" ? event.systemPrompt.trim() : "";
@@ -470,7 +498,7 @@ export default function HappierPiToolsBridgeExtension(pi) {
       });
     }
 
-    if (memoryMachineId) {
+    if (memoryMachineId && !disabledActionIds.has("memory.search")) {
       pi.registerTool({
         name: "memory_search",
         label: "Search Memory",
@@ -495,7 +523,9 @@ export default function HappierPiToolsBridgeExtension(pi) {
           return toolResult(await callHappierTool(pi, ctx, "memory_search", args));
         },
       });
+    }
 
+    if (memoryMachineId && !disabledActionIds.has("memory.get_window")) {
       pi.registerTool({
         name: "memory_get_window",
         label: "Get Memory Window",
@@ -527,14 +557,27 @@ export default function HappierPiToolsBridgeExtension(pi) {
     // tools above; the only difference is that parameters are converted from the
     // inlined JSON Schema (serialized from the protocol action specs at generation
     // time) instead of being hand-written typebox objects.
-    if (readFlagBool(pi, SESSION_TOOLS_FLAG)) {
+    if (actionPolicyValid && readFlagBool(pi, SESSION_TOOLS_FLAG)) {
       for (const def of SESSION_AGENT_TOOL_DEFS) {
+        if (def.actionId && disabledActionIds.has(def.actionId)) continue;
         pi.registerTool({
           name: def.name,
           label: def.title,
           description: def.description,
           parameters: jsonSchemaToTypebox(def.inputSchema),
           async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+            if (def.name === "action_execute") {
+              const requestedActionId = typeof params?.actionId === "string" ? params.actionId.trim() : "";
+              if (requestedActionId && disabledActionIds.has(requestedActionId)) {
+                return toolResult({
+                  ok: false,
+                  error: {
+                    code: "action_disabled",
+                    message: "This action is disabled for the session agent surface: " + requestedActionId,
+                  },
+                });
+              }
+            }
             return toolResult(await callHappierTool(pi, ctx, def.name, params));
           },
         });

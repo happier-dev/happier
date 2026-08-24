@@ -64,6 +64,34 @@ describe('runPi', () => {
     });
   });
 
+  it('forwards the daemon-projected disabled session-agent actions to the Pi runtime', async () => {
+    await runPi({ credentials });
+
+    const config = runStandardAcpProviderMock.mock.calls[0]?.[1];
+    const { createPiAcpRuntime } = await import('@/backends/pi/acp/runtime');
+    const createPiAcpRuntimeMock = vi.mocked(createPiAcpRuntime);
+    createPiAcpRuntimeMock.mockClear();
+    config.createRuntime({
+      directory: '/tmp/repo',
+      machineId: 'machine-1',
+      session: {},
+      messageBuffer: {},
+      mcpServers: {},
+      permissionHandler: {},
+      setThinking() {},
+      getPermissionMode: () => 'default',
+      getAbortSignal: () => new AbortController().signal,
+      memoryRecallGuidanceEnabled: false,
+      sessionToolsEnabled: true,
+      disabledSessionAgentActionIds: ['session.message.send'],
+      providerInputConsumer: {},
+    });
+
+    expect(createPiAcpRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      disabledSessionAgentActionIds: ['session.message.send'],
+    }));
+  });
+
   it('uses the native Pi tool catalog as the unrestricted permission queue key', async () => {
     await runPi({ credentials });
 

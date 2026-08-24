@@ -47,6 +47,7 @@ describe('Pi ACP runtime spawn system prompt', () => {
         providerInputConsumer: createSessionProviderInputConsumerFixture(),
         credentials,
         accountSettings: {},
+        disabledSessionAgentActionIds: ['session.message.send'],
       });
 
       await runtime.startOrLoad({});
@@ -61,6 +62,11 @@ describe('Pi ACP runtime spawn system prompt', () => {
       expect(createCalls[0]?.happyToolsBridge?.sessionRenameMode).toBe('ongoing');
       expect(createCalls[0]?.happyToolsBridge?.promptOptionsEnabled).toBe(true);
       expect(createCalls[0]?.happyToolsBridge?.memoryMachineId).toBeNull();
+      expect(createCalls[0]?.happyToolsBridge?.disabledActionIds).toEqual(expect.arrayContaining([
+        'session.message.send',
+        'memory.search',
+        'memory.get_window',
+      ]));
     } finally {
       removeTempDirSync(agentDir);
     }

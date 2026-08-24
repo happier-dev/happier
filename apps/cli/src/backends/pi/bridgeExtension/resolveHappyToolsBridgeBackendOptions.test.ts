@@ -48,6 +48,8 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
     expect(enabled?.sessionRenameMode).toBe('ongoing');
     expect(enabled?.promptOptionsEnabled).toBe(true); // responseOptions defaults to 'agent'
     expect(enabled?.memoryMachineId).toBe('machine-1');
+    expect(enabled?.disabledActionIds).not.toContain('memory.search');
+    expect(enabled?.disabledActionIds).not.toContain('session.title.set');
     expect(enabled?.extensionPath).toBe(resolvePiBridgeExtensionPath(agentDir));
     expect(existsSync(enabled!.extensionPath)).toBe(true);
 
@@ -68,6 +70,7 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
     });
     expect(resolved?.sessionRenameMode).toBe('disabled');
     expect(resolved?.promptOptionsEnabled).toBe(true);
+    expect(resolved?.disabledActionIds).toContain('session.title.set');
 
     const initial = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
@@ -100,6 +103,10 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
       memoryMachineId: 'machine-1',
     });
     expect(guidanceOff?.memoryMachineId).toBeNull();
+    expect(guidanceOff?.disabledActionIds).toEqual(expect.arrayContaining([
+      'memory.search',
+      'memory.get_window',
+    ]));
 
     const noMachineId = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
