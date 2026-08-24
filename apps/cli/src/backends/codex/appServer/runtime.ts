@@ -705,6 +705,13 @@ function readNormalizedProviderEventItemType(value: unknown): string | null {
     return normalized.length > 0 ? normalized : null;
 }
 
+function readProviderUserMessageClientId(value: unknown): string | null {
+    if (readNormalizedProviderEventItemType(value) !== 'usermessage') return null;
+    const item = readProviderEventItemRecord(value);
+    if (!item) return null;
+    return readPendingLocalId(item.clientId) ?? readPendingLocalId(item.client_id);
+}
+
 function isBlockingCodexAppServerItemStart(value: unknown): boolean {
     const itemId = readProviderEventItemId(value);
     if (!itemId) return false;
@@ -1592,6 +1599,18 @@ export function createCodexAppServerRuntime(params: Readonly<{
             providerTurnId,
             ...(pending.appliedModelId ? { appliedModelId: pending.appliedModelId } : {}),
         });
+    };
+
+    const markCorrelatedProviderUserMessageAccepted = (
+        notificationParams: unknown,
+        rawProviderTurnId: string | null | undefined,
+    ): void => {
+        const clientUserMessageId = readProviderUserMessageClientId(notificationParams);
+        if (!clientUserMessageId) return;
+        const pending = Array.from(pendingProviderPrompts).find(
+            (candidate) => candidate.localIds?.length === 1 && candidate.localIds[0] === clientUserMessageId,
+        );
+        markPendingProviderPromptAccepted(pending, rawProviderTurnId);
     };
 
     const clearPendingProviderPrompt = (pending: CodexAppServerPendingProviderPrompt | null | undefined): void => {
@@ -3512,6 +3531,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     details: { method },
                 }, async () => {
                     if (attachedClientGeneration !== clientLifecycleGeneration) return;
+                    if (method === 'item/started' || method === 'item/completed') {
+                        markCorrelatedProviderUserMessageAccepted(
+                            notificationParams,
+                            readProviderEventTurnId(notificationParams) ?? pendingTurn?.turnId,
+                        );
+                    }
                     const context = await resolveStreamUpdateContext(method, notificationParams);
                     if (!context) {
                         if (pendingTurn && notificationMatchesPendingTurn(notificationParams)) {
@@ -3904,23 +3929,25 @@ export function createCodexAppServerRuntime(params: Readonly<{
             preserveRequestedThreadId: boolean;
             strictNativeResumeIdentity?: boolean;
             allowOversizedResponseRecovery?: boolean;
+            includeTurns?: boolean;
         }>,
     ): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
         historyBoundary.beginHydration();
-        const requestOptions = options.allowOversizedResponseRecovery
+        const resumeRequestOptions = { timeoutMs: null } as const;
+        const recoveryReadRequestOptions = options.allowOversizedResponseRecovery
             ? { timeoutMs: readCodexAppServerResumeRecoveryTimeoutMs(runtimeEnv) }
             : undefined;
         const readResumedThreadHistory = async (): Promise<unknown> => {
             const startedAt = Date.now();
             logger.debug('[codex-app-server] Reading authoritative thread history after oversized resume response', {
                 threadId: requestedThreadId,
-                timeoutMs: requestOptions?.timeoutMs ?? null,
+                timeoutMs: recoveryReadRequestOptions?.timeoutMs ?? null,
             });
             try {
                 const result = await client.request('thread/read', {
                     threadId: requestedThreadId,
                     includeTurns: true,
-                }, requestOptions);
+                }, recoveryReadRequestOptions);
                 logger.debug('[codex-app-server] Authoritative thread history read completed after oversized resume response', {
                     threadId: requestedThreadId,
                     elapsedMs: Date.now() - startedAt,
@@ -3952,10 +3979,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
             ...buildThreadConfigOverrideParams(currentReasoningEffort),
             ...buildCurrentPermissionParams('thread'),
             persistExtendedHistory: true,
+            excludeTurns: options.includeTurns === true ? false : true,
         };
         let response: unknown;
         try {
-            response = await client.request('thread/resume', requestParams, requestOptions);
+            response = await client.request('thread/resume', requestParams, resumeRequestOptions);
             if (Object.prototype.hasOwnProperty.call(requestParams, 'permissions')) {
                 permissionSupport = 'supported';
             }
@@ -3979,7 +4007,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         ...buildThreadConfigOverrideParams(currentReasoningEffort),
                         ...buildCurrentLegacyPermissionParams('thread'),
                         persistExtendedHistory: true,
-                    }, requestOptions);
+                        excludeTurns: options.includeTurns === true ? false : true,
+                    }, resumeRequestOptions);
                 } catch (legacyError) {
                     const legacyRecoveredResponse = await recoverOversizedResumeResponse(legacyError);
                     if (!legacyRecoveredResponse) {
@@ -4066,12 +4095,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     preserveRequestedThreadId: options.strictNativeResumeIdentity === true,
                     strictNativeResumeIdentity: options.strictNativeResumeIdentity === true,
                     allowOversizedResponseRecovery: !importHistory,
+                    includeTurns: importHistory,
                 });
             }
             if (existingSessionId) {
                 return await resumeThread(client, existingSessionId, {
                     preserveRequestedThreadId: false,
                     allowOversizedResponseRecovery: !importHistory,
+                    includeTurns: importHistory,
                 });
             }
             const requestParams = {
@@ -4594,8 +4625,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
             }
             const textOnlyInput: CodexAppServerTurnInputItem[] = [{ type: 'text', text: prompt }];
             const pendingProviderPrompt = trackPendingProviderPrompt(prompt, options);
+            const clientUserMessageId = pendingProviderPrompt.localIds?.length === 1
+                ? pendingProviderPrompt.localIds[0]
+                : null;
             const payload = {
                 threadId: activeTurn.threadId,
+                ...(clientUserMessageId ? { clientUserMessageId } : {}),
             };
             const requestSteer = async (
                 input: CodexAppServerTurnInputItem[],
@@ -4638,7 +4673,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         throw fallbackError;
                     }
                     await turnBoundaryTracker.appendSteerMessage({ localId: options?.localId ?? null });
-                    markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
+                    if (!clientUserMessageId) {
+                        markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
+                    }
                     return;
                 }
                 // Backward compatibility: older experimental app-server builds used `turnId` instead
@@ -4663,7 +4700,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             throw fallbackError;
                         }
                         await turnBoundaryTracker.appendSteerMessage({ localId: options?.localId ?? null });
-                        markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
+                        if (!clientUserMessageId) {
+                            markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
+                        }
                         return;
                     }
                     clearPendingProviderPrompt(pendingProviderPrompt);
@@ -4671,7 +4710,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 }
             }
             await turnBoundaryTracker.appendSteerMessage({ localId: options?.localId ?? null });
-            markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
+            if (!clientUserMessageId) {
+                markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
+            }
         },
         compactContext: async (_command: string) => {
             const activeThreadId = threadId;

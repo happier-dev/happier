@@ -1,9 +1,10 @@
-import { db } from "@/storage/db";
 import { inTx, afterTx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter, buildKVBatchUpdateUpdate } from "@/app/events/eventRouter";
 import * as privacyKit from "privacy-kit";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { isPublicAccountScopedKvKey } from "./reservedAccountScopedKvRow";
+import { mutateAccountScopedKvRowsInTx } from "./accountScopedKv";
 
 export interface KVMutation {
     key: string;
@@ -19,7 +20,7 @@ export interface KVMutateResult {
     }>;
     errors?: Array<{
         key: string;
-        error: 'version-mismatch';
+        error: 'version-mismatch' | 'reserved-key';
         version: number;
         value: string | null;  // Current value (null if deleted)
     }>;
@@ -36,93 +37,51 @@ export async function kvMutate(
     ctx: { uid: string },
     mutations: KVMutation[]
 ): Promise<KVMutateResult> {
+    const reservedErrors = mutations
+        .filter((mutation) => !isPublicAccountScopedKvKey(mutation.key))
+        .map((mutation) => ({
+            key: mutation.key,
+            error: 'reserved-key' as const,
+            version: -1,
+            value: null,
+        }));
+    if (reservedErrors.length > 0) {
+        return { success: false, errors: reservedErrors };
+    }
+
     return await inTx(async (tx) => {
-        const errors: KVMutateResult['errors'] = [];
-
-        // Pre-validate all mutations
-        for (const mutation of mutations) {
-            const existing = await tx.userKVStore.findUnique({
-                where: {
-                    accountId_key: {
-                        accountId: ctx.uid,
-                        key: mutation.key
-                    }
-                }
-            });
-
-            const currentVersion = existing?.version ?? -1;
-
-            // Version check is always required
-            if (currentVersion !== mutation.version) {
-                errors.push({
-                    key: mutation.key,
-                    error: 'version-mismatch',
-                    version: currentVersion,
-                    value: existing?.value ? privacyKit.encodeBase64(existing.value) : null
-                });
-            }
+        const mutationResult = await mutateAccountScopedKvRowsInTx(tx, {
+            accountId: ctx.uid,
+            mutations: mutations.map((mutation) => ({
+                key: mutation.key,
+                value: mutation.value ? privacyKit.decodeBase64(mutation.value) : null,
+                expectedVersion: mutation.version,
+            })),
+        });
+        if (mutationResult.status === 'conflict') {
+            const currentByKey = new Map(mutationResult.rows.map((row) => [row.key, row]));
+            return {
+                success: false,
+                errors: mutations
+                    .filter((mutation) => (currentByKey.get(mutation.key)?.version ?? -1) !== mutation.version)
+                    .map((mutation) => {
+                        const current = currentByKey.get(mutation.key);
+                        return {
+                            key: mutation.key,
+                            error: 'version-mismatch' as const,
+                            version: current?.version ?? -1,
+                            value: current?.value ? privacyKit.encodeBase64(current.value) : null,
+                        };
+                    }),
+            };
         }
 
-        // If any errors, return all errors and abort
-        if (errors.length > 0) {
-            return { success: false, errors };
-        }
-
-        // Apply all mutations and collect results
-        const results: Array<{ key: string; version: number }> = [];
-        const changes: Array<{ key: string; value: string | null; version: number }> = [];
-
-        for (const mutation of mutations) {
-            if (mutation.version === -1) {
-                // Create new entry (must not exist)
-                const result = await tx.userKVStore.create({
-                    data: {
-                        accountId: ctx.uid,
-                        key: mutation.key,
-                        value: mutation.value ? new Uint8Array(Buffer.from(mutation.value, 'base64')) : null,
-                        version: 0
-                    }
-                });
-
-                results.push({
-                    key: mutation.key,
-                    version: result.version
-                });
-
-                changes.push({
-                    key: mutation.key,
-                    value: mutation.value,
-                    version: result.version
-                });
-            } else {
-                // Update existing entry (including "delete" which sets value to null)
-                const newVersion = mutation.version + 1;
-
-                const result = await tx.userKVStore.update({
-                    where: {
-                        accountId_key: {
-                            accountId: ctx.uid,
-                            key: mutation.key
-                        }
-                    },
-                    data: {
-                        value: mutation.value ? privacyKit.decodeBase64(mutation.value) : null,
-                        version: newVersion
-                    }
-                });
-
-                results.push({
-                    key: mutation.key,
-                    version: result.version
-                });
-
-                changes.push({
-                    key: mutation.key,
-                    value: mutation.value,
-                    version: result.version
-                });
-            }
-        }
+        const results = mutationResult.rows.map((row) => ({ key: row.key, version: row.version }));
+        const changes = mutationResult.rows.map((row) => ({
+            key: row.key,
+            value: mutations.find((mutation) => mutation.key === row.key)?.value ?? null,
+            version: row.version,
+        }));
 
         const uniqueKeys = Array.from(new Set(mutations.map((m) => m.key)));
         const hint = uniqueKeys.length <= 50 ? { keys: uniqueKeys } : { full: true };

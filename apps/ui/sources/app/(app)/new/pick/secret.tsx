@@ -7,14 +7,15 @@ import { t } from '@/text';
 import { SecretsList } from '@/components/secrets/SecretsList';
 import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export default React.memo(function SecretPickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ selectedId?: string }>();
+    const params = useLocalSearchParams<{ selectedId?: string; draftId?: string }>();
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
 
     const [secrets, setSecrets] = useSettingMutable('secrets');
@@ -24,15 +25,16 @@ export default React.memo(function SecretPickerScreen() {
             navigation: navigation as any,
             router,
             routeParams: { secretId },
+            currentParams: { draftId: params.draftId },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [navigation, router]);
+    }, [navigation, params.draftId, pickerFallbackHref, router]);
 
     const handleBackPress = React.useCallback(() => {
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [navigation, pickerFallbackHref, router]);
 
     const headerTitle = t('settings.secrets');
     const headerBackTitle = t('common.back');

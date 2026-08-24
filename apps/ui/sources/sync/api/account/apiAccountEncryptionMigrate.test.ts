@@ -75,4 +75,38 @@ describe('migrateAccountEncryptionMode', () => {
       return (err as any).code === 'restore_required' && err.status === 400;
     });
   });
+
+  it.each([
+    ['session_drafts_require_upgrade', 400],
+    ['session_drafts_migration_incomplete', 400],
+    ['session_drafts_version_mismatch', 409],
+  ] as const)('surfaces %s through the incumbent typed error flow', async (code, status) => {
+    mocks.serverFetch.mockResolvedValueOnce(
+      jsonResponse(code === 'session_drafts_version_mismatch'
+        ? {
+          error: code,
+          address: { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000201' },
+          currentRevision: 4,
+        }
+        : { error: code }, status),
+    );
+
+    await expect(
+      migrateAccountEncryptionMode(
+        { token: 't', encryption: { publicKey: 'pk', machineKey: 'mk' } } as any,
+        {
+          toMode: 'plain',
+          expectedSettingsVersion: 0,
+          settingsContent: { t: 'plain', v: {} },
+          connectedServices: { action: 'assert_empty' },
+          automations: { action: 'assert_empty' },
+          sessionDrafts: { items: [] },
+        } as any,
+      ),
+    ).rejects.toSatisfy((err: unknown) => {
+      if (!(err instanceof HappyError)) return false;
+      return err.code === code && err.status === status;
+    });
+    expect(mocks.invalidateAccountEncryptionModeCache).not.toHaveBeenCalled();
+  });
 });

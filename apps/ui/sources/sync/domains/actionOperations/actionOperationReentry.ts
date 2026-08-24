@@ -1,10 +1,18 @@
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
+import {
+    getSessionDraftSnapshot,
+    type SessionDraftCurrentness,
+    type SessionDraftLocalSupplement,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import {
+    findSpawnAttemptCustody,
+    type PersistedSpawnAttempt,
+} from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
 
 export type ActionOperationReentryTarget =
-    | Readonly<{ kind: 'new_session'; draftScope: ServerAccountScope; operationId: string }>
+    | Readonly<{ kind: 'new_session'; draftScope: ServerAccountScope; draftId: string; operationId: string }>
     | Readonly<{ kind: 'session'; sessionId: string; serverId: string | null }>
     | Readonly<{ kind: 'detail' }>;
 
@@ -15,6 +23,7 @@ export type ActionOperationLocalPresentation = Readonly<{
 export type NewSessionOperationReentryRegistration = Readonly<{
     markSetupNeedsAttention: (createdSessionId: string) => void;
     markWorkflowComplete: (createdSessionId: string) => void;
+    release: () => void;
 }>;
 
 type NewSessionReentryEntry = {
@@ -22,8 +31,10 @@ type NewSessionReentryEntry = {
     key: string;
     requestId: string;
     draftScope: ServerAccountScope;
+    draftId: string;
     workflow: 'pending' | 'setup_needs_attention' | 'complete';
     createdSessionId: string | null;
+    workflowOwner: symbol | null;
 };
 
 const DEFAULT_MAX_REENTRY_ENTRIES = 100;
@@ -44,6 +55,59 @@ function readStringField(value: unknown, field: string): string | null {
 
 function entryKey(accountId: string, requestId: string): string {
     return JSON.stringify([accountId, requestId]);
+}
+
+export type PersistedNewSessionOperationIdentity = Readonly<{
+    operation: ActionOperationSnapshotV1;
+    custody: PersistedSpawnAttempt;
+    launchCurrentness: SessionDraftCurrentness | null;
+}>;
+
+export function resolvePersistedNewSessionOperationIdentity(params: Readonly<{
+    draftScope: ServerAccountScope | null;
+    draftId: string;
+    draft: SessionDraftLocalSupplement | null;
+    operations: Iterable<ActionOperationSnapshotV1>;
+    findCustody?: typeof findSpawnAttemptCustody;
+}>): PersistedNewSessionOperationIdentity | null {
+    const userAttemptId = typeof params.draft?.launchUserAttemptId === 'string'
+        ? params.draft.launchUserAttemptId.trim()
+        : '';
+    if (!params.draftScope || !userAttemptId) return null;
+
+    const candidates = Array.from(params.operations).filter((operation) => (
+        operation.actionId === 'session.spawn_new'
+        && operation.scope.accountId === params.draftScope!.accountId
+        && typeof operation.requestId === 'string'
+        && operation.requestId.trim().length > 0
+    ));
+    const machineIds = new Set(candidates.map((operation) => operation.scope.machineId));
+    const findCustody = params.findCustody ?? findSpawnAttemptCustody;
+    const matches: PersistedNewSessionOperationIdentity[] = [];
+    for (const machineId of machineIds) {
+        const custody = findCustody({
+            scope: params.draftScope,
+            machineId,
+            userAttemptId,
+        });
+        if (!custody) continue;
+        for (const operation of candidates) {
+            if (
+                operation.scope.machineId === custody.machineId
+                && operation.requestId === custody.nonce
+            ) {
+                const capture = params.draft?.launchCurrentnessCapture;
+                const launchCurrentness = capture
+                    && capture.userAttemptId === userAttemptId
+                    && capture.currentness.address.kind === 'newSession'
+                    && capture.currentness.address.draftId === params.draftId
+                    ? capture.currentness
+                    : null;
+                matches.push({ operation, custody, launchCurrentness });
+            }
+        }
+    }
+    return matches.length === 1 ? matches[0]! : null;
 }
 
 export function createActionOperationReentryRegistry(options?: Readonly<{ maxEntries?: number }>) {
@@ -72,17 +136,24 @@ export function createActionOperationReentryRegistry(options?: Readonly<{ maxEnt
         registerNewSession(params: Readonly<{
             requestId: string;
             draftScope: ServerAccountScope;
-        }>): NewSessionOperationReentryRegistration {
+            draftId: string;
+        }>): NewSessionOperationReentryRegistration | null {
             const requestId = params.requestId.trim();
             const key = entryKey(params.draftScope.accountId, requestId);
-            const entry: NewSessionReentryEntry = {
-                kind: 'new_session',
-                key,
-                requestId,
-                draftScope: params.draftScope,
-                workflow: 'pending',
-                createdSessionId: null,
-            };
+            const existing = entries.get(key);
+            if (existing?.workflowOwner) return null;
+            const workflowOwner = Symbol(key);
+            const entry: NewSessionReentryEntry = existing ?? {
+                    kind: 'new_session',
+                    key,
+                    requestId,
+                    draftScope: params.draftScope,
+                    draftId: params.draftId,
+                    workflow: 'pending',
+                    createdSessionId: null,
+                    workflowOwner: null,
+                };
+            entry.workflowOwner = workflowOwner;
             retain(entry);
             return {
                 markSetupNeedsAttention: (createdSessionId) => {
@@ -97,11 +168,23 @@ export function createActionOperationReentryRegistry(options?: Readonly<{ maxEnt
                     entry.createdSessionId = createdSessionId.trim() || null;
                     retain(entry);
                 },
+                release: () => {
+                    if (entries.get(key) !== entry || entry.workflowOwner !== workflowOwner) return;
+                    entry.workflowOwner = null;
+                    retain(entry);
+                },
             };
+        },
+        canAutomaticallyReenterNewSession(snapshot: ActionOperationSnapshotV1): boolean {
+            if (snapshot.actionId !== 'session.spawn_new') return false;
+            const requestId = snapshotRequestId(snapshot);
+            if (!requestId) return false;
+            const entry = entries.get(entryKey(snapshot.scope.accountId, requestId));
+            return !entry || (entry.workflow === 'pending' && entry.workflowOwner === null);
         },
         resolve(
             snapshot: ActionOperationSnapshotV1,
-            deps?: Readonly<{ loadDraft?: (scope: ServerAccountScope) => unknown }>,
+            deps?: Readonly<{ hasDraft?: (scope: ServerAccountScope, draftId: string) => boolean }>,
         ): ActionOperationReentryTarget {
             if (snapshot.actionId === 'session.fork') {
                 if (snapshot.state !== 'succeeded') return { kind: 'detail' };
@@ -128,9 +211,10 @@ export function createActionOperationReentryRegistry(options?: Readonly<{ maxEnt
                     serverId: entry.draftScope.serverId,
                 };
             }
-            const draft = (deps?.loadDraft ?? loadNewSessionDraft)(entry.draftScope);
-            return draft
-                ? { kind: 'new_session', draftScope: entry.draftScope, operationId: snapshot.operationId }
+            const hasDraft = deps?.hasDraft?.(entry.draftScope, entry.draftId)
+                ?? getSessionDraftSnapshot(entry.draftScope, { kind: 'newSession', draftId: entry.draftId }) !== null;
+            return hasDraft
+                ? { kind: 'new_session', draftScope: entry.draftScope, draftId: entry.draftId, operationId: snapshot.operationId }
                 : { kind: 'detail' };
         },
         resolvePresentation(snapshot: ActionOperationSnapshotV1): ActionOperationLocalPresentation | null {

@@ -94,13 +94,13 @@ Use `skills/happier-testing` for exact lanes and browser/device skills for execu
 
 ## Stability and resource ownership
 
-Final QA must identify the tested relevant source state, bundle, binary, artifact, server, account, and relevant configuration. Do not assume hot reload or use a knowingly half-wired path as final evidence. Moving work may still receive advisory QA; reconcile changed decision-material paths and rerun affected scenarios before the verdict.
+Final QA must identify the tested relevant source state, loaded bundle or binary when applicable, server, account, and relevant configuration. This identifies what actually ran; it does not freeze the worktree or create a separate release representation. Do not assume hot reload or use a knowingly half-wired path as final evidence. Moving work may still receive advisory QA; reconcile changed decision-material paths and rerun affected scenarios before the verdict.
 
 Parallelize only flows with independent code and mutable resources. Track ownership of accounts/browser storage, daemons/services, databases, VMs/devices, ports, artifact directories, and provider sessions. Do not stop or restart externally managed processes without authorization.
 
 When the user supplies a managed stack or running environment, reuse it and its stated access path; do not start a competing stack. If its state is unsuitable or a managed process appears to need restart/stop, report the evidence and ask rather than taking ownership of it.
 
-For platform-sensitive QA, exercise the actual affected runtime when it is authorized and available: the host macOS environment, an existing authorized Linux VM/container such as Lima, or an authorized Windows connection. Record OS/build/architecture and tested artifact identity, manage only resources started by the lane, and keep machine addresses and credentials runtime-supplied rather than hardcoded in the skill or evidence.
+For platform-sensitive QA, exercise the actual affected runtime when it is authorized and available: the host macOS environment, an existing authorized Linux VM/container such as Lima, or an authorized Windows connection. Record OS/build/architecture and the observed loaded source/build identity, manage only resources started by the lane, and keep machine addresses and credentials runtime-supplied rather than hardcoded in the skill or evidence.
 
 For runtime failures, inspect the evidence sources that can decide the cause: structured CLI/API output, Happier/session/provider logs, browser console and network traffic, daemon/server process state, persistence/database state, and platform/service logs. Use `skills/happier-diagnose` for Happier-specific log/session diagnosis. Do not add source instrumentation in read-only modes.
 

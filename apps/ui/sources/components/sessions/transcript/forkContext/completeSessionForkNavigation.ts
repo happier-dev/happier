@@ -3,6 +3,9 @@ import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { requireLocalSessionVisibleForRoute } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
+import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { flushSessionDraft, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type ForkNavigationOptions = Readonly<{ serverId?: string }>;
 
@@ -35,9 +38,23 @@ function isExpectedForkChild(session: Session, parentSessionId: string): boolean
     return forkRecord.v === 1 && forkRecord.parentSessionId === parentSessionId;
 }
 
-function writeRestoredDraft(childSessionId: string, restoredDraftText: string): void {
+function writeRestoredDraft(childSessionId: string, restoredDraftText: string, serverId: string | null): void {
     try {
-        storage.getState().updateSessionDraft(childSessionId, restoredDraftText);
+        const activeScope = storage.getState().profileScope;
+        const scope = activeScope
+            ? createServerAccountScope(serverId ?? activeScope.serverId, activeScope.accountId)
+            : null;
+        if (!scope) return;
+        writeExistingSessionDraft({
+            scope,
+            sessionId: childSessionId,
+            patch: { text: restoredDraftText },
+            materializationIntent: 'seeded',
+        });
+        fireAndForget(flushSessionDraft({
+            scope,
+            address: { kind: 'session', sessionId: childSessionId },
+        }), { tag: 'completeSessionForkNavigation.restoreDraft' });
     } catch {
         // Draft restore is best-effort; fork navigation should not fail because local draft persistence failed.
     }
@@ -75,7 +92,7 @@ export async function completeSessionForkNavigation(params: CompleteSessionForkN
     });
     // The draft is locally targeted state. Do not write it until the canonical
     // route owner has proved this row is the expected fork child.
-    if (restoredDraftText) writeRestoredDraft(params.childSessionId, restoredDraftText);
+    if (restoredDraftText) writeRestoredDraft(params.childSessionId, restoredDraftText, serverId);
     await params.navigate(params.childSessionId, serverId ? { serverId } : undefined);
 
     if (restoredDraftText && params.writeForkInitialPrompt === true) {

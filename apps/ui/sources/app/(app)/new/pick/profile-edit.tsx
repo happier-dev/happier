@@ -19,7 +19,7 @@ import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 
@@ -32,11 +32,14 @@ export default React.memo(function ProfileEditScreen() {
         cloneFromProfileId?: string | string[];
         profileData?: string | string[];
         machineId?: string | string[];
+        draftId?: string | string[];
     }>();
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const profileIdParam = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const cloneFromProfileIdParam = Array.isArray(params.cloneFromProfileId) ? params.cloneFromProfileId[0] : params.cloneFromProfileId;
     const profileDataParam = Array.isArray(params.profileData) ? params.profileData[0] : params.profileData;
     const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
+    const draftIdParam = Array.isArray(params.draftId) ? params.draftId[0] : params.draftId;
     const screenWidth = useWindowDimensions().width;
     const headerHeight = useHeaderHeight();
     const profiles = useSetting('profiles');
@@ -194,9 +197,10 @@ export default React.memo(function ProfileEditScreen() {
                 navigation: navigation as any,
                 router,
                 routeParams: { profileId: profileToSave.id },
+                currentParams: { draftId: draftIdParam },
             });
             if (returnMode === 'dispatch') {
-                safeRouterBack({ router, navigation, fallbackHref: '/new' });
+                safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
             }
             return true;
         }
@@ -206,9 +210,10 @@ export default React.memo(function ProfileEditScreen() {
             navigation: navigation as any,
             router,
             routeParams: { profileId: profileToSave.id },
+            currentParams: { draftId: draftIdParam },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
         // Prevent the unsaved-changes guard from triggering on successful save.
         isDirtyRef.current = false;
@@ -219,18 +224,18 @@ export default React.memo(function ProfileEditScreen() {
     const handleCancel = React.useCallback(() => {
         fireAndForget((async () => {
             if (!isDirtyRef.current) {
-                safeRouterBack({ router, navigation, fallbackHref: '/new' });
+                safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
                 return;
             }
             const decision = await confirmDiscard();
             if (decision === 'discard') {
                 isDirtyRef.current = false;
-                safeRouterBack({ router, navigation, fallbackHref: '/new' });
+                safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
             } else if (decision === 'save') {
                 saveRef.current?.();
             }
         })(), { tag: 'ProfileEditScreen.cancel' });
-    }, [confirmDiscard, navigation, router]);
+    }, [confirmDiscard, navigation, pickerFallbackHref, router]);
 
     const headerTitle = profile.name ? t('profiles.editProfile') : t('profiles.addProfile');
     const headerBackTitle = t('common.back');

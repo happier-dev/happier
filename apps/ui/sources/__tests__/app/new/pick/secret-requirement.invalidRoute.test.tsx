@@ -92,6 +92,11 @@ describe('SecretRequirementPickerScreen invalid route state', () => {
         const SecretRequirementPickerScreen = (await import('@/app/(app)/new/pick/secret-requirement')).default;
         await renderScreen(React.createElement(SecretRequirementPickerScreen));
 
-        expect(routerMock.replace).toHaveBeenCalledWith('/new');
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+            },
+        });
     });
 });

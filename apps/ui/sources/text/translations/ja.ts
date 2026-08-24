@@ -6356,6 +6356,12 @@ localTailscale: {
     newTagConfirm: "追加",
   },
 
+  sessionDrafts: {
+    sectionTitle: '下書き', badge: '下書き', untitled: '無題の下書き', continueEditing: '編集を続ける', startAnother: '別の下書きを開始',
+    status: { offline: 'オフライン', syncing: '同期中', conflict: '競合', machineUnavailable: 'マシンを利用できません', attachmentNeedsAttention: '添付ファイルの確認が必要です', startInterrupted: '開始が中断されました' },
+    new: { action: '新しい下書き' }, delete: { action: '下書きを削除', confirmTitle: '下書きを削除しますか？', confirmDescription: 'この下書きはデバイスから削除されます。' },
+    conflict: { title: '下書きの競合', description: 'このフィールドは別のデバイスで変更されました。', mine: 'このデバイス', synced: '同期済み', useSynced: '同期版を使用', keepDevice: 'デバイス版を保持', copyMine: '自分の版をコピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした', field: { text: 'テキスト', mentions: 'メンション', attachments: '添付ファイル', recipient: '受信者', agentContinuation: 'エージェント継続', executionRunDelivery: '実行配信' } },
+  },
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `サーバー: ${server}`,
     storagePersistedTab: "Happier",
@@ -8019,6 +8025,14 @@ localTailscale: {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: '新しいセッションの下書き',
+        footer: '「新しいセッション」でこのデバイスの下書きを続けるか、新規作成するかを選びます。',
+        resumeTitle: '前の下書きを再開',
+        resumeSubtitle: 'このデバイスで「新しいセッション」から始めた下書きを続けます。',
+        freshTitle: '常に新しく始める',
+        freshSubtitle: '「新しいセッション」を選ぶたびに新しい下書きを開きます。',
+    },
 	    sessionList: {
 	        title: 'セッション一覧',
 	        footer: '各セッション行に表示する内容をカスタマイズします。',

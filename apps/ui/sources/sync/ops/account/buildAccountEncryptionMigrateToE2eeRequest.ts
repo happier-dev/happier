@@ -23,6 +23,10 @@ import {
   AccountEncryptionMigrateRequestSchema,
   type AccountEncryptionMigrateRequest,
 } from '@/sync/api/account/apiAccountEncryptionMigrate';
+import {
+  buildAccountEncryptionSessionDraftsDirective,
+  type AccountEncryptionSessionDraftMigrationCandidate,
+} from './buildAccountEncryptionSessionDraftsDirective';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
@@ -37,6 +41,7 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
   settings: Settings;
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   automations: ReadonlyArray<Readonly<{ id: string; templateCiphertext: string }>>;
+  sessionDrafts?: readonly AccountEncryptionSessionDraftMigrationCandidate[];
   fetchConnectedServiceCredentialPlain: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     content: Readonly<{ t: 'plain'; v: unknown }>;
     metadata?: ConnectedServiceCredentialMetadataInput;
@@ -141,11 +146,17 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
     return { action: 'migrate' as const, templates };
   })();
 
+  const sessionDrafts = buildAccountEncryptionSessionDraftsDirective({
+    candidates: params.sessionDrafts ?? [],
+    target: { mode: 'e2ee', material, randomBytes: getRandomBytes },
+  });
+
   return AccountEncryptionMigrateRequestSchema.parse({
     toMode: 'e2ee',
     expectedSettingsVersion: params.expectedSettingsVersion,
     settingsContent: { t: 'encrypted', c: settingsCiphertext },
     connectedServices,
     automations,
+    ...(sessionDrafts ? { sessionDrafts } : {}),
   });
 }

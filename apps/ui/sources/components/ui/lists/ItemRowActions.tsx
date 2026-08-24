@@ -165,7 +165,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 onPressIn={() => props.onActionPressIn?.()}
                 onPress={(e: GestureResponderEvent) => {
                     e?.stopPropagation?.();
-                    action.onPress?.();
+                    action.onPress?.(e);
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={action.title}

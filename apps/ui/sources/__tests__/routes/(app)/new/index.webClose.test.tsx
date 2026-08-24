@@ -20,6 +20,7 @@ vi.mock('react-native', async () => {
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
+        params: { draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e' },
         router: {
             back: routerBackSpy,
         },
@@ -69,18 +70,28 @@ vi.mock('@/components/sessions/new/navigation/newSessionContainedModalScreen', (
     NewSessionScreenPortalScope: (props: { children?: React.ReactNode }) => React.createElement('NewSessionScreenPortalScope', null, props.children),
 }));
 
-vi.mock('@/sync/domains/state/persistence', () => ({
-    loadNewSessionDraft: () => null,
+vi.mock('@/sync/domains/state/newSessionCheckoutDraft', () => ({
+    parseCheckoutCreationDraft: () => null,
 }));
 
-vi.mock('@/sync/domains/state/newSessionCheckoutDraft', () => ({
-    parseNewSessionCheckoutDraft: () => ({
-        checkoutCreationDraft: null,
-    }),
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    getSessionDraftSnapshot: () => null,
+    subscribeSessionDraft: () => () => {},
+    deleteSessionDraft: vi.fn(async () => {}),
+}));
+
+vi.mock('@/sync/domains/actionOperations/useActionOperations', () => ({
+    useAllActionOperations: () => [],
+}));
+
+vi.mock('@/sync/domains/actionOperations/actionOperationReentry', () => ({
+    resolvePersistedNewSessionOperationIdentity: () => null,
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
     useActiveServerAccountScope: () => null,
+    useSetting: (key: string) => key === 'newSessionDraftEntryMode' ? 'resumePrevious' : false,
+    useLocalSettingMutable: () => [[], vi.fn()],
 }));
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({

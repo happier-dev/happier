@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const ensureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn());
 const requireLocalSessionVisibleForRouteMock = vi.hoisted(() => vi.fn());
 const patchSessionMetadataWithRetryMock = vi.hoisted(() => vi.fn());
-const updateSessionDraftMock = vi.hoisted(() => vi.fn());
+const writeExistingSessionDraftMock = vi.hoisted(() => vi.fn());
+const flushSessionDraftMock = vi.hoisted(() => vi.fn(async () => ({ status: 'clean' as const })));
 const storageRef = vi.hoisted(() => ({ current: null as any }));
 
 vi.mock('@/sync/sync', () => ({
@@ -16,6 +17,11 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
     requireLocalSessionVisibleForRoute: (params: unknown) => requireLocalSessionVisibleForRouteMock(params),
+}));
+
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    writeExistingSessionDraft: writeExistingSessionDraftMock,
+    flushSessionDraft: flushSessionDraftMock,
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -33,7 +39,8 @@ describe('completeSessionForkNavigation', () => {
         ensureSessionVisibleForMessageRouteMock.mockReset();
         requireLocalSessionVisibleForRouteMock.mockReset();
         patchSessionMetadataWithRetryMock.mockReset();
-        updateSessionDraftMock.mockReset();
+        writeExistingSessionDraftMock.mockReset();
+        flushSessionDraftMock.mockClear();
 
         const storageModule = await import('@/sync/domains/state/storage');
         storageRef.current = (storageModule as any).createForkCompletionTestStore({
@@ -43,7 +50,7 @@ describe('completeSessionForkNavigation', () => {
                     metadata: {},
                 },
             },
-            updateSessionDraft: (...args: unknown[]) => updateSessionDraftMock(...args),
+            profileScope: { serverId: 'server-a', accountId: 'account-a' },
         });
         requireLocalSessionVisibleForRouteMock.mockResolvedValue(undefined);
     });
@@ -60,7 +67,7 @@ describe('completeSessionForkNavigation', () => {
         patchSessionMetadataWithRetryMock.mockImplementation(async (sessionId: string) => {
             events.push(`patch:${sessionId}`);
         });
-        updateSessionDraftMock.mockImplementation((sessionId: string) => {
+        writeExistingSessionDraftMock.mockImplementation(({ sessionId }: { sessionId: string }) => {
             events.push(`draft:${sessionId}`);
         });
         const navigate = vi.fn(async (sessionId: string) => {
@@ -84,7 +91,12 @@ describe('completeSessionForkNavigation', () => {
             serverId: 'server-b',
             isLocalSessionReady: expect.any(Function),
         }));
-        expect(updateSessionDraftMock).toHaveBeenCalledWith('child', 'retry this');
+        expect(writeExistingSessionDraftMock).toHaveBeenCalledWith({
+            scope: { serverId: 'server-b', accountId: 'account-a' },
+            sessionId: 'child',
+            patch: { text: 'retry this' },
+            materializationIntent: 'seeded',
+        });
         expect(navigate).toHaveBeenCalledWith('child', { serverId: 'server-b' });
         expect(patchSessionMetadataWithRetryMock).toHaveBeenCalledWith('child', expect.any(Function), { serverId: 'server-b' });
         expect(events).toEqual(['hydrate:child', 'draft:child', 'navigate:child', 'patch:child']);
@@ -111,7 +123,7 @@ describe('completeSessionForkNavigation', () => {
             writeForkInitialPrompt: true,
         })).rejects.toThrow();
 
-        expect(updateSessionDraftMock).not.toHaveBeenCalled();
+        expect(writeExistingSessionDraftMock).not.toHaveBeenCalled();
         expect(navigate).not.toHaveBeenCalled();
         expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     });

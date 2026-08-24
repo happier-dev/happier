@@ -3,37 +3,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mmkvStore = vi.hoisted(() => new Map<string, string>());
 vi.mock('react-native-mmkv', () => {
   class MMKV {
-    getString(key: string) {
-      return mmkvStore.get(key);
-    }
-    set(key: string, value: string) {
-      mmkvStore.set(key, value);
-    }
-    delete(key: string) {
-      mmkvStore.delete(key);
-    }
-    clearAll() {
-      mmkvStore.clear();
-    }
+    getString(key: string) { return mmkvStore.get(key); }
+    set(key: string, value: string) { mmkvStore.set(key, value); }
+    delete(key: string) { mmkvStore.delete(key); }
+    clearAll() { mmkvStore.clear(); }
   }
   return { MMKV };
 });
 
 import { createSessionsDomain } from './sessions';
-import { clearPersistence, loadSessionDrafts } from '@/sync/domains/state/persistence';
+import { clearPersistence } from '@/sync/domains/state/persistence';
 import {
-  readSessionDraftValue,
-  resetSessionDraftValuesCachesForTests,
-  writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
-import {
-  patchAgentInputLocalUiState,
-  readAgentInputLocalUiState,
-  resetAgentInputLocalUiStateCachesForTests,
-} from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
+  getSessionDraftSnapshot,
+  writeExistingSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 function createHarness() {
-  let state: any = {
+  let state: Record<string, unknown> = {
     sessions: {},
     sessionsData: null,
     sessionListViewData: null,
@@ -50,221 +36,53 @@ function createHarness() {
     settings: { groupInactiveSessionsByProject: false },
     machineDisplayById: {},
   };
-
   const get = () => state;
-  const set = (updater: any) => {
-    const next = typeof updater === 'function' ? updater(state) : updater;
+  const set = (updater: unknown) => {
+    const next = typeof updater === 'function'
+      ? (updater as (current: typeof state) => Partial<typeof state>)(state)
+      : updater as Partial<typeof state>;
     state = { ...state, ...next };
   };
-
-  const domain = createSessionsDomain({ get, set } as any);
-  set(domain as any);
-  return { get, domain };
+  const domain = createSessionsDomain({ get, set } as never);
+  set(domain);
+  return { domain };
 }
 
-describe('sessions domain: drafts', () => {
-  beforeEach(() => {
-    clearPersistence();
-    resetSessionDraftValuesCachesForTests();
-    resetAgentInputLocalUiStateCachesForTests();
-  });
+function sessionFixture(id: string) {
+  return {
+    id,
+    seq: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    active: true,
+    activeAt: 1,
+    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+    metadataVersion: 1,
+    agentState: null,
+    agentStateVersion: 0,
+    thinking: false,
+    thinkingAt: 0,
+    presence: 1,
+  };
+}
 
-  it('persists drafts even when the session is not yet loaded', () => {
-    const { get, domain } = createHarness();
-    expect(Object.keys(get().sessions).length).toBe(0);
+describe('sessions domain: canonical draft cleanup', () => {
+  beforeEach(() => clearPersistence());
 
-    domain.updateSessionDraft('s_missing', 'hello');
-    expect(loadSessionDrafts()).toEqual({ s_missing: 'hello' });
-    expect(Object.keys(get().sessions).length).toBe(0);
-  });
-
-  it('applies a persisted draft when the session is later loaded', () => {
-    const { get, domain } = createHarness();
-    expect(Object.keys(get().sessions).length).toBe(0);
-
-    domain.updateSessionDraft('s_new', 'hello');
-    expect(loadSessionDrafts()).toEqual({ s_new: 'hello' });
-
-    domain.applySessions([
-      {
-        id: 's_new',
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: true,
-        activeAt: 1,
-        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 0,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 1,
-      } as any,
-    ]);
-
-    expect(get().sessions.s_new?.draft).toBe('hello');
-  });
-
-  it('applies persisted drafts for new sessions even when some sessions are already loaded', () => {
-    const { get, domain } = createHarness();
-
-    domain.applySessions([
-      {
-        id: 's_existing',
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: true,
-        activeAt: 1,
-        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 0,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 1,
-      } as any,
-    ]);
-
-    expect(Object.keys(get().sessions).length).toBe(1);
-
-    domain.updateSessionDraft('s_new', 'hello');
-    expect(loadSessionDrafts()).toEqual({ s_new: 'hello' });
-
-    domain.applySessions([
-      {
-        id: 's_new',
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: true,
-        activeAt: 1,
-        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 0,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 1,
-      } as any,
-    ]);
-
-    expect(get().sessions.s_new?.draft).toBe('hello');
-  });
-
-  it('preserves persisted drafts for unloaded sessions when updating a loaded session draft', () => {
-    const { get, domain } = createHarness();
-
-    domain.updateSessionDraft('s_unloaded', 'keep this draft');
-    expect(loadSessionDrafts()).toEqual({ s_unloaded: 'keep this draft' });
-
-    domain.applySessions([
-      {
-        id: 's_loaded',
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: true,
-        activeAt: 1,
-        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 0,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 1,
-      } as any,
-    ]);
-
-    expect(get().sessions.s_unloaded).toBeUndefined();
-
-    domain.updateSessionDraft('s_loaded', 'loaded draft');
-
-    expect(loadSessionDrafts()).toEqual({
-      s_unloaded: 'keep this draft',
-      s_loaded: 'loaded draft',
-    });
-  });
-
-  it('preserves persisted drafts for unloaded sessions when clearing a loaded session draft', () => {
-    const { get, domain } = createHarness();
-
-    domain.updateSessionDraft('s_unloaded', 'keep this draft');
-    expect(loadSessionDrafts()).toEqual({ s_unloaded: 'keep this draft' });
-
-    domain.applySessions([
-      {
-        id: 's_loaded',
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: true,
-        activeAt: 1,
-        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 0,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 1,
-      } as any,
-    ]);
-
-    domain.updateSessionDraft('s_loaded', 'loaded draft');
-    expect(loadSessionDrafts()).toEqual({
-      s_unloaded: 'keep this draft',
-      s_loaded: 'loaded draft',
-    });
-
-    domain.updateSessionDraft('s_loaded', '');
-
-    expect(get().sessions.s_loaded?.draft).toBeNull();
-    expect(loadSessionDrafts()).toEqual({
-      s_unloaded: 'keep this draft',
-    });
-  });
-
-  it('deletes semantic draft values and local composer UI state with the session', () => {
+  it('deletes the canonical repository draft with the session', () => {
+    const scope = { serverId: 'server-delete', accountId: 'account-delete' } as const;
     const { domain } = createHarness();
-    domain.applySessions([
-      {
-        id: 's_delete',
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: true,
-        activeAt: 1,
-        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 0,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 1,
-      } as any,
-    ]);
-
-    writeSessionDraftValue(null, 's_delete', 'routing.executionRunDelivery', 'interrupt');
-    patchAgentInputLocalUiState(null, { kind: 'session', sessionId: 's_delete' }, {
-      expanded: true,
-      scrollY: 12,
-      textLength: 20,
-      fontScale: 1,
+    domain.activateSessionLocalStateScope(scope);
+    domain.applySessions([sessionFixture('session-delete') as never]);
+    writeExistingSessionDraft({
+      scope,
+      sessionId: 'session-delete',
+      patch: { text: 'delete me' },
     });
+    expect(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'session-delete' })).not.toBeNull();
 
-    expect(readSessionDraftValue(null, 's_delete', 'routing.executionRunDelivery')).toBe('interrupt');
-    expect(readAgentInputLocalUiState(null, {
-      kind: 'session',
-      sessionId: 's_delete',
-    })?.expanded).toBe(true);
+    domain.deleteSession('session-delete');
 
-    domain.deleteSession('s_delete');
-
-    expect(readSessionDraftValue(null, 's_delete', 'routing.executionRunDelivery')).toBeUndefined();
-    expect(readAgentInputLocalUiState(null, {
-      kind: 'session',
-      sessionId: 's_delete',
-    })).toBeNull();
+    expect(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'session-delete' })).toBeNull();
   });
 });

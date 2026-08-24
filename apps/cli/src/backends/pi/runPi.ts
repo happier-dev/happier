@@ -22,10 +22,11 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
     agentMessageType: 'pi',
     supportsMcpServers: false,
     resolveToolsDeliveryAvailability: resolvePiToolsDeliveryAvailability,
+    deliversSystemPromptAtSpawn: true,
     machineMetadata: initialMachineMetadata,
     terminalDisplay: PiTerminalDisplay,
     resolvePermissionModeQueueKey: (permissionMode) => buildPiToolsForPermissionMode(permissionMode)?.join(',') ?? 'native',
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, getAbortSignal, memoryRecallGuidanceEnabled, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) =>
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, getAbortSignal, memoryRecallGuidanceEnabled, pendingQueueDrainMaxPopPerWake, providerInputConsumer, resolveSystemPromptBeforeSpawn }) =>
       createPiAcpRuntime({
         directory,
         machineId,
@@ -39,6 +40,7 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
         getPermissionMode,
         pendingQueueDrainMaxPopPerWake,
         providerInputConsumer,
+        resolveSystemPromptBeforeSpawn,
       }),
     onAttachMetadataSnapshotMissing: (error) => {
       logger.debug(

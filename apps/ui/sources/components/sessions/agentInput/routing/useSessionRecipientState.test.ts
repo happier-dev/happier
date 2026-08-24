@@ -7,12 +7,8 @@ import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-    invalidateSessionDraftValuesCache,
-    readSessionDraftValue,
-    writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
-import { savePersistedSessionDraftValues } from '@/sync/domains/state/sessionDraftValuesPersistence';
+import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
+import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import { useSessionRecipientState } from './useSessionRecipientState';
 
@@ -20,6 +16,7 @@ const mmkvStore = vi.hoisted(() => new Map<string, string>());
 const activeScopeState = vi.hoisted(() => ({
     value: { serverId: 'server-a', accountId: 'account-a' } as ServerAccountScope | null,
 }));
+let scopeSequence = 0;
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -63,11 +60,16 @@ function target(recipient: ParticipantRecipientV1, label = 'x'): SessionParticip
     return { key, displayLabel: label, recipient };
 }
 
+function getActiveScope(): ServerAccountScope {
+    const scope = activeScopeState.value;
+    if (!scope) throw new Error('Expected an active server account scope');
+    return scope;
+}
+
 describe('useSessionRecipientState', () => {
     beforeEach(() => {
         mmkvStore.clear();
-        activeScopeState.value = { serverId: 'server-a', accountId: 'account-a' };
-        invalidateSessionDraftValuesCache(activeScopeState.value);
+        activeScopeState.value = { serverId: 'server-a', accountId: `account-${scopeSequence++}` };
     });
 
     it('defaults execution-run delivery to steer_if_supported and allows overriding', async () => {
@@ -172,7 +174,7 @@ describe('useSessionRecipientState', () => {
             memberId: 'member_1',
             memberLabel: 'Reviewer',
         };
-        writeSessionDraftValue(activeScopeState.value, 'session-a', 'routing.recipient', persisted);
+        existingSessionDraftSemanticValues.write(getActiveScope(), 'session-a', 'routing.recipient', persisted);
         const targets = [target(auto), target(persisted)];
 
         const hook = await renderHook(
@@ -196,6 +198,92 @@ describe('useSessionRecipientState', () => {
         await hook.unmount();
     });
 
+    it('does not rerender routing state for unrelated composer text writes', async () => {
+        const persisted: ParticipantRecipientV1 = {
+            kind: 'agent_team_member',
+            teamId: 'team_1',
+            memberId: 'member_1',
+            memberLabel: 'Reviewer',
+        };
+        const targets = [target(persisted)];
+        existingSessionDraftSemanticValues.write(getActiveScope(), 'session-a', 'routing.recipient', persisted);
+        let renderCount = 0;
+
+        const hook = await renderHook(
+            () => {
+                renderCount += 1;
+                return useSessionRecipientState({
+                    targets,
+                    autoRecipient: null,
+                    draftPersistence: { sessionId: 'session-a', surface: 'mainComposer' },
+                });
+            },
+            { flushOptions: { cycles: 2, turns: 2 } },
+        );
+        const settledRenderCount = renderCount;
+
+        await act(async () => {
+            writeExistingSessionDraft({
+                scope: getActiveScope(),
+                sessionId: 'session-a',
+                patch: { text: 'hello world' },
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        });
+
+        expect(renderCount).toBe(settledRenderCount);
+        expect(hook.getCurrent().recipient).toEqual(persisted);
+        await hook.unmount();
+    });
+
+    it('does not feed persisted recipient hydration back through equivalent target arrays', async () => {
+        const persisted: ParticipantRecipientV1 = {
+            kind: 'agent_team_member',
+            teamId: 'team_1',
+            memberId: 'member_1',
+            memberLabel: 'Reviewer',
+        };
+        const persistedTarget = target(persisted);
+        existingSessionDraftSemanticValues.write(getActiveScope(), 'session-a', 'routing.recipient', persisted);
+        let renderCount = 0;
+
+        const hook = await renderHook(
+            () => {
+                renderCount += 1;
+                if (renderCount > 20) throw new Error('recipient hydration feedback loop');
+                return useSessionRecipientState({
+                    targets: [{ ...persistedTarget }],
+                    autoRecipient: null,
+                    draftPersistence: { sessionId: 'session-a', surface: 'mainComposer' },
+                });
+            },
+            { flushOptions: { cycles: 2, turns: 2 } },
+        );
+
+        expect(renderCount).toBeLessThan(10);
+        expect(hook.getCurrent().recipient).toEqual(persisted);
+        await hook.unmount();
+    });
+
+    it('restores an explicit manual Session recipient instead of applying auto-recipient', async () => {
+        const auto: ParticipantRecipientV1 = { kind: 'execution_run', runId: 'run_auto' };
+        const targets = [target(auto)];
+        existingSessionDraftSemanticValues.write(getActiveScope(), 'session-a', 'routing.recipient', null);
+
+        const hook = await renderHook(
+            () => useSessionRecipientState({
+                targets,
+                autoRecipient: auto,
+                draftPersistence: { sessionId: 'session-a', surface: 'mainComposer' },
+            }),
+            { flushOptions: { cycles: 2, turns: 2 } },
+        );
+
+        expect(hook.getCurrent().didManualOverride).toBe(true);
+        expect(hook.getCurrent().recipient).toBeNull();
+        await hook.unmount();
+    });
+
     it('does not apply an unavailable persisted recipient but restores it when the target reappears', async () => {
         const auto: ParticipantRecipientV1 = { kind: 'execution_run', runId: 'run_auto' };
         const persisted: ParticipantRecipientV1 = {
@@ -204,7 +292,7 @@ describe('useSessionRecipientState', () => {
             memberId: 'member_1',
             memberLabel: 'Reviewer',
         };
-        writeSessionDraftValue(activeScopeState.value, 'session-a', 'routing.recipient', persisted);
+        existingSessionDraftSemanticValues.write(getActiveScope(), 'session-a', 'routing.recipient', persisted);
 
         const hook = await renderHook(
             ({ nextTargets }: { nextTargets: SessionParticipantTarget[] }) =>
@@ -232,10 +320,10 @@ describe('useSessionRecipientState', () => {
         await hook.unmount();
     });
 
-    it('hydrates persisted delivery and falls back when the persisted delivery is invalid', async () => {
+    it('hydrates persisted delivery and falls back when the next Session has no delivery override', async () => {
         const auto: ParticipantRecipientV1 = { kind: 'execution_run', runId: 'run_1' };
         const targets = [target(auto)];
-        writeSessionDraftValue(activeScopeState.value, 'session-a', 'routing.executionRunDelivery', 'interrupt');
+        existingSessionDraftSemanticValues.write(getActiveScope(), 'session-a', 'routing.executionRunDelivery', 'interrupt');
 
         const hook = await renderHook(
             ({ sessionId }: { sessionId: string }) =>
@@ -254,17 +342,6 @@ describe('useSessionRecipientState', () => {
         );
 
         expect(hook.getCurrent().executionRunDelivery).toBe('interrupt');
-
-        savePersistedSessionDraftValues({
-            'session-b': {
-                'routing.executionRunDelivery': {
-                    v: 1,
-                    lastEditedAt: 1,
-                    value: 'invalid-delivery',
-                },
-            },
-        }, activeScopeState.value);
-        invalidateSessionDraftValuesCache(activeScopeState.value);
 
         await hook.rerender({ sessionId: 'session-b' });
         await flushHookEffects({ cycles: 2, turns: 2 });
@@ -298,8 +375,8 @@ describe('useSessionRecipientState', () => {
             await flushHookEffects({ cycles: 2, turns: 2 });
         });
 
-        expect(readSessionDraftValue(activeScopeState.value, 'session-a', 'routing.recipient')).toEqual(manual);
-        expect(readSessionDraftValue(activeScopeState.value, 'session-a', 'routing.executionRunDelivery')).toBe('prompt');
+        expect(existingSessionDraftSemanticValues.read(getActiveScope(), 'session-a', 'routing.recipient')).toEqual(manual);
+        expect(existingSessionDraftSemanticValues.read(getActiveScope(), 'session-a', 'routing.executionRunDelivery')).toBe('prompt');
         await hook.unmount();
     });
 
@@ -324,8 +401,8 @@ describe('useSessionRecipientState', () => {
             await flushHookEffects({ cycles: 2, turns: 2 });
         });
 
-        expect(readSessionDraftValue(activeScopeState.value, 'session-a', 'routing.recipient')).toBeUndefined();
-        expect(readSessionDraftValue(activeScopeState.value, 'session-a', 'routing.executionRunDelivery')).toBeUndefined();
+        expect(existingSessionDraftSemanticValues.read(getActiveScope(), 'session-a', 'routing.recipient')).toBeUndefined();
+        expect(existingSessionDraftSemanticValues.read(getActiveScope(), 'session-a', 'routing.executionRunDelivery')).toBeUndefined();
         await hook.unmount();
     });
 });

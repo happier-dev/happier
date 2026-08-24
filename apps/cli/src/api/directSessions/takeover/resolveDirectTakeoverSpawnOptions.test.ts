@@ -17,6 +17,8 @@ const { listSessionMarkersMock } = vi.hoisted(() => ({
   listSessionMarkersMock: vi.fn<() => Promise<unknown[]>>(async () => []),
 }));
 
+const TEST_CODEX_SQLITE_HOME = '/tmp/happier-test-codex-state';
+
 vi.mock('@/configuration', () => ({
   configuration: {
     activeServerDir: '/tmp/happier-test-active-server',
@@ -76,6 +78,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
   beforeEach(() => {
     listSessionMarkersMock.mockReset();
     listSessionMarkersMock.mockResolvedValue([]);
+    vi.stubEnv('CODEX_SQLITE_HOME', TEST_CODEX_SQLITE_HOME);
   });
 
   afterEach(() => {
@@ -125,6 +128,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
       transcriptStorage: 'direct',
       environmentVariables: {
         CODEX_HOME: codexHome,
+        CODEX_SQLITE_HOME: TEST_CODEX_SQLITE_HOME,
       },
     });
   });
@@ -155,6 +159,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
       codexBackendMode: 'appServer',
       environmentVariables: {
         CODEX_HOME: codexHome,
+        CODEX_SQLITE_HOME: TEST_CODEX_SQLITE_HOME,
       },
     });
   });
@@ -276,6 +281,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
       codexBackendMode: 'acp',
       environmentVariables: {
         CODEX_HOME: codexHome,
+        CODEX_SQLITE_HOME: TEST_CODEX_SQLITE_HOME,
       },
     });
   });
@@ -314,6 +320,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
       codexBackendMode: 'appServer',
       environmentVariables: {
         CODEX_HOME: codexHome,
+        CODEX_SQLITE_HOME: TEST_CODEX_SQLITE_HOME,
       },
     });
   });

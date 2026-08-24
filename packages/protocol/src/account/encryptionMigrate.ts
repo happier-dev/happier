@@ -8,6 +8,7 @@ import {
   SealedConnectedServiceCredentialV1Schema,
 } from '../connect/connectedServiceSchemas.js';
 import { AccountSettingsStoredContentEnvelopeSchema } from './settings/index.js';
+import { SessionDraftRecordV1Schema, SessionDraftStoredContentEnvelopeV1Schema } from '../drafts/sessionDrafts.js';
 
 export const AccountEncryptionMigrateToModeSchema = AccountEncryptionModeSchema;
 export type AccountEncryptionMigrateToMode = z.infer<typeof AccountEncryptionMigrateToModeSchema>;
@@ -103,6 +104,17 @@ export const AccountEncryptionMigrateAutomationsDirectiveSchema = z.discriminate
 ]);
 export type AccountEncryptionMigrateAutomationsDirective = z.infer<typeof AccountEncryptionMigrateAutomationsDirectiveSchema>;
 
+export const AccountEncryptionMigrateSessionDraftItemSchema = z.object({
+  address: z.object({ kind: z.literal('newSession'), draftId: z.string().uuid() }).strict(),
+  expectedRevision: z.number().int().nonnegative(),
+  content: SessionDraftStoredContentEnvelopeV1Schema,
+}).strict();
+export type AccountEncryptionMigrateSessionDraftItem = z.infer<typeof AccountEncryptionMigrateSessionDraftItemSchema>;
+export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = z.object({
+  items: z.array(AccountEncryptionMigrateSessionDraftItemSchema).max(500),
+}).strict();
+export type AccountEncryptionMigrateSessionDraftsDirective = z.infer<typeof AccountEncryptionMigrateSessionDraftsDirectiveSchema>;
+
 export const AccountEncryptionMigrateRequestSchema = z
   .object({
     toMode: AccountEncryptionMigrateToModeSchema,
@@ -110,6 +122,7 @@ export const AccountEncryptionMigrateRequestSchema = z
     settingsContent: AccountSettingsStoredContentEnvelopeSchema.nullable(),
     connectedServices: AccountEncryptionMigrateConnectedServicesDirectiveSchema,
     automations: AccountEncryptionMigrateAutomationsDirectiveSchema,
+    sessionDrafts: AccountEncryptionMigrateSessionDraftsDirectiveSchema.optional(),
     keyProof: AccountEncryptionMigrateKeyProofSchema.optional(),
   })
   .strict();
@@ -120,6 +133,7 @@ export const AccountEncryptionMigrateSuccessResponseSchema = z
     success: z.literal(true),
     mode: AccountEncryptionMigrateToModeSchema,
     settingsVersion: z.number().int().min(0),
+    sessionDrafts: z.object({ records: z.array(SessionDraftRecordV1Schema) }).strict().optional(),
   })
   .strict();
 export type AccountEncryptionMigrateSuccessResponse = z.infer<typeof AccountEncryptionMigrateSuccessResponseSchema>;
@@ -136,6 +150,8 @@ export const AccountEncryptionMigrateBadRequestResponseSchema = z.discriminatedU
     .strict(),
   z.object({ error: z.literal('connected_services_not_empty') }).strict(),
   z.object({ error: z.literal('automations_not_empty') }).strict(),
+  z.object({ error: z.literal('session_drafts_require_upgrade') }).strict(),
+  z.object({ error: z.literal('session_drafts_migration_incomplete') }).strict(),
 ]);
 export type AccountEncryptionMigrateBadRequestResponse = z.infer<typeof AccountEncryptionMigrateBadRequestResponseSchema>;
 
@@ -147,9 +163,14 @@ export type AccountEncryptionMigrateForbiddenResponse = z.infer<typeof AccountEn
 export const AccountEncryptionMigrateNotFoundResponseSchema = z.object({ error: z.literal('not_found') }).strict();
 export type AccountEncryptionMigrateNotFoundResponse = z.infer<typeof AccountEncryptionMigrateNotFoundResponseSchema>;
 
-export const AccountEncryptionMigrateConflictResponseSchema = z
-  .object({ error: z.literal('version-mismatch'), currentVersion: z.number().int().min(0) })
-  .strict();
+export const AccountEncryptionMigrateConflictResponseSchema = z.discriminatedUnion('error', [
+  z.object({ error: z.literal('version-mismatch'), currentVersion: z.number().int().min(0) }).strict(),
+  z.object({
+    error: z.literal('session_drafts_version_mismatch'),
+    address: z.object({ kind: z.literal('newSession'), draftId: z.string().uuid() }).strict(),
+    currentRevision: z.number().int().nonnegative(),
+  }).strict(),
+]);
 export type AccountEncryptionMigrateConflictResponse = z.infer<typeof AccountEncryptionMigrateConflictResponseSchema>;
 
 export const AccountEncryptionMigrateInternalResponseSchema = z.object({ error: z.literal('internal') }).strict();

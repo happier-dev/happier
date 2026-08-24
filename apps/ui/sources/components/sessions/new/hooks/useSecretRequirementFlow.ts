@@ -11,6 +11,7 @@ import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvP
 import { getTempData } from '@/utils/sessions/tempDataStore';
 
 export function useSecretRequirementFlow(params: Readonly<{
+    draftId: string;
     router: { push: (options: any) => void };
     navigation: any;
     useProfiles: boolean;
@@ -69,6 +70,7 @@ export function useSecretRequirementFlow(params: Readonly<{
             params.router.push({
                 pathname: '/new/pick/secret-requirement',
                 params: {
+                    draftId: params.draftId,
                     profileId: profile.id,
                     machineId: params.selectedMachineId ?? '',
                     secretEnvVarName: targetEnvVarName,

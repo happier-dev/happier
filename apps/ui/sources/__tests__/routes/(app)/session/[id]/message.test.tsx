@@ -110,7 +110,7 @@ installSessionRouteCommonModuleMocks({
           }),
         } as any,
         useSession: () => mockSession,
-        useSessionTranscriptIds: () => ({ ids: [], isLoaded: mockMessagesLoaded }),
+        useSessionTranscriptIds: () => ({ ids: [], isLoaded: mockMessagesLoaded, hasRetainedContent: false }),
         useSessionServerId: () => mockSession?.serverId ?? (typeof mockSearchParams?.serverId === 'string' ? mockSearchParams.serverId : null),
         useMessage: (_sessionId: string, messageId: string) => mockMessagesById[messageId] ?? mockMessage,
         useResolvedSessionMessageRouteId: (_sessionId: string, _routeMessageId: string) => mockResolvedRouteMessageId,

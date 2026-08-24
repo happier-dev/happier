@@ -295,6 +295,7 @@ export type AcpRuntime = Readonly<{
   */
   steerPrompt: (prompt: string, options?: AcpRuntimeSteerPromptOptions) => Promise<void>;
   compactContext: (command: string) => Promise<void>;
+  isProviderNativeCommand: (prompt: string) => Promise<boolean>;
   sendPrompt: (prompt: string) => Promise<void>;
   sendPromptWithMeta: (params: ProviderPromptWithMeta) => Promise<void>;
   failTurn: (error: unknown) => Promise<boolean>;
@@ -2088,6 +2089,11 @@ export function createAcpRuntime(params: {
     getSessionId: () => sessionId,
     supportsInFlightSteer: () => inFlightSteerEnabled,
     isTurnInFlight: () => turnInFlight,
+
+    async isProviderNativeCommand(prompt: string): Promise<boolean> {
+      const b = await ensureBackend();
+      return b.isProviderNativeCommand?.(prompt) === true;
+    },
 
     beginTurn(): void {
       closeOpenStreamedTranscriptSegmentsBeforeTurn();

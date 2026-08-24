@@ -39,6 +39,27 @@ const reactiveStorageHarness = vi.hoisted(() => {
 
 const rowRenderProps = vi.hoisted(() => [] as any[]);
 const rowLifecycleEvents = vi.hoisted(() => [] as string[]);
+const draftRepositoryHarness = vi.hoisted(() => {
+    let projection: Readonly<{ preview: string }> | null = null;
+    const listeners = new Set<() => void>();
+    return {
+        deleteDraft: vi.fn(async () => undefined),
+        getProjection: () => projection,
+        reset() {
+            projection = null;
+            listeners.clear();
+            this.deleteDraft.mockClear();
+        },
+        setProjection(next: Readonly<{ preview: string }> | null) {
+            projection = next;
+            for (const listener of listeners) listener();
+        },
+        subscribe(listener: () => void) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+        },
+    };
+});
 
 installSessionShellCommonModuleMocks({
     storage: async (importOriginal) => {
@@ -62,10 +83,17 @@ installSessionShellCommonModuleMocks({
             importOriginal,
             overrides: {
                 storage,
+                useActiveServerAccountScope: () => ({ serverId: 'server_a', accountId: 'account_a' }),
             },
         });
     },
 });
+
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    deleteSessionDraft: draftRepositoryHarness.deleteDraft,
+    getExistingSessionDraftProjection: () => draftRepositoryHarness.getProjection(),
+    subscribeSessionDraft: (_scope: unknown, _address: unknown, listener: () => void) => draftRepositoryHarness.subscribe(listener),
+}));
 
 vi.mock('@/hooks/session/sessionListRuntimeClock', () => ({
     useSessionListRelativeTimeNowMs: () => 2_000,
@@ -195,6 +223,7 @@ describe('SessionListRowModelBoundary', () => {
     beforeEach(() => {
         rowRenderProps.length = 0;
         rowLifecycleEvents.length = 0;
+        draftRepositoryHarness.reset();
         reactiveStorageHarness.reset({
             activeServerId: 'server_a',
             sessions: {
@@ -256,6 +285,30 @@ describe('SessionListRowModelBoundary', () => {
         expect(updatedRow?.props.rowModel.session.thinking).toBe(true);
         expect(updatedRow?.props.rowModel.status.state).toBe('thinking');
         expect(rowRenderProps.length).toBeGreaterThan(renderCountBeforeScopedUpdate);
+    });
+
+    it('projects canonical existing-session draft updates into the same row and deletes only the draft', async () => {
+        const { SessionListRowModelBoundary } = await import('./SessionListRowModelBoundary');
+        const screen = await renderScreen(<SessionListRowModelBoundary {...createBoundaryProps()} />);
+
+        expect(screen.findByTestId('session-list-row-boundary:sess_a')?.props.rowModel.draft).toBeNull();
+
+        await act(async () => {
+            draftRepositoryHarness.setProjection({ preview: 'Resume release validation' });
+        });
+
+        const row = screen.findByTestId('session-list-row-boundary:sess_a');
+        expect(row?.props.rowModel.draft).toEqual({ preview: 'Resume release validation' });
+
+        await act(async () => {
+            await row?.props.onDeleteDraft?.();
+        });
+
+        expect(draftRepositoryHarness.deleteDraft).toHaveBeenCalledWith({
+            scope: { serverId: 'server_a', accountId: 'account_a' },
+            address: { kind: 'session', sessionId: 'sess_a' },
+        });
+        expect(rowRenderProps.every((props) => props.session.id === 'sess_a')).toBe(true);
     });
 
     it('keeps the row subtree mounted when the row leaves the row-store subscription set', async () => {

@@ -6,6 +6,7 @@ import {
 import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
 import type { CodexAppServerClient } from '../client/createCodexAppServerClient';
 import { withCodexAppServerClient } from '../client/withCodexAppServerClient';
+import { resolveCodexAppServerProcessEnv } from '../resolveCodexAppServerProcessEnv';
 
 type CodexAppServerThread = Readonly<{
     id: string;
@@ -56,22 +57,6 @@ async function listThreadsForArchiveStateWithClient(params: Readonly<{
         if (!cursor) break;
     }
     return out;
-}
-
-async function listThreadsForArchiveState(params: Readonly<{
-    codexHome: string;
-    env?: NodeJS.ProcessEnv;
-    archived: boolean;
-}>): Promise<CodexAppServerThread[]> {
-    const processEnv = {
-        ...process.env,
-        ...(params.env ?? {}),
-        CODEX_HOME: params.codexHome,
-    } as NodeJS.ProcessEnv;
-    return await withCodexAppServerClient({
-        processEnv,
-        run: async (client) => listThreadsForArchiveStateWithClient({ client, processEnv, archived: params.archived }),
-    });
 }
 
 export async function listCodexDirectSessionCandidatesViaExistingAppServerClient(params: Readonly<{
@@ -125,11 +110,10 @@ export async function listCodexDirectSessionCandidatesViaAppServer(params: Reado
     codexHome: string;
     env?: NodeJS.ProcessEnv;
 }>): Promise<DirectSessionCandidateV1[]> {
-    const processEnv = {
-        ...process.env,
-        ...(params.env ?? {}),
-        CODEX_HOME: params.codexHome,
-    } as NodeJS.ProcessEnv;
+    const processEnv = await resolveCodexAppServerProcessEnv({
+        processEnv: { ...process.env, ...(params.env ?? {}) },
+        affinity: { home: 'user', homePath: params.codexHome },
+    });
     return await withCodexAppServerClient({
         processEnv,
         run: async (client) => listCodexDirectSessionCandidatesViaExistingAppServerClient({ client, processEnv }),

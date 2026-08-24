@@ -1041,6 +1041,176 @@ describe('runCodex CodexACP resume behavior', () => {
     await expect(failedOutcome.error).toEqual(expect.objectContaining({ message: expect.stringMatching(/appServer-startOrLoad-called/) }));
   });
 
+  it('does not report a resumed app-server session ready when provider resume fails', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+    let daemonReadinessResolved = false;
+    initializeBackendRunSessionSpy.mockImplementationOnce(async (opts: any) => {
+      const initialized = await initializeDefaultBackendRunSession(opts);
+      void Promise.resolve()
+        .then(async () => await opts.waitForDaemonReportReadiness?.())
+        .then(() => {
+          daemonReadinessResolved = true;
+        });
+      return initialized;
+    });
+
+    const { runCodex } = await import('./runCodex');
+    const outcome = await runCodex({
+      credentials: { token: 'test' } as Credentials,
+      startedBy: 'daemon',
+      startingMode: 'remote',
+      resume: 'resume-123',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+      codexBackendMode: 'appServer',
+    } as any)
+      .then(() => ({ ok: true as const }))
+      .catch((error: unknown) => ({ ok: false as const, error }));
+
+    await Promise.resolve();
+    expect(outcome).toMatchObject({ ok: false });
+    expect(daemonReadinessResolved).toBe(false);
+  });
+
+  it('does not report an ordinary metadata-driven app-server resume ready when provider resume fails', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+    let daemonReadinessResolved = false;
+    initializeBackendRunSessionSpy.mockImplementationOnce(async (opts: any) => {
+      const session = opts.api.sessionSyncClient({ id: 'sess_1', metadataVersion: 1 });
+      Object.assign(session, {
+        fetchLatestUserPermissionIntentFromTranscript: vi.fn(async () => null),
+        sendCodexMessage: vi.fn(),
+        sendAgentMessage: vi.fn(),
+        getLastObservedMessageSeq: vi.fn(() => 0),
+        bindProviderInputOutcomeProducer: vi.fn(() => providerInputOutcomeObserverMock),
+        blockPendingMessageDelivery: vi.fn(async () => false),
+        beginTurnAssistantTextSnapshot: vi.fn(() => ({ id: 'turn-token' })),
+        getMetadataSnapshot: vi.fn(() => ({
+          codexSessionId: 'vendor-thread-existing-123',
+          codexBackendMode: 'appServer',
+        })),
+      });
+      opts.configureSessionClient?.(session);
+      void Promise.resolve()
+        .then(async () => await opts.waitForDaemonReportReadiness?.())
+        .then(() => {
+          daemonReadinessResolved = true;
+        });
+      return {
+        session,
+        reconnectionHandle: null,
+        reportedSessionId: 'sess_1',
+        attachedToExistingSession: true,
+      };
+    });
+
+    const { runCodex } = await import('./runCodex');
+    const outcome = await runCodex({
+      credentials: { token: 'test' } as Credentials,
+      startedBy: 'daemon',
+      startingMode: 'remote',
+      existingSessionId: 'existing-123',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+      codexBackendMode: 'appServer',
+    } as any)
+      .then(() => ({ ok: true as const }))
+      .catch((error: unknown) => ({ ok: false as const, error }));
+
+    await Promise.resolve();
+    expect(outcome).toMatchObject({ ok: false });
+    expect(daemonReadinessResolved).toBe(false);
+  });
+
+  it('reports app-server readiness after provider resume succeeds', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+    const runtime = {
+      ...createDefaultCodexAppServerRuntimeMock(),
+      startOrLoad: vi.fn(async () => undefined),
+    };
+    createCodexAppServerRuntimeSpy.mockImplementationOnce(() => runtime);
+    sessionInputConsumerWaitForNextInputImpl = async () => {
+      throw new Error('stop-after-resume-ready');
+    };
+    let daemonReadinessResolved = false;
+    initializeBackendRunSessionSpy.mockImplementationOnce(async (opts: any) => {
+      const initialized = await initializeDefaultBackendRunSession(opts);
+      void Promise.resolve()
+        .then(async () => await opts.waitForDaemonReportReadiness?.())
+        .then(() => {
+          daemonReadinessResolved = true;
+        });
+      return initialized;
+    });
+
+    const { runCodex } = await import('./runCodex');
+    const outcome = await runCodex({
+      credentials: { token: 'test' } as Credentials,
+      startedBy: 'daemon',
+      startingMode: 'remote',
+      resume: 'resume-123',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+      codexBackendMode: 'appServer',
+    } as any)
+      .then(() => ({ ok: true as const }))
+      .catch((error: unknown) => ({ ok: false as const, error }));
+
+    await vi.waitFor(() => {
+      expect(daemonReadinessResolved).toBe(true);
+    });
+    expect(runtime.startOrLoad).toHaveBeenCalledWith(expect.objectContaining({ resumeId: 'resume-123' }));
+    expect(outcome).toMatchObject({ ok: false });
+  });
+
+  it('keeps fresh app-server session registration lazy without opening a provider thread', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+    sessionInputConsumerWaitForNextInputImpl = async () => {
+      throw new Error('stop-after-fresh-ready');
+    };
+    let daemonReadinessResolved = false;
+    initializeBackendRunSessionSpy.mockImplementationOnce(async (opts: any) => {
+      const initialized = await initializeDefaultBackendRunSession(opts);
+      void Promise.resolve()
+        .then(async () => await opts.waitForDaemonReportReadiness?.())
+        .then(() => {
+          daemonReadinessResolved = true;
+        });
+      return initialized;
+    });
+
+    const { runCodex } = await import('./runCodex');
+    const outcome = await runCodex({
+      credentials: { token: 'test' } as Credentials,
+      startedBy: 'daemon',
+      startingMode: 'remote',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+      codexBackendMode: 'appServer',
+    } as any)
+      .then(() => ({ ok: true as const }))
+      .catch((error: unknown) => ({ ok: false as const, error }));
+
+    await vi.waitFor(() => {
+      expect(daemonReadinessResolved).toBe(true);
+    });
+    const createdRuntime = createCodexAppServerRuntimeSpy.mock.results[0]?.value as any;
+    expect(createdRuntime.startOrLoad).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ ok: false });
+  });
+
   it('routes Codex ChatGPT refresh bridge requests for connected-service profile selections to the daemon', async () => {
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },

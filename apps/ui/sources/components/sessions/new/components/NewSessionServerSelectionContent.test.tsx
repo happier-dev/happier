@@ -127,7 +127,8 @@ vi.mock('@/utils/navigation/safeRouterBack', () => ({
     safeRouterBack: vi.fn(),
 }));
 
-vi.mock('@/components/sessions/new/navigation/setNewSessionPickerReturnParams', () => ({
+vi.mock('@/components/sessions/new/navigation/setNewSessionPickerReturnParams', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/sessions/new/navigation/setNewSessionPickerReturnParams')>()),
     setNewSessionPickerReturnParams: vi.fn(() => 'dispatch'),
 }));
 

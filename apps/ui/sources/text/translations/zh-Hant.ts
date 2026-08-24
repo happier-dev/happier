@@ -5146,6 +5146,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         newTagConfirm: '新增',
     },
 
+    sessionDrafts: {
+        sectionTitle: '草稿', badge: '草稿', untitled: '未命名草稿', continueEditing: '繼續編輯', startAnother: '開始另一份',
+        status: { offline: '離線', syncing: '同步中', conflict: '衝突', machineUnavailable: '機器無法使用', attachmentNeedsAttention: '附件需要處理', startInterrupted: '啟動中斷' },
+        new: { action: '新增草稿' }, delete: { action: '刪除草稿', confirmTitle: '刪除草稿？', confirmDescription: '此草稿將從你的裝置移除。' },
+        conflict: { title: '草稿衝突', description: '此欄位已在其他裝置上變更。', mine: '此裝置', synced: '已同步', useSynced: '使用同步版本', keepDevice: '保留裝置版本', copyMine: '複製我的版本', copied: '已複製', copyFailed: '無法複製', field: { text: '文字', mentions: '提及', attachments: '附件', recipient: '收件者', agentContinuation: '代理延續', executionRunDelivery: '執行傳送' } },
+    },
     sessionsList: {
         serverHeader: ({ server }: { server: string }) => `伺服器：${server}`,
         storagePersistedTab: 'Happier',
@@ -6530,6 +6536,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
 settingsSession: {
+    newSessionDraftEntry: {
+        title: '新工作階段草稿',
+        footer: '選擇「新工作階段」要繼續此裝置上的草稿，還是開啟新草稿。',
+        resumeTitle: '繼續上一個草稿',
+        resumeSubtitle: '繼續在此裝置上透過「新工作階段」開始的草稿。',
+        freshTitle: '一律重新開始',
+        freshSubtitle: '每次選擇「新工作階段」時都開啟新草稿。',
+    },
 	          sessionList: {
 	              title: '工作階段列表',
 	              footer: '工作階段側邊欄列表的外觀與行為。',

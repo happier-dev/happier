@@ -60,6 +60,8 @@ import {
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { completeSessionForkNavigation } from '@/components/sessions/transcript/forkContext/completeSessionForkNavigation';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
@@ -260,7 +262,6 @@ function useStableSessionInfoContentSession(session: Session | null): Session | 
         session?.optimisticThinkingAt,
         session?.thinkingGraceUntil,
         session?.todos,
-        session?.draft,
         session?.permissionMode,
         session?.permissionModeUpdatedAt,
         session?.modelMode,
@@ -920,6 +921,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     ]);
 
     const handleNewSessionSameSetup = useCallback(() => {
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         const dataId = storeTempData(buildNewSessionTempDataFromSessionConfiguration({
             session,
             machineId: newSessionSeedMachineId,
@@ -928,10 +930,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         router.push({
             pathname: '/new',
             params: {
+                ...buildNewSessionLaunchRouteParams({
+                    draftId,
+                    machineId: newSessionSeedMachineId,
+                    directory: newSessionSeedDirectory,
+                    targetServerId: sessionServerId,
+                }),
                 dataId,
-                ...(newSessionSeedMachineId ? { machineId: newSessionSeedMachineId } : {}),
-                ...(newSessionSeedDirectory ? { directory: newSessionSeedDirectory } : {}),
-                ...(sessionServerId ? { spawnServerId: sessionServerId } : {}),
             },
         } as any);
     }, [newSessionSeedDirectory, newSessionSeedMachineId, router, session, sessionServerId]);

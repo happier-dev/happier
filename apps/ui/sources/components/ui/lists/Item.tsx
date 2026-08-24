@@ -68,10 +68,14 @@ type ItemTextEllipsizeMode = NonNullable<TextProps['ellipsizeMode']>;
 
 export interface ItemProps {
     testID?: string;
+    /** Imperative focus target for list-owned focus restoration after row removal. */
+    focusRef?: React.Ref<React.ElementRef<typeof Pressable>>;
     title: React.ReactNode;
     subtitle?: React.ReactNode;
     subtitleTestID?: string;
     subtitleAccessory?: React.ReactNode;
+    /** Override the primitive title line allowance; defaults to one with a subtitle, two otherwise. */
+    titleLines?: number;
     subtitleLines?: number; // set 0 or undefined for auto/multiline
     detail?: string;
     detailTestID?: string;
@@ -303,10 +307,12 @@ export const Item = React.memo<ItemProps>((props) => {
     
     const {
         testID,
+        focusRef,
         title,
         subtitle,
         subtitleTestID,
         subtitleAccessory,
+        titleLines,
         subtitleLines,
         detail,
         detailTestID,
@@ -628,7 +634,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     renderPrimitiveText({
                         value: title,
                         style: [styles.title, titleSizeStyle, titleColor, titleStyle],
-                        numberOfLines: subtitle ? 1 : 2,
+                        numberOfLines: titleLines ?? (subtitle ? 1 : 2),
                         ellipsizeMode: titleEllipsizeMode,
                     })
                 ) : (
@@ -745,6 +751,7 @@ export const Item = React.memo<ItemProps>((props) => {
         title,
         titleColor,
         titleEllipsizeMode,
+        titleLines,
         titleSizeStyle,
         titleStyle,
         theme.colors.text.secondary,
@@ -802,6 +809,7 @@ export const Item = React.memo<ItemProps>((props) => {
     if (isInteractive) {
         return (
             <Pressable
+                ref={focusRef}
                 testID={testID}
                 {...webTestIdProps}
                 onPress={handlePress}

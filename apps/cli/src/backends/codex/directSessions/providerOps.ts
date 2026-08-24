@@ -13,6 +13,7 @@ import { listCodexSessionCandidates } from './listCodexSessionCandidates';
 import { pageCodexTranscript } from './pageCodexTranscript';
 import { readAfterCodexTranscript } from './readAfterCodexTranscript';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
+import { resolveCodexAppServerProcessEnv } from '../appServer/resolveCodexAppServerProcessEnv';
 
 export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
   listCandidates: async ({ source, cursor, limit, searchTerm, searchMode }) => {
@@ -82,6 +83,13 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
         env: process.env,
         }));
       if (!directory || !codexHome) return null;
+      const runtimeEnv = await resolveCodexAppServerProcessEnv({
+        processEnv: process.env,
+        affinity: {
+          home: homeEntries[0]?.source.kind === 'codexHome' ? homeEntries[0].source.home : 'user',
+          homePath: codexHome,
+        },
+      });
       return {
         directory,
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
@@ -92,7 +100,10 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
       ...buildCodexSpawnRuntimeAffinityCompatFields(
         linked.codexBackendMode ? { backendMode: linked.codexBackendMode } : null,
       ),
-      environmentVariables: mergeDirectSessionEnvironmentVariables([codexHome ? { CODEX_HOME: codexHome } : null]),
+      environmentVariables: mergeDirectSessionEnvironmentVariables([{
+        CODEX_HOME: codexHome,
+        CODEX_SQLITE_HOME: runtimeEnv.CODEX_SQLITE_HOME ?? codexHome,
+      }]),
     };
   },
 };

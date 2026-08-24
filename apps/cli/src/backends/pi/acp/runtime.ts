@@ -23,6 +23,7 @@ export function createPiAcpRuntime(params: {
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
   providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
+  resolveSystemPromptBeforeSpawn?: () => Promise<string>;
 }) {
   const lastPublishedPiSessionId: { value: string | null; sessionFile?: string | null } = { value: null };
   let lastPiIdentityGeneration: number | null = null;
@@ -63,6 +64,11 @@ export function createPiAcpRuntime(params: {
     getPermissionMode: params.getPermissionMode,
     backendOptions: {
       env: process.env,
+    },
+    resolveBackendOptionsBeforeSpawn: async () => {
+      const text = await params.resolveSystemPromptBeforeSpawn?.();
+      const appendSystemPromptText = typeof text === 'string' ? text.trim() : '';
+      return appendSystemPromptText ? { appendSystemPromptText } : {};
     },
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: params.providerInputConsumer,

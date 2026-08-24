@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, StyleProp, TextStyle, View, ViewStyle } from 'react-native';
+import { Platform, Pressable, StyleProp, TextStyle, View, ViewStyle, type GestureResponderEvent } from 'react-native';
 import { iOSUIKit } from 'react-native-typography';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -93,16 +93,16 @@ export const RoundButton = React.memo((props: {
      * action with no explanation.
      */
     accessibilityHint?: string,
-    onPress?: () => void,
+    onPress?: (event: GestureResponderEvent) => void,
     action?: () => Promise<any>
 }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [loading, setLoading] = React.useState(false);
     const doLoading = props.loading !== undefined ? props.loading : loading;
-    const doAction = React.useCallback(() => {
+    const doAction = React.useCallback((event: GestureResponderEvent) => {
         if (props.onPress) {
-            props.onPress();
+            props.onPress(event);
             return;
         }
         if (props.action) {

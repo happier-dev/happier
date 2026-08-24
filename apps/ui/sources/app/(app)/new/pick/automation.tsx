@@ -1,6 +1,10 @@
+import * as React from 'react';
 import { Redirect, useLocalSearchParams } from 'expo-router';
 
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+
 type AutomationPickerParams = Readonly<{
+    draftId?: string;
     automationEnabled?: string;
     automationName?: string;
     automationDescription?: string;
@@ -12,6 +16,9 @@ type AutomationPickerParams = Readonly<{
 
 export default function LegacyAutomationPickerRoute() {
     const params = useLocalSearchParams<AutomationPickerParams>();
+    const draftId = React.useMemo(() => resolveNewSessionDraftRouteIdentity({
+        routeDraftId: params.draftId,
+    }).draftId, [params.draftId]);
 
     return (
         <Redirect
@@ -19,6 +26,7 @@ export default function LegacyAutomationPickerRoute() {
                 pathname: '/new',
                 params: {
                     automation: '1',
+                    draftId,
                     ...(typeof params.automationEnabled === 'string' ? { automationEnabled: params.automationEnabled } : {}),
                     ...(typeof params.automationName === 'string' ? { automationName: params.automationName } : {}),
                     ...(typeof params.automationDescription === 'string' ? { automationDescription: params.automationDescription } : {}),

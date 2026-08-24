@@ -8,6 +8,7 @@ type LegacyResumeBrowseParams = Readonly<{
     spawnServerId?: string | string[];
     serverId?: string | string[];
     dataId?: string | string[];
+    draftId?: string | string[];
     currentResumeId?: string | string[];
     resumeSessionId?: string | string[];
 }>;
@@ -34,6 +35,7 @@ export default function LegacyResumeBrowseRoute() {
     const machineId = normalizeNonEmptyParam(params.machineId);
     const spawnServerId = pickFirstString(params.spawnServerId, params.serverId);
     const dataId = normalizeNonEmptyParam(params.dataId);
+    const draftId = normalizeNonEmptyParam(params.draftId);
     const currentResumeId = pickFirstString(params.currentResumeId, params.resumeSessionId);
 
     return (
@@ -45,6 +47,7 @@ export default function LegacyResumeBrowseRoute() {
                     ...(machineId ? { machineId } : {}),
                     ...(spawnServerId ? { spawnServerId } : {}),
                     ...(dataId ? { dataId } : {}),
+                    ...(draftId ? { draftId } : {}),
                     ...(currentResumeId ? { currentResumeId } : {}),
                 },
             }}

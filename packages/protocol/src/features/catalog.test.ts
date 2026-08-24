@@ -136,6 +136,13 @@ describe('feature catalog', () => {
     expect(FEATURE_CATALOG['sessions.folders']?.dependencies).toEqual(['sessions']);
   });
 
+  it('includes synchronized session drafts as a fail-closed server feature', () => {
+    expect(isFeatureId('sessions.drafts')).toBe(true);
+    expect(FEATURE_CATALOG['sessions.drafts']?.representation).toBe('server');
+    expect(FEATURE_CATALOG['sessions.drafts']?.dependencies).toEqual(['sessions']);
+    expect(FEATURE_CATALOG['sessions.drafts']?.defaultFailMode).toBe('fail_closed');
+  });
+
   it('includes sharing feature ids', () => {
     expect(isFeatureId('sharing.session')).toBe(true);
     expect(isFeatureId('sharing.public')).toBe(true);

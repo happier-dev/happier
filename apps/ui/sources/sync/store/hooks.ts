@@ -715,25 +715,39 @@ export function useSessionConnectedServiceAccountSwitchEvents(
   );
 }
 
-export function useSessionTranscriptIds(sessionId: string, enabled: boolean = true): { ids: string[]; isLoaded: boolean } {
+export function useSessionTranscriptIds(
+  sessionId: string,
+  enabled: boolean = true,
+): { ids: string[]; isLoaded: boolean; hasRetainedContent: boolean } {
   const snapshot = getStorage()(
     useShallow((state) => {
       if (!enabled) {
         return {
           committedIds: emptyArray as any as string[],
           isLoaded: false,
+          entryExists: false,
         };
       }
       const session = state.sessionMessages[sessionId];
       return {
         committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
         isLoaded: session?.isLoaded ?? false,
+        entryExists: session !== undefined,
       };
     })
   );
   return React.useMemo(
-    () => ({ ids: snapshot.committedIds as string[], isLoaded: snapshot.isLoaded }),
-    [snapshot.committedIds, snapshot.isLoaded],
+    () => ({
+      ids: snapshot.committedIds as string[],
+      isLoaded: snapshot.isLoaded,
+      // Reset window: the entry still exists but has nothing materialized and the load has not
+      // finished. `useSessionMessages` keeps serving its cached rows here (its `!isLoaded`
+      // branch), so a consumer deciding whether the transcript has anything to show must ask
+      // this rather than `ids.length`, which is 0 for the whole window.
+      hasRetainedContent:
+        snapshot.entryExists && !snapshot.isLoaded && snapshot.committedIds.length === 0,
+    }),
+    [snapshot],
   );
 }
 

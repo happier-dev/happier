@@ -99,7 +99,6 @@ export function areStoredSessionsEqual(
         && (previous.optimisticThinkingAt ?? null) === (next.optimisticThinkingAt ?? null)
         && (previous.resumingAt ?? null) === (next.resumingAt ?? null)
         && (previous.thinkingGraceUntil ?? null) === (next.thinkingGraceUntil ?? null)
-        && (previous.draft ?? null) === (next.draft ?? null)
         && (previous.permissionMode ?? null) === (next.permissionMode ?? null)
         && (previous.permissionModeUpdatedAt ?? null) === (next.permissionModeUpdatedAt ?? null)
         && (previous.modelMode ?? null) === (next.modelMode ?? null)

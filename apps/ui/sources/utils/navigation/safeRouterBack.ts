@@ -1,8 +1,9 @@
 import { Platform } from 'react-native';
+import type { Href } from 'expo-router';
 
 type RouterLike = Readonly<{
     back: () => void;
-    replace: (href: string) => void;
+    replace: (href: Href) => void;
     canGoBack?: () => boolean;
 }>;
 
@@ -15,7 +16,7 @@ type NavigationLike = Readonly<{
     }> | undefined;
 }>;
 
-export function safeRouterBack(params: { router: RouterLike; navigation?: NavigationLike | null; fallbackHref: string }): void {
+export function safeRouterBack(params: { router: RouterLike; navigation?: NavigationLike | null; fallbackHref: Href }): void {
     const routerCanGoBack = typeof params.router.canGoBack === 'function'
         ? params.router.canGoBack()
         : null;

@@ -33,6 +33,7 @@ type PromptRuntime = {
   // Read at dispatch to reconstruct provider context for composer references (INV-9).
   listVendorPlugins?: () => Promise<unknown>;
   listSkills?: () => Promise<unknown>;
+  isProviderNativeCommand?: (prompt: string) => Promise<boolean>;
   compactContext?: (command: string) => Promise<void>;
   failTurn?: (error: unknown) => void | boolean | Promise<void | boolean>;
   flushTurn: () => void | Promise<void>;
@@ -445,7 +446,6 @@ export async function runPermissionModePromptLoop(opts: {
     try {
       turnInFlight = true;
       let shouldApplyFreshSessionSystemPrompt = pendingFreshSessionSystemPrompt;
-      pendingFreshSessionSystemPrompt = false;
       const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
       const committedUserMessageSeq = await waitForCommittedUserPromptBoundary(opts.session, localId);
       if (opts.shouldExit()) {
@@ -497,24 +497,38 @@ export async function runPermissionModePromptLoop(opts: {
         continue;
       }
 
+      const providerNativeCommand = special.type === null
+        && typeof opts.runtime.isProviderNativeCommand === 'function'
+        && await opts.runtime.isProviderNativeCommand(message.message.text);
+      if (!providerNativeCommand) {
+        pendingFreshSessionSystemPrompt = false;
+      }
+
       const nowMs = Date.now();
-      const seedResolution = await resolveProviderPromptForDispatch({
-        session: opts.session,
-        userText: message.message.text,
-        allowSeed: special.type === null,
-        localId,
-        nowMs,
-        refreshMetadataBeforeRead: false,
-        meta: message.message.meta,
-        catalogs: {
-          ...(typeof opts.runtime.listSkills === 'function'
-            ? { listSkills: () => opts.runtime.listSkills!() }
-            : {}),
-          ...(typeof opts.runtime.listVendorPlugins === 'function'
-            ? { listVendorPlugins: () => opts.runtime.listVendorPlugins!() }
-            : {}),
-        },
-      });
+      const seedResolution = providerNativeCommand
+        ? {
+            providerPrompt: message.message.text,
+            meta: message.message.meta,
+            seedApplied: false,
+            settleReplaySeedOnProviderAcceptance: async () => undefined,
+          }
+        : await resolveProviderPromptForDispatch({
+            session: opts.session,
+            userText: message.message.text,
+            allowSeed: special.type === null,
+            localId,
+            nowMs,
+            refreshMetadataBeforeRead: false,
+            meta: message.message.meta,
+            catalogs: {
+              ...(typeof opts.runtime.listSkills === 'function'
+                ? { listSkills: () => opts.runtime.listSkills!() }
+                : {}),
+              ...(typeof opts.runtime.listVendorPlugins === 'function'
+                ? { listVendorPlugins: () => opts.runtime.listVendorPlugins!() }
+                : {}),
+            },
+          });
       const dispatchMeta = seedResolution.meta;
       if (seedResolution.seedApplied) {
         pendingReplaySeedSettlement = seedResolution.settleReplaySeedOnProviderAcceptance;
@@ -525,6 +539,7 @@ export async function runPermissionModePromptLoop(opts: {
       }
       snapshotFreshForNextPromptBoundary = false;
       didReplaySeedBootstrap = true;
+      shouldApplyFreshSessionSystemPrompt = shouldApplyFreshSessionSystemPrompt && !providerNativeCommand;
       const explicitBaseOverride = shouldApplyFreshSessionSystemPrompt
         ? resolveAppendSystemPromptBaseOverride(message.mode)
         : undefined;

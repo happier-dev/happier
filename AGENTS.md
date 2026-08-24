@@ -95,7 +95,7 @@ Always make the smallest coherent systemic change at the correct canonical owner
 - Treat uncertainty as an investigation task, not a stopping condition. Name the missing fact and the observation that would resolve it, then inspect code, history, tests, schemas, logs, runtime state, or current primary documentation. Mark `[blocked]` only after meaningful safe retrieval cannot resolve a decision-material ambiguity or when user authority/external state is genuinely required.
 - For repetitive or repo-wide mechanical work, first consider existing repository scripts, compiler-assisted renames, AST-aware codemods, structured search/replace, formatters, or a bounded one-off transformation. Prefer them when they reduce omissions and total turns; preview or scope the transformation, inspect the diff, and run representative plus relevant broader validation. Do not build a codemod when a few direct edits are safer and faster.
 - Batch independent reads and deterministic checks when useful, reduce bulky output before returning it to the model, and use the narrowest tool loop that preserves required evidence. Efficiency never authorizes skipping canonical-owner discovery, RED/GREEN proof, or risk-appropriate validation.
-- Process artifacts are costs, not evidence. Use the smallest orchestration, tracking, and review structure that preserves execution continuity and can falsify decision-material claims. Do not create source/worktree/plan hashes, candidate manifests, leases, receipts, custody logs, mirrored status systems, per-lane ledgers, task-count gates, or repeated review rounds unless an approved product or release protocol requires that exact mechanism. Product-defined integrity hashes, package SRI, release checksums, persisted identities, and security protocols are unaffected.
+- Process artifacts are costs, not evidence. Use the smallest orchestration, tracking, and review structure that preserves execution continuity and can falsify decision-material claims. Do not create source/worktree/plan hashes, release-representation manifests, leases, receipts, custody logs, mirrored status systems, per-lane ledgers, task-count gates, or repeated review rounds unless an approved product or release protocol requires that exact mechanism. A feature plan cannot declare itself a release protocol to create this exception. Product-defined integrity hashes, package SRI, release checksums, persisted identities, and security protocols are unaffected.
 
 ## Product priorities
 
@@ -243,9 +243,10 @@ Before changing production behavior:
 ### Validation
 
 - Use the smallest relevant slice for RED/GREEN loops.
+- Validate implementation directly from the current moving source and the existing development stack. Feature implementation, review, and QA must not create, freeze, package, install, identify, or certify a separate release representation of the source; actual release automation owns producing and verifying what it publishes when a release is explicitly dispatched.
 - Before handoff, run the touched package’s typecheck/build-enforcing lane and the relevant broader test lane.
 - User-visible behavior also needs the risk-appropriate live gate when runnable; use `skills/happier-testing` for lane, rerun, device, browser, and live-validation rules.
-- For user-visible or environment-dependent programs, name the composed live recipe and required runtime identity before implementation. A green owner test, registered-but-uninvoked wiring, or a still-running command is not completion; run the recipe against the attested runtime/build identity or mark it `[blocked]` with the missing prerequisite.
+- For user-visible or environment-dependent programs, name the composed live recipe and required runtime identity before implementation. A green owner test, registered-but-uninvoked wiring, or a still-running command is not completion; run the recipe against the observed loaded source/build identity or mark it `[blocked]` with the missing prerequisite.
 - Never claim a test, typecheck, build, or manual QA passed unless it actually ran. Report skipped or unavailable validation and why.
 
 ## Type safety and code hygiene

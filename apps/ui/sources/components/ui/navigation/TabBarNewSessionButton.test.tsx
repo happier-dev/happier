@@ -7,6 +7,12 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const ordinaryEntryScope = {
+    serverId: 'tabbar-ordinary-entry-server',
+    accountId: 'tabbar-ordinary-entry-account',
+} as const;
+const ordinaryEntryDraftId = '00000000-0000-4000-8000-000000000701';
+
 installNavigationCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -22,8 +28,10 @@ installNavigationCommonModuleMocks({
             useSetting: ((key: string) => {
                 if (key === 'tabBarShowLabels') return true;
                 if (key === 'tabBarSize') return 'regular';
+                if (key === 'newSessionDraftEntryMode') return 'resumePrevious';
                 return undefined;
             }) as typeof import('@/sync/domains/state/storage').useSetting,
+            useActiveServerAccountScope: () => ordinaryEntryScope,
         };
     },
 });
@@ -48,13 +56,54 @@ describe('TabBarNewSessionButton', () => {
         expoRouterMock.spies.push.mockReset();
     });
 
-    it('opens the new-session flow when pressed', async () => {
+    it('resumes the origin-owned ordinary-entry draft with explicit route params', async () => {
+        const { setOrdinaryEntryDraftId, writeNewSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        writeNewSessionDraft({
+            scope: ordinaryEntryScope,
+            draftId: ordinaryEntryDraftId,
+            patch: { text: 'Resume this draft' },
+            materializationIntent: 'userEdit',
+        });
+        expect(setOrdinaryEntryDraftId(ordinaryEntryScope, ordinaryEntryDraftId)).toBe(true);
         const { TabBarNewSessionButton } = await import('./TabBarNewSessionButton');
 
         const screen = await renderScreen(<TabBarNewSessionButton />);
         screen.pressByTestId('tabbar-start-new-session');
 
-        expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/new');
+        expect(expoRouterMock.spies.push).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: ordinaryEntryDraftId,
+                draftOrigin: 'ordinary',
+            },
+        });
+    });
+
+    it('forces a fresh ordinary-entry identity on the platform modifier-click', async () => {
+        const { setOrdinaryEntryDraftId, writeNewSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        writeNewSessionDraft({
+            scope: ordinaryEntryScope,
+            draftId: ordinaryEntryDraftId,
+            patch: { text: 'Keep this saved draft' },
+            materializationIntent: 'userEdit',
+        });
+        expect(setOrdinaryEntryDraftId(ordinaryEntryScope, ordinaryEntryDraftId)).toBe(true);
+        const { TabBarNewSessionButton } = await import('./TabBarNewSessionButton');
+        const { resolveKeyboardPlatform } = await import('@/keyboard/runtime');
+
+        const screen = await renderScreen(<TabBarNewSessionButton />);
+        const platform = resolveKeyboardPlatform();
+        screen.findByTestId('tabbar-start-new-session')?.props.onPress({
+            nativeEvent: platform === 'macos' ? { metaKey: true } : { ctrlKey: true },
+        });
+
+        expect(expoRouterMock.spies.push).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.not.stringMatching(ordinaryEntryDraftId),
+                draftOrigin: 'ordinary',
+            },
+        });
     });
 
     it('exposes the new-session action to assistive technology', async () => {

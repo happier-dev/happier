@@ -378,4 +378,28 @@ describe('planSyncActionsFromChanges', () => {
 
         expect(planned.kv).toEqual({ type: 'refresh-feature', feature: 'todos' });
     });
+
+    it('classifies a typed Account draft hint before generic Account invalidation', () => {
+        const change = buildChange({
+            cursor: 12,
+            kind: 'account',
+            entityId: 'session-draft:session/session-a',
+            hint: {
+                v: 1,
+                sessionDraft: true,
+                address: { kind: 'session', sessionId: 'session-a' },
+                revision: 4,
+                status: 'present',
+            },
+        });
+
+        expect(classifyChangeForCheckpoint(change, { isSessionMessagesLoaded: () => false })).toMatchObject({
+            plannerOwner: 'session-drafts',
+            materializationProof: 'session-draft',
+        });
+        const planned = planSyncActionsFromChanges([change]);
+        expect(planned.sessionDraftAddresses).toEqual([{ kind: 'session', sessionId: 'session-a' }]);
+        expect(planned.invalidate.settings).toBe(false);
+        expect(planned.invalidate.profile).toBe(false);
+    });
 });

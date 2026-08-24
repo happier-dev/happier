@@ -31,7 +31,7 @@ import {
 } from '@happier-dev/agents';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 import { isAskUserQuestionToolName } from '@happier-dev/protocol';
-import { withAskUserQuestionUiFreeformDefault } from './askUserQuestionFreeformDefault';
+import { normalizeClaudeAskUserQuestionInputForPublication } from '../utils/normalizeClaudeAskUserQuestionInput';
 import { buildAskUserQuestionAnswersForClaude } from '../utils/askUserQuestionAnswersForClaude';
 import {
     normalizeLegacyStructuredQuestionAnswers,
@@ -298,7 +298,7 @@ export class ClaudeLocalPermissionBridge {
             });
         }
 
-        const coordinatorToolInput = withAskUserQuestionUiFreeformDefault(toolName, toolInput);
+        const coordinatorToolInput = normalizeClaudeAskUserQuestionInputForPublication(toolName, toolInput);
         const waiter = this.createLocalWaiter({
             requestId,
             toolName,

@@ -328,6 +328,21 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
     });
   });
 
+  it('classifies the observed high-demand terminal failure for provider-scoped retry recovery', () => {
+    expect(classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true,
+      error: new Error("We're currently experiencing high demand. Please try again shortly."),
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      groupId: 'pool',
+    })).toMatchObject({
+      kind: 'capacity',
+      limitCategory: 'capacity',
+      quotaScope: 'provider',
+      source: 'structured_provider_error',
+    });
+  });
+
   it('recognizes account-changed auth failures', () => {
     const result = classifyCodexConnectedServiceAuthFailure({
       providerErrorPath: true,

@@ -152,6 +152,7 @@ export function useNewSessionSimplePanelProps(
         pathPopover,
         targetServerId: params.targetServerId,
         attachmentFlowId: params.attachmentFlowId,
+        resumePersistedLaunchKey: params.resumePersistedLaunchKey,
     }), [
         params.acpConfigOptionOverrides,
         params.acpConfigOptions,
@@ -209,6 +210,7 @@ export function useNewSessionSimplePanelProps(
         params.submitAccessibilityLabel,
         params.targetServerId,
         params.attachmentFlowId,
+        params.resumePersistedLaunchKey,
         params.useProfiles,
     ]);
 }

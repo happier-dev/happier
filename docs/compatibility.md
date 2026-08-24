@@ -41,10 +41,10 @@ Self-hosted operators can upgrade clients, daemons, relays, and persisted
 state independently. Release evidence therefore covers the reachable
 directions rather than imposing a fleet wait or a global cutover:
 
-- candidate clients, CLI, and daemon against a supported older stable relay;
-- bounded supported older client/daemon core flows against a candidate relay;
-- persisted state from an older writer into candidate readers; and
-- candidate writes into older readers only when supported rollback or
+- current clients, CLI, and daemon against a supported older stable relay;
+- bounded supported older client/daemon core flows against the current relay;
+- persisted state from an older writer into current readers; and
+- current writes into older readers only when supported rollback or
   coexistence makes that direction reachable.
 
 The last direction is conditional, not an excuse to add dual writers or a
@@ -52,8 +52,8 @@ permanent fallback. The release agent derives the affected, reachable
 directions from the actual diff and supported released baselines. Scripts prove
 only named behaviors against exact artifacts; they do not issue a general
 compatibility verdict. The named Docker relay-upgrade scenario is selected
-automatically only when the release contains an exact server candidate and a
-supported published relay predecessor. Installer and broader Docker validation
+automatically only when the release changes the server and a supported
+published relay predecessor exists. Installer and broader Docker validation
 remain risk-selected; deep certification owns cross-OS, provider, mobile, and
 comprehensive review.
 Product seams still own the actual compatibility implementation.
@@ -70,15 +70,15 @@ Before adding dual writers, parallel persisted formats, rollout modes, operator 
 
 ### Self-hosted relay release checks
 
-For stable releases, prioritize candidate UI, CLI, and daemon core flows against
+For stable releases, prioritize current UI, CLI, and daemon core flows against
 the supported older self-hosted relay. Check the bounded reverse direction only
 for core usability affected by the changed seam. Check released persisted state
-against candidate readers/migrations, and candidate writers against old readers
+against current readers/migrations, and current writers against old readers
 only when rollback or coexistence makes that direction reachable.
 
 The registry may automatically select the exact `docker-release-assets`
-published-channel to candidate upgrade when a server candidate and supported
-published predecessor both exist. That proves one named SQLite/Postgres relay
+published-channel-to-current-source upgrade when the server changed and a
+supported published predecessor exists. That proves one named SQLite/Postgres relay
 upgrade; it is not a generic compatibility verdict. Release orchestration never
 waits for client adoption, self-hosted relay upgrades, daemon drain, migration
 cohorts, or a global cutover.
@@ -108,6 +108,25 @@ Every retained compatibility path records:
 - its removal condition.
 
 Remove the path when its support window has ended and evidence shows no supported reader, writer, or stored shape still requires it. Do not remove a released-data reader merely because current writers stopped producing that shape.
+
+### Session draft rollout
+
+Synchronized Session drafts are negotiated through the `sessions.drafts` server feature bit. A new
+client fails closed when that bit or the typed routes are unavailable and retains the incumbent
+local-only behavior; it does not send draft records through generic Account KV routes. A capable
+server reserves the draft KV prefix so old generic-KV clients cannot read or overwrite typed draft
+rows.
+
+The first capable client imports the retired local existing-Session text/semantic stores and the
+singleton new-Session draft into the canonical draft repository. It removes each legacy value only
+after the corresponding canonical record is durably acknowledged, so an interrupted import remains
+recoverable. The legacy readers are migration adapters, not parallel writers, and may be removed
+when supported persisted local state no longer requires them.
+
+Draft documents preserve unknown extension fields as JSON. This lets a client without a newer
+composer contribution edit fields it understands without deleting newer semantic data; it does not
+authorize that client to execute the unknown contribution. Raw files, handles, secrets, and other
+device-only state remain outside the compatibility shape.
 
 ## Migration history
 

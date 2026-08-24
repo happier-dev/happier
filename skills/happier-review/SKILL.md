@@ -178,7 +178,7 @@ Before a non-trivial boundary or ship verdict:
 4. require a reviewer different from the author of the reviewed vertical for release, schema/data, security-critical, and user-visible ship gates; require a wholly separate validation session only when release or security policy says so;
 5. audit whether the QA ledger itself omitted any affected material flow—not only whether existing rows passed.
 
-Route release-candidate sign-off to `skills/happier-release-validation-review`; do not recreate its release evidence protocol here.
+Route explicit release sign-off to `skills/happier-release-validation-review`; do not recreate its release evidence protocol here.
 
 ## 10. Tracking, evidence, and completion
 

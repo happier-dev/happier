@@ -27,6 +27,7 @@ import {
     updateRetainedSessionListPaneActiveSessionId,
     useSessionListPaneSourceScopeKey,
 } from '@/components/sessions/shell/surface/sessionListPaneRetention';
+import { useNewSessionDraftProjections } from '@/components/sessions/shell/NewSessionDraftsSection';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -114,6 +115,7 @@ const SessionsListWrapperContent = React.memo((props: { pathname: string; surfac
     const { theme } = useUnistyles();
     const isFocused = useIsFocused();
     const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const newSessionDrafts = useNewSessionDraftProjections();
     const pathname = props.pathname;
     const surfaceRoutePathname = props.surfaceRoutePathname;
     const sourceScopeKey = useSessionListPaneSourceScopeKey();
@@ -243,7 +245,7 @@ const SessionsListWrapperContent = React.memo((props: { pathname: string; surfac
                 </View>
             </View>
         );
-    } else if (visibleSessionCount === 0) {
+    } else if (visibleSessionCount === 0 && newSessionDrafts.length === 0) {
         content = (
             <View style={styles.container}>
                 {storageChrome}

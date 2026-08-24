@@ -37,6 +37,7 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
 }>): Readonly<{
     promptStore: NewSessionPromptStore;
     setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
+    hasUserEditedSessionPrompt: () => boolean;
     automationDraft: NewSessionAutomationDraft;
     setAutomationDraft: React.Dispatch<React.SetStateAction<NewSessionAutomationDraft>>;
     automationEditId: string | null;
@@ -58,6 +59,10 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
         hasUserEditedSessionPromptRef.current = true;
         promptStore.setPrompt(next);
     }, [promptStore]);
+    const hasUserEditedSessionPrompt = React.useCallback(
+        () => hasUserEditedSessionPromptRef.current,
+        [],
+    );
     // Explicit re-entry (a fresh temp-draft handoff or a deep link carrying a prompt) is a
     // deliberate hydration request, not a stale echo — let it apply over live text again.
     const hydrationRequestKey = `${params.dataId ?? ''}\u0000${params.prompt ?? ''}`;
@@ -202,6 +207,7 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     return {
         promptStore,
         setSessionPrompt,
+        hasUserEditedSessionPrompt,
         automationDraft,
         setAutomationDraft,
         automationEditId,

@@ -50,6 +50,9 @@ const routerMockState = vi.hoisted(() => ({
     push: vi.fn(),
     useRouterCalls: 0,
 }));
+const machineState = vi.hoisted(() => ({
+    machines: [] as Array<{ active: boolean }>,
+}));
 
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriState.desktop,
@@ -99,6 +102,19 @@ installSessionGuidanceCommonModuleMocks({
             return { push: routerMockState.push };
         },
     }),
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useMachineListByServerId: () => ({ s1: machineState.machines }),
+            useMachineListStatusByServerId: () => ({ s1: 'idle' }),
+            useSetting: (key: string) => {
+                if (key === 'serverSelectionGroups') return [];
+                if (key === 'newSessionDraftEntryMode') return 'resumePrevious';
+                return undefined;
+            },
+            useActiveServerAccountScope: () => null,
+        });
+    },
 });
 
 describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
@@ -106,6 +122,7 @@ describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
         connectTerminalHookState.calls = 0;
         routerMockState.push.mockClear();
         routerMockState.useRouterCalls = 0;
+        machineState.machines = [];
     });
 
     it('hides the Open setup CTA on non-Tauri surfaces', async () => {
@@ -126,5 +143,24 @@ describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
 
         const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant="sidebar" />)).tree;
         expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).not.toThrow();
+    });
+
+    it('routes the create-session CTA through the ordinary-entry resolver with pointer modifiers', async () => {
+        machineState.machines = [{ active: true }];
+        vi.resetModules();
+        const { SessionGettingStartedGuidance } = await import('./SessionGettingStartedGuidance');
+
+        const tree = (await renderScreen(<SessionGettingStartedGuidance variant="sidebar" />)).tree;
+        tree.root.findByProps({ testID: 'session-getting-started-start-new-session' }).props.onPress({
+            nativeEvent: { ctrlKey: true },
+        });
+
+        expect(routerMockState.push).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+                draftOrigin: 'ordinary',
+            },
+        });
     });
 });

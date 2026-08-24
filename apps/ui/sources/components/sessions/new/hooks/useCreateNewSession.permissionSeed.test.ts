@@ -223,6 +223,12 @@ async function setupUseCreateNewSessionHarness() {
         })),
     }));
     vi.doMock('@/sync/domains/state/persistence', () => ({
+        getPersistenceStorage: () => ({
+            getString: () => undefined,
+            set: vi.fn(),
+            delete: vi.fn(),
+            getAllKeys: () => [],
+        }),
         clearNewSessionDraft: clearNewSessionDraftSpy,
         loadChangesCursor: () => null,
         loadDeviceAnalyticsId: () => null,
@@ -412,6 +418,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -472,6 +479,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -539,6 +547,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -614,6 +623,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
                 launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -698,6 +708,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -764,6 +775,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -836,6 +848,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -903,6 +916,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -965,6 +979,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -1031,6 +1046,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -1097,6 +1113,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -1180,6 +1197,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
@@ -1269,6 +1287,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
@@ -1352,6 +1371,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
@@ -1441,6 +1461,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: routerPush, replace: routerReplace },
                 selectedMachineId: 'm1',
@@ -1582,6 +1603,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: routerPush, replace: routerReplace },
                 selectedMachineId: 'm1',
@@ -1678,6 +1700,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test(props: Readonly<{ automationDraft: NewSessionAutomationDraft }>) {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router,
                 selectedMachineId: 'm1',
@@ -1780,6 +1803,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test(props: Readonly<{ automationDraft: NewSessionAutomationDraft }>) {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router,
                 selectedMachineId: 'm1',
@@ -1890,6 +1914,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
@@ -1959,6 +1984,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
@@ -2051,6 +2077,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',
@@ -2141,6 +2168,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: routerReplace },
                 selectedMachineId: 'm1',
@@ -2211,6 +2239,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         function Test() {
             const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
                 router: { push: vi.fn(), replace: vi.fn() },
                 selectedMachineId: 'm1',

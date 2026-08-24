@@ -7,6 +7,7 @@ import { normalizeCodexBackendMode, type DirectSessionsSource } from '@happier-d
 import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { inferCodexDirectSessionsSourceFromHome } from '../directSessions/resolveCodexHomeEntriesForDirectSessionsSource';
 import { resolveConfiguredCodexHome } from './resolveConfiguredCodexHome';
+import { resolveConfiguredCodexSqliteHome } from '../connectedServices/codexStateFileNames';
 
 function normalizeOptionalString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -72,8 +73,10 @@ function resolveCodexRuntimeSourceAffinity(params: Readonly<{
   connectedServiceProfileId?: string;
   connectedServiceGroupId?: string;
   homePath?: string;
+  sqliteHomePath?: string;
 }> {
   const source = resolveCodexDirectSource(params);
+  const sqliteHomePath = resolveConfiguredCodexSqliteHome(params.processEnv ?? process.env);
   return source.home === 'connectedService'
     ? {
       home: 'connectedService',
@@ -93,6 +96,7 @@ function resolveCodexRuntimeSourceAffinity(params: Readonly<{
         'homePath' in source && typeof source.homePath === 'string'
           ? source.homePath
           : undefined,
+      sqliteHomePath,
     }
     : {
       home: 'user',
@@ -100,6 +104,7 @@ function resolveCodexRuntimeSourceAffinity(params: Readonly<{
         'homePath' in source && typeof source.homePath === 'string'
           ? source.homePath
           : undefined,
+      sqliteHomePath,
     };
 }
 

@@ -111,6 +111,21 @@ describe('HomeHeader automations button', () => {
         expect(() => findPressableByLabel(tree!, 'Open automations')).toThrow();
     });
 
+    it('opens an ordinary draft route from the new-session header action', async () => {
+        const { HomeHeader } = await import('./HomeHeader');
+        const tree = (await renderScreen(<HomeHeader />)).tree;
+
+        tree.findByProps({ testID: 'home-header-start-new-session' }).props.onPress({ nativeEvent: { ctrlKey: true } });
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.any(String),
+                draftOrigin: 'ordinary',
+            },
+        });
+    });
+
     it('uses a compact update tag in the mobile logo slot', async () => {
         const { HomeHeader } = await import('./HomeHeader');
 

@@ -7,6 +7,7 @@ import { invalidateSessionRelayAuthorizationForSession } from '@/app/api/socket/
 import { deleteSessionTree, SessionDeleteConditionLostError } from './deleteSessionTree';
 import { emitSessionDeletedUpdate } from './emitSessionDeletedUpdate';
 import { loadSessionDeleteRecipients } from './loadSessionDeleteRecipients';
+import { tombstoneSessionDraftForLifecycleInTx } from '@/app/account/sessionDrafts/sessionDraftService';
 
 export async function deleteOwnedSession(params: {
     sessionId: string;
@@ -44,6 +45,10 @@ export async function deleteOwnedSession(params: {
                     entityId: params.sessionId,
                 });
                 recipientCursors.push({ accountId, cursor });
+                await tombstoneSessionDraftForLifecycleInTx(tx, {
+                    accountId,
+                    sessionId: params.sessionId,
+                });
             }
 
             const sessionDeleteWhere = {

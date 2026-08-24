@@ -5,9 +5,6 @@ import {
     garbageCollectAgentInputLocalUiState,
 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import {
-    garbageCollectSessionDraftValues,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
-import {
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
@@ -38,10 +35,6 @@ function runAgentInputComposerDraftGarbageCollection(
         return;
     }
 
-    garbageCollectSessionDraftValues(scope, {
-        now: options.now,
-        reason: options.reason,
-    });
     garbageCollectAgentInputLocalUiState(scope, {
         now: options.now,
         reason: options.reason,

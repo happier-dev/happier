@@ -6,7 +6,7 @@ import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/cata
 import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { useSettings } from '@/sync/domains/state/storage';
@@ -27,7 +27,9 @@ export default function ResumePickerScreen() {
         machineId?: string;
         spawnServerId?: string;
         dataId?: string;
+        draftId?: string;
     }>();
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
 
     const [inputValue, setInputValue] = React.useState(params.currentResumeId || '');
     const agentType: AgentId = isAgentId(params.agentType) ? params.agentType : DEFAULT_AGENT_ID;
@@ -59,22 +61,24 @@ export default function ResumePickerScreen() {
             navigation,
             router,
             routeParams: { resumeSessionId: nextValue },
+            currentParams: { draftId: params.draftId },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [navigation, router]);
+    }, [navigation, params.draftId, pickerFallbackHref, router]);
 
     const handleClear = React.useCallback(() => {
         const returnMode = setNewSessionPickerReturnParams({
             navigation,
             router,
             routeParams: { resumeSessionId: '' },
+            currentParams: { draftId: params.draftId },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [navigation, router]);
+    }, [navigation, params.draftId, pickerFallbackHref, router]);
 
     const headerTitle = t('newSession.resume.pickerTitle');
     const headerBackTitle = t('common.cancel');
@@ -95,7 +99,7 @@ export default function ResumePickerScreen() {
                 onChangeValue={setInputValue}
                 onSave={handleSave}
                 onClear={handleClear}
-                onClose={() => safeRouterBack({ router, navigation, fallbackHref: '/new' })}
+                onClose={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
                 agentType={agentType}
                 resumeBrowse={resumeBrowseEnabled ? {
                     enabled: true,

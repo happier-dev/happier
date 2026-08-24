@@ -23,7 +23,6 @@ function makeSession(partial: Partial<Session> & Pick<Session, 'id'>): Session {
         thinkingAt: partial.thinkingAt ?? 0,
         presence: active ? 'online' : activeAt,
         todos: partial.todos,
-        draft: partial.draft,
         permissionMode: partial.permissionMode ?? null,
         permissionModeUpdatedAt: partial.permissionModeUpdatedAt ?? null,
         modelMode: partial.modelMode ?? null,

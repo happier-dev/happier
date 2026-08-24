@@ -120,18 +120,18 @@ profile.
   coordinate only overlapping hunks, incompatible decisions for one live seam, generated outputs
   with one producer, destructive moves/rewrites, or exclusive mutable runtime resources.
 - **Record material transitions, not every thought.** Update the lane report and orchestrator
-  ledger when scope, ownership, candidate identity, finding disposition, validation state, or a
+  ledger when scope, ownership, validation basis, finding disposition, validation state, or a
   blocker materially changes. Do not create per-microchange packets or ledger churn.
 - **Stalled/killed agent ≠ lost work.** Before re-running, check its artifacts (report, evidence
   files, ledger rows, codex session). Resume with context (SendMessage / `codex exec resume`)
   instead of restarting; only fresh-start when the transcript/session is genuinely gone.
 - **Verify lane claims.** Reports referencing files that don't exist, "green" suites that are red
   at the lane's own commit, and inflated LOC deltas all happened. Reviewers rerun the tests
-  themselves against a frozen snapshot/commit basis and attribute concurrent churn explicitly.
+  themselves against the current source basis and attribute concurrent churn explicitly.
 - **Adversarial review at composed boundaries.** Authors run `skills/attack-conclusion` while
   building. Independent review and `skills/verify-claims` target load-bearing delegated claims and
-  the frozen consumed vertical, corridor gate, or ship candidate—not every microchange. After
-  accepted fixes, review the finding delta unless the candidate, contract, scope, or risk changed
+  the consumed vertical, corridor gate, or ship gate—not every microchange. After
+  accepted fixes, review the finding delta unless the validated source, contract, scope, or risk changed
   materially. Author ≠ reviewer remains mandatory for corridor and ship gates.
 
 ## Validation doctrine

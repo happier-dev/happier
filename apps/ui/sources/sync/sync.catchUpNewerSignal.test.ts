@@ -47,6 +47,13 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
     },
 }));
 
+const directTailReadMock = vi.hoisted(() => vi.fn());
+const directTranscriptPageMock = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/ops/machineDirectSessions', () => ({
+    machineDirectSessionTranscriptReadAfter: directTailReadMock,
+    machineDirectSessionTranscriptPage: directTranscriptPageMock,
+}));
+
 import { storage } from './domains/state/storage';
 import type { Session } from './domains/state/storageTypes';
 import { markSessionVisible } from '@/sync/domains/session/activeViewingSession';
@@ -190,6 +197,105 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
         expect(storage.getState().isSessionCatchingUpNewer(SESSION_ID)).toBe(false);
 
         deferred.resolve();
+        await refresh;
+        expect(catchUpInFlight()).toBe(0);
+    });
+});
+
+/**
+ * The direct-session tail probe is the steady-state poll, not a catch-up.
+ *
+ * `useDirectSessionRuntime` re-invalidates this exact path on a self-rescheduling timer — 250ms
+ * while the agent is running, 2s otherwise — so anything bracketed around the probe itself is
+ * raised and lowered several times a second for the life of an open direct session. The overlay
+ * component's own contract (`CatchUpProgressOverlay.tsx`) states the signal is bracketed "ONLY
+ * around genuine newer-catch-up work ... and never around normal streaming".
+ *
+ * The sibling incremental path already gates the same signal on `isCatchUpWork`
+ * (`decision.kind !== 'do_nothing'`); these two cases pin the direct-session equivalent, so the
+ * fix cannot be "stop bracketing" — a truncated tail must still surface, because it drops the
+ * transcript and refetches it.
+ */
+describe('§13 catch-up-newer signal and the direct-session tail poll', () => {
+    beforeEach(() => {
+        storage.setState(initialStorageState, true);
+        requestMock.mockReset();
+        directTailReadMock.mockReset();
+        directTranscriptPageMock.mockReset();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    async function seedLoadedDirectSession(): Promise<void> {
+        const { sync } = await import('./sync');
+        const t = sync as unknown as SyncCatchUpTestAccess;
+        sync.disconnectServer();
+        storage.getState().applySessions([{
+            ...createSession(SESSION_ID, 20),
+            metadata: {
+                directSessionV1: {
+                    v: 1,
+                    providerId: 'claude',
+                    machineId: 'm-1',
+                    remoteSessionId: 'r-1',
+                    source: { kind: 'claudeConfig' },
+                },
+            } as unknown as Session['metadata'],
+        }]);
+        storage.getState().applyMessagesLoaded(SESSION_ID);
+        t.encryption = { getSessionEncryption: () => null };
+        t.activeServerSessionIds = new Set<string>([SESSION_ID]);
+        t.hasFetchedSessionsSnapshotForActiveServer = true;
+        t.isForeground = true;
+        t.sessionMaterializedMaxSeqById[SESSION_ID] = 20;
+        markSessionVisible(SESSION_ID);
+    }
+
+    /** A promise whose settlement this test controls, so the in-flight window is observable. */
+    function deferredResponse<T>(): Readonly<{ promise: Promise<T>; resolve: (value: T) => void }> {
+        let resolve!: (value: T) => void;
+        const promise = new Promise<T>((settle) => { resolve = settle; });
+        return { promise, resolve };
+    }
+
+    it('does NOT raise the signal while an idle tail probe is in flight', async () => {
+        await seedLoadedDirectSession();
+        const { sync } = await import('./sync');
+
+        const tail = deferredResponse<unknown>();
+        directTailReadMock.mockReturnValue(tail.promise);
+
+        const refresh = sync.refreshSessionMessages(SESSION_ID);
+        await waitFor(() => directTailReadMock.mock.calls.length > 0);
+
+        // The probe is in flight and has not yet reported whether anything is new. Nothing is
+        // being caught up, so the reader must not be told that anything is.
+        expect(catchUpInFlight()).toBe(0);
+        expect(storage.getState().isSessionCatchingUpNewer(SESSION_ID)).toBe(false);
+
+        tail.resolve({ ok: true, items: [], nextCursor: 'c-1', truncated: false });
+        await refresh;
+        expect(catchUpInFlight()).toBe(0);
+    });
+
+    it('DOES raise the signal while a truncated tail drops and refetches the transcript', async () => {
+        await seedLoadedDirectSession();
+        const { sync } = await import('./sync');
+
+        directTailReadMock.mockResolvedValue({ ok: true, items: [], nextCursor: null, truncated: true });
+        const page = deferredResponse<unknown>();
+        directTranscriptPageMock.mockReturnValue(page.promise);
+
+        const refresh = sync.refreshSessionMessages(SESSION_ID);
+        await waitFor(() => directTranscriptPageMock.mock.calls.length > 0);
+
+        // A truncated tail is genuine catch-up: the transcript was reset and is being refetched,
+        // which is exactly the window the overlay exists to cover.
+        expect(catchUpInFlight()).toBeGreaterThan(0);
+
+        page.resolve({ ok: true, items: [], nextCursor: null, hasMore: false });
         await refresh;
         expect(catchUpInFlight()).toBe(0);
     });

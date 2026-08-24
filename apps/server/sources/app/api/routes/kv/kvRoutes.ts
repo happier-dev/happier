@@ -140,7 +140,7 @@ export function kvRoutes(app: Fastify) {
                     success: z.literal(false),
                     errors: z.array(z.object({
                         key: z.string(),
-                        error: z.literal('version-mismatch'),
+                        error: z.enum(['version-mismatch', 'reserved-key']),
                         version: z.number(),
                         value: z.string().nullable()
                     }))

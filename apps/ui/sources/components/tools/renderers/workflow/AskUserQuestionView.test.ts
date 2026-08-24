@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
-import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { changeTextTestInstance, findTestInstanceByTypeContainingText, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
 
 
@@ -233,6 +233,21 @@ describe('AskUserQuestionView', () => {
         });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
+    });
+
+    it('keeps native freeform input touches inside the field instead of bubbling to transcript keyboard dismissal', async () => {
+        const screen = await renderView(makeFreeformTool());
+        const input = screen.findByProps({ testID: 'ask-user-question.freeform:0' });
+        const stopPropagation = vi.fn();
+
+        invokeTestInstanceHandler(
+            input,
+            'onTouchStart',
+            { stopPropagation },
+            'ask-user-question freeform touch start',
+        );
+
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
     });
 
     it('opens the attached Claude terminal without resolving the permission request', async () => {

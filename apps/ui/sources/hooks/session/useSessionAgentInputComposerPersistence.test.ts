@@ -8,7 +8,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 
 const mmkvStore = vi.hoisted(() => new Map<string, string>());
 const activeScopeState = vi.hoisted(() => ({
-    value: { serverId: 'server-a', accountId: 'account-a' } as ServerAccountScope | null,
+    value: { serverId: 'server-a', accountId: 'account-a' } as ServerAccountScope,
 }));
 const appStateListeners = vi.hoisted(() => new Set<(nextState: string) => void>());
 
@@ -153,8 +153,12 @@ async function importLocalUiStateStore() {
     return await import('@/sync/domains/input/draftValues/agentInputLocalUiStateStore');
 }
 
-async function importSessionDraftValueStore() {
-    return await import('@/sync/domains/input/draftValues/sessionDraftValueStore');
+async function importExistingSessionDraftSemanticValues() {
+    return await import('@/sync/domains/input/drafts/existingSessionDraftSemanticValues');
+}
+
+async function importSessionDraftRepository() {
+    return await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 }
 
 async function importLocalUiStatePersistence() {
@@ -361,7 +365,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
         vi.useFakeTimers();
         const { useSessionAgentInputComposerPersistence } = await importHook();
         const localUiStateStore = await importLocalUiStateStore();
-        const draftValueStore = await importSessionDraftValueStore();
+        const { existingSessionDraftSemanticValues } = await importExistingSessionDraftSemanticValues();
         const localUiStatePersistence = await importLocalUiStatePersistence();
         const draftValuePersistence = await importSessionDraftValuesPersistence();
         const scope = activeScopeState.value;
@@ -394,7 +398,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
         });
 
         localUiStateStore.invalidateAgentInputLocalUiStateCache(scope);
-        draftValueStore.invalidateSessionDraftValuesCache(scope);
         expect(localUiStateStore.readAgentInputLocalUiState(scope, owner, {
             textLength: 'Ask $review'.length,
             fontScale: 1,
@@ -402,7 +405,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
             scrollY: 64,
             textLength: 'Ask $review'.length,
         }));
-        expect(draftValueStore.readSessionDraftValue(scope, 'session-a', 'structuredInput.mentions')).toEqual([mention]);
+        expect(existingSessionDraftSemanticValues.read(scope, 'session-a', 'structuredInput.mentions')).toEqual([mention]);
 
         vi.useRealTimers();
     });
@@ -412,7 +415,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
         const mockDocument = installMockDocument('visible');
         const { useSessionAgentInputComposerPersistence } = await importHook();
         const localUiStateStore = await importLocalUiStateStore();
-        const draftValueStore = await importSessionDraftValueStore();
+        const { existingSessionDraftSemanticValues } = await importExistingSessionDraftSemanticValues();
         const localUiStatePersistence = await importLocalUiStatePersistence();
         const draftValuePersistence = await importSessionDraftValuesPersistence();
         const scope = activeScopeState.value;
@@ -447,7 +450,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
             });
 
             localUiStateStore.invalidateAgentInputLocalUiStateCache(scope);
-            draftValueStore.invalidateSessionDraftValuesCache(scope);
             expect(localUiStateStore.readAgentInputLocalUiState(scope, owner, {
                 textLength: 'Ask $review'.length,
                 fontScale: 1,
@@ -455,7 +457,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
                 scrollY: 64,
                 textLength: 'Ask $review'.length,
             }));
-            expect(draftValueStore.readSessionDraftValue(scope, 'session-a', 'structuredInput.mentions')).toEqual([mention]);
+            expect(existingSessionDraftSemanticValues.read(scope, 'session-a', 'structuredInput.mentions')).toEqual([mention]);
         } finally {
             mockDocument.restore();
             vi.useRealTimers();
@@ -468,7 +470,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
         const mockWindowLifecycle = installMockWindowLifecycleEvents();
         const { useSessionAgentInputComposerPersistence } = await importHook();
         const localUiStateStore = await importLocalUiStateStore();
-        const draftValueStore = await importSessionDraftValueStore();
+        const { existingSessionDraftSemanticValues } = await importExistingSessionDraftSemanticValues();
         const localUiStatePersistence = await importLocalUiStatePersistence();
         const draftValuePersistence = await importSessionDraftValuesPersistence();
         const scope = activeScopeState.value;
@@ -503,7 +505,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
             });
 
             localUiStateStore.invalidateAgentInputLocalUiStateCache(scope);
-            draftValueStore.invalidateSessionDraftValuesCache(scope);
             expect(localUiStateStore.readAgentInputLocalUiState(scope, owner, {
                 textLength: 'Ask $review'.length,
                 fontScale: 1,
@@ -511,7 +512,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
                 scrollY: 64,
                 textLength: 'Ask $review'.length,
             }));
-            expect(draftValueStore.readSessionDraftValue(scope, 'session-a', 'structuredInput.mentions')).toEqual([mention]);
+            expect(existingSessionDraftSemanticValues.read(scope, 'session-a', 'structuredInput.mentions')).toEqual([mention]);
         } finally {
             mockWindowLifecycle.restore();
             mockDocument.restore();
@@ -686,7 +687,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
 
     it('hydrates structured mentions for surviving tokens and drops stale mentions', async () => {
         const { useSessionAgentInputComposerPersistence } = await importHook();
-        const draftValueStore = await importSessionDraftValueStore();
+        const { existingSessionDraftSemanticValues } = await importExistingSessionDraftSemanticValues();
         const survivingMention = {
             kind: 'skill' as const,
             tokenText: '$review',
@@ -697,7 +698,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
             tokenText: '$gone',
             name: 'gone',
         };
-        draftValueStore.writeSessionDraftValue(activeScopeState.value, 'session-a', 'structuredInput.mentions', [
+        existingSessionDraftSemanticValues.write(activeScopeState.value, 'session-a', 'structuredInput.mentions', [
             survivingMention,
             staleMention,
         ]);
@@ -713,17 +714,53 @@ describe('useSessionAgentInputComposerPersistence', () => {
         );
 
         expect(hook.getCurrent().structuredInputPersistence.mentions).toEqual([survivingMention]);
-        expect(draftValueStore.readSessionDraftValue(
+        expect(existingSessionDraftSemanticValues.read(
             activeScopeState.value,
             'session-a',
             'structuredInput.mentions',
         )).toEqual([survivingMention]);
     });
 
+    it('does not rerender composer persistence for unrelated draft text writes', async () => {
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        const repository = await importSessionDraftRepository();
+        let renderCount = 0;
+
+        function Harness() {
+            renderCount += 1;
+            useSessionAgentInputComposerPersistence({
+                sessionId: 'session-a',
+                text: '',
+                textLength: 0,
+                fontScale: 1,
+            });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Harness));
+        });
+        const settledRenderCount = renderCount;
+
+        await act(async () => {
+            repository.writeExistingSessionDraft({
+                scope: activeScopeState.value,
+                sessionId: 'session-a',
+                patch: { text: 'hello' },
+            });
+        });
+
+        expect(renderCount).toBe(settledRenderCount);
+        await act(async () => {
+            tree!.unmount();
+        });
+    });
+
     it('persists structured mention changes for the session owner', async () => {
         vi.useFakeTimers();
         const { useSessionAgentInputComposerPersistence } = await importHook();
-        const draftValueStore = await importSessionDraftValueStore();
+        const { existingSessionDraftSemanticValues } = await importExistingSessionDraftSemanticValues();
         const mention = {
             kind: 'skill' as const,
             tokenText: '$review',
@@ -744,7 +781,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
             vi.advanceTimersByTime(250);
         });
 
-        expect(draftValueStore.readSessionDraftValue(
+        expect(existingSessionDraftSemanticValues.read(
             activeScopeState.value,
             'session-a',
             'structuredInput.mentions',
@@ -754,7 +791,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
 
     it('does not drop a selected structured mention while the parent text prop is catching up', async () => {
         const { useSessionAgentInputComposerPersistence } = await importHook();
-        const draftValueStore = await importSessionDraftValueStore();
+        const { existingSessionDraftSemanticValues } = await importExistingSessionDraftSemanticValues();
         const mention = {
             kind: 'skill' as const,
             tokenText: '$review',
@@ -775,7 +812,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
             hook.getCurrent().structuredInputPersistence.onMentionsChange([mention]);
         });
 
-        expect(draftValueStore.readSessionDraftValue(
+        expect(existingSessionDraftSemanticValues.read(
             activeScopeState.value,
             'session-a',
             'structuredInput.mentions',
@@ -862,16 +899,15 @@ describe('useSessionAgentInputComposerPersistence', () => {
         expect(hook.getCurrent().expanded).toBe(true);
     });
 
-    it('garbage collects stale semantic and local UI draft state on scope activation and foreground', async () => {
+    it('garbage collects stale local UI state without deleting canonical semantic drafts', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-05-27T12:00:00Z'));
         const { useSessionAgentInputComposerPersistence } = await importHook();
         const localUiStateStore = await importLocalUiStateStore();
-        const draftValueStore = await importSessionDraftValueStore();
+        const { existingSessionDraftSemanticValues } = await importExistingSessionDraftSemanticValues();
         const scope = activeScopeState.value;
         const now = Date.now();
         const staleUiTime = now - 8 * 24 * 60 * 60 * 1000;
-        const staleDraftTime = now - 31 * 24 * 60 * 60 * 1000;
 
         localUiStateStore.patchAgentInputLocalUiState(scope, {
             kind: 'session',
@@ -882,12 +918,11 @@ describe('useSessionAgentInputComposerPersistence', () => {
             textLength: 100,
             fontScale: 1,
         }, { now: staleUiTime });
-        draftValueStore.writeSessionDraftValue(
+        existingSessionDraftSemanticValues.write(
             scope,
             'stale-draft-session',
             'routing.executionRunDelivery',
             'interrupt',
-            { now: staleDraftTime },
         );
 
         await renderHook(() => useSessionAgentInputComposerPersistence({
@@ -900,11 +935,11 @@ describe('useSessionAgentInputComposerPersistence', () => {
             kind: 'session',
             sessionId: 'stale-ui-session',
         })).toBeNull();
-        expect(draftValueStore.readSessionDraftValue(
+        expect(existingSessionDraftSemanticValues.read(
             scope,
             'stale-draft-session',
             'routing.executionRunDelivery',
-        )).toBeUndefined();
+        )).toBe('interrupt');
 
         localUiStateStore.patchAgentInputLocalUiState(scope, {
             kind: 'session',
@@ -915,12 +950,11 @@ describe('useSessionAgentInputComposerPersistence', () => {
             textLength: 100,
             fontScale: 1,
         }, { now: staleUiTime });
-        draftValueStore.writeSessionDraftValue(
+        existingSessionDraftSemanticValues.write(
             scope,
             'foreground-stale-draft-session',
             'routing.executionRunDelivery',
             'interrupt',
-            { now: staleDraftTime },
         );
 
         vi.advanceTimersByTime(60 * 60 * 1000 + 1);
@@ -932,26 +966,25 @@ describe('useSessionAgentInputComposerPersistence', () => {
             kind: 'session',
             sessionId: 'foreground-stale-ui-session',
         })).toBeNull();
-        expect(draftValueStore.readSessionDraftValue(
+        expect(existingSessionDraftSemanticValues.read(
             scope,
             'foreground-stale-draft-session',
             'routing.executionRunDelivery',
-        )).toBeUndefined();
+        )).toBe('interrupt');
 
         vi.useRealTimers();
     });
 
-    it('garbage collects stale semantic and local UI draft state when the web document becomes visible', async () => {
+    it('garbage collects stale local UI state on web visibility without deleting canonical semantic drafts', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-05-27T12:00:00Z'));
         const mockDocument = installMockDocument('hidden');
         const { useSessionAgentInputComposerPersistence } = await importHook();
         const localUiStateStore = await importLocalUiStateStore();
-        const draftValueStore = await importSessionDraftValueStore();
+        const { existingSessionDraftSemanticValues } = await importExistingSessionDraftSemanticValues();
         const scope = activeScopeState.value;
         const now = Date.now();
         const staleUiTime = now - 8 * 24 * 60 * 60 * 1000;
-        const staleDraftTime = now - 31 * 24 * 60 * 60 * 1000;
 
         try {
             await renderHook(() => useSessionAgentInputComposerPersistence({
@@ -969,12 +1002,11 @@ describe('useSessionAgentInputComposerPersistence', () => {
                 textLength: 100,
                 fontScale: 1,
             }, { now: staleUiTime });
-            draftValueStore.writeSessionDraftValue(
+            existingSessionDraftSemanticValues.write(
                 scope,
                 'visible-stale-draft-session',
                 'routing.executionRunDelivery',
                 'interrupt',
-                { now: staleDraftTime },
             );
 
             vi.advanceTimersByTime(60 * 60 * 1000 + 1);
@@ -987,11 +1019,11 @@ describe('useSessionAgentInputComposerPersistence', () => {
                 kind: 'session',
                 sessionId: 'visible-stale-ui-session',
             })).toBeNull();
-            expect(draftValueStore.readSessionDraftValue(
+            expect(existingSessionDraftSemanticValues.read(
                 scope,
                 'visible-stale-draft-session',
                 'routing.executionRunDelivery',
-            )).toBeUndefined();
+            )).toBe('interrupt');
         } finally {
             mockDocument.restore();
             vi.useRealTimers();

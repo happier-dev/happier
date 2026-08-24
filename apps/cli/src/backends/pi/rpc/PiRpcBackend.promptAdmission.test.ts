@@ -25,7 +25,13 @@ type PiRpcBackendWithPromptAdmission = PiRpcBackend & {
 
 function makeFakePiRpcProcessScript(
   dir: string,
-  scenario: 'ack-before-turn' | 'negative-ack-then-turn' | 'response-loss' | 'turn-before-ack',
+  scenario:
+    | 'ack-before-turn'
+    | 'advertised-prompt-ack-before-turn'
+    | 'command-without-turn'
+    | 'negative-ack-then-turn'
+    | 'response-loss'
+    | 'turn-before-ack',
 ): string {
   const scriptPath = join(dir, `fake-pi-rpc-${scenario}.js`);
   const script = `
@@ -68,10 +74,32 @@ rl.on('line', (line) => {
       });
       break;
     case 'get_commands':
-      out({ id: command.id, type: 'response', command: command.type, success: true, data: { commands: [] } });
+      out({
+        id: command.id,
+        type: 'response',
+        command: command.type,
+        success: true,
+        data: {
+          commands: scenario === 'command-without-turn'
+            ? [{ name: 'goal', source: 'extension' }]
+            : scenario === 'advertised-prompt-ack-before-turn'
+              ? [{ name: 'goal', source: 'prompt' }]
+              : [],
+        },
+      });
       break;
     case 'prompt':
+      if (scenario === 'command-without-turn') {
+        out({ id: command.id, type: 'response', command: command.type, success: true });
+        break;
+      }
       if (scenario === 'ack-before-turn') {
+        out({ id: command.id, type: 'response', command: command.type, success: true });
+        setTimeout(() => out({ type: 'agent_start' }), 100);
+        setTimeout(() => out({ type: 'agent_end' }), 140);
+        break;
+      }
+      if (scenario === 'advertised-prompt-ack-before-turn') {
         out({ id: command.id, type: 'response', command: command.type, success: true });
         setTimeout(() => out({ type: 'agent_start' }), 100);
         setTimeout(() => out({ type: 'agent_end' }), 140);
@@ -137,6 +165,29 @@ describe('PiRpcBackend prompt admission', () => {
 
     await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
     expect(completionSettled).toBe(false);
+    await expect(submission.completion).resolves.toBeUndefined();
+  });
+
+  it('completes an advertised command that returns without starting an agent turn', async () => {
+    const { backend, sessionId } = await startBackend('command-without-turn');
+
+    const submission = backend.sendPromptWithAdmission(sessionId, '/goal fix authentication');
+
+    await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    await expect(submission.completion).resolves.toBeUndefined();
+  });
+
+  it('keeps an advertised prompt-template command pending until its delayed agent turn completes', async () => {
+    const { backend, sessionId } = await startBackend('advertised-prompt-ack-before-turn');
+
+    const submission = backend.sendPromptWithAdmission(sessionId, '/goal fix authentication');
+
+    await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    const earlyCompletion = await Promise.race([
+      submission.completion.then(() => 'settled' as const),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 70)),
+    ]);
+    expect(earlyCompletion).toBe('pending');
     await expect(submission.completion).resolves.toBeUndefined();
   });
 

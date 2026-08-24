@@ -1,7 +1,7 @@
 import { isNonSteerablePromptPayload, type PendingRequestedActionV1 } from '@happier-dev/protocol';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { isVersionSupported, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
+import { getVersionSupportState, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
 import { getSessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
 import { deriveSessionInputReadinessState } from '@/sync/domains/session/control/deriveSessionInputReadinessState';
 
@@ -265,7 +265,10 @@ export function getPendingQueueSubmitSupportState(session: Session | null): Pend
 
     const cliVersion = session?.metadata?.version;
     const trimmedCliVersion = typeof cliVersion === 'string' ? cliVersion.trim() : '';
-    if (trimmedCliVersion && !isVersionSupported(trimmedCliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION)) {
+    if (
+        trimmedCliVersion
+        && getVersionSupportState(trimmedCliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION) === 'unsupported'
+    ) {
         return 'unsupported_cli_version';
     }
 
@@ -384,7 +387,7 @@ export function decideSessionMessageDelivery(opts: {
     const cliVersion = session?.metadata?.version;
     const trimmedCliVersion = typeof cliVersion === 'string' ? cliVersion.trim() : '';
     if (trimmedCliVersion) {
-        if (!isVersionSupported(trimmedCliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION)) {
+        if (getVersionSupportState(trimmedCliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION) === 'unsupported') {
             if (requestedMode === 'interrupt') {
                 return {
                     mode: 'server_pending',

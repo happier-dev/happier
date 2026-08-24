@@ -10,7 +10,8 @@ import {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const executeSpy = vi.fn();
-const updateSessionDraftSpy = vi.fn();
+const writeExistingSessionDraftSpy = vi.fn();
+const flushSessionDraftSpy = vi.fn(async () => ({ status: 'clean' as const }));
 const createDefaultActionExecutorSpy = vi.fn((_: unknown) => ({
     execute: (actionId: unknown, input: unknown, ctx: unknown) => executeSpy(actionId, input, ctx),
 }));
@@ -21,13 +22,16 @@ installTranscriptCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                storage: createStorageStoreMock({
-                    updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
-                }),
+                storage: createStorageStoreMock({}),
+                useActiveServerAccountScope: () => ({ serverId: 'server:session-1', accountId: 'account-1' }),
             },
         });
     },
 });
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    writeExistingSessionDraft: writeExistingSessionDraftSpy,
+    flushSessionDraft: flushSessionDraftSpy,
+}));
 resetTranscriptCommonModuleMockState();
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
@@ -45,7 +49,8 @@ describe('TranscriptRollbackActionButton', () => {
 
     beforeEach(() => {
         executeSpy.mockReset();
-        updateSessionDraftSpy.mockReset();
+        writeExistingSessionDraftSpy.mockReset();
+        flushSessionDraftSpy.mockClear();
         createDefaultActionExecutorSpy.mockClear();
         getTranscriptModalMockRef().current?.spies.alert?.mockReset();
     });
@@ -98,7 +103,7 @@ describe('TranscriptRollbackActionButton', () => {
 
         expect(getTranscriptModalMockRef().current).not.toBeNull();
         expect(getTranscriptModalMockRef().current.spies.alert).toHaveBeenCalledWith('common.error', 'nope');
-        expect(updateSessionDraftSpy).not.toHaveBeenCalled();
+        expect(writeExistingSessionDraftSpy).not.toHaveBeenCalled();
         await screen.unmount();
     });
 
@@ -128,7 +133,16 @@ describe('TranscriptRollbackActionButton', () => {
                 surface: 'ui_button',
             },
         );
-        expect(updateSessionDraftSpy).toHaveBeenCalledWith('session-1', 'edit this prompt');
+        expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith({
+            scope: { serverId: 'server:session-1', accountId: 'account-1' },
+            sessionId: 'session-1',
+            patch: { text: 'edit this prompt' },
+            materializationIntent: 'seeded',
+        });
+        expect(flushSessionDraftSpy).toHaveBeenCalledWith({
+            scope: { serverId: 'server:session-1', accountId: 'account-1' },
+            address: { kind: 'session', sessionId: 'session-1' },
+        });
         await screen.unmount();
     });
 
@@ -153,7 +167,7 @@ describe('TranscriptRollbackActionButton', () => {
         );
         await screen.pressByTestIdAsync('rollback-action');
 
-        expect(updateSessionDraftSpy).not.toHaveBeenCalled();
+        expect(writeExistingSessionDraftSpy).not.toHaveBeenCalled();
         expect(getTranscriptModalMockRef().current?.spies.alert).not.toHaveBeenCalled();
         await screen.unmount();
     });

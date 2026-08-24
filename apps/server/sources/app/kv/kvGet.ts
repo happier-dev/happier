@@ -1,5 +1,6 @@
 import { db } from "@/storage/db";
 import * as privacyKit from "privacy-kit";
+import { isPublicAccountScopedKvKey } from "./reservedAccountScopedKvRow";
 
 export type KVGetResult = {
     key: string;
@@ -15,6 +16,8 @@ export async function kvGet(
     ctx: { uid: string },
     key: string
 ): Promise<KVGetResult> {
+    if (!isPublicAccountScopedKvKey(key)) return null;
+
     const result = await db.userKVStore.findUnique({
         where: {
             accountId_key: {

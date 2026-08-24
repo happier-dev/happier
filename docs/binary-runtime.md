@@ -72,6 +72,6 @@ yarn workspace @happier-dev/protocol build
 
 Stack builds should fail fast or build missing internal workspace outputs through the stack build helpers.
 
-## Packaging sanity checks
+## Bundling sanity checks
 
-When touching bundling/dependencies, run the relevant script tests and validate tarball contents. For CLI changes, the check should prove that protocol dependencies appear under the bundled protocol workspace path, not duplicated at the host root unless the host imports them directly.
+When touching bundling or dependencies, run the relevant source-level script and dependency-closure tests. For CLI changes, the check should prove that protocol dependencies are projected under the bundled protocol workspace path, not duplicated at the host root unless the host imports them directly. Feature QA does not produce or install a local release archive; release automation owns the archive it publishes.

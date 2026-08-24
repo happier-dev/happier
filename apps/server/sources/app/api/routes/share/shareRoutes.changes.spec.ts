@@ -50,6 +50,8 @@ const markAccountChanged = vi.fn(async (_tx: any, params: any) => {
     return 99;
 });
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
+const tombstoneSessionDraftForLifecycleInTx = vi.fn(async () => true);
+vi.mock("@/app/account/sessionDrafts/sessionDraftService", () => ({ tombstoneSessionDraftForLifecycleInTx }));
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
@@ -338,6 +340,11 @@ describe("shareRoutes (AccountChange integration)", () => {
                 params: { sessionId: "s1", shareId: "share-1" },
             },
         );
+
+        expect(tombstoneSessionDraftForLifecycleInTx).toHaveBeenCalledWith(expect.anything(), {
+            accountId: "recipient",
+            sessionId: "s1",
+        });
 
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "owner", kind: "share", entityId: "s1" }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "recipient", kind: "share", entityId: "s1" }));

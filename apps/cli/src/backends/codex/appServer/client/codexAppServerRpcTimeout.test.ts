@@ -18,7 +18,7 @@ describe('codexAppServerRpcTimeout', () => {
         expect(readCodexAppServerRpcTimeoutMs({ HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '9999999' } as NodeJS.ProcessEnv)).toBe(60_000);
     });
 
-    it('uses the startup RPC timeout for initialize, thread/start, and thread/resume requests', () => {
+    it('keeps provider resume requests alive while preserving bounded initialize and thread/start requests', () => {
         const env = {
             HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '1200',
             HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '20000',
@@ -26,17 +26,23 @@ describe('codexAppServerRpcTimeout', () => {
 
         expect(readCodexAppServerRequestTimeoutMs('initialize', env)).toBe(20_000);
         expect(readCodexAppServerRequestTimeoutMs('thread/start', env)).toBe(20_000);
-        expect(readCodexAppServerRequestTimeoutMs('thread/resume', env)).toBe(20_000);
+        expect(readCodexAppServerRequestTimeoutMs('thread/resume', env)).toBeNull();
         expect(readCodexAppServerRequestTimeoutMs('model/list', env)).toBe(1200);
     });
 
-    it('gives native fork requests a dedicated five-minute window without inflating ordinary RPCs', () => {
+    it('defaults initialize and thread/start to the shared 60s startup budget', () => {
+        expect(readCodexAppServerStartupRpcTimeoutMs({} as NodeJS.ProcessEnv)).toBe(60_000);
+        expect(readCodexAppServerRequestTimeoutMs('initialize', {} as NodeJS.ProcessEnv)).toBe(60_000);
+        expect(readCodexAppServerRequestTimeoutMs('thread/start', {} as NodeJS.ProcessEnv)).toBe(60_000);
+    });
+
+    it('keeps provider-native fork requests alive without inflating ordinary RPCs', () => {
         const env = {
             HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '1200',
         } as NodeJS.ProcessEnv;
 
-        expect(readCodexAppServerRequestTimeoutMs('thread/fork', env)).toBe(5 * 60_000);
-        expect(readCodexAppServerRequestTimeoutMs('conversation/fork', env)).toBe(5 * 60_000);
+        expect(readCodexAppServerRequestTimeoutMs('thread/fork', env)).toBeNull();
+        expect(readCodexAppServerRequestTimeoutMs('conversation/fork', env)).toBeNull();
         expect(readCodexAppServerRequestTimeoutMs('model/list', env)).toBe(1200);
     });
 

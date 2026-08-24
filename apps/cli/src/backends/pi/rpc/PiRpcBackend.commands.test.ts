@@ -17,6 +17,7 @@ function makeFakePiRpcCommandsScript(dir: string): string {
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+let getCommandsCount = 0;
 
 rl.on('line', (line) => {
   let command;
@@ -43,6 +44,11 @@ rl.on('line', (line) => {
       out({ id: command.id, type: 'response', command: 'get_available_models', success: true, data: { models: [] } });
       break;
     case 'get_commands':
+      getCommandsCount += 1;
+      if (getCommandsCount > 1) {
+        out({ id: command.id, type: 'response', command: 'get_commands', success: false, error: 'temporary command refresh failure' });
+        break;
+      }
       out({
         id: command.id,
         type: 'response',
@@ -108,5 +114,12 @@ describe('PiRpcBackend (command discovery)', () => {
       { name: '/probe-template', description: 'Prompt template command' },
       { name: '/skill:probe-skill', description: 'Skill command' },
     ]);
+    expect(backend.isProviderNativeCommand('/probe-template describe this')).toBe(true);
+    expect(backend.isProviderNativeCommand('/SKILL:PROBE-SKILL')).toBe(true);
+    expect(backend.isProviderNativeCommand('/unknown command')).toBe(false);
+    expect(backend.isProviderNativeCommand('please run /probe-template')).toBe(false);
+
+    await backend.setSessionConfigOption('pi-session-commands', 'reasoning_effort', 'low');
+    expect(backend.isProviderNativeCommand('/probe-template after refresh failure')).toBe(true);
   });
 });

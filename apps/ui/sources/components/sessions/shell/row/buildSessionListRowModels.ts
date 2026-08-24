@@ -23,6 +23,7 @@ type CacheEntry = Readonly<{
     renderableRef: SessionListRowStateSnapshot['renderable'];
     messagesRef: SessionListRowStateSnapshot['messages'];
     pendingRef: SessionListRowStateSnapshot['pending'];
+    draftPreview: string | null;
 }>;
 
 export type SessionListRowModelsCache = {
@@ -217,6 +218,7 @@ function buildInputSignature(input: Readonly<{
     appendSignaturePart(parts, settings.statusColors.default);
     appendSignaturePart(parts, input.snapshot.messages?.messagesVersion ?? null);
     appendSignaturePart(parts, input.snapshot.pending?.messages.length ?? null);
+    appendSignaturePart(parts, input.snapshot.draft?.preview ?? null);
     return parts.join('|');
 }
 
@@ -256,6 +258,7 @@ function canReuseEntry(
         && entry.renderableRef === snapshot.renderable
         && entry.messagesRef === snapshot.messages
         && entry.pendingRef === snapshot.pending
+        && entry.draftPreview === (snapshot.draft?.preview ?? null)
         && isCachedActivityFresh(entry.model, settings.relativeNowMs)
         && isCachedRuntimeFresh(entry.model, settings.runtimeNowMs);
 }
@@ -279,6 +282,7 @@ function canReuseEntryWithoutSignature(input: Readonly<{
         && entry.renderableRef === input.snapshot.renderable
         && entry.messagesRef === input.snapshot.messages
         && entry.pendingRef === input.snapshot.pending
+        && entry.draftPreview === (input.snapshot.draft?.preview ?? null)
         && areStablePresentationSettingsRefsEqual(entry.stableSettings, input.stableSettings)
         && isCachedActivityFresh(entry.model, input.settings.relativeNowMs)
         && isCachedRuntimeFresh(entry.model, input.settings.runtimeNowMs);
@@ -357,6 +361,7 @@ export function buildCachedSessionListRowModel(input: BuildCachedSessionListRowM
         renderableRef: input.snapshot.renderable,
         messagesRef: input.snapshot.messages,
         pendingRef: input.snapshot.pending,
+        draftPreview: input.snapshot.draft?.preview ?? null,
     });
     return model;
 }

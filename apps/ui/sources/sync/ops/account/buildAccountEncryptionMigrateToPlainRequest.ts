@@ -22,6 +22,10 @@ import {
   AccountEncryptionMigrateRequestSchema,
   type AccountEncryptionMigrateRequest,
 } from '@/sync/api/account/apiAccountEncryptionMigrate';
+import {
+  buildAccountEncryptionSessionDraftsDirective,
+  type AccountEncryptionSessionDraftMigrationCandidate,
+} from './buildAccountEncryptionSessionDraftsDirective';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
@@ -36,6 +40,7 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
   settings: Settings;
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   automations: ReadonlyArray<Readonly<{ id: string; templateCiphertext: string }>>;
+  sessionDrafts?: readonly AccountEncryptionSessionDraftMigrationCandidate[];
   fetchConnectedServiceCredentialSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     sealed: Readonly<{ format: string; ciphertext: string }>;
     metadata: ConnectedServiceCredentialMetadataInput;
@@ -120,11 +125,17 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
     return { action: 'migrate' as const, templates };
   })();
 
+  const sessionDrafts = buildAccountEncryptionSessionDraftsDirective({
+    candidates: params.sessionDrafts ?? [],
+    target: { mode: 'plain' },
+  });
+
   return AccountEncryptionMigrateRequestSchema.parse({
     toMode: 'plain',
     expectedSettingsVersion: params.expectedSettingsVersion,
     settingsContent: { t: 'plain', v: plainSettings },
     connectedServices,
     automations,
+    ...(sessionDrafts ? { sessionDrafts } : {}),
   });
 }

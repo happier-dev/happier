@@ -1947,6 +1947,63 @@ afterEach(() => {
     expect(harness.onAuthUpdated).toHaveBeenCalled();
   });
 
+  it('lets a respawn preflight adopt an already-persisted rotation while its distribution is waiting for that respawn', async () => {
+    const harness = await buildGroupHomeOwnershipHarness();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        access_token: 'rotated-access',
+        refresh_token: 'rotated-refresh',
+        expires_in: 3600,
+      }),
+    })) as unknown as typeof fetch);
+
+    let releaseDistribution!: () => void;
+    const distributionReleased = new Promise<void>((resolve) => {
+      releaseDistribution = resolve;
+    });
+    let observeDistributionStarted!: () => void;
+    const distributionStarted = new Promise<void>((resolve) => {
+      observeDistributionStarted = resolve;
+    });
+    harness.onAuthUpdated.mockImplementation(async () => {
+      observeDistributionStarted();
+      await distributionReleased;
+    });
+
+    const distributionOwner = harness.coordinator.refreshConnectedServiceCredentialForSpawnPreflight({
+      serviceId: 'claude-subscription',
+      profileId: 'workA',
+      force: true,
+    });
+
+    try {
+      await distributionStarted;
+      let respawnPreflightResult: Awaited<ReturnType<
+        typeof harness.coordinator.refreshConnectedServiceCredentialForSpawnPreflight
+      >> | null = null;
+      void harness.coordinator.refreshConnectedServiceCredentialForSpawnPreflight({
+        serviceId: 'claude-subscription',
+        profileId: 'workA',
+        force: true,
+      }).then((result) => {
+        respawnPreflightResult = result;
+      });
+
+      await expect.poll(() => respawnPreflightResult, { timeout: 2_000 }).toMatchObject({
+        status: 'refreshed',
+        credential: expect.objectContaining({
+          oauth: expect.objectContaining({ accessToken: 'rotated-access' }),
+        }),
+      });
+    } finally {
+      releaseDistribution();
+      await distributionOwner;
+    }
+
+    expect(harness.onAuthUpdated).toHaveBeenCalledTimes(1);
+  });
+
   it('reports a successful old-member refresh as superseded when the session materializes current group truth', async () => {
     const harness = await buildGroupHomeOwnershipHarness();
     harness.setCanonicalGroupState('workB', 5);
@@ -4152,6 +4209,102 @@ afterEach(() => {
       expect.objectContaining({ record: expect.objectContaining({ oauth: expect.objectContaining({ accessToken: 'new-access' }) }) }),
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a joining spawn preflight behind completion when the shared result failed to rotate a credential', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-join-not-needed-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-refresh-join-not-needed-'));
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 30_000,
+      oauth: {
+        accessToken: 'current-access',
+        refreshToken: 'current-refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: null,
+      },
+    });
+    const sealedCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    let releaseHealthSettlement!: () => void;
+    const healthSettlementReleased = new Promise<void>((resolve) => {
+      releaseHealthSettlement = resolve;
+    });
+    let observeHealthSettlementStarted!: () => void;
+    const healthSettlementStarted = new Promise<void>((resolve) => {
+      observeHealthSettlementStarted = resolve;
+    });
+    const api = {
+      getConnectedServiceCredentialSealed: vi.fn(async () => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
+        metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct', expiresAt: now + 30_000 },
+      })),
+      acquireConnectedServiceRefreshLease: vi.fn(async () => ({ acquired: true, leaseUntil: now + 60_000 })),
+      updateConnectedServiceCredentialHealth: vi.fn(async () => {
+        observeHealthSettlementStarted();
+        await healthSettlementReleased;
+      }),
+    } as unknown as ApiClient;
+    completeCredentialAuthorityBoundaryFixture(api);
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: async () => JSON.stringify({ error: 'invalid_grant' }),
+    })) as unknown as typeof fetch);
+    const coordinator = new ConnectedServiceRefreshCoordinator({
+      api,
+      credentials,
+      machineIdProvider: () => 'machine-1',
+      activeServerDir,
+      baseDir,
+      refreshWindowMs: 60_000,
+      refreshLeaseMs: 30_000,
+      now: () => now,
+    });
+
+    const owner = coordinator.refreshConnectedServiceCredentialForSpawnPreflight({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    });
+    await healthSettlementStarted;
+    let joinerSettled = false;
+    const joiner = coordinator.refreshConnectedServiceCredentialForSpawnPreflight({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    }).then((result) => {
+      joinerSettled = true;
+      return result;
+    });
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(joinerSettled).toBe(false);
+    } finally {
+      releaseHealthSettlement();
+      await Promise.all([owner, joiner]);
+    }
+    await expect(Promise.all([owner, joiner])).resolves.toEqual([
+      expect.objectContaining({ status: 'refresh_failed' }),
+      expect.objectContaining({ status: 'refresh_failed' }),
+    ]);
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledTimes(1);
   });
 
   it('does not satisfy a forced refresh from an in-flight non-forced not-needed refresh', async () => {

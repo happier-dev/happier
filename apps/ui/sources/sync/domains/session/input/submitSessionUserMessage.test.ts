@@ -228,4 +228,25 @@ describe('submitSessionUserMessage', () => {
         expect(harness.enqueuePendingMessage).not.toHaveBeenCalled();
         expect(harness.sendMessage).not.toHaveBeenCalled();
     });
+
+    it('uses proven Pending custody for an opaque development CLI identity', async () => {
+        const harness = createPort();
+
+        const result = await submitSessionUserMessage(harness.port, {
+            ...baseOptions,
+            configuredMode: 'agent_queue',
+            session: createSession({
+                metadata: {
+                    ...createSession().metadata,
+                    path: '/tmp/project',
+                    host: 'host.local',
+                    version: '0.2.10-dev.abcdef123',
+                },
+            }),
+        });
+
+        expect(harness.enqueuePendingMessage).toHaveBeenCalledTimes(1);
+        expect(harness.sendMessage).not.toHaveBeenCalled();
+        expect(result.persistence).toBe('pending');
+    });
 });

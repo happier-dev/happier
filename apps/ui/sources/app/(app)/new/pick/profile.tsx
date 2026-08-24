@@ -20,7 +20,7 @@ import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { PopoverScope } from '@/components/ui/popover';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export default React.memo(function ProfilePickerScreen() {
@@ -29,12 +29,14 @@ export default React.memo(function ProfilePickerScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         dataId?: string;
+        draftId?: string;
         selectedId?: string;
         machineId?: string;
         profileId?: string | string[];
         secretRequirementResultId?: string;
         spawnServerId?: string;
     }>();
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const useProfiles = useSetting('useProfiles');
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
@@ -43,6 +45,7 @@ export default React.memo(function ProfilePickerScreen() {
 
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
     const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
+    const draftId = typeof params.draftId === 'string' ? params.draftId : undefined;
     const machineId = typeof params.machineId === 'string' ? params.machineId : undefined;
     const profileId = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const secretRequirementResultId = typeof params.secretRequirementResultId === 'string' ? params.secretRequirementResultId : '';
@@ -54,15 +57,16 @@ export default React.memo(function ProfilePickerScreen() {
             routeParams: next,
             replaceParams: {
                 ...(dataId ? { dataId } : {}),
+                ...(draftId ? { draftId } : {}),
                 ...(machineId ? { machineId } : {}),
                 ...(spawnServerId ? { spawnServerId } : {}),
                 ...next,
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [dataId, machineId, navigation, router, spawnServerId]);
+    }, [dataId, draftId, machineId, navigation, pickerFallbackHref, router, spawnServerId]);
 
     // When the secret requirement screen is used (native), it returns a temp id via params.
     // We handle it here and then return to the previous route with the correct selection.
@@ -142,6 +146,7 @@ export default React.memo(function ProfilePickerScreen() {
                 pathname: '/new/pick/secret-requirement',
                 params: {
                     profileId: profile.id,
+                    draftId,
                     machineId: machineId ?? undefined,
                     spawnServerId: spawnServerId ?? undefined,
                     secretEnvVarName: requiredSecretName,
@@ -201,7 +206,7 @@ export default React.memo(function ProfilePickerScreen() {
             onRequestClose: () => handleResolve({ action: 'cancel' }),
             closeOnBackdrop: true,
         });
-    }, [machineId, router, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, setSecrets, spawnServerId]);
+    }, [draftId, machineId, router, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, setSecrets, spawnServerId]);
 
     const handleProfilePress = React.useCallback(async (profile: AIBackendProfile) => {
         const profileId = profile.id;
@@ -297,32 +302,35 @@ export default React.memo(function ProfilePickerScreen() {
             pathname: '/new/pick/profile-edit',
             params: {
                 ...(machineId ? { machineId } : {}),
+                ...(draftId ? { draftId } : {}),
                 ...(spawnServerId ? { spawnServerId } : {}),
             },
         });
-    }, [machineId, router, spawnServerId]);
+    }, [draftId, machineId, router, spawnServerId]);
 
     const openProfileEdit = React.useCallback((profileId: string) => {
         router.push({
             pathname: '/new/pick/profile-edit',
             params: {
                 profileId,
+                ...(draftId ? { draftId } : {}),
                 ...(machineId ? { machineId } : {}),
                 ...(spawnServerId ? { spawnServerId } : {}),
             },
         });
-    }, [machineId, router, spawnServerId]);
+    }, [draftId, machineId, router, spawnServerId]);
 
     const openProfileDuplicate = React.useCallback((cloneFromProfileId: string) => {
         router.push({
             pathname: '/new/pick/profile-edit',
             params: {
                 cloneFromProfileId,
+                ...(draftId ? { draftId } : {}),
                 ...(machineId ? { machineId } : {}),
                 ...(spawnServerId ? { spawnServerId } : {}),
             },
         });
-    }, [machineId, router, spawnServerId]);
+    }, [draftId, machineId, router, spawnServerId]);
 
     const handleAddProfile = React.useCallback(() => {
         openProfileCreate();

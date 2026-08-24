@@ -42,6 +42,7 @@ const moveSessionFolderAssignmentsSpy = vi.hoisted(() => vi.fn(async () => undef
 const reorderSessionOrganizationSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const upsertSessionFolderSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const deleteSessionFolderSpy = vi.hoisted(() => vi.fn(async () => undefined));
+const routerPushSpy = vi.hoisted(() => vi.fn());
 
 let sessionFolderViewModeV1: 'off' | 'tree' = 'tree';
 let sessionListFolderSortModeV1: 'foldersFirst' | 'mixed' = 'foldersFirst';
@@ -71,7 +72,7 @@ installSessionShellCommonModuleMocks({
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({ pathname: '', router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() } }).module;
+        return createExpoRouterMock({ pathname: '', router: { push: routerPushSpy, replace: vi.fn(), back: vi.fn() } }).module;
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -437,6 +438,7 @@ describe('SessionsList session folders shell', () => {
         reorderSessionOrganizationSpy.mockClear();
         upsertSessionFolderSpy.mockClear();
         deleteSessionFolderSpy.mockClear();
+        routerPushSpy.mockClear();
         resetFolderData();
         standardCleanup();
     });
@@ -451,6 +453,27 @@ describe('SessionsList session folders shell', () => {
         // folder headers no longer render a row-local drop-target outline.
         expect(screen.findByTestId('session-list-drop-overlay')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('47');
+    });
+
+    it('starts a folder-scoped session with a fresh explicit draft identity', async () => {
+        const screen = await renderSessionsList();
+        const folderMenu = screen.findAllByType('DropdownMenu' as React.ElementType)
+            .find((menu) => menu.props.items?.some((item: { id?: string }) => item.id === 'new-session'));
+        expect(folderMenu).toBeTruthy();
+
+        await act(async () => {
+            await folderMenu?.props.onSelect('new-session');
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+                machineId: 'machine_a',
+                directory: '/repo',
+                spawnServerId: 'server_a',
+            },
+        });
     });
 
     it('shows a workspace reorder handle with the project header hover actions', async () => {

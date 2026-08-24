@@ -26,6 +26,17 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 describe('RoundButton', () => {
+    it('forwards the press event to modifier-aware actions', async () => {
+        const { RoundButton } = await import('./RoundButton');
+        const onPress = vi.fn();
+        const event = { nativeEvent: { metaKey: true } };
+        const screen = await renderScreen(<RoundButton title="New session" testID="round-button" onPress={onPress} />);
+
+        screen.findByTestId('round-button')?.props.onPress(event);
+
+        expect(onPress).toHaveBeenCalledWith(event);
+    });
+
     it('forwards testID to the Pressable', async () => {
         const { RoundButton } = await import('./RoundButton');
         const screen = await renderScreen(<RoundButton title="Hello" testID="round-button" />);
