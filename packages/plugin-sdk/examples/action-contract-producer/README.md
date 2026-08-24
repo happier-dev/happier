@@ -42,6 +42,6 @@ example, owns the specialized independently installed SDK-copy contract.
 Build and pack this plugin with the normal author commands:
 
 ```sh
-happier plugins author build .
+happier plugins dev build .
 happier plugins pack .
 ```

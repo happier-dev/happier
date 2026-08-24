@@ -1030,8 +1030,8 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             expect(packageJson.keywords).toContain('happier-plugin');
             expect(packageJson.files).toContain('dist');
             expect(packageJson.scripts).toMatchObject({
-                build: 'happier plugins author build .',
-                typecheck: 'happier plugins author typecheck .',
+                build: 'happier plugins dev build .',
+                typecheck: 'happier plugins dev typecheck .',
                 test: 'happier plugins test .',
                 'pack:plugin': 'happier plugins pack .',
             });

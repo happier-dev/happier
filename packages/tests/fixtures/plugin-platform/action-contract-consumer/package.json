@@ -22,8 +22,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "happier plugins author build .",
-    "typecheck": "happier plugins author typecheck .",
+    "build": "happier plugins dev build .",
+    "typecheck": "happier plugins dev typecheck .",
     "pack:plugin": "happier plugins pack ."
   },
   "dependencies": {

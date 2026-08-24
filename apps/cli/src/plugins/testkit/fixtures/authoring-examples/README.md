@@ -11,13 +11,13 @@ Create the current minimal external package with:
 happier plugins create my-plugin --id com.example.my-plugin
 cd my-plugin
 happier plugins dev
-happier plugins author build .
+happier plugins dev build .
 happier plugins test .
 happier plugins pack .
 ```
 
 Focused typecheck diagnostics remain available through
-`happier plugins author typecheck .`.
+`happier plugins dev typecheck .`.
 
 The canonical external source of truth is the generated package's
 `src/index.ts`: `definePlugin(...)` derives its named `manifest` and `activate`

@@ -12,7 +12,7 @@ surface instead.
 Run the package-local checks with the standard authoring tools:
 
 ```bash
-happier plugins author typecheck .
+happier plugins dev typecheck .
 happier plugins test .
 ```
 

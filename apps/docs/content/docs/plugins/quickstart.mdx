@@ -48,7 +48,7 @@ the development module only as the activation entry and calls its generated
 `activate(api)` export.
 
 This normal create-to-dev loop prepares dependencies automatically; do not run
-`happier plugins author install .` first. That command prepares an
+`happier plugins dev install .` first. That command prepares an
 external-author fixture. If the SDK must resolve through an approved registry
 origin, use `happier plugins dev --sdk-registry <origin>`. Installed SDK
 packages include copyable public patterns under
@@ -133,8 +133,8 @@ The normal test command runs the generated daemon-independent suite. The
 lower-level author commands remain available for focused checks:
 
 ```bash
-happier plugins author typecheck .
-happier plugins author build .
+happier plugins dev typecheck .
+happier plugins dev build .
 happier plugins test .
 happier plugins pack .
 ```

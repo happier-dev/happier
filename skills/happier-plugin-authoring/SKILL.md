@@ -21,10 +21,10 @@ For a maintained feature-owned integration, follow the [cross-plugin contributio
 
 Work in a normal Happier Agent Session rooted at this source directory. Use the same public lifecycle as a human author:
 
-1. Start or continue live development with `happier plugins dev`. It prepares declared dependencies automatically; do not run `happier plugins author install .` first. It prompts once to trust this source root, so when no present user can answer that prompt use the headless route below instead.
+1. Start or continue live development with `happier plugins dev`. It prepares declared dependencies automatically; do not run `happier plugins dev install .` first. It prompts once to trust this source root, so when no present user can answer that prompt use the headless route below instead.
 2. The generated prepublication SDK version resolves automatically through the running Happier CLI during managed author commands; do not add a workspace alias, file dependency, author-owned `pnpm-workspace.yaml`, or ad hoc local registry.
-When deliberately preparing from an approved registry origin, pass `--sdk-registry <origin>` to `happier plugins dev`, `happier plugins author install .`, or `happier plugins pack .`.
-3. Make the smallest source change, then use `happier plugins author typecheck .`, `happier plugins author build .`, and `happier plugins test .` for focused checks. Use `happier plugins test . --packed` when you need the explicit disposable-daemon package/load smoke.
+When deliberately preparing from an approved registry origin, pass `--sdk-registry <origin>` to `happier plugins dev`, `happier plugins dev install .`, or `happier plugins pack .`.
+3. Make the smallest source change, then use `happier plugins dev typecheck .`, `happier plugins dev build .`, and `happier plugins test .` for focused checks. Use `happier plugins test . --packed` when you need the explicit disposable-daemon package/load smoke.
 4. Use `happier plugins doctor .` to diagnose an import or top-level evaluation issue; it evaluates once and does not prove repeated evaluation is pure.
 5. Use the installed `node_modules/@happier-dev/plugin-sdk/examples/` as copyable public patterns, then adapt the smallest matching example through documented SDK exports. For a custom Session Agent, an External Sessions companion, a managed Provider, Connected Accounts, or daemon-generation background work, start from `node_modules/@happier-dev/plugin-sdk/examples/advanced-package-root/`; its package-root entry and import-safe Session runner leaf are the maintained executable reference.
 6. Use `happier plugins pack .` before requesting installation through the ordinary install-and-trust flow.

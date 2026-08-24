@@ -36,7 +36,7 @@ import {
 import { speechToTextRuntime, textToSpeechRuntime } from './voiceSpeechProvider.js';
 
 /**
- * The single public-authoring source of truth. `happier plugins author build`
+ * The single public-authoring source of truth. `happier plugins dev build`
  * projects this declaration into its staged `.happier-plugin/plugin.json` and
  * the matching activation module; no handwritten manifest or activation path
  * remains beside it.

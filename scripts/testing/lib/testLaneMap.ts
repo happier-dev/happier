@@ -303,12 +303,12 @@ function resolveExplicitlyNamedUnitLane(context: TestLaneContext, relativePath: 
 export const DECLARED_UNWIRED_TEST_FILES: Readonly<Record<string, string>> = Object.freeze({
   // Blocked on a build prerequisite no unit lane provides: this is the code-defined example, so it
   // owns no handwritten `.happier-plugin/plugin.json` (its own first assertion requires that file to
-  // be absent) and its manifest exists only after `happier plugins author build .` emits
+  // be absent) and its manifest exists only after `happier plugins dev build .` emits
   // `dist/index.js`. Measured 2026-08-21 without that build:
   // `ERR_MODULE_NOT_FOUND: Cannot find module packages/plugin-sdk/examples/public-authoring/dist/index.js`.
   // Its ten build-free sibling example tests are named by the plugin-sdk `test` chain and run there.
   'packages/plugin-sdk/examples/public-authoring/test/index.test.mjs':
-    'Requires `happier plugins author build .` to emit dist/index.js; no unit lane builds the example.',
+    'Requires `happier plugins dev build .` to emit dist/index.js; no unit lane builds the example.',
 
   // Red where they would be wired. Measured 2026-08-23 with `node --test <file>` from `apps/ui`:
   // `tauri_desktop_autostart` 0 pass / 1 fail (Cargo.toml no longer matches

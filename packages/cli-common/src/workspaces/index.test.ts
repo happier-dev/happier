@@ -85,7 +85,7 @@ describe('sanitizeBundledPackageJson', () => {
   it('keeps the executable entrypoint declaration for every bundled workspace package', () => {
     // `bin` is the only thing that makes a bundled package's dist executable
     // discoverable. The Plugin SDK's `happier-plugin-build-ui` is exactly that:
-    // strip it and no `--ui` author can run `plugins author build` from either
+    // strip it and no `--ui` author can run `plugins dev build` from either
     // the packaged CLI's own bundled copy or a materialized prepublication root.
     expect(sanitizeBundledPackageJson({
       name: '@happier-dev/plugin-sdk',

@@ -571,9 +571,11 @@ describe('handlePluginsCommand', () => {
       expect(output.text()).toContain('happier plugins uninstall <pluginId> [--delete-data --yes] [--json]');
       expect(output.text()).toContain('happier plugins create <name> [--id <plugin.id>] [--name <display name>] [--ui hostedWeb|reactNative] [--json]');
       expect(output.text()).toContain('happier plugins dev [path] [--sdk-registry <origin>] [--json]');
+      expect(output.text()).toContain('happier plugins dev install <path> [--sdk-registry <origin>] [--json]');
+      expect(output.text()).toContain('happier plugins dev typecheck|build|test <path> [--json]');
       expect(output.text()).toContain('happier plugins test [path] [--packed] [--with-plugin <root-or-archive>]… [--sdk-registry <origin>] [--json]');
       expect(output.text()).not.toContain('happier plugins scaffold');
-      expect(output.text()).toContain('happier plugins author install <path> [--sdk-registry <origin>] [--json]');
+      expect(output.text()).not.toContain('happier plugins author');
       expect(output.text()).toContain('Repair or refresh a stale or wiped author root');
       expect(output.text()).toContain('happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>] [--json]');
       expect(output.text()).toContain('happier plugins doctor [path] [--json]');
@@ -830,19 +832,16 @@ describe('handlePluginsCommand', () => {
     }
   });
 
-  it.each([
-    ['change', ['change', 'bogus', 'pending-1', '--json'], 'plugins_change_bogus'],
-    ['author', ['author', 'bogus', '/tmp/plugin-root', '--json'], 'plugins_author_bogus'],
-  ])('reports an unknown plugins %s operation as a structured failure', async (_label, args, kind) => {
+  it('reports an unknown plugins change operation as a structured failure', async () => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
     const output = captureConsoleJsonOutput();
     try {
-      await handlePluginsCommand(args as string[]);
+      await handlePluginsCommand(['change', 'bogus', 'pending-1', '--json']);
 
       expect(output.json()).toMatchObject({
         ok: false,
-        kind,
+        kind: 'plugins_change_bogus',
         error: { code: 'unknown_subcommand' },
       });
       expect(process.exitCode).toBe(1);
@@ -855,8 +854,6 @@ describe('handlePluginsCommand', () => {
   it.each([
     ['change', ['change']],
     ['change help', ['change', '--help']],
-    ['author', ['author']],
-    ['author help', ['author', 'help']],
   ])('keeps the plugins %s help path successful', async (_label, args) => {
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -1133,7 +1130,7 @@ describe('handlePluginsCommand', () => {
       }, { signal: controller.signal });
 
       // A warm author root must not pay a full install on every watch start;
-      // refreshing a stale tree is `happier plugins author install`.
+      // refreshing a stale tree is `happier plugins dev install`.
       expect(runPluginAuthorToolchain).not.toHaveBeenCalled();
       expect(output.text()).toContain('Development candidate accepted');
     } finally {
@@ -1917,8 +1914,8 @@ describe('handlePluginsCommand', () => {
       });
       expect(packageJson.private).toBeUndefined();
       expect(packageJson.scripts?.['pack:plugin']).toBe('happier plugins pack .');
-      expect(packageJson.scripts?.build).toBe('happier plugins author build .');
-      expect(packageJson.scripts?.typecheck).toBe('happier plugins author typecheck .');
+      expect(packageJson.scripts?.build).toBe('happier plugins dev build .');
+      expect(packageJson.scripts?.typecheck).toBe('happier plugins dev typecheck .');
       expect(packageJson.scripts?.test).toBe('happier plugins test .');
       expect(packageJson.dependencies?.['@happier-dev/plugin-sdk'])
         .toBe(PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1.dependencies['@happier-dev/plugin-sdk']);
@@ -1968,7 +1965,7 @@ describe('handlePluginsCommand', () => {
     }
   });
 
-  it('dispatches packed-author operations through the author toolchain owner', async () => {
+  it('dispatches focused development operations through the author toolchain owner', async () => {
     const output = captureConsoleJsonOutput();
     const runPluginAuthorToolchain = vi.fn(async () => ({
       ok: true as const,
@@ -1977,7 +1974,7 @@ describe('handlePluginsCommand', () => {
     }));
     try {
       await handlePluginsCommand([
-        'author',
+        'dev',
         'install',
         '/fixture/plugin',
         '--sdk-registry',
@@ -1994,7 +1991,7 @@ describe('handlePluginsCommand', () => {
       });
       expect(output.json()).toMatchObject({
         ok: true,
-        kind: 'plugins_author_install',
+        kind: 'plugins_dev_install',
         data: { operation: 'install', projectRoot: '/fixture/plugin' },
       });
     } finally {
@@ -2002,6 +1999,38 @@ describe('handlePluginsCommand', () => {
     }
   });
 
+  it('does not retain the never-published plugins author command family', async () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const output = captureConsoleText();
+    try {
+      await handlePluginsCommand(['author', 'typecheck', '/fixture/plugin']);
+
+      expect(output.text()).toContain('Unknown plugins subcommand: author');
+      expect(process.exitCode).toBe(1);
+    } finally {
+      output.restore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('uses the plugins dev vocabulary in focused-check human output', async () => {
+    const output = captureConsoleText();
+    try {
+      await handlePluginsCommand(['dev', 'typecheck', '/fixture/plugin'], {
+        runPluginAuthorToolchain: async () => ({
+          ok: true,
+          operation: 'typecheck',
+          projectRoot: '/fixture/plugin',
+        }),
+      });
+
+      expect(output.text()).toContain('Plugin development typecheck completed');
+      expect(output.text()).not.toContain('Plugin author typecheck');
+    } finally {
+      output.restore();
+    }
+  });
   it('dispatches the normal plugin test front door through the daemon-independent author test owner', async () => {
     const output = captureConsoleJsonOutput();
     const runPluginAuthorToolchain = vi.fn(async () => ({

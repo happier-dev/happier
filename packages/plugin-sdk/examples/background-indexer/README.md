@@ -16,7 +16,7 @@ currentness, cancellation, quotas, and close/reload behavior.
 Run the normal external-author commands from this directory:
 
 ```sh
-happier plugins author typecheck .
+happier plugins dev typecheck .
 happier plugins test .
 happier plugins pack .
 ```

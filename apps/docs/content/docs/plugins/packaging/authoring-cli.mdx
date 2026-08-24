@@ -33,7 +33,7 @@ author root itself when nothing has materialized it yet, so the directory you
 edit resolves its declared dependencies; a root whose declared SDK already
 resolves is left alone rather than reinstalled, and an interrupted first run is
 repaired on the next start. Do not run
-`happier plugins author install .` before this loop: it is the explicit repair
+`happier plugins dev install .` before this loop: it is the explicit repair
 command, not a prerequisite. Pass
 `--sdk-registry <origin>` only when the selected SDK must resolve from an
 approved registry origin.
@@ -41,18 +41,18 @@ approved registry origin.
 ## Check the author package
 
 ```bash
-happier plugins author typecheck .
-happier plugins author build .
+happier plugins dev typecheck .
+happier plugins dev build .
 happier plugins test .
 happier plugins test . --packed
 ```
 
-- `happier plugins author install <path> [--sdk-registry <origin>]` prepares an
+- `happier plugins dev install <path> [--sdk-registry <origin>]` prepares an
   external-author fixture, and repairs or refreshes an author root whose package
   tree is stale or wiped. It is not a prerequisite for `plugins dev`.
-- `happier plugins author typecheck <path>`,
-  `happier plugins author build <path>`, and
-  `happier plugins author test <path>` run the managed focused check named by
+- `happier plugins dev typecheck <path>`,
+  `happier plugins dev build <path>`, and
+  `happier plugins dev test <path>` run the managed focused check named by
   the subcommand.
 - `happier plugins test [path]` runs the plugin's daemon-independent suite.
   Its `--packed` mode packs, trusts, installs, restarts, and invokes the

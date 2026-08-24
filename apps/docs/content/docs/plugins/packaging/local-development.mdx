@@ -39,7 +39,7 @@ activation, registration validation, and replacement of the serving plugin.
 
 When the package declares a plugin UI build config (`pluginUiBuild.ts`, written
 by `happier plugins create --ui …`), the daemon runs the same
-`happier-plugin-build-ui` builder that `happier plugins author build .` runs
+`happier-plugin-build-ui` builder that `happier plugins dev build .` runs
 after the CLI submits the captured batch and before candidate adoption. The
 development generation carries the resulting `dist/happier-plugin-ui` tree, so
 each accepted edit produces a generation whose UI artifacts match the source

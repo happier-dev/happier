@@ -189,8 +189,8 @@ function usage(): string {
       { label: 'happier plugins create <name> [--id <plugin.id>] [--name <display name>] [--ui hostedWeb|reactNative] [--json]', description: 'Create a minimal TypeScript plugin, optionally with a wired UI surface, ready for the normal development loop' },
       { label: 'happier plugins dev [path] [--sdk-registry <origin>] [--json]', description: 'Watch a source plugin and submit captured edit batches to the daemon-owned development cycle' },
       { label: 'happier plugins test [path] [--packed] [--with-plugin <root-or-archive>]… [--sdk-registry <origin>] [--json]', description: 'Run unit tests or pack, install, and exercise the plugin through a disposable daemon' },
-      { label: 'happier plugins author install <path> [--sdk-registry <origin>] [--json]', description: 'Repair or refresh a stale or wiped author root; dev already materializes it' },
-      { label: 'happier plugins author typecheck|build|test <path> [--json]', description: 'Run managed author typecheck, build, or test checks' },
+      { label: 'happier plugins dev install <path> [--sdk-registry <origin>] [--json]', description: 'Repair or refresh a stale or wiped author root; the watch loop already materializes it' },
+      { label: 'happier plugins dev typecheck|build|test <path> [--json]', description: 'Run one managed focused development check' },
       { label: 'happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>] [--json]', description: 'Validate and package a local plugin into an installable archive' },
       { label: 'happier plugins doctor [path] [--json]', description: 'Evaluate and diagnose a code-defined plugin author module' },
       { label: 'happier plugins doctor --installed [<pluginId>] [--json]', description: 'Inspect installed immutable plugin generations for missing, escaped, non-regular, drifted, or unloadable files' },
@@ -1724,6 +1724,11 @@ async function runPluginsDevCommand(
   deps: PluginsCommandDeps,
   runtime: PluginsCommandRuntime,
 ): Promise<void> {
+  const operation = String(args[1] ?? '').trim();
+  if (isPluginAuthorOperation(operation)) {
+    await runPluginsDevToolchainCommand(args, deps, operation);
+    return;
+  }
   const requestedPath = readCommandPositionals(args, {
     startIndex: 1,
     valueFlags: ['--sdk-registry'],
@@ -1795,7 +1800,7 @@ async function runPluginsDevCommand(
   // compiler resolution must not depend on a separate command. A root whose
   // declared SDK already resolves is left alone rather than paying a full
   // install on every watch start — refreshing a stale one is
-  // `plugins author install` — and a literal one-file source has no package
+  // `plugins dev install` — and a literal one-file source has no package
   // root to prepare at all.
   if (
     sourceInspection.sourceKind === 'packageRoot'
@@ -1997,23 +2002,11 @@ function isPluginAuthorOperation(value: string): value is PluginAuthorToolchainO
   return value === 'install' || value === 'typecheck' || value === 'build' || value === 'test';
 }
 
-async function runPluginsAuthorCommand(
+async function runPluginsDevToolchainCommand(
   args: readonly string[],
   deps: PluginsCommandDeps,
+  operation: PluginAuthorToolchainOperation,
 ): Promise<void> {
-  const rawOperation = String(args[1] ?? '').trim();
-  if (!rawOperation || rawOperation === 'help' || rawOperation === '--help' || rawOperation === '-h') {
-    console.log(usage());
-    return;
-  }
-  if (!isPluginAuthorOperation(rawOperation)) {
-    await reportUnknownPluginsSubcommand(
-      args,
-      `plugins_author_${rawOperation}`,
-      `Unknown plugins author subcommand: ${rawOperation}`,
-    );
-    return;
-  }
   const projectRoot = readCommandPositionals(args, {
     startIndex: 2,
     valueFlags: ['--sdk-registry'],
@@ -2026,13 +2019,12 @@ async function runPluginsAuthorCommand(
   await runPluginToolchainCommand({
     args,
     deps,
-    operation: rawOperation,
+    operation,
     projectRoot,
-    kind: `plugins_author_${rawOperation}`,
-    ...(rawOperation === 'install' ? { sdkRegistryOrigin: readFlagValue(args, '--sdk-registry') } : {}),
+    kind: `plugins_dev_${operation}`,
+    ...(operation === 'install' ? { sdkRegistryOrigin: readFlagValue(args, '--sdk-registry') } : {}),
   });
 }
-
 async function runPluginToolchainCommand(params: Readonly<{
   args: readonly string[];
   deps: PluginsCommandDeps;
@@ -2082,7 +2074,7 @@ async function runPluginToolchainCommand(params: Readonly<{
     process.exitCode = 1;
     return;
   }
-  console.log(ok(`Plugin author ${result.operation} completed for ${result.projectRoot}.`));
+  console.log(ok(`Plugin development ${result.operation} completed for ${result.projectRoot}.`));
 }
 
 async function runPluginsTestCommand(
@@ -3129,11 +3121,6 @@ export async function handlePluginsCommand(
 
   if (subcommand === 'test') {
     await runPluginsTestCommand(args, deps);
-    return;
-  }
-
-  if (subcommand === 'author') {
-    await runPluginsAuthorCommand(args, deps);
     return;
   }
 

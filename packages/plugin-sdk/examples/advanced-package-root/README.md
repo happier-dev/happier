@@ -20,8 +20,8 @@ the action through the public testkit. Run the package-local lifecycle with the
 canonical author, pack, and disposable-daemon owners:
 
 ```bash
-happier plugins author typecheck .
-happier plugins author build .
+happier plugins dev typecheck .
+happier plugins dev build .
 happier plugins test .
 happier plugins test . --packed
 ```

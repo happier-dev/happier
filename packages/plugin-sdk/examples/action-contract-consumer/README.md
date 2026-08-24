@@ -15,6 +15,6 @@ remains operation-only.
 Build and pack this plugin independently with the normal author commands:
 
 ```sh
-happier plugins author build .
+happier plugins dev build .
 happier plugins pack .
 ```

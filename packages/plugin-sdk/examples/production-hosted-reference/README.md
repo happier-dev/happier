@@ -35,8 +35,8 @@ owners; there is no global fixed candidate.
 Run the package through the canonical author owners:
 
 ```bash
-happier plugins author typecheck .
-happier plugins author build .
+happier plugins dev typecheck .
+happier plugins dev build .
 happier plugins test .
 happier plugins test . --packed
 ```

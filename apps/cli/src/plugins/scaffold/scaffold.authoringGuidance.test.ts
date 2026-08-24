@@ -68,15 +68,15 @@ describe('scaffoldLocalPlugin authoring guidance', () => {
       expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples');
       expect(skill).toContain('--sdk-registry <origin>');
       expect(skill).toContain('prepares declared dependencies automatically');
-      expect(skill).toContain('do not run `happier plugins author install .` first');
+      expect(skill).toContain('do not run `happier plugins dev install .` first');
       expect(skill).toContain('running Happier CLI');
       expect(skill).toContain('prepublication SDK version resolves automatically');
       expect(skill).toContain('managed author commands');
       expect(skill).toContain('author-owned `pnpm-workspace.yaml`');
       expect(skill).not.toContain('release-authorized `--sdk-registry` origin');
       expect(skill).toContain('examples/advanced-package-root');
-      expect(skill).toContain('happier plugins author typecheck .');
-      expect(skill).toContain('happier plugins author build .');
+      expect(skill).toContain('happier plugins dev typecheck .');
+      expect(skill).toContain('happier plugins dev build .');
       expect(skill).toContain('happier plugins test . --packed');
     } finally {
       await rm(root, { recursive: true, force: true });

@@ -129,8 +129,8 @@ Run its package-local lifecycle through the canonical author and packed-test
 owners:
 
 ```bash
-happier plugins author typecheck .
-happier plugins author build .
+happier plugins dev typecheck .
+happier plugins dev build .
 happier plugins test .
 happier plugins test . --packed
 ```

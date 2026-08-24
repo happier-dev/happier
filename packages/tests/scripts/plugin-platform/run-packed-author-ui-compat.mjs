@@ -3481,8 +3481,8 @@ export function inspectGeneratedScaffoldPackage(packageJson, expectedSdkVersion)
     ? packageJson.scripts
     : {};
   const requiredScripts = {
-    build: 'happier plugins author build .',
-    typecheck: 'happier plugins author typecheck .',
+    build: 'happier plugins dev build .',
+    typecheck: 'happier plugins dev typecheck .',
     test: 'happier plugins test .',
     'pack:plugin': 'happier plugins pack .',
   };

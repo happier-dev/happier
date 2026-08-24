@@ -3817,8 +3817,8 @@ test('candidate capture cleanup is single-flight and retries after a transient r
 test('scaffold inspection rejects repository links, bare tools, and TypeScript 5', () => {
   assert.deepEqual(inspectGeneratedScaffoldPackage({
     scripts: {
-      build: 'happier plugins author build .',
-      typecheck: 'happier plugins author typecheck .',
+      build: 'happier plugins dev build .',
+      typecheck: 'happier plugins dev typecheck .',
       test: 'happier plugins test .',
       'pack:plugin': 'happier plugins pack .',
     },
@@ -3841,8 +3841,8 @@ test('scaffold inspection rejects repository links, bare tools, and TypeScript 5
   assert.ok(failures.some((message) => message.includes('@happier-dev/protocol')));
   const compilerDriftFailures = inspectGeneratedScaffoldPackage({
     scripts: {
-      build: 'happier plugins author build .',
-      typecheck: 'happier plugins author typecheck .',
+      build: 'happier plugins dev build .',
+      typecheck: 'happier plugins dev typecheck .',
       test: 'happier plugins test .',
       'pack:plugin': 'happier plugins pack .',
     },

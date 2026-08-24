@@ -67,8 +67,8 @@ by the same guard; do not depend on an internal transport-error class.
 
 ## Diagnose the owning boundary
 
-1. Run `happier plugins author typecheck .` for source/type failures and
-   `happier plugins author build .` for a declared build.
+1. Run `happier plugins dev typecheck .` for source/type failures and
+   `happier plugins dev build .` for a declared build.
 2. Run `happier plugins test .` for the package's daemon-independent suite, or
    `happier plugins test . --packed` for the explicit disposable-daemon smoke.
 3. Run `happier plugins doctor .` for an import or top-level evaluation issue.

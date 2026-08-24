@@ -15,9 +15,9 @@
     "resources"
   ],
   "scripts": {
-    "build": "happier plugins author build .",
+    "build": "happier plugins dev build .",
     "build:ui": "happier-plugin-build-ui --project-root .",
-    "typecheck": "happier plugins author typecheck .",
+    "typecheck": "happier plugins dev typecheck .",
     "test": "happier plugins test .",
     "pack:plugin": "happier plugins pack ."
   },

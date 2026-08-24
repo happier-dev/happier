@@ -261,8 +261,8 @@ describe('scaffoldLocalPlugin',
     });
     expect(packageJson.devDependencies).not.toHaveProperty('typescript');
     expect(packageJson.scripts).toMatchObject({
-      build: 'happier plugins author build .',
-  typecheck: 'happier plugins author typecheck .',
+      build: 'happier plugins dev build .',
+  typecheck: 'happier plugins dev typecheck .',
   test: 'happier plugins test .',
   'pack:plugin': 'happier plugins pack .',
   });
@@ -532,7 +532,7 @@ describe('scaffoldLocalPlugin',
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    // `happier plugins author build` writes the self-contained daemon bundle to
+    // `happier plugins dev build` writes the self-contained daemon bundle to
     // the manifest's declared daemon entry. Read that entry from the scaffolded
     // source so this contract follows the scaffold instead of restating it.
     const scaffoldedSource = await readFile(result.sourceEntryPath, 'utf8');

@@ -111,7 +111,7 @@ happier plugins dev
 ```
 
 `plugins dev` prepares declared dependencies automatically. Do not run
-`happier plugins author install .` before this normal create-to-dev loop;
+`happier plugins dev install .` before this normal create-to-dev loop;
 `author install` is reserved for an external-author fixture. When the SDK must
 resolve through an approved registry origin, use
 `happier plugins dev --sdk-registry <origin>`.
@@ -135,13 +135,13 @@ The generated package scripts use the managed lower-level author checks. After
 developing, build, test, and pack the same project:
 
 ```bash
-happier plugins author build .
+happier plugins dev build .
 happier plugins test .
 happier plugins pack .
 ```
 
 Focused typecheck diagnostics remain available through
-`happier plugins author typecheck .`.
+`happier plugins dev typecheck .`.
 `happier plugins doctor .` resolves the exact author entry, evaluates it once,
 and reports import failures or observable evaluation slowness. Doctor output is
 diagnostic; it does not claim that repeated evaluation proves purity or a

@@ -732,7 +732,7 @@ export async function runManagedPluginPnpm(
  * whether the package materializer has already produced a resolvable package
  * tree in the directory the author edits, so the dev loop can prepare an author
  * root exactly once instead of reinstalling on every watch start. Refreshing a
- * stale tree stays the explicit job of `happier plugins author install`.
+ * stale tree stays the explicit job of `happier plugins dev install`.
  *
  * A bare `node_modules` is not that evidence: the managed package materializer
  * creates its store directory before any package lands, so an interrupted first
@@ -979,7 +979,7 @@ export type PluginUiArtifactBuildResult =
  * author project.
  *
  * This is the single owner of "produce the plugin's UI artifact tree". Both
- * `happier plugins author build` and the `happier plugins dev` watch loop call
+ * `happier plugins dev build` and the `happier plugins dev` watch loop call
  * it; daemon-owned development materialization needs it WITHOUT the TypeScript
  * emit and daemon bundling steps, because a development plugin's daemon half
  * runs from source. The CLI development loop only observes and submits edits.

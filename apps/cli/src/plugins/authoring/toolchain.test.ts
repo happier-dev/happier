@@ -1224,7 +1224,7 @@ describe('runPluginAuthorToolchain', () => {
     try {
       await mkdir(join(packageRoot, 'dist', 'ui', 'build'), { recursive: true });
       await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
-        scripts: { build: 'happier plugins author build .' },
+        scripts: { build: 'happier plugins dev build .' },
       }), 'utf8');
       await writeFile(
         join(projectRoot, 'pluginUiBuild.mjs'),
@@ -1255,7 +1255,7 @@ describe('runPluginAuthorToolchain', () => {
     try {
       await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
         scripts: {
-          build: 'happier plugins author build .',
+          build: 'happier plugins dev build .',
           'build:ui': 'unrelated-company-ui-builder',
         },
       }), 'utf8');

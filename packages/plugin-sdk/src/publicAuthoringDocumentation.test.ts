@@ -326,8 +326,8 @@ describe('Plugin SDK public authoring documentation', () => {
 
         for (const guide of [agentModeGuide, agentRuntimeGuide]) {
             expect(guide).toContain('advanced-package-root');
-            expect(guide).toContain('happier plugins author typecheck .');
-            expect(guide).toContain('happier plugins author build .');
+            expect(guide).toContain('happier plugins dev typecheck .');
+            expect(guide).toContain('happier plugins dev build .');
             expect(guide).toContain('happier plugins test . --packed');
         }
     });
@@ -344,10 +344,10 @@ describe('Plugin SDK public authoring documentation', () => {
             'happier plugins create',
             'happier plugins dev',
             'happier plugins test',
-            'happier plugins author install',
-            'happier plugins author typecheck',
-            'happier plugins author build',
-            'happier plugins author test',
+            'happier plugins dev install',
+            'happier plugins dev typecheck',
+            'happier plugins dev build',
+            'happier plugins dev test',
             'happier plugins pack',
             'happier plugins doctor',
             'happier plugins reload',
