@@ -1032,12 +1032,12 @@ export class PiRpcBackend implements AgentBackend {
     const maybeRestart = this.maybeRestartForUpdatedAuthJson();
     try {
       if (maybeRestart) await maybeRestart;
-      const message = prompt.trim();
-      if (!message) {
+      if (!prompt.trim()) {
         settleAdmission({ status: 'rejected_before_effect', error: new Error('Prompt text is blank') });
         settleBarrier();
         return;
       }
+      const message = prompt;
 
       // Ensure we have a live process *before* allocating a pending turn.
       // If the process died between turns, `ensureProcess()` may need to restart and reattach via --session.

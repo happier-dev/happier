@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,7 +28,9 @@ function makeFakePiRpcProcessScript(
   scenario: 'ack-before-turn' | 'command-without-turn' | 'command-ack-before-turn' | 'negative-ack-then-turn' | 'response-loss' | 'turn-before-ack',
 ): string {
   const scriptPath = join(dir, `fake-pi-rpc-${scenario}.js`);
+  const observedPromptsPath = join(dir, 'observed-prompts.jsonl');
   const script = `
+const fs = require('node:fs');
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 const out = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
@@ -83,6 +85,7 @@ rl.on('line', (line) => {
       });
       break;
     case 'prompt':
+      fs.appendFileSync(${JSON.stringify(observedPromptsPath)}, JSON.stringify(command.message) + '\\n');
       if (scenario === 'command-without-turn') {
         out({ id: command.id, type: 'response', command: command.type, success: true });
         break;
@@ -161,6 +164,17 @@ describe('PiRpcBackend prompt admission', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(completionSettled).toBe(false);
     await expect(submission.completion).resolves.toBeUndefined();
+  });
+
+  it('preserves nonblank prompt bytes when sending them to Pi', async () => {
+    const { backend, sessionId } = await startBackend('ack-before-turn');
+
+    const prompt = '  /goal fix authentication  ';
+    const submission = backend.sendPromptWithAdmission(sessionId, prompt);
+
+    await expect(submission.admission).resolves.toEqual({ status: 'accepted' });
+    await expect(submission.completion).resolves.toBeUndefined();
+    expect(readFileSync(join(tempDirs[0]!, 'observed-prompts.jsonl'), 'utf8')).toBe(`${JSON.stringify(prompt)}\n`);
   });
 
   it('completes an advertised command that returns without starting an agent turn', async () => {
