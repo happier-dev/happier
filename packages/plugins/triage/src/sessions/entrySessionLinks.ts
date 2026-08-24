@@ -66,20 +66,6 @@ export function entrySessionLinkDisplayPath(display: TriageEntrySessionLinkDispl
     return display.locator.displayPath ?? display.scopeLabel;
 }
 
-/**
- * Mints the row-private publication id.
- *
- * It is opaque and random: it encodes and hashes no Session, provider, account,
- * source, entry, title or path identity, so the plaintext Message local id it
- * later becomes cannot be dictionary-tested against public provider candidates
- * on an E2EE Account. Randomness is a genuine system boundary, so the generator
- * is injectable while the real one stays the default.
- */
-export type TriageCardPublicationIdMintV1 = () => string;
-
-const mintRandomCardPublicationId: TriageCardPublicationIdMintV1 = () =>
-    globalThis.crypto.randomUUID();
-
 export type TriageLinkEntryToSessionInputV1 = Readonly<{
     collections: LinkCollections;
     entryRef: TriageEntryRefV1;
@@ -87,7 +73,6 @@ export type TriageLinkEntryToSessionInputV1 = Readonly<{
     sessionId: SessionId;
     /** Our clock, supplied by the caller so the writer owns no ambient time. */
     nowMs: number;
-    mintCardPublicationId?: TriageCardPublicationIdMintV1;
     signal?: AbortSignal;
 }>;
 
@@ -122,8 +107,8 @@ async function writeEntrySessionLink(
     const linkTag = await deriveSessionLinkTag(collections.sessionLinks, entryRef, sessionId, options);
 
     // An existing link is the same committed relationship. It keeps its
-    // original `linkedAtMs`, its minted publication id and any retargeted
-    // current `entryRef` a merge reconciliation already wrote.
+    // original `linkedAtMs` and any retargeted current `entryRef` a merge
+    // reconciliation already wrote.
     if (await readLiveLink(collections, linkTag, options)) return { status: 'linked', linkTag };
 
     const row: CorpusSessionLinkRowV1 = {
@@ -131,7 +116,6 @@ async function writeEntrySessionLink(
         entryTag: await deriveSessionLinkEntryTag(collections.sessionLinks, entryRef, options),
         sessionId,
         linkedAtMs: nowMs,
-        cardPublicationId: (input.mintCardPublicationId ?? mintRandomCardPublicationId)(),
         entryRef,
         identityEntryRef: entryRef,
         displayPathAtLink: entrySessionLinkDisplayPath(input.display),

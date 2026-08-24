@@ -24,7 +24,6 @@ describe('linkEntryToSession', () => {
             display: TESTKIT_LINK_DISPLAY,
             sessionId: 'session-a',
             nowMs: NOW_MS,
-            mintCardPublicationId: () => 'publication-id-a',
         });
 
         const linkTag = await deriveSessionLinkTag(fixture.collections.sessionLinks, entryRef, 'session-a');
@@ -34,7 +33,6 @@ describe('linkEntryToSession', () => {
             entryTag: await deriveSessionLinkEntryTag(fixture.collections.sessionLinks, entryRef),
             sessionId: 'session-a',
             linkedAtMs: NOW_MS,
-            cardPublicationId: 'publication-id-a',
             entryRef,
             identityEntryRef: entryRef,
             displayPathAtLink: 'example/repository #17',
@@ -54,7 +52,6 @@ describe('linkEntryToSession', () => {
             display: TESTKIT_LINK_DISPLAY,
             sessionId: 'session-a',
             nowMs: NOW_MS,
-            mintCardPublicationId: () => 'publication-id-a',
         });
         const linkTag = await deriveSessionLinkTag(fixture.collections.sessionLinks, entryRef, 'session-a');
         const revisionAfterFirst = fixture.control.sessionLinks.inspect(linkTag)?.revision;
@@ -69,7 +66,6 @@ describe('linkEntryToSession', () => {
             },
             sessionId: 'session-a',
             nowMs: NOW_MS + 60_000,
-            mintCardPublicationId: () => 'publication-id-b',
         });
 
         expect(second).toEqual({ status: 'linked', linkTag });
@@ -81,7 +77,6 @@ describe('linkEntryToSession', () => {
         expect(page.rows).toHaveLength(1);
         const row = page.rows[0]?.value as unknown as CorpusSessionLinkRowV1;
         expect(row.linkedAtMs).toBe(NOW_MS);
-        expect(row.cardPublicationId).toBe('publication-id-a');
         expect(row.displayPathAtLink).toBe('example/repository #17');
         expect(fixture.control.sessionLinks.inspect(linkTag)?.revision).toBe(revisionAfterFirst);
     });

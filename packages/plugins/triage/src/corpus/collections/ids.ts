@@ -29,7 +29,6 @@ export const CORPUS_SESSION_LINKS_FIELD = {
     entryTag: 'entryTag',
     sessionId: 'sessionId',
     linkedAtMs: 'linkedAtMs',
-    cardPublicationId: 'cardPublicationId',
     entryRef: 'entryRef',
     identityEntryRef: 'identityEntryRef',
     displayPathAtLink: 'displayPathAtLink',

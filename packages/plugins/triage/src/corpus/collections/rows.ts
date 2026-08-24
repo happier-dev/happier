@@ -52,12 +52,6 @@ export type CorpusSessionLinkRowV1 = Readonly<{
     /** [projected] our clock. */
     linkedAtMs: number;
 
-    /**
-     * Target-minted random publication id, private to the row. It is stable
-     * across Account-mode reprojection and contains no Session, provider or
-     * entry identity.
-     */
-    cardPublicationId: string;
     /** The full entry ref: the only identity of the linked provider entity anywhere in the Account. */
     entryRef: TriageEntryRefV1;
     /** Immutable initial entry ref, used only to rederive this stable link id during an Account-mode transition. */

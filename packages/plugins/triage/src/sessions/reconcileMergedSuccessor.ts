@@ -21,11 +21,9 @@ import { deriveSessionLinkEntryTag, deriveSessionLinkTag } from '../corpus/ident
  * "In place" is the whole design. The row keeps its `linkTag`, so its address
  * never moves: that address is derived from the immutable `identityEntryRef`,
  * which is why that field exists at all. It keeps its `sessionId`, its
- * `linkedAtMs`, its minted `cardPublicationId` — so no new card is published and
- * the structured Message already in the Session stays the one this relationship
- * owns — and its `displayPathAtLink`, which is what the row renders from until a
- * live materialization supplies fresher facts. Only the projected `entryTag` and
- * the private current `entryRef` move.
+ * `linkedAtMs` and its `displayPathAtLink`, which is what the row renders from
+ * until a live materialization supplies fresher facts. Only the projected
+ * `entryTag` and the private current `entryRef` move.
  *
  * What it deliberately is not:
  *

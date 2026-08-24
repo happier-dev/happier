@@ -31,7 +31,7 @@ const PIN_DISPLAY = { title: 'Replace the duplicated normalizer', scopeLabel: 'e
 
 async function link(
     fixture: TestkitCorpusCollections,
-    input: Readonly<{ entryRef: TriageEntryRefV1; sessionId: string; nowMs: number; publicationId: string }>,
+    input: Readonly<{ entryRef: TriageEntryRefV1; sessionId: string; nowMs: number }>,
 ): Promise<string> {
     const result = await linkEntryToSession({
         collections: fixture.collections,
@@ -39,7 +39,6 @@ async function link(
         display: TESTKIT_LINK_DISPLAY,
         sessionId: input.sessionId,
         nowMs: input.nowMs,
-        mintCardPublicationId: () => input.publicationId,
     });
     if (result.status !== 'linked') throw new Error('the link fixture did not commit');
     return result.linkTag;
@@ -92,13 +91,13 @@ describe('reconcileMergedSuccessor', () => {
         // One Session holds only the predecessor link; another already holds a
         // separate successor link beside its predecessor one.
         const predecessorLinkA = await link(fixture, {
-            entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS, publicationId: 'publication-a',
+            entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS,
         });
         const predecessorLinkB = await link(fixture, {
-            entryRef: PREDECESSOR, sessionId: 'session-b', nowMs: NOW_MS + 1_000, publicationId: 'publication-b-predecessor',
+            entryRef: PREDECESSOR, sessionId: 'session-b', nowMs: NOW_MS + 1_000,
         });
         const successorLinkB = await link(fixture, {
-            entryRef: SUCCESSOR, sessionId: 'session-b', nowMs: NOW_MS + 2_000, publicationId: 'publication-b-successor',
+            entryRef: SUCCESSOR, sessionId: 'session-b', nowMs: NOW_MS + 2_000,
         });
         await setPinned({
             collections: fixture.collections,
@@ -137,15 +136,14 @@ describe('reconcileMergedSuccessor', () => {
         const current = await rowsOn(fixture, SUCCESSOR);
         expect(current.map((row) => row.sessionId).sort()).toEqual(['session-a', 'session-b']);
 
-        // The retargeted row is the SAME row: its address, publication identity,
-        // link time, immutable identity ref and frozen display path all survive,
-        // and only the projected entry tag and the current ref moved.
+        // The retargeted row is the SAME row: its address, link time,
+        // immutable identity ref and frozen display path all survive, and only
+        // the projected entry tag and the current ref moved.
         expect(current.find((row) => row.sessionId === 'session-a')).toEqual({
             linkTag: predecessorLinkA,
             entryTag: await deriveSessionLinkEntryTag(sessionLinks, SUCCESSOR),
             sessionId: 'session-a',
             linkedAtMs: NOW_MS,
-            cardPublicationId: 'publication-a',
             entryRef: SUCCESSOR,
             identityEntryRef: PREDECESSOR,
             displayPathAtLink: 'example/repository #17',
@@ -153,15 +151,10 @@ describe('reconcileMergedSuccessor', () => {
 
         // The Session that already had a successor link keeps that row and loses
         // the predecessor one, rather than showing two relationships.
-        expect(current.find((row) => row.sessionId === 'session-b')?.cardPublicationId)
-            .toBe('publication-b-successor');
+        expect(current.find((row) => row.sessionId === 'session-b')?.linkTag)
+            .toBe(successorLinkB);
         expect(await sessionLinks.get(predecessorLinkB)).toBeNull();
         expect(fixture.control.sessionLinks.inspect(predecessorLinkB)?.deleted).toBe(true);
-
-        // No new card is published: every live publication id was already minted
-        // by a user's own link.
-        expect(current.map((row) => row.cardPublicationId).sort())
-            .toEqual(['publication-a', 'publication-b-successor']);
 
         // No `user-marks` write at all. A reconciler that helpfully moved the pin
         // would be the second mark writer the corpus refuses.
@@ -175,7 +168,7 @@ describe('reconcileMergedSuccessor', () => {
         // which never terminates.
         const fixture = createTestkitCorpusCollections();
         const linkTag = await link(fixture, {
-            entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS, publicationId: 'publication-a',
+            entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS,
         });
         const before = fixture.control.sessionLinks.inspect(linkTag);
 
@@ -196,7 +189,7 @@ describe('reconcileMergedSuccessor', () => {
         // would spin the daemon's event loop on a row this pass cannot win.
         const fixture = createTestkitCorpusCollections();
         const linkTag = await link(fixture, {
-            entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS, publicationId: 'publication-a',
+            entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS,
         });
         const contended = racingSessionLinks(fixture.collections.sessionLinks, async () => {
             // The same bytes, recommitted by somebody else: the row's content is
@@ -228,7 +221,7 @@ describe('reconcileMergedSuccessor', () => {
         // was false.
         const fixture = createTestkitCorpusCollections();
         await link(fixture, {
-            entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS, publicationId: 'publication-a',
+            entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS,
         });
         const controller = new AbortController();
         controller.abort();
