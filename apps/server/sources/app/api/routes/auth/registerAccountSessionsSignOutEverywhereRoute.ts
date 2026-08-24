@@ -38,6 +38,7 @@ export function registerAccountSessionsSignOutEverywhereRoute(app: Fastify): voi
             }
 
             await auth.signOutEverywhere(request.userId);
+            app.disconnectAccountSockets(request.userId);
             return await reply.send({ status: "signed_out" });
         },
     );

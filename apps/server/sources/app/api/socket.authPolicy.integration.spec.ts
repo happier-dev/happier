@@ -80,6 +80,40 @@ async function waitForConnectionSuccess(socket: ReturnType<typeof ioClient>): Pr
     });
 }
 
+function waitForHandlerUsabilityOrDisconnect(
+    socket: ReturnType<typeof ioClient>,
+): Promise<"handler_usable" | "disconnected"> {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error("Timed out waiting for revocation to disconnect post-connect admission"));
+        }, 5_000);
+        const cleanup = () => {
+            clearTimeout(timeout);
+            socket.off("disconnect", onDisconnect);
+            socket.off("connect_error", onConnectError);
+        };
+        const onDisconnect = () => {
+            cleanup();
+            resolve("disconnected");
+        };
+        const onConnectError = () => {
+            cleanup();
+            resolve("disconnected");
+        };
+
+        socket.on("disconnect", onDisconnect);
+        socket.on("connect_error", onConnectError);
+        void socket.timeout(1_000).emitWithAck("ping").then(
+            () => {
+                cleanup();
+                resolve("handler_usable");
+            },
+            () => {},
+        );
+    });
+}
+
 async function waitForConnectionFailure(socket: ReturnType<typeof ioClient>): Promise<ProviderRequiredErrorPayload> {
     return await new Promise<ProviderRequiredErrorPayload>((resolve, reject) => {
         const cleanup = () => {
@@ -101,6 +135,41 @@ async function waitForConnectionFailure(socket: ReturnType<typeof ioClient>): Pr
         socket.on("connect", onConnect);
     });
 }
+
+function deferred(): Readonly<{
+    promise: Promise<void>;
+    resolve: () => void;
+}> {
+    let resolvePromise: (() => void) | undefined;
+    const promise = new Promise<void>((resolve) => {
+        resolvePromise = resolve;
+    });
+    return {
+        promise,
+        resolve: () => resolvePromise?.(),
+    };
+}
+
+function pausePrismaQuery<T extends object>(query: T, release: Promise<void>): T {
+    return new Proxy(query, {
+        get(target, property, receiver) {
+            if (property !== "then") {
+                return Reflect.get(target, property, receiver);
+            }
+            const then = Reflect.get(target, property, target);
+            if (typeof then !== "function") {
+                return then;
+            }
+            return (...args: unknown[]) => release.then(() => Reflect.apply(then, target, args));
+        },
+    });
+}
+
+type PausedAdmissionBoundary = Readonly<{
+    reached: Promise<void>;
+    release: () => void;
+    restore: () => void;
+}>;
 
 describe("startSocket (auth policy enforcement)", () => {
     let harness: LightSqliteHarness;
@@ -170,6 +239,314 @@ describe("startSocket (auth policy enforcement)", () => {
             provider: "github",
             statusCode: 403,
         });
+    }, 30_000);
+
+    it("rejects an API token before it can enter every generic Socket.IO admission family", async () => {
+        const account = await db.account.create({
+            data: { publicKey: `pk-api-token-${Date.now()}` },
+            select: { id: true },
+        });
+        const apiToken = await auth.createApiToken({
+            accountId: account.id,
+            label: "Socket admission must reject this",
+        });
+
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) {
+            await app.close();
+            throw new Error("Failed to bind socket server");
+        }
+
+        try {
+            for (const admission of [
+                { name: "user", auth: {} },
+                {
+                    name: "session",
+                    auth: { clientType: "session-scoped", sessionId: "session-api-token-rejected" },
+                },
+                {
+                    name: "machine",
+                    auth: { clientType: "machine-scoped", machineId: "machine-api-token-rejected" },
+                },
+            ] as const) {
+                const socket = ioClient(`http://127.0.0.1:${port}`, {
+                    path: "/v1/updates",
+                    transports: ["websocket"],
+                    reconnection: false,
+                    auth: { token: apiToken.token, ...admission.auth },
+                });
+
+                try {
+                    const payload = await waitForConnectionFailure(socket);
+                    expect(payload.message, admission.name).toBe("invalid-token");
+                    expect(payload.data, admission.name).toEqual({
+                        error: "invalid-token",
+                        provider: undefined,
+                        statusCode: 401,
+                        owner: undefined,
+                    });
+                } finally {
+                    socket.close();
+                }
+            }
+        } finally {
+            await app.close();
+        }
+    }, 30_000);
+
+    it("rejects user, session, and machine admissions when their token epoch advances after initial verification", async () => {
+        const admissions = [
+            {
+                name: "user",
+                configure: async (_accountId: string): Promise<Readonly<Record<string, string>>> => ({}),
+                pauseAdmission: (): PausedAdmissionBoundary => {
+                    const admissionReached = deferred();
+                    const releaseAdmission = deferred();
+                    const originalFindUnique = db.account.findUnique;
+                    let accountLookups = 0;
+                    const findUniqueSpy = vi.spyOn(db.account, "findUnique").mockImplementation((...args) => {
+                        accountLookups += 1;
+                        const query = originalFindUnique(...args);
+                        if (accountLookups === 2) {
+                            admissionReached.resolve();
+                            return pausePrismaQuery(query, releaseAdmission.promise);
+                        }
+                        return query;
+                    });
+                    return {
+                        reached: admissionReached.promise,
+                        release: releaseAdmission.resolve,
+                        restore: () => {
+                            findUniqueSpy.mockRestore();
+                            Reflect.set(db.account, "findUnique", originalFindUnique);
+                        },
+                    };
+                },
+            },
+            {
+                name: "session",
+                configure: async (accountId: string): Promise<Readonly<Record<string, string>>> => {
+                    const sessionId = `s-epoch-race-${Date.now()}`;
+                    await db.session.create({
+                        data: {
+                            id: sessionId,
+                            tag: `t-epoch-race-${Date.now()}`,
+                            accountId,
+                            encryptionMode: "e2ee",
+                            metadata: "{}",
+                        },
+                    });
+                    return { clientType: "session-scoped", sessionId };
+                },
+                pauseAdmission: (): PausedAdmissionBoundary => {
+                    const admissionReached = deferred();
+                    const releaseAdmission = deferred();
+                    const originalFindUnique = db.session.findUnique;
+                    const findUniqueSpy = vi.spyOn(db.session, "findUnique").mockImplementation((...args) => {
+                        admissionReached.resolve();
+                        return pausePrismaQuery(originalFindUnique(...args), releaseAdmission.promise);
+                    });
+                    return {
+                        reached: admissionReached.promise,
+                        release: releaseAdmission.resolve,
+                        restore: () => {
+                            findUniqueSpy.mockRestore();
+                            Reflect.set(db.session, "findUnique", originalFindUnique);
+                        },
+                    };
+                },
+            },
+            {
+                name: "machine",
+                configure: async (accountId: string): Promise<Readonly<Record<string, string>>> => {
+                    const machineId = `m-epoch-race-${Date.now()}`;
+                    await db.machine.create({
+                        data: {
+                            id: machineId,
+                            accountId,
+                            metadata: "metadata",
+                            metadataVersion: 1,
+                            daemonState: null,
+                            daemonStateVersion: 0,
+                            active: false,
+                        },
+                    });
+                    return { clientType: "machine-scoped", machineId };
+                },
+                pauseAdmission: (): PausedAdmissionBoundary => {
+                    const admissionReached = deferred();
+                    const releaseAdmission = deferred();
+                    const originalFindFirst = db.machine.findFirst;
+                    const findFirstSpy = vi.spyOn(db.machine, "findFirst").mockImplementation((...args) => {
+                        admissionReached.resolve();
+                        return pausePrismaQuery(originalFindFirst(...args), releaseAdmission.promise);
+                    });
+                    return {
+                        reached: admissionReached.promise,
+                        release: releaseAdmission.resolve,
+                        restore: () => {
+                            findFirstSpy.mockRestore();
+                            Reflect.set(db.machine, "findFirst", originalFindFirst);
+                        },
+                    };
+                },
+            },
+        ] as const;
+
+        for (const admission of admissions) {
+            const account = await db.account.create({
+                data: { publicKey: `pk-epoch-race-${admission.name}-${Date.now()}` },
+                select: { id: true },
+            });
+            const token = await auth.createToken(account.id);
+            const socketAuth = await admission.configure(account.id);
+            const pausedAdmission = admission.pauseAdmission();
+            const verifySpy = vi.spyOn(auth, "verifyToken");
+
+            const app = Fastify({ logger: false }) as unknown as AppFastify;
+            startSocket(app);
+            await app.listen({ port: 0, host: "127.0.0.1" });
+            const address = app.server.address();
+            const port = typeof address === "object" && address ? address.port : null;
+            if (!port) {
+                pausedAdmission.restore();
+                verifySpy.mockRestore();
+                await app.close();
+                throw new Error("Failed to bind socket server");
+            }
+
+            const socket = ioClient(`http://127.0.0.1:${port}`, {
+                path: "/v1/updates",
+                transports: ["websocket"],
+                reconnection: false,
+                autoConnect: false,
+                auth: { token, ...socketAuth },
+            });
+
+            try {
+                const outcome = waitForHandlerUsabilityOrDisconnect(socket);
+                socket.connect();
+                await pausedAdmission.reached;
+                await auth.signOutEverywhere(account.id);
+                app.disconnectAccountSockets(account.id);
+                pausedAdmission.release();
+
+                await expect(outcome, admission.name).resolves.toBe("disconnected");
+                expect(verifySpy, admission.name).toHaveBeenCalledTimes(2);
+            } finally {
+                pausedAdmission.release();
+                socket.close();
+                pausedAdmission.restore();
+                verifySpy.mockRestore();
+                await app.close();
+            }
+        }
+    }, 30_000);
+
+    it("keeps user, session, and machine sockets handler-inert when sign-out races post-connect epoch verification", async () => {
+        const admissions = [
+            {
+                name: "user",
+                configure: async (_accountId: string): Promise<Readonly<Record<string, string>>> => ({}),
+            },
+            {
+                name: "session",
+                configure: async (accountId: string): Promise<Readonly<Record<string, string>>> => {
+                    const sessionId = `s-post-connect-epoch-${Date.now()}`;
+                    await db.session.create({
+                        data: {
+                            id: sessionId,
+                            tag: `t-post-connect-epoch-${Date.now()}`,
+                            accountId,
+                            encryptionMode: "e2ee",
+                            metadata: "{}",
+                        },
+                    });
+                    return { clientType: "session-scoped", sessionId };
+                },
+            },
+            {
+                name: "machine",
+                configure: async (accountId: string): Promise<Readonly<Record<string, string>>> => {
+                    const machineId = `m-post-connect-epoch-${Date.now()}`;
+                    await db.machine.create({
+                        data: {
+                            id: machineId,
+                            accountId,
+                            metadata: "metadata",
+                            metadataVersion: 1,
+                            daemonState: null,
+                            daemonStateVersion: 0,
+                            active: false,
+                        },
+                    });
+                    return { clientType: "machine-scoped", machineId };
+                },
+            },
+        ] as const;
+
+        for (const admission of admissions) {
+            const account = await db.account.create({
+                data: { publicKey: `pk-post-connect-epoch-${admission.name}-${Date.now()}` },
+                select: { id: true },
+            });
+            const token = await auth.createToken(account.id);
+            const socketAuth = await admission.configure(account.id);
+            const finalVerificationReached = deferred();
+            const releaseFinalVerification = deferred();
+            const originalVerifyToken = auth.verifyToken;
+            let verifyCalls = 0;
+            const verifySpy = vi.spyOn(auth, "verifyToken").mockImplementation(async (candidate) => {
+                const verified = await originalVerifyToken.call(auth, candidate);
+                verifyCalls += 1;
+                if (verifyCalls === 2) {
+                    finalVerificationReached.resolve();
+                    await releaseFinalVerification.promise;
+                }
+                return verified;
+            });
+
+            const app = Fastify({ logger: false }) as unknown as AppFastify;
+            startSocket(app);
+            await app.listen({ port: 0, host: "127.0.0.1" });
+            const address = app.server.address();
+            const port = typeof address === "object" && address ? address.port : null;
+            if (!port) {
+                releaseFinalVerification.resolve();
+                verifySpy.mockRestore();
+                await app.close();
+                throw new Error("Failed to bind socket server");
+            }
+
+            const socket = ioClient(`http://127.0.0.1:${port}`, {
+                path: "/v1/updates",
+                transports: ["websocket"],
+                reconnection: false,
+                autoConnect: false,
+                auth: { token, ...socketAuth },
+            });
+
+            try {
+                socket.connect();
+                await finalVerificationReached.promise;
+                const outcome = waitForHandlerUsabilityOrDisconnect(socket);
+                await auth.signOutEverywhere(account.id);
+                app.disconnectAccountSockets(account.id);
+                releaseFinalVerification.resolve();
+
+                await expect(outcome).resolves.toBe("disconnected");
+                expect(verifySpy).toHaveBeenCalledTimes(2);
+            } finally {
+                releaseFinalVerification.resolve();
+                socket.close();
+                verifySpy.mockRestore();
+                await app.close();
+            }
+        }
     }, 30_000);
 
     it("disconnects a machine-scoped socket when a required login provider is missing", async () => {

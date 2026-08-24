@@ -241,6 +241,13 @@ export function startSocket(app: Fastify) {
         serveClient: false // Don't serve the client files
     });
 
+    app.disconnectAccountSockets = (accountId: string): void => {
+        // `user:` contains user- and session-scoped sockets; machine daemons
+        // deliberately live in the separate account machine room.
+        io.in(`user:${accountId}`).disconnectSockets(true);
+        io.in(`user-machines:${accountId}`).disconnectSockets(true);
+    };
+
     setSocketAdapterModeInfo({
         adapter: socketAdapter,
         redisEnabled: shouldEnableRedisAdapter,
@@ -402,10 +409,15 @@ export function startSocket(app: Fastify) {
         if (clientType === 'machine-scoped' && !machineId) {
             return rejectHandshake({ statusCode: 400, error: 'missing-machine-id' });
         }
+        let releaseMachineOwnershipIfClaimed: (() => Promise<void>) | null = null;
         try {
             setHandshakeStage("verify-token");
             const verified = await auth.verifyToken(token);
             if (!verified) {
+                observeHandshakeStage("error");
+                return rejectHandshake({ statusCode: 401, error: 'invalid-token' });
+            }
+            if (verified.authTokenKind === "api_token") {
                 observeHandshakeStage("error");
                 return rejectHandshake({ statusCode: 401, error: 'invalid-token' });
             }
@@ -432,6 +444,16 @@ export function startSocket(app: Fastify) {
                 accountStoredContentCompatibility,
             );
             let verifiedMachineInstallationId: string | null = null;
+            let machineOwnershipClaimed = false;
+            releaseMachineOwnershipIfClaimed = async (): Promise<void> => {
+                if (!machineOwnershipClaimed || !machineId) return;
+                machineOwnershipClaimed = false;
+                await machineOwnershipRegistry.releaseOwner({
+                    accountId: verified.userId,
+                    machineId,
+                    socketId: socket.id,
+                });
+            };
             if (clientType === 'machine-scoped') {
                 setHandshakeStage("machine-lookup");
                 const machine = await db.machine.findFirst({
@@ -481,6 +503,7 @@ export function startSocket(app: Fastify) {
                         data: buildMachineOwnerConflictSocketPayload(readMachineDaemonOwnershipMetadataFromSocketAuth(owner)),
                     });
                 }
+                machineOwnershipClaimed = true;
                 observeHandshakeStage("ok");
 
                 activityCache.seedMachineValidity({
@@ -529,6 +552,7 @@ export function startSocket(app: Fastify) {
             if (verifiedMachineInstallationId) {
                 socket.data.verifiedMachineInstallationId = verifiedMachineInstallationId;
             }
+
             recordSocketAuthHandshake({
                 clientType,
                 transport: handshakeTransport,
@@ -537,6 +561,9 @@ export function startSocket(app: Fastify) {
             });
             return next();
         } catch (error) {
+            if (releaseMachineOwnershipIfClaimed) {
+                await releaseMachineOwnershipIfClaimed().catch(() => {});
+            }
             observeHandshakeStage("error");
             const classification = classifySocketHandshakeException(error);
             recordSocketAuthHandshakeException({
@@ -588,6 +615,7 @@ export function startSocket(app: Fastify) {
             socket.data.sessionScopedBinding?.sessionId
             ?? socket.data.sessionId;
         const machineId = socket.data.machineId;
+        const token = socket.handshake.auth.token as string;
         let connectConvergenceFinished = false;
         let connectReady = false;
 
@@ -621,6 +649,18 @@ export function startSocket(app: Fastify) {
             return;
         }
 
+        // Join the canonical fanout rooms before the final currentness read.
+        // Socket.IO adds this socket to the namespace before this callback, so
+        // account-wide revocation can reach it while that read is in flight.
+        const canonicalRoomJoin = socket.join(getSocketRooms({
+            userId,
+            clientType,
+            sessionId,
+            machineId,
+            includeAccountStoredContentV3Room:
+                readAccountStoredContentCompatibilityForSocket(socket).supportsPluginDataProtocol,
+        }));
+
         log(
             {
                 module: 'websocket',
@@ -636,6 +676,49 @@ export function startSocket(app: Fastify) {
             },
             `Token verified: ${userId}, clientType: ${clientType}, purpose: ${clientPurpose || 'unknown'}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
         );
+
+        const releasePostConnectMachineOwnership = async (): Promise<void> => {
+            if (clientType !== "machine-scoped" || !machineId) return;
+            await machineOwnershipRegistry.releaseOwner({
+                accountId: userId,
+                machineId,
+                socketId: socket.id,
+            });
+        };
+
+        const rejectPostConnectAdmission = async (): Promise<void> => {
+            await releasePostConnectMachineOwnership().catch(() => {});
+            finalizeConnectConvergence("disconnect_before_ready");
+            socket.disconnect(true);
+        };
+
+        try {
+            await canonicalRoomJoin;
+            const currentVerified = await auth.verifyToken(token);
+            if (
+                !socket.connected
+                || !currentVerified
+                || currentVerified.authTokenKind === "api_token"
+                || currentVerified.userId !== userId
+            ) {
+                await rejectPostConnectAdmission();
+                return;
+            }
+        } catch (error) {
+            await rejectPostConnectAdmission();
+            log(
+                {
+                    module: "websocket-auth-admission",
+                    socketId: socket.id,
+                    clientType,
+                    sessionId,
+                    machineId,
+                    err: error,
+                },
+                "Post-connect Socket authentication admission failed unexpectedly",
+            );
+            return;
+        }
 
         // Store connection based on type
         const metadata = { clientType, clientPurpose: clientPurpose || 'unknown', sessionId, machineId };
@@ -770,24 +853,15 @@ export function startSocket(app: Fastify) {
             );
         }
 
-        // Start canonical fanout-room membership, but install the RPC listeners before yielding.
+        // Room membership and the final currentness check completed before any
+        // authority-bearing listener is installed. Register RPC immediately
+        // afterward: machine clients replay their rpc-register burst from
+        // their connect callback and Socket.IO does not replay delivered events.
         // Socket.IO does not buffer application events for listeners attached after delivery, and
-        // machine clients replay their rpc-register burst immediately from their connect callback.
-        const canonicalRoomJoin = socket.join(getSocketRooms({
-            userId,
-            clientType: metadata.clientType,
-            sessionId,
-            machineId,
-            includeAccountStoredContentV3Room:
-                readAccountStoredContentCompatibilityForSocket(socket).supportsPluginDataProtocol,
-        }));
-
         rpcHandler(userId, socket, {
             io,
             sessionPublisherPresence,
         });
-
-        await canonicalRoomJoin;
 
         // Broadcast daemon online status
         if (connection.connectionType === 'machine-scoped') {
