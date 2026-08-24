@@ -148,6 +148,42 @@ describe('createActionExecutor (session control)', () => {
     }));
   });
 
+  it('forwards declared attachment drafts only for a plugin caller', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted', localId: 'plugin-input-v1:test' }));
+    const executor = createExecutor({ sessionSendMessage });
+    const actionCaller = {
+      kind: 'plugin' as const,
+      pluginId: 'happier.triage',
+      contributionLocalId: 'entries',
+    };
+    const attachments = [{
+      attachmentLocalId: 'entry',
+      value: {
+        key: 'github:pull:42',
+        value: { sourceId: 'github', entryId: '42' },
+        presentation: { label: 'PR #42' },
+      },
+    }];
+
+    await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Fix it', idempotencyKey: 'message-42', attachments },
+      { surface: 'plugin', actionCaller },
+    );
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      actionCaller,
+      attachments,
+    }));
+
+    sessionSendMessage.mockClear();
+    await expect(executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Fix it', attachments },
+      { surface: 'cli', defaultSessionId: null },
+    )).resolves.toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+  });
+
   it('never lets a plugin caller retain its own durable input identity', async () => {
     const sessionSendMessage = vi.fn(async () => ({ status: 'accepted', localId: 'plugin-input-v1:test' }));
     const executor = createExecutor({ sessionSendMessage });

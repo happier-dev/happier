@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { SessionMessageProvenanceV1Schema as publicSessionMessageProvenanceV1Schema } from '../general.js';
+import { getActionSpec } from '../../actions/actionSpecs.js';
+import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from '../../runtime/input/composerAttachmentV1.js';
 import * as sessionInputAdmission from './sessionInputAdmission.js';
 import { SessionMessageMetaSchema } from './sessionMessageMeta.js';
 
@@ -309,6 +311,115 @@ describe('session input admission metadata', () => {
         ...request.source,
         admittedPermissionCeiling: 'yolo',
       },
+    }).success).toBe(false);
+  });
+
+  it('admits declared composer attachment drafts alongside plugin Session input text', () => {
+    const request = {
+      kind: 'userText',
+      text: 'Fix the failing check',
+      idempotencyKey: 'triage-entry-42',
+      attachments: [{
+        attachmentLocalId: 'entry',
+        value: {
+          key: 'github:pull:42',
+          value: { sourceId: 'github', entryId: '42' },
+          presentation: { label: 'PR #42' },
+        },
+      }],
+    } as const;
+
+    expect(protocol.PluginSessionInputRequestV1Schema.parse(request)).toEqual(request);
+    // The host qualifies the caller's plugin id and stamps instance identity and
+    // type label. An author-supplied identity is not admissible on this seam.
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      ...request,
+      attachments: [{
+        ...request.attachments[0],
+        attachment: { pluginId: 'forged.plugin', localId: 'entry' },
+      }],
+    }).success).toBe(false);
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      ...request,
+      attachments: [{
+        ...request.attachments[0],
+        value: {
+          ...request.attachments[0].value,
+          presentation: { label: 'PR #42', typeLabel: 'Triage' },
+        },
+      }],
+    }).success).toBe(false);
+    // The seam cannot admit more attachment instances than one Message may carry.
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      ...request,
+      attachments: Array.from(
+        { length: MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 + 1 },
+        (_unused, index) => ({
+          attachmentLocalId: 'entry',
+          value: {
+            key: `github:pull:${index}`,
+            value: { sourceId: 'github', entryId: String(index) },
+            presentation: { label: `PR #${index}` },
+          },
+        }),
+      ),
+    }).success).toBe(false);
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      ...request,
+      attachments: [],
+    }).success).toBe(false);
+  });
+
+  it('admits an attachment-only plugin Session input and refuses one carrying neither', () => {
+    // The canonical composer submission rule is `text.trim().length === 0 &&
+    // attachments.length === 0` (`apps/ui/sources/components/sessions/composer/
+    // composerSubmissionCoordinator.ts`): blank text WITH an attachment is a
+    // real message. The plugin seam refusing it made a promptless configured
+    // action deliver nothing at all, which is the contract half `PLAN.md`
+    // §0a A4a exists to close.
+    const attachments = [{
+      attachmentLocalId: 'entry',
+      value: {
+        key: 'github:pull:42',
+        value: { sourceId: 'github', entryId: '42' },
+        presentation: { label: 'PR #42' },
+      },
+    }] as const;
+
+    const attachmentOnly = {
+      kind: 'userText',
+      text: '',
+      idempotencyKey: 'triage-entry-42',
+      attachments,
+    } as const;
+    expect(protocol.PluginSessionInputRequestV1Schema.parse(attachmentOnly)).toEqual(attachmentOnly);
+
+    // Neither text nor an attachment is still nothing to say, and stays refused.
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      kind: 'userText',
+      text: '',
+      idempotencyKey: 'triage-entry-42',
+    }).success).toBe(false);
+    // Whitespace is not content either: the canonical rule trims first.
+    expect(protocol.PluginSessionInputRequestV1Schema.safeParse({
+      kind: 'userText',
+      text: '   \n  ',
+      idempotencyKey: 'triage-entry-42',
+    }).success).toBe(false);
+    // The same rule at the Action surface binding, which is the schema the
+    // plugin executor actually admits a caller through.
+    const spec = getActionSpec('session.message.send');
+    const pluginInput = spec.surfaceBindings?.plugin?.inputSchema;
+    expect(pluginInput?.safeParse({
+      sessionId: 'session-a',
+      message: '',
+      idempotencyKey: 'triage-entry-42',
+      attachments,
+    }).success).toBe(true);
+    expect(pluginInput?.safeParse({
+      sessionId: 'session-a',
+      message: '',
+      idempotencyKey: 'triage-entry-42',
     }).success).toBe(false);
   });
 

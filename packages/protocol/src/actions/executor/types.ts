@@ -45,6 +45,7 @@ import type {
 import type { SessionContinueWithReplayRpcParams } from '../../sessions/continueWithReplay.js';
 import type { SessionForkRpcParams } from '../../sessions/fork.js';
 import type {
+  PluginSessionInputAttachmentV1,
   PluginSessionInputSourceV1,
   SessionInputCausalPermissionAuthorityV1,
 } from '../../sessions/messages/sessionInputAdmission.js';
@@ -818,6 +819,7 @@ export type ActionExecutorDeps = Readonly<{
     /** Caller-retained durable input identity; plugin inputs derive their own. */
     localId?: string;
     source?: PluginSessionInputSourceV1;
+    attachments?: readonly PluginSessionInputAttachmentV1[];
     permissionModeOverride?: string;
     modelOverride?: string | null;
     providerConnectionId?: ProviderConnectionId | null;

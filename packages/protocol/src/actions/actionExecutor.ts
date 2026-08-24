@@ -116,6 +116,7 @@ import {
 } from '../plugins/actions/invocation.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import {
+  PluginSessionInputAttachmentsV1Schema,
   PluginSessionInputSourceV1Schema,
   SessionInputCausalPermissionAuthorityV1Schema,
   derivePluginSessionInputLocalIdV1,
@@ -4009,6 +4010,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
           const actionCaller = ctx.actionCaller ?? { kind: 'host' as const };
+          const parsedAttachments = Object.prototype.hasOwnProperty.call(data, 'attachments')
+            ? PluginSessionInputAttachmentsV1Schema.safeParse(data.attachments)
+            : null;
+          if (parsedAttachments && (actionCaller.kind !== 'plugin' || !parsedAttachments.success)) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
           if (
             actionCaller.kind === 'plugin'
             && (
@@ -4061,6 +4068,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               ? { localId: data.localId }
               : {}),
             ...(parsedSource?.success ? { source: parsedSource.data } : {}),
+            ...(parsedAttachments?.success ? { attachments: parsedAttachments.data } : {}),
             ...(permissionModeOverride ? { permissionModeOverride } : {}),
             ...(modelOverrideRaw === null
               ? { modelOverride: null }

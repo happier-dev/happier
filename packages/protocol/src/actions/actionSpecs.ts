@@ -178,8 +178,10 @@ import {
 import { SessionSpawnNewResultV1Schema } from '../sessions/creation/sessionSpawnNewResultV1.js';
 import { SessionCreationKeyV1Schema } from '../sessions/creation/sessionCreationIdentityV1.js';
 import {
+  PluginSessionInputAttachmentsV1Schema,
   PluginSessionInputIdempotencyKeyV1Schema,
   PluginSessionInputSourceV1Schema,
+  requireSessionInputContent,
   SessionInputAdmissionResultV1Schema,
 } from '../sessions/messages/sessionInputAdmission.js';
 import { ExternalShareableTranscriptPageV1Schema } from '../sessions/messages/sessionExternalShareableTranscriptV1.js';
@@ -1545,7 +1547,7 @@ const CurrentUiContextCommandInvokeInputSchema = z.object({
 
 const SessionSendMessageInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
-  message: z.string().min(1),
+  message: z.string(),
   requestedAction: PendingRequestedActionV1Schema.optional(),
   /**
    * The caller-retained stable identity for this durable input. Resubmitting
@@ -1556,12 +1558,13 @@ const SessionSendMessageInputSchema = z.object({
   localId: PendingLocalIdSchema.optional(),
   idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema.optional(),
   source: PluginSessionInputSourceV1Schema.optional(),
+  attachments: PluginSessionInputAttachmentsV1Schema.optional(),
   permissionModeOverride: z.string().trim().min(1).optional(),
   modelOverride: z.union([z.string().trim().min(1), z.null()]).optional(),
   providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
   wait: z.boolean().optional(),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
-}).passthrough().superRefine((value, ctx) => {
+}).passthrough().superRefine(requireSessionInputContent).superRefine((value, ctx) => {
   if (value.providerConnectionId !== undefined
     && value.providerConnectionId !== null
     && typeof value.modelOverride !== 'string') {
@@ -1576,10 +1579,11 @@ const SessionSendMessageInputSchema = z.object({
 /** Plugin Session messages carry only host-attributed admission intent. */
 const SessionSendMessagePluginInputV1Schema = z.object({
   sessionId: z.string().min(1),
-  message: z.string().min(1),
+  message: z.string(),
   idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema,
   source: PluginSessionInputSourceV1Schema.optional(),
-}).strict();
+  attachments: PluginSessionInputAttachmentsV1Schema.optional(),
+}).strict().superRefine(requireSessionInputContent);
 
 const SessionPermissionRespondInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
