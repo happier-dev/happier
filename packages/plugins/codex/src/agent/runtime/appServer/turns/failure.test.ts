@@ -113,6 +113,27 @@ describe('createCodexAppServerTurnFailure', () => {
         });
     });
 
+    it('marks provider high-demand failures as temporary recoverable failures', () => {
+        const failure = createCodexAppServerTurnFailure({
+            value: {
+                turn: {
+                    error: {
+                        message: 'The service is currently experiencing high demand. Please try again later.',
+                        codex_error_info: 'other',
+                    },
+                },
+            },
+        });
+
+        expect(isCodexAppServerTemporaryRecoverableTurnFailureError(failure)).toBe(true);
+        expect((failure as Error & { runtimeAuthClassification?: unknown }).runtimeAuthClassification).toMatchObject({
+            kind: 'capacity',
+            limitCategory: 'capacity',
+            quotaScope: 'provider',
+            serviceId: 'openai-codex',
+        });
+    });
+
     it('formats non-empty messages for UI without double-prefixing error text', () => {
         expect(formatCodexAppServerErrorForUi(new Error('provider failed'))).toBe('Error: provider failed');
         expect(formatCodexAppServerErrorForUi(new Error('Error: provider failed'))).toBe('Error: provider failed');

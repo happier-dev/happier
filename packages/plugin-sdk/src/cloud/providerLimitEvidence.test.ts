@@ -28,6 +28,20 @@ describe('provider limit evidence classification', () => {
       quotaScope: 'unknown',
       provenance: { kind: 'stableProviderMessage' },
     });
+    expect(classifyProviderLimitEvidence(
+      new Error('The service is currently experiencing high demand. Please try again later.'),
+    )).toMatchObject({
+      category: 'capacity',
+      confidence: 'diagnostic',
+      quotaScope: 'unknown',
+      provenance: { kind: 'stableProviderMessage' },
+    });
+    expect(classifyProviderLimitEvidence(
+      new Error('Internal Server Error'),
+    )).toMatchObject({
+      category: 'unknown',
+      confidence: 'diagnostic',
+    });
   });
 
   it('preserves structured status and provider-code classifications', () => {

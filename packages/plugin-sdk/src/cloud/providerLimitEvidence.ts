@@ -600,7 +600,7 @@ export function classifyProviderLimitEvidence(
   if (/\b(upgrade|plan|billing|payment required|subscription|permission denied|not entitled|entitlement)\b/u.test(text)) {
     return diagnosticClassification('plan_invalid', true);
   }
-  if (/\b(capacity|overloaded|server[_\s-]*(?:is[_\s-]*)?overloaded|model[_\s-]*(?:is[_\s-]*)?overloaded|capacity[_\s-]*(?:exceeded|unavailable)|(?:model|server|provider|service)[_\s-]*(?:is[_\s-]*)?unavailable)\b/u.test(evidenceText)) {
+  if (/\b(capacity|overloaded|currently experiencing high demand|server[_\s-]*(?:is[_\s-]*)?overloaded|model[_\s-]*(?:is[_\s-]*)?overloaded|capacity[_\s-]*(?:exceeded|unavailable)|(?:model|server|provider|service)[_\s-]*(?:is[_\s-]*)?unavailable)\b/u.test(evidenceText)) {
     return diagnosticClassification('capacity', true);
   }
   if (/\b(validation|invalid request|bad request|malformed)\b/u.test(text)) {
