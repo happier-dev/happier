@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { profileDefaults, type Profile } from '@/sync/domains/profiles/profile';
 import { purchasesDefaults, type Purchases } from '@/sync/domains/purchases/purchases';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import {
+    serverAccountScopedStorageKey,
+    type ServerAccountScope,
+} from '@/sync/domains/scope/serverAccountScope';
+import { loadProfile } from '@/sync/domains/state/profilePersistence';
 
 type AccountProfilePersistenceModule = Readonly<{
     loadAccountProfile: (scope: ServerAccountScope) => Profile;
@@ -42,6 +46,30 @@ async function loadAccountProfilePersistenceModule(): Promise<AccountProfilePers
     return loaded as AccountProfilePersistenceModule;
 }
 
+function createPersistedProfileWithoutRevisionSemantics(): unknown {
+    return {
+        ...profileDefaults,
+        id: 'cached-account',
+        timestamp: 1,
+        connectedAccountsV4: [{
+            ref: {
+                service: {
+                    pluginId: 'third-party.connected-accounts',
+                    localId: 'service/with/path',
+                },
+                accountId: 'account/with/path',
+            },
+            status: 'connected',
+            authenticationModeId: 'manual',
+            credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+            configurationReady: false,
+            configurationRevision: null,
+            displayName: 'Cached account',
+            scopes: [],
+        }],
+    };
+}
+
 describe('accountProfilePersistence', () => {
     const scopeA = { serverId: 'server-a', accountId: 'account-a' };
     const sameAccountDifferentServer = { serverId: 'server-b', accountId: 'account-a' };
@@ -49,6 +77,42 @@ describe('accountProfilePersistence', () => {
 
     beforeEach(() => {
         store.clear();
+    });
+
+    it('discards a cached V4 projection with no revision discriminator without treating it as current', async () => {
+        const mod = await loadAccountProfilePersistenceModule();
+        expect(mod, 'account profile persistence module should exist').not.toBeNull();
+        if (!mod) return;
+
+        const key = serverAccountScopedStorageKey('account-profile:v1', scopeA);
+        store.set(key, JSON.stringify(createPersistedProfileWithoutRevisionSemantics()));
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            expect(mod.loadAccountProfile(scopeA)).toEqual({ ...profileDefaults });
+            expect(store.has(key)).toBe(false);
+            expect(errorSpy).not.toHaveBeenCalled();
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    it('silently drops the same invalid projection from the legacy profile cache during scope migration', async () => {
+        const mod = await loadAccountProfilePersistenceModule();
+        expect(mod, 'account profile persistence module should exist').not.toBeNull();
+        if (!mod) return;
+
+        store.set('profile', JSON.stringify(createPersistedProfileWithoutRevisionSemantics()));
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            mod.prepareAccountProfileScopeForActivation(scopeA);
+
+            expect(loadProfile()).toEqual({ ...profileDefaults });
+            expect(mod.loadAccountProfile(scopeA)).toEqual({ ...profileDefaults });
+            expect(store.has('profile')).toBe(false);
+            expect(errorSpy).not.toHaveBeenCalled();
+        } finally {
+            errorSpy.mockRestore();
+        }
     });
 
     it('persists profiles separately for each server/account scope', async () => {
