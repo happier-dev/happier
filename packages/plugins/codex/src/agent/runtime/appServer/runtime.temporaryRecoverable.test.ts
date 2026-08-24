@@ -3704,6 +3704,73 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     });
   });
 
+  it('accepts a correlated steer only at the provider user-message boundary', async () => {
+    const runtime = createRuntime();
+    await runtime.send({ v: 1, text: 'original prompt' }, { turnId: 'host-turn-287' });
+
+    let settled = false;
+    const steering = runtime.send(
+      { v: 1, text: 'correlated steer' },
+      {
+        deliverAs: 'steer',
+        localInputId: 'pending-steer-287',
+        localInputIds: ['pending-steer-287'],
+        userMessageSeq: 287,
+        turnId: 'host-turn-287',
+      },
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await waitForRequestCount('turn/steer', 1);
+    expect(clientState.requests.at(-1)).toMatchObject({
+      method: 'turn/steer',
+      params: expect.objectContaining({
+        threadId: 'thread-1',
+        expectedTurnId: 'turn-1',
+        clientUserMessageId: 'pending-steer-287',
+      }),
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    emitNotification('item/started', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      item: {
+        id: 'provider-user-message-287',
+        type: 'userMessage',
+        clientId: 'pending-steer-287',
+      },
+    });
+
+    await expect(steering).resolves.toEqual({ status: 'accepted' });
+  });
+
+  it('does not leave correlated steer custody pending after its provider turn ends without an echo', async () => {
+    const runtime = createRuntime();
+    await runtime.send({ v: 1, text: 'original prompt' }, { turnId: 'host-turn-288' });
+
+    const steering = runtime.send(
+      { v: 1, text: 'unconfirmed steer' },
+      {
+        deliverAs: 'steer',
+        localInputId: 'pending-steer-unconfirmed',
+        localInputIds: ['pending-steer-unconfirmed'],
+        userMessageSeq: 288,
+        turnId: 'host-turn-288',
+      },
+    );
+    await waitForRequestCount('turn/steer', 1);
+
+    emitNotification('turn/completed', completedTurn('turn-1'));
+
+    await expect(steering).rejects.toThrow(
+      'Codex provider turn ended before correlated user-message acceptance was observed',
+    );
+  });
+
   it('keeps the foreground turn active when an invoked turn/steer throws', async () => {
     const runtime = createRuntime();
     await runtime.send({ v: 1, text: 'original prompt' });

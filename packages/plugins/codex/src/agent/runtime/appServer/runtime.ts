@@ -268,12 +268,20 @@ type PendingTurn = {
   reject: (error: Error) => void;
 };
 
+type PendingProviderAcceptance = {
+  promise: Promise<void>;
+  settled: boolean;
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
+
 type PendingProviderPrompt = Readonly<{
   text: string;
   localInputIds: readonly string[];
   hostTurnId: string | null;
   userMessageSeq: number | null;
   userMessageSeqs: readonly number[];
+  providerAcceptance: PendingProviderAcceptance | null;
 }>;
 
 type BufferedTranscriptSegment = {
@@ -997,14 +1005,28 @@ export function createCodexAppServerRuntime(
   const trackPendingProviderPrompt = (
     text: string,
     options: CodexAppServerSendOptions | undefined,
+    waitForProviderAcceptance = false,
   ): PendingProviderPrompt => {
     const userMessageSeq = readRuntimeUserMessageSeq(options);
+    const localInputIds = readRuntimeLocalInputIds(options);
+    let providerAcceptance: PendingProviderAcceptance | null = null;
+    if (waitForProviderAcceptance && localInputIds.length === 1) {
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+      });
+      void promise.catch(() => undefined);
+      providerAcceptance = { promise, settled: false, resolve, reject };
+    }
     const pending = {
       text,
-      localInputIds: readRuntimeLocalInputIds(options),
+      localInputIds,
       hostTurnId: readRuntimeTurnId(options),
       userMessageSeq,
       userMessageSeqs: readRuntimeUserMessageSeqs(options),
+      providerAcceptance,
     };
     pendingProviderPrompts.add(pending);
     return pending;
@@ -1012,13 +1034,30 @@ export function createCodexAppServerRuntime(
 
   const clearPendingProviderPrompt = (
     pending: PendingProviderPrompt | null | undefined,
+    error?: Error,
   ): void => {
     if (!pending) return;
     pendingProviderPrompts.delete(pending);
+    const acceptance = pending.providerAcceptance;
+    if (error && acceptance && !acceptance.settled) {
+      acceptance.settled = true;
+      acceptance.reject(error);
+    }
   };
 
-  const clearAllPendingProviderPrompts = (): void => {
-    pendingProviderPrompts.clear();
+  const clearAllPendingProviderPrompts = (error?: Error): void => {
+    for (const pending of [...pendingProviderPrompts]) {
+      clearPendingProviderPrompt(pending, error);
+    }
+  };
+
+  const rejectPendingProviderAcceptancesForHostTurn = (
+    hostTurnId: string,
+    error: Error,
+  ): void => {
+    for (const pending of [...pendingProviderPrompts]) {
+      if (pending.hostTurnId === hostTurnId) clearPendingProviderPrompt(pending, error);
+    }
   };
 
   const readLiveProviderAccount = async (): Promise<CodexActiveProviderAccount | null> => {
@@ -1360,6 +1399,25 @@ export function createCodexAppServerRuntime(
     return role ? role.toLowerCase() : null;
   };
 
+  const readProviderUserMessageClientId = (notificationParams: unknown): string | null => {
+    if (readNormalizedProviderEventItemType(notificationParams) !== 'usermessage') return null;
+    const item = readProviderEventItemRecord(notificationParams);
+    return trimStringValue(item?.clientId) ?? trimStringValue(item?.client_id);
+  };
+
+  const markCorrelatedProviderUserMessageAccepted = (notificationParams: unknown): void => {
+    const clientUserMessageId = readProviderUserMessageClientId(notificationParams);
+    if (!clientUserMessageId) return;
+    const pending = Array.from(pendingProviderPrompts).find((candidate) => (
+      candidate.localInputIds.length === 1
+      && candidate.localInputIds[0] === clientUserMessageId
+    ));
+    const acceptance = pending?.providerAcceptance;
+    if (!acceptance || acceptance.settled) return;
+    acceptance.settled = true;
+    acceptance.resolve();
+  };
+
   const readThreadNameUpdateTitle = (notificationParams: unknown): string | null => {
     const record = readRecord(notificationParams);
     return trimStringValue(record?.threadName);
@@ -1604,6 +1662,10 @@ export function createCodexAppServerRuntime(
         ? 'abort'
         : 'turn-end',
     );
+    rejectPendingProviderAcceptancesForHostTurn(
+      activeTurn.sessionTurnId,
+      new Error('Codex provider turn ended before correlated user-message acceptance was observed'),
+    );
     pendingTurn = null;
     clearPendingHappierTitleToolNamesForTurn(activeTurn.sessionTurnId);
     providerPromptForDeferredTemporaryRecoverableRetry = null;
@@ -1800,6 +1862,7 @@ export function createCodexAppServerRuntime(
     // The failed attempt no longer owns provider acceptance. Keep only its immutable identity
     // for an internal retry; the retry registers a fresh pending acceptance record.
     clearPendingProviderPrompt(activeTurn.providerPrompt);
+    rejectPendingProviderAcceptancesForHostTurn(activeTurn.sessionTurnId, error);
     setActive(false);
     void publishImmediateProviderAccountUsageSnapshotForQuotaFailure(error);
     if (options.deferBackendError !== true) {
@@ -1987,6 +2050,9 @@ export function createCodexAppServerRuntime(
             || method === 'item/reasoning/textDelta'
             || method === 'item/started',
         })) return;
+        if (method === 'item/started' || method === 'item/completed') {
+          markCorrelatedProviderUserMessageAccepted(notificationParams);
+        }
         publishGeneratedMediaFromNotification(method, notificationParams);
         if (publishToolEventsFromNotification(method, notificationParams)) {
           activeTurnHadMeaningfulActivity = true;
@@ -2449,7 +2515,10 @@ export function createCodexAppServerRuntime(
     if (!agentTurnId) throw new Error('Codex app-server steer requires an active provider turn id');
     const appServerClient = await ensureClient();
     const userMessageSeq = readRuntimeUserMessageSeq(options);
-    const pendingProviderPrompt = trackPendingProviderPrompt(message, options);
+    const pendingProviderPrompt = trackPendingProviderPrompt(message, options, true);
+    const clientUserMessageId = pendingProviderPrompt.localInputIds.length === 1
+      ? pendingProviderPrompt.localInputIds[0]
+      : null;
     const steerInput = buildCodexAppServerTurnInput({
       text: message,
       ...(input.structuredInput === undefined ? {} : { structuredInput: input.structuredInput }),
@@ -2459,6 +2528,7 @@ export function createCodexAppServerRuntime(
         threadId: activeTurn.threadId,
         input: turnInput,
         expectedTurnId: agentTurnId,
+        ...(clientUserMessageId ? { clientUserMessageId } : {}),
       });
     };
     try {
@@ -2471,9 +2541,11 @@ export function createCodexAppServerRuntime(
         await requestSteer(buildCodexAppServerTurnInput({ text: message }));
       }
     } catch (error) {
-      clearPendingProviderPrompt(pendingProviderPrompt);
+      const steerError = error instanceof Error ? error : new Error(String(error));
+      clearPendingProviderPrompt(pendingProviderPrompt, steerError);
       throw error;
     }
+    await pendingProviderPrompt.providerAcceptance?.promise;
     clearPendingProviderPrompt(pendingProviderPrompt);
     for (const seq of pendingProviderPrompt.userMessageSeqs) {
       appendRollbackUserMessageSeq(activeTurn, seq);
@@ -2501,6 +2573,10 @@ export function createCodexAppServerRuntime(
       pendingTurn = null;
       clearPendingHappierTitleToolNamesForTurn(activeTurn.sessionTurnId);
       clearPendingProviderPrompt(activeTurn.providerPrompt);
+      rejectPendingProviderAcceptancesForHostTurn(
+        activeTurn.sessionTurnId,
+        new Error('Codex provider turn was cancelled before correlated user-message acceptance was observed'),
+      );
       publishRuntimeEvent({
         kind: 'turn-cancelled',
         turnId: activeTurn.sessionTurnId,
@@ -2685,7 +2761,7 @@ export function createCodexAppServerRuntime(
   const resetOrDisposeRuntime = async (): Promise<void> => {
     disposed = true;
     await realtimeConversation.dispose();
-    clearAllPendingProviderPrompts();
+    clearAllPendingProviderPrompts(new Error('Codex runtime disposed before provider input acceptance was observed'));
     const activeTurn = pendingTurn;
     clearPendingTurnCompletionTimer();
     flushAssistantReasoningProjection('abort');
