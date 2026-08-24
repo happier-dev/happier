@@ -2016,6 +2016,14 @@ export class PiRpcBackend implements AgentBackend {
   ): Promise<void> {
     if (!child || this.activeExtensionUiRequestIds.has(request.id)) return;
     this.activeExtensionUiRequestIds.add(request.id);
+    let providerTimedOut = false;
+    const timeout = typeof request.timeout === 'number'
+      ? setTimeout(() => {
+        providerTimedOut = true;
+        this.permissionHandler?.cancelPendingRequest?.(request.id, 'Pi extension dialog timed out');
+      }, request.timeout)
+      : null;
+    timeout?.unref?.();
     try {
       const result = this.permissionHandler
         ? await this.permissionHandler.handleToolCall(
@@ -2024,14 +2032,17 @@ export class PiRpcBackend implements AgentBackend {
           buildPiExtensionAskUserQuestionInput(request),
         )
         : { decision: 'denied' as const };
+      if (providerTimedOut) return;
       await this.writeExtensionUiResponse(child, buildPiExtensionUiResponse(request, result));
     } catch {
+      if (providerTimedOut) return;
       await this.writeExtensionUiResponse(child, {
         type: 'extension_ui_response',
         id: request.id,
         cancelled: true,
       }).catch(() => undefined);
     } finally {
+      if (timeout) clearTimeout(timeout);
       this.activeExtensionUiRequestIds.delete(request.id);
     }
   }

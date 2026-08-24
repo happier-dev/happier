@@ -339,6 +339,12 @@ export interface AcpPermissionHandler {
   ): Promise<PermissionResult>;
 
   /**
+   * Finalize one provider-owned prompt that can no longer accept a response.
+   * Neighboring permission requests remain pending.
+   */
+  cancelPendingRequest?(requestId: string, reason: string): boolean;
+
+  /**
    * Abort any ACP permission requests still waiting on user/provider state.
    *
    * This is intentionally event-driven from turn finalization/cancellation, not timer-based.

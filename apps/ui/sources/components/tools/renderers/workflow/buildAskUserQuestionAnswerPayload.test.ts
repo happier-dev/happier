@@ -62,6 +62,98 @@ describe('buildAskUserQuestionAnswerPayload', () => {
         });
     });
 
+    it('preserves an explicitly empty freeform value on the modern protocol', () => {
+        const result = buildAskUserQuestionAnswerPayload({
+            questions: [{
+                question: 'Edit value',
+                header: 'Value',
+                multiSelect: false,
+                options: [],
+                freeform: { allowEmpty: true, multiline: true },
+            }],
+            selections: new Map(),
+            freeformAnswers: new Map([[0, '']]),
+            structuredQuestionAnswersV1Supported: true,
+        });
+
+        expect(result).toEqual({
+            kind: 'modern',
+            send: {
+                protocol: 'structured-question-v1',
+                structuredAnswersV1: { 'Edit value': [''] },
+            },
+        });
+    });
+
+    it('materializes an untouched allow-empty freeform as the exact empty answer', () => {
+        const result = buildAskUserQuestionAnswerPayload({
+            questions: [{
+                question: 'Optional detail',
+                header: 'Detail',
+                multiSelect: false,
+                options: [],
+                freeform: { allowEmpty: true },
+            }],
+            selections: new Map(),
+            freeformAnswers: new Map(),
+            structuredQuestionAnswersV1Supported: true,
+        });
+
+        expect(result).toEqual({
+            kind: 'modern',
+            send: {
+                protocol: 'structured-question-v1',
+                structuredAnswersV1: { 'Optional detail': [''] },
+            },
+        });
+    });
+
+    it('does not let an untouched allow-empty freeform override a selected option', () => {
+        const result = buildAskUserQuestionAnswerPayload({
+            questions: [{
+                question: 'Choose or edit',
+                header: 'Value',
+                multiSelect: false,
+                options: [{ value: 'preset', label: 'Preset' }],
+                freeform: { allowEmpty: true },
+            }],
+            selections: new Map([[0, new Set([0])]]),
+            freeformAnswers: new Map(),
+            structuredQuestionAnswersV1Supported: true,
+        });
+
+        expect(result).toEqual({
+            kind: 'modern',
+            send: {
+                protocol: 'structured-question-v1',
+                structuredAnswersV1: { 'Choose or edit': ['preset'] },
+            },
+        });
+    });
+
+    it('does not let a cleared freeform entry override a subsequently selected option', () => {
+        const result = buildAskUserQuestionAnswerPayload({
+            questions: [{
+                question: 'Choose or edit',
+                header: 'Value',
+                multiSelect: false,
+                options: [{ value: 'preset', label: 'Preset' }],
+                freeform: { allowEmpty: true },
+            }],
+            selections: new Map([[0, new Set([0])]]),
+            freeformAnswers: new Map([[0, '']]),
+            structuredQuestionAnswersV1Supported: true,
+        });
+
+        expect(result).toEqual({
+            kind: 'modern',
+            send: {
+                protocol: 'structured-question-v1',
+                structuredAnswersV1: { 'Choose or edit': ['preset'] },
+            },
+        });
+    });
+
     it('submits canonical option values while leaving display labels independent', () => {
         const result = buildAskUserQuestionAnswerPayload({
             questions: [{

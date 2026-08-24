@@ -51,6 +51,9 @@ interface Question {
     freeform?: {
         placeholder?: string;
         description?: string;
+        initialValue?: string;
+        multiline?: boolean;
+        allowEmpty?: boolean;
     };
 }
 
@@ -290,6 +293,15 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         return null;
     }
 
+    const effectiveFreeformAnswers = new Map<number, string>();
+    questions.forEach((question, questionIndex) => {
+        if (freeformAnswers.has(questionIndex)) {
+            effectiveFreeformAnswers.set(questionIndex, freeformAnswers.get(questionIndex) ?? '');
+        } else if (typeof question.freeform?.initialValue === 'string') {
+            effectiveFreeformAnswers.set(questionIndex, question.freeform.initialValue);
+        }
+    });
+
     const isRunning = tool.state === 'running';
     const canApprovePermissions = interaction?.canApprovePermissions ?? true;
     const toolCallId = resolvePermissionRequestId(tool);
@@ -362,10 +374,11 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         const q = questions[qIndex];
         const options = Array.isArray(q?.options) ? q.options : [];
         const hasFreeform = Boolean(q?.freeform);
-        const typed = freeformAnswers.get(qIndex);
+        const typed = effectiveFreeformAnswers.get(qIndex);
         const hasTyped = typeof typed === 'string' && typed.trim().length > 0;
+        const acceptsEmpty = q?.freeform?.allowEmpty === true;
         if (options.length === 0) {
-            return hasTyped;
+            return hasTyped || acceptsEmpty;
         }
         const selected = selections.get(qIndex);
         const hasSelection = Boolean(selected && selected.size > 0);
@@ -375,7 +388,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         ? tryBuildAskUserQuestionAnswerPayload({
             questions,
             selections,
-            freeformAnswers,
+            freeformAnswers: effectiveFreeformAnswers,
             structuredQuestionAnswersV1Supported: getStructuredQuestionAnswersV1Supported(
                 session?.agentState?.capabilities,
             ),
@@ -414,12 +427,12 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
 
         // If the user chooses a structured option, clear any typed freeform value so we have a single source of truth.
         setFreeformAnswers((prev) => {
-            if (!prev.has(questionIndex)) return prev;
+            if (!prev.has(questionIndex) && questions[questionIndex]?.freeform?.initialValue === undefined) return prev;
             const next = new Map(prev);
-            next.delete(questionIndex);
+            next.set(questionIndex, '');
             return next;
         });
-    }, [canInteract]);
+    }, [canInteract, questions]);
 
     const handleSubmit = React.useCallback(async () => {
         if (!sessionId || !allQuestionsAnswered || isSubmitting) return;
@@ -428,7 +441,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         const responseLines: string[] = [];
         questions.forEach((q, qIndex) => {
             const options = Array.isArray(q.options) ? q.options : [];
-            const typed = freeformAnswers.get(qIndex);
+            const typed = effectiveFreeformAnswers.get(qIndex);
             const typedText = typeof typed === 'string' ? typed.trim() : '';
             if (options.length === 0) {
                 if (typedText.length > 0) {
@@ -471,7 +484,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             const payload = buildAskUserQuestionAnswerPayload({
                 questions,
                 selections,
-                freeformAnswers,
+                freeformAnswers: effectiveFreeformAnswers,
                 structuredQuestionAnswersV1Supported: getStructuredQuestionAnswersV1Supported(
                     latestSession?.agentState?.capabilities,
                 ),
@@ -534,7 +547,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         } finally {
             setIsSubmitting(false);
         }
-    }, [sessionId, questions, selections, freeformAnswers, allQuestionsAnswered, input?.happierDialog, isSubmitting, setResumeChoice, setWorkspaceTrust, toolCallId]);
+    }, [sessionId, questions, selections, effectiveFreeformAnswers, allQuestionsAnswered, input?.happierDialog, isSubmitting, setResumeChoice, setWorkspaceTrust, toolCallId]);
 
     // Show submitted state
     if (isSubmitted || tool.state === 'completed') {
@@ -546,7 +559,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                         const selected = selections.get(qIndex);
                         const questionKey = typeof q.question === 'string' && q.question.trim().length > 0 ? q.question : q.header;
                         const options = Array.isArray(q.options) ? q.options : [];
-                        const freeform = freeformAnswers.get(qIndex);
+                        const freeform = effectiveFreeformAnswers.get(qIndex);
                         const selectedLabels =
                             options.length === 0
                                 ? ((typeof freeform === 'string' && freeform.trim().length > 0)
@@ -619,7 +632,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                         <TextInput
                                             testID={`ask-user-question.freeform:${qIndex}`}
                                             style={styles.freeformInput}
-                                            value={freeformAnswers.get(qIndex) ?? ''}
+                                            value={effectiveFreeformAnswers.get(qIndex) ?? ''}
                                             onTouchStart={keepFreeformTouchInsideInput}
                                             onChangeText={(text) => {
                                                 if (!canInteract) return;
@@ -640,6 +653,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                             placeholder={question.freeform?.placeholder ?? t('tools.askUserQuestion.otherPlaceholder')}
                                             placeholderTextColor={theme.colors.input.placeholder}
                                             editable={canInteract}
+                                            multiline={question.freeform?.multiline === true}
+                                            textAlignVertical={question.freeform?.multiline === true ? 'top' : 'center'}
                                             autoCapitalize="none"
                                             autoCorrect={false}
                                         />
