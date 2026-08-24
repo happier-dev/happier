@@ -821,7 +821,7 @@ describe('Action Spec Registry', () => {
       viewId: 'view-1',
       requesterRef: { kind: 'spoofed' },
     }).success).toBe(false);
-    expect(getActionSpec('browser.automation.cancelActive').requiredAuthority).toBe('account_automation');
+    expect(getActionSpec('browser.automation.cancelActive').requiredAuthority).toBe('present_user');
     expect(cancelActiveOutput?.safeParse({
       v: 1,
       outcome: 'canceled',
