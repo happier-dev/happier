@@ -103,11 +103,7 @@ function envelopeToToolResult(envelope) {
   if (typeof error.message === "string" && error.message) parts.push(error.message);
   if (Array.isArray(error.candidates) && error.candidates.length > 0) parts.push("candidates: " + error.candidates.join(", "));
   const projected = truncateToolOutput(parts.join(" — "));
-  return {
-    content: [{ type: "text", text: projected.content }],
-    details: { truncation: projected },
-    isError: true,
-  };
+  throw new Error(projected.content);
 }
 
 function runChild(filePath, argv, options) {

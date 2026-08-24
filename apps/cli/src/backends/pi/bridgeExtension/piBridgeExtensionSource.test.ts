@@ -172,10 +172,7 @@ if (args.input.value === 'fail') {
         new AbortController().signal,
         undefined,
         { cwd: dir },
-      )).resolves.toMatchObject({
-        isError: true,
-        content: [{ type: 'text', text: expect.stringContaining('action_failed') }],
-      });
+      )).rejects.toThrow('action_failed');
 
       const largeResult = await harness.tools[0]!.execute(
         'call-3',
@@ -194,10 +191,7 @@ if (args.input.value === 'fail') {
         new AbortController().signal,
         undefined,
         { cwd: dir },
-      )).resolves.toMatchObject({
-        isError: true,
-        content: [{ type: 'text', text: expect.stringContaining('bridge_output_limit') }],
-      });
+      )).rejects.toThrow('bridge_output_limit');
 
       const controller = new AbortController();
       const waitingCall = harness.tools[0]!.execute(
@@ -208,10 +202,7 @@ if (args.input.value === 'fail') {
         { cwd: dir },
       );
       setTimeout(() => controller.abort(), 25);
-      await expect(waitingCall).resolves.toMatchObject({
-        isError: true,
-        content: [{ type: 'text', text: expect.stringContaining('bridge_cancelled') }],
-      });
+      await expect(waitingCall).rejects.toThrow('bridge_cancelled');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
