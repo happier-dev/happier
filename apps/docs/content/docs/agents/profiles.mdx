@@ -1,17 +1,17 @@
 ---
 title: Profiles
-description: Use backend profiles to reuse environment variables, secret bindings, and startup defaults across the app and CLI.
+description: Use Agent profiles to reuse environment variables, secret bindings, and session-launch defaults across the app and CLI.
 ---
 
-Backend profiles let you save a **named backend configuration** and reuse it whenever you start a session.
+Agent profiles let you save a **named session-launch configuration** and reuse it whenever you start a session.
 
 Use profiles when you want to:
 
-- switch a provider to a different endpoint or auth scheme
+- configure an Agent to use a different model-provider endpoint or auth scheme
 - reuse the same environment variables across multiple sessions
 - bind required secrets once and avoid re-entering them
 - keep the app UI, daemon, and CLI using the **same account-synced profile definitions**
-- target either built-in providers or configured **Custom ACP** backends with the same profile model
+- target either built-in Agents or configured **Custom ACP** Agents with the same profile model
 
 Examples:
 
@@ -27,8 +27,8 @@ A profile can include:
 - **environment variables** to inject at session start
 - **requirements** for variables that must exist before the session starts
 - **saved secret bindings** for required secrets
-- **compatibility** with one or more backend choices, including configured ACP backends
-- **default per-backend startup preferences**, such as permission and transcript-storage defaults where supported
+- **compatibility** with one or more Agent choices, including configured ACP Agents
+- **default per-Agent startup preferences**, such as permission and transcript-storage defaults where supported
 
 Profiles are applied **only when starting a new session**.
 They are **fixed per session** after launch. If you want a different profile, start a new session.
@@ -63,7 +63,7 @@ If Profiles is turned off, the app falls back to the machine environment without
 1. Open **Settings → Profiles**
 2. Click **Add Profile**
 3. Give the profile a clear name
-4. Choose which backend choices it should be compatible with
+4. Choose which Agents it should be compatible with
 5. Add the environment variables Happier should inject when the session starts
 6. Mark any required values as:
    - **Secret** when Happier should satisfy them from a saved secret, machine env, or prompt flow
@@ -81,7 +81,7 @@ Recommended pattern:
 When Profiles is enabled:
 
 1. Start a new session from the app
-2. Choose the backend you want to run
+2. Choose the Agent you want to run
 3. Pick a profile
 4. Complete any missing requirements if Happier asks
 
@@ -95,7 +95,9 @@ If a required config variable is missing on the target machine, the app blocks t
 
 After the session starts, the chosen profile is shown in **Session Info → AI Profile**.
 
-Configured ACP backends participate in this flow the same way built-in backends do. If a profile is intended for one specific backend, Happier preserves that relationship directly.
+Configured ACP Agents participate in this flow the same way built-in Agents do.
+If a profile is intended for one specific Agent, Happier preserves that
+relationship directly.
 
 ## Use profiles in the CLI
 
@@ -201,16 +203,17 @@ Create a custom profile such as **Work Codex** when you want:
 - a reusable token binding
 - a clear label in session history and Session Info
 
-### Example: profile for a Custom ACP backend
+### Example: profile for a Custom ACP Agent
 
-If you have a custom ACP backend such as **Review Bot**, you can create a profile that is compatible only with that backend.
+If you have a custom ACP Agent such as **Review Bot**, you can create a profile
+that is compatible only with that Agent.
 
 This is useful when you want:
 
-- a backend-specific endpoint or env setup
-- a backend-specific permission default
-- a backend-specific transcript-storage default
-- a profile that should not appear for unrelated backend choices
+- an Agent-specific endpoint or env setup
+- an Agent-specific permission default
+- an Agent-specific transcript-storage default
+- a profile that should not appear for unrelated Agents
 
 ## Troubleshooting
 
@@ -248,5 +251,5 @@ Open the profile in **Settings → Profiles** to review its requirements.
 
 ## Related guides
 
-- [ACP backends](/agents/acp-backends)
+- [Custom ACP Agents](/agents/acp-backends)
 - [Provider authentication](/agents/provider-authentication)
