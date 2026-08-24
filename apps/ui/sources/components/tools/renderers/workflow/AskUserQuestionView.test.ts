@@ -737,6 +737,32 @@ describe('AskUserQuestionView', () => {
         });
     });
 
+    it('submits an untouched allow-empty freeform as the exact empty answer', async () => {
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        supportsStructuredQuestionAnswersV1 = true;
+        const tool = makeFreeformTool();
+        tool.input = {
+            questions: [{
+                question: 'Optional detail',
+                header: 'Detail',
+                multiSelect: false,
+                options: [],
+                freeform: { allowEmpty: true },
+            }],
+        };
+
+        const screen = await renderView(tool);
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
+        expect(submit).toBeTruthy();
+        expect(submit!.props.disabled).toBe(false);
+        await pressTestInstanceAsync(submit!, 'tools.askUserQuestion.submit');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'Optional detail': [''] },
+        });
+    });
+
     it('supports suggestion questions that allow a typed freeform answer (options + freeform)', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 

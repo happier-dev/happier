@@ -87,11 +87,16 @@ export function buildAskUserQuestionAnswerPayload(params: Readonly<{
         }
         const selected = params.selections.get(questionIndex);
         const options = Array.isArray(question.options) ? question.options : [];
-        rawAnswers[key] = selected
+        const selectedAnswers = selected
             ? [...selected]
                 .map((optionIndex) => resolveStructuredQuestionOptionAnswerValue(options[optionIndex]))
                 .filter((value): value is string => value !== null)
             : [];
+        rawAnswers[key] = selectedAnswers.length > 0
+            ? selectedAnswers
+            : question.freeform?.allowEmpty === true
+                ? ['']
+                : [];
     }
 
     const structuredAnswersV1 = StructuredQuestionAnswersV1Schema.parse(rawAnswers);

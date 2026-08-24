@@ -85,6 +85,29 @@ describe('buildAskUserQuestionAnswerPayload', () => {
         });
     });
 
+    it('materializes an untouched allow-empty freeform as the exact empty answer', () => {
+        const result = buildAskUserQuestionAnswerPayload({
+            questions: [{
+                question: 'Optional detail',
+                header: 'Detail',
+                multiSelect: false,
+                options: [],
+                freeform: { allowEmpty: true },
+            }],
+            selections: new Map(),
+            freeformAnswers: new Map(),
+            structuredQuestionAnswersV1Supported: true,
+        });
+
+        expect(result).toEqual({
+            kind: 'modern',
+            send: {
+                protocol: 'structured-question-v1',
+                structuredAnswersV1: { 'Optional detail': [''] },
+            },
+        });
+    });
+
     it('does not let an untouched allow-empty freeform override a selected option', () => {
         const result = buildAskUserQuestionAnswerPayload({
             questions: [{
