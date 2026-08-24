@@ -234,6 +234,26 @@ describe('PiRpcBackend context telemetry markers', () => {
     });
   });
 
+  it('does not reuse a marker consumed by the previous assistant boundary', async () => {
+    const backend = createBackendForContextTelemetry();
+    const priv = backend as unknown as PrivateContextTelemetryBackend;
+    const emitSpy = vi.spyOn(priv, 'emitMessage');
+    let statsRead = 0;
+    priv.getSessionStats = async () => ({
+      sessionId: 'pi-session-1',
+      assistantMessages: 4 + statsRead++,
+      tokens: { input: 100 },
+    });
+
+    priv.handleStderrLine(`{"type":"${PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE}","used":1234,"size":128000}`);
+    priv.handleEvent({ type: 'message_end', message: { role: 'assistant', content: [] } });
+    await priv.usageStatsPublishChain;
+    priv.handleEvent({ type: 'message_end', message: { role: 'assistant', content: [] } });
+    await priv.usageStatsPublishChain;
+
+    expect(emitSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('does not publish on user message_end events', async () => {
     const backend = createBackendForContextTelemetry();
     const priv = backend as unknown as PrivateContextTelemetryBackend;

@@ -954,9 +954,9 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private readProviderNativeCommandName(prompt: string): string {
-    const trimmed = prompt.trimStart();
-    if (!trimmed.startsWith('/')) return '';
-    return trimmed.slice(1).split(/\s/u, 1)[0]?.trim().toLowerCase() ?? '';
+    if (!prompt.startsWith('/')) return '';
+    const spaceIndex = prompt.indexOf(' ');
+    return spaceIndex === -1 ? prompt.slice(1) : prompt.slice(1, spaceIndex);
   }
 
   async sendPromptWithEvidence(
@@ -1912,8 +1912,10 @@ export class PiRpcBackend implements AgentBackend {
       const message = asRecord(normalizedEvent.message);
       if (message?.role === 'assistant') {
         if (this.latestContextTelemetry) {
+          const contextTelemetry = this.latestContextTelemetry;
+          this.latestContextTelemetry = null;
           this.assistantMessageEndAwaitingContextTelemetry = false;
-          this.scheduleUsageStatsPublish();
+          this.scheduleUsageStatsPublish(contextTelemetry);
         } else {
           this.assistantMessageEndAwaitingContextTelemetry = true;
         }
@@ -1970,16 +1972,16 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   /** Schedule a serialized usage-stats publish; safe to call from any event path. */
-  private scheduleUsageStatsPublish(): Promise<void> {
+  private scheduleUsageStatsPublish(contextTelemetryOverride: PiContextTelemetry | null = null): Promise<void> {
     this.usageStatsPublishChain = this.usageStatsPublishChain
-      .then(() => this.publishUsageStatsBestEffort())
+      .then(() => this.publishUsageStatsBestEffort(contextTelemetryOverride))
       .catch(() => {
         // best-effort; publish errors are already swallowed inside
       });
     return this.usageStatsPublishChain;
   }
 
-  private async publishUsageStatsBestEffort(): Promise<void> {
+  private async publishUsageStatsBestEffort(contextTelemetryOverride: PiContextTelemetry | null = null): Promise<void> {
       if (this.disposed) return;
       if (!this.process) return;
 
@@ -1997,7 +1999,7 @@ export class PiRpcBackend implements AgentBackend {
       // when the assistant-message counter has not advanced (compaction, retries).
       const contextTelemetry = Object.prototype.hasOwnProperty.call(stats, 'contextUsage')
         ? parsePiContextTelemetryFromSessionStats(stats)
-        : this.latestContextTelemetry;
+        : contextTelemetryOverride ?? this.latestContextTelemetry;
       const rawKey = (assistantMessages !== null ? `${sessionId}:${assistantMessages}` : sessionId)
         + (contextTelemetry ? buildPiContextTelemetryKeySuffix(contextTelemetry) : '');
       if (this.lastPublishedUsageKey === rawKey) return;
@@ -2044,8 +2046,9 @@ export class PiRpcBackend implements AgentBackend {
     if (contextTelemetry) {
       this.latestContextTelemetry = contextTelemetry;
       if (this.assistantMessageEndAwaitingContextTelemetry) {
+        this.latestContextTelemetry = null;
         this.assistantMessageEndAwaitingContextTelemetry = false;
-        this.scheduleUsageStatsPublish();
+        this.scheduleUsageStatsPublish(contextTelemetry);
       }
       return;
     }

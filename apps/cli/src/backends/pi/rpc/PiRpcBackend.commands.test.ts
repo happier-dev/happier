@@ -109,7 +109,9 @@ describe('PiRpcBackend (command discovery)', () => {
       { name: '/skill:probe-skill', description: 'Skill command' },
     ]);
     expect(backend.isProviderNativeCommand('/probe-template describe this')).toBe(true);
-    expect(backend.isProviderNativeCommand('/SKILL:PROBE-SKILL')).toBe(true);
+    expect(backend.isProviderNativeCommand('/SKILL:PROBE-SKILL')).toBe(false);
+    expect(backend.isProviderNativeCommand(' /probe-template describe this')).toBe(false);
+    expect(backend.isProviderNativeCommand('/probe-template\tdescribe this')).toBe(false);
     expect(backend.isProviderNativeCommand('/unknown command')).toBe(false);
     expect(backend.isProviderNativeCommand('please run /probe-template')).toBe(false);
   });
