@@ -9,13 +9,19 @@ test('resolveNpmReleaseInputs gives preview releases their sole permitted source
       channel: 'preview',
       npmTag: 'next',
       sourceRef: 'auto',
+      authorizedSha: 'a'.repeat(40),
       publishCli: true,
       publishStack: false,
       publishServer: false,
       publishPluginSdk: false,
       publishSdk: false,
     }),
-    { channel: 'preview', npmTag: 'next', sourceRef: 'preview' },
+    {
+      channel: 'preview',
+      npmTag: 'next',
+      sourceRef: 'preview',
+      authorizedSha: 'a'.repeat(40),
+    },
   );
 });
 
@@ -24,6 +30,7 @@ test('resolveNpmReleaseInputs rejects a mismatched tag, source, or empty publica
     channel: 'production',
     npmTag: 'latest',
     sourceRef: 'auto',
+    authorizedSha: 'b'.repeat(40),
     publishCli: true,
     publishStack: false,
     publishServer: false,
@@ -45,21 +52,25 @@ test('resolveNpmReleaseInputs rejects a mismatched tag, source, or empty publica
   );
 });
 
-test('resolveNpmReleaseInputs refuses workflow dispatch from an untrusted control ref', () => {
+test('resolveNpmReleaseInputs requires an exact caller-authorized candidate SHA', () => {
+  const valid = {
+    channel: 'preview',
+    npmTag: 'next',
+    sourceRef: 'auto',
+    authorizedSha: 'c'.repeat(40),
+    publishCli: true,
+    publishStack: false,
+    publishServer: false,
+    publishPluginSdk: false,
+    publishSdk: false,
+  };
+
   assert.throws(
-    () =>
-      resolveNpmReleaseInputs({
-        channel: 'preview',
-        npmTag: 'next',
-        sourceRef: 'auto',
-        publishCli: true,
-        publishStack: false,
-        publishServer: false,
-        publishPluginSdk: false,
-        publishSdk: false,
-        eventName: 'workflow_dispatch',
-        refName: 'feature/untrusted',
-      }),
-    /Refusing workflow_dispatch from untrusted ref/,
+    () => resolveNpmReleaseInputs({ ...valid, authorizedSha: '' }),
+    /authorized_sha must be exactly 40 lowercase hexadecimal characters/,
+  );
+  assert.throws(
+    () => resolveNpmReleaseInputs({ ...valid, authorizedSha: 'C'.repeat(40) }),
+    /authorized_sha must be exactly 40 lowercase hexadecimal characters/,
   );
 });

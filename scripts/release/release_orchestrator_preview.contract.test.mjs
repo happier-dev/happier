@@ -244,17 +244,24 @@ test('release workflows do not embed invalid JS escaping in node -p/-e snippets'
   }
 });
 
-test('release-npm resolves channel metadata and prefers an authorized candidate SHA at checkout', async () => {
+test('release-npm is reusable-only and resolves an authorized candidate SHA at checkout', async () => {
   const raw = await loadWorkflow('release-npm.yml');
+  const workflow = parse(raw);
 
-  assert.match(raw, /workflow_dispatch:[\s\S]*?inputs:[\s\S]*?source_ref:/);
+  assert.equal(workflow?.on?.workflow_dispatch, undefined, 'release-npm must not expose a direct publish dispatch');
   assert.match(raw, /workflow_call:[\s\S]*?inputs:[\s\S]*?source_ref:/);
-  assert.match(raw, /workflow_dispatch:[\s\S]*?inputs:[\s\S]*?authorized_sha:/);
   assert.match(raw, /workflow_call:[\s\S]*?inputs:[\s\S]*?authorized_sha:/);
+  assert.equal(workflow?.on?.workflow_call?.inputs?.authorized_sha?.required, true);
+  assert.equal(workflow?.on?.workflow_call?.inputs?.authorized_sha?.default, undefined);
 
   assert.match(raw, /node scripts\/pipeline\/release\/resolve-npm-release-inputs\.mjs/);
-  assert.match(raw, /ref:\s*\$\{\{ inputs\.authorized_sha != '' && inputs\.authorized_sha \|\| steps\.release_inputs\.outputs\.source_ref \}\}/);
-  assert.match(raw, /test "\$\(git rev-parse HEAD\)" = "\$AUTHORIZED_SHA"/);
+  assert.match(raw, /--authorized-sha "\$INPUT_AUTHORIZED_SHA"/);
+  assert.match(raw, /ref:\s*\$\{\{ steps\.release_inputs\.outputs\.authorized_sha \}\}/);
+  assert.doesNotMatch(raw, /Enforce caller-authorized source SHA/);
+  assert.match(
+    raw,
+    /node scripts\/pipeline\/run\.mjs npm-release[\s\S]*?--authorized-sha "\$\{AUTHORIZED_SHA\}"/,
+  );
 });
 
 test('release-npm embeds build feature policy defaults by channel', async () => {

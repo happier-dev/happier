@@ -1,68 +1,6 @@
 name: RELEASE — npm publish (cli/stack/server/plugin-sdk/sdk)
 
 on:
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: "Target — Release channel"
-        required: true
-        type: choice
-        options:
-          - production
-          - preview
-      source_ref:
-        description: "Promotion — Source ref to release from (auto: preview→preview, production→main)"
-        required: true
-        default: auto
-        type: string
-      authorized_sha:
-        description: "Caller-authorized exact source SHA"
-        required: false
-        default: ""
-        type: string
-      run_tests:
-        description: "Checks — Run publish checks/tests before publishing"
-        required: true
-        default: true
-        type: boolean
-      publish_cli:
-        description: "Publish (CLI) — Publish CLI to npm"
-        required: true
-        default: true
-        type: boolean
-      npm_tag:
-        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next)"
-        required: true
-        default: latest
-        type: choice
-        options:
-          - latest
-          - next
-      publish_stack:
-        description: "Compatibility (Stack) — Publish hstack dev-helper package to npm (not release signoff)"
-        required: true
-        default: false
-        type: boolean
-      publish_server:
-        description: "Publish (Server) — Publish server runner (@happier-dev/relay-server) to npm"
-        required: true
-        default: false
-        type: boolean
-      publish_plugin_sdk:
-        description: "Publish (Plugin SDK) — Publish the lockstep plugin-sdk/plugin-ui pair to npm"
-        required: true
-        default: false
-        type: boolean
-      publish_sdk:
-        description: "Publish (SDK) — Publish @happier-dev/sdk to npm"
-        required: true
-        default: false
-        type: boolean
-      release_message:
-        description: "Release message — Optional note to include at the top of GitHub rolling release notes"
-        required: false
-        default: ""
-        type: string
   workflow_call:
     outputs:
       plugin_sdk_result:
@@ -103,8 +41,8 @@ on:
         default: auto
         type: string
       authorized_sha:
-        required: false
-        default: ""
+        description: "Release-admitted exact source SHA"
+        required: true
         type: string
       run_tests:
         description: "Checks — Run publish checks/tests before publishing"
@@ -223,69 +161,43 @@ jobs:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_NPM_TAG: ${{ inputs.npm_tag }}
           INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+          INPUT_AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
           INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
           INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/resolve-npm-release-inputs.mjs \
             --channel "$INPUT_CHANNEL" \
             --npm-tag "$INPUT_NPM_TAG" \
             --source-ref "$INPUT_SOURCE_REF" \
+            --authorized-sha "$INPUT_AUTHORIZED_SHA" \
             --publish-cli "$INPUT_PUBLISH_CLI" \
             --publish-stack "$INPUT_PUBLISH_STACK" \
             --publish-server "$INPUT_PUBLISH_SERVER" \
             --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
             --publish-sdk "$INPUT_PUBLISH_SDK" \
-            --event-name "$GITHUB_EVENT_NAME" \
-            --ref-name "$GITHUB_REF_NAME" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Checkout source ref
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || steps.release_inputs.outputs.source_ref }}
+          ref: ${{ steps.release_inputs.outputs.authorized_sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Enforce caller-authorized source SHA
-        if: ${{ inputs.authorized_sha != '' }}
-        env:
-          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
 
       - name: Admit Qualified V4 npm CLI payload publication
         if: inputs.publish_cli
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          CANDIDATE_SHA: ${{ steps.release_inputs.outputs.authorized_sha }}
         run: |
-          set -euo pipefail
-          case "$RELEASE_CHANNEL" in
-            production|stable) deploy_environment="production" ;;
-            preview|dev) deploy_environment="preview" ;;
-            *) echo "Unsupported npm CLI release channel: $RELEASE_CHANNEL" >&2; exit 1 ;;
-          esac
-          deploy_branch="deploy/${deploy_environment}/server"
-          baseline_ref="refs/qualified-v4-payload-baseline"
-          set +e
-          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
-          baseline_status=$?
-          set -e
-          case "$baseline_status" in
-            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
-            2) ;;
-            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
-          esac
-          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
-            --admission-kind payload-publication \
-            --baseline-ref "$baseline_ref" \
+          node scripts/pipeline/release/admit-qualified-v4-npm-cli-payload.mjs \
+            --channel "$RELEASE_CHANNEL" \
             --candidate-ref HEAD \
+            --candidate-sha "$CANDIDATE_SHA" \
             --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Node
@@ -412,6 +324,7 @@ jobs:
           SDK_VERSION: ${{ steps.meta.outputs.sdk_version }}
           RUN_TESTS: ${{ inputs.run_tests }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
+          AUTHORIZED_SHA: ${{ steps.release_inputs.outputs.authorized_sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs npm-release \
@@ -428,6 +341,7 @@ jobs:
             --plugin-sdk-version "${PLUGIN_SDK_VERSION}" \
             --sdk-version "${SDK_VERSION}" \
             --run-tests "${RUN_TESTS}" \
+            --authorized-sha "${AUTHORIZED_SHA}" \
             --mode pack
 
       - name: Upload npm pack artifact (cli)
@@ -558,40 +472,23 @@ jobs:
           CANDIDATE_SHA: ${{ needs.release.outputs.sha }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
         run: |
-          set -euo pipefail
-          git fetch --no-tags --depth=1 origin "$CANDIDATE_SHA"
-          git update-ref refs/qualified-v4-payload-candidate FETCH_HEAD
-          case "$RELEASE_CHANNEL" in
-            production|stable) deploy_environment="production" ;;
-            preview|dev) deploy_environment="preview" ;;
-            *) echo "Unsupported npm CLI release channel: $RELEASE_CHANNEL" >&2; exit 1 ;;
-          esac
-          deploy_branch="deploy/${deploy_environment}/server"
-          baseline_ref="refs/qualified-v4-payload-baseline"
-          set +e
-          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
-          baseline_status=$?
-          set -e
-          case "$baseline_status" in
-            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
-            2) ;;
-            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
-          esac
-          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
-            --admission-kind payload-publication \
-            --baseline-ref "$baseline_ref" \
+          node scripts/pipeline/release/admit-qualified-v4-npm-cli-payload.mjs \
+            --channel "$RELEASE_CHANNEL" \
             --candidate-ref refs/qualified-v4-payload-candidate \
+            --candidate-sha "$CANDIDATE_SHA" \
             --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: npm publish (cli tarball) (pipeline)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          AUTHORIZED_SHA: ${{ needs.release.outputs.sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/npm/publish-tarball.mjs \
             --channel "${RELEASE_CHANNEL}" \
-            --tarball-dir "dist/release-assets/cli"
+            --tarball-dir "dist/release-assets/cli" \
+            --authorized-sha "${AUTHORIZED_SHA}"
 
   publish-stack:
     name: npm publish (stack)
@@ -627,11 +524,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          AUTHORIZED_SHA: ${{ needs.release.outputs.sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/npm/publish-tarball.mjs \
             --channel "${RELEASE_CHANNEL}" \
-            --tarball-dir "dist/release-assets/stack"
+            --tarball-dir "dist/release-assets/stack" \
+            --authorized-sha "${AUTHORIZED_SHA}"
 
   publish-server-runner:
     name: npm publish (server runner)
@@ -667,11 +566,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          AUTHORIZED_SHA: ${{ needs.release.outputs.sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/npm/publish-tarball.mjs \
             --channel "${RELEASE_CHANNEL}" \
-            --tarball-dir "dist/release-assets/server"
+            --tarball-dir "dist/release-assets/server" \
+            --authorized-sha "${AUTHORIZED_SHA}"
 
   publish-plugin-sdk-pair:
     name: npm publish (plugin SDK pair)
@@ -715,11 +616,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          AUTHORIZED_SHA: ${{ needs.release.outputs.sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/npm/publish-plugin-sdk-pair.mjs \
             --channel "${RELEASE_CHANNEL}" \
             --tarball-dir "dist/release-assets/plugin-sdk" \
+            --authorized-sha "${AUTHORIZED_SHA}" \
             --github-output "$GITHUB_OUTPUT"
 
   publish-sdk:
@@ -761,9 +664,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          AUTHORIZED_SHA: ${{ needs.release.outputs.sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/npm/publish-tarball.mjs \
             --channel "${RELEASE_CHANNEL}" \
             --tarball-dir "dist/release-assets/sdk" \
+            --authorized-sha "${AUTHORIZED_SHA}" \
             --github-output "$GITHUB_OUTPUT"

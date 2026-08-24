@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+const admittedSha = 'a'.repeat(40);
 
 function writeExecutable(filePath, contents) {
   fs.writeFileSync(filePath, contents, 'utf8');
@@ -58,7 +59,12 @@ fi
   const runPublish = (env) => {
     const stdout = execFileSync(
       process.execPath,
-      [script, '--channel', 'preview', '--tarball', tarballPath],
+      [
+        script,
+        '--channel', 'preview',
+        '--tarball', tarballPath,
+        '--authorized-sha', admittedSha,
+      ],
       {
         cwd: repoRoot,
         env,

@@ -2,6 +2,11 @@
 
 import { execFileSync } from 'node:child_process';
 
+const RELEASE_CONTROL_PATHS = [
+  'scripts/pipeline/',
+  '.github/workflows/release-npm.yml',
+];
+
 /**
  * @param {string} cwd
  * @returns {boolean}
@@ -41,6 +46,49 @@ function gitStatusPorcelain(cwd) {
 }
 
 /**
+ * @param {string} statusLine
+ * @returns {boolean}
+ */
+function isReleaseControlStatusLine(statusLine) {
+  const paths = statusLine.slice(3).split(' -> ');
+  return paths.some((path) =>
+    RELEASE_CONTROL_PATHS.some((controlPath) =>
+      controlPath.endsWith('/')
+        ? path === controlPath.slice(0, -1) || path.startsWith(controlPath)
+        : path === controlPath,
+    ),
+  );
+}
+
+/**
+ * `--allow-dirty` permits product edits while preserving the local release-control
+ * scripts that determine the release plan as a fixed, auditable corridor.
+ *
+ * @param {{ cwd: string; maxLines?: number }} opts
+ */
+export function assertReleaseControlWorktreeClean(opts) {
+  if (!isGitRepo(opts.cwd)) return;
+
+  const controlLines = gitStatusPorcelain(opts.cwd).filter(isReleaseControlStatusLine);
+  if (controlLines.length === 0) return;
+
+  const maxLines = typeof opts.maxLines === 'number' && Number.isFinite(opts.maxLines) ? opts.maxLines : 20;
+  const snippet = controlLines.slice(0, Math.max(0, maxLines));
+  const extra = controlLines.length > snippet.length ? `\n… and ${controlLines.length - snippet.length} more` : '';
+  throw new Error(
+    [
+      'RELEASE_CONTROL_WORKTREE_DIRTY: release-control paths are dirty; --allow-dirty permits unrelated product edits only.',
+      'Commit or revert release-control edits before release planning.',
+      '',
+      ...snippet,
+      extra,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  );
+}
+
+/**
  * Require a clean git worktree unless explicitly overridden.
  * This is intended to prevent accidental publishes from a dirty local checkout.
  *
@@ -72,4 +120,3 @@ export function assertCleanWorktree(opts) {
       .join('\n'),
   );
 }
-

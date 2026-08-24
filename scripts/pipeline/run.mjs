@@ -10,8 +10,9 @@ import { loadPipelineEnv } from './env/load-pipeline-env.mjs';
 import { loadSecrets } from './secrets/load-secrets.mjs';
 import { importDotenvIntoKeychainBundle } from './secrets/import-keychain-bundle.mjs';
 import { resolveKeychainBundleAccounts } from './secrets/keychain-bundle-accounts.mjs';
-import { assertCleanWorktree } from './git/ensure-clean-worktree.mjs';
+import { assertCleanWorktree, assertReleaseControlWorktreeClean } from './git/ensure-clean-worktree.mjs';
 import { resolveAuthorizedReleaseSource } from './github/resolve-authorized-release-source.mjs';
+import { admitNpmPublication, resolvePublicNpmPackageNames } from './release/admit-release.mjs';
 import { resolveRemoteReleasePlanningRefs } from './release/lib/release-planning-remote-refs.mjs';
 import { createAnsiStyle } from './cli/ansi-style.mjs';
 import { renderCommandHelp, renderPipelineHelp } from './cli/help.mjs';
@@ -1367,6 +1368,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           tag: { type: 'string', default: '' },
           tarball: { type: 'string', default: '' },
           'tarball-dir': { type: 'string', default: '' },
+          'authorized-sha': { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1379,6 +1381,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const channel = String(values.channel ?? '').trim();
     if (!isReleaseDeployEnvironment(channel)) {
       fail(`--channel must be 'dev', 'preview', or 'production' (got: ${channel || '<empty>'})`);
+    }
+    const dryRun = values['dry-run'] === true;
+    if (!dryRun) {
+      fail(
+        'DIRECT_NPM_PUBLISH_DISABLED: direct local npm publication is disabled. Use node scripts/pipeline/run.mjs npm-release from the checkout that prepared the candidate.',
+      );
     }
 
     const { env, sources } = loadPipelineEnv({ repoRoot });
@@ -1410,11 +1418,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const tarball = String(values.tarball ?? '').trim();
       const tarballDir = String(values['tarball-dir'] ?? '').trim();
       const tag = String(values.tag ?? '').trim();
+      const authorizedSha = String(values['authorized-sha'] ?? '').trim();
       const publishChannel = channel === 'dev' ? 'preview' : channel;
       const publishTag = tag || (channel === 'dev' ? 'dev' : '');
-      const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
-      const dryRun = values['dry-run'] === true;
-      if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
 
       console.log(`[pipeline] npm publish: channel=${channel}`);
 
@@ -1428,6 +1434,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ...(publishTag ? ['--tag', publishTag] : []),
         ...(tarball ? ['--tarball', tarball] : []),
         ...(tarballDir ? ['--tarball-dir', tarballDir] : []),
+        ...(authorizedSha ? ['--authorized-sha', authorizedSha] : []),
         ...(dryRun ? ['--dry-run'] : []),
       ],
     });
@@ -1453,6 +1460,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'server-version': { type: 'string', default: '' },
           'plugin-sdk-version': { type: 'string', default: '' },
           'sdk-version': { type: 'string', default: '' },
+          'authorized-sha': { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1467,7 +1475,22 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       fail(`--channel must be 'dev', 'preview', or 'production' (got: ${channel || '<empty>'})`);
     }
 
-    const { env, sources } = loadPipelineEnv({ repoRoot });
+    const publishCli = String(values['publish-cli'] ?? '').trim();
+    const publishStack = String(values['publish-stack'] ?? '').trim();
+    const publishServer = String(values['publish-server'] ?? '').trim();
+    const publishPluginSdk = String(values['publish-plugin-sdk'] ?? '').trim();
+    const publishSdk = String(values['publish-sdk'] ?? '').trim();
+    const cliVersion = String(values['cli-version'] ?? '').trim();
+    const stackVersion = String(values['stack-version'] ?? '').trim();
+    const serverVersion = String(values['server-version'] ?? '').trim();
+    const pluginSdkVersion = String(values['plugin-sdk-version'] ?? '').trim();
+    const sdkVersion = String(values['sdk-version'] ?? '').trim();
+    const authorizedSha = String(values['authorized-sha'] ?? '').trim();
+    const runnerDir = String(values['server-runner-dir'] ?? '').trim();
+    const runTests = String(values['run-tests'] ?? '').trim();
+    const mode = String(values.mode ?? '').trim();
+    const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
+    const dryRun = values['dry-run'] === true;
     const secretsSourceRaw = String(values['secrets-source'] ?? '').trim();
     const secretsSource =
       secretsSourceRaw === 'auto' || secretsSourceRaw === 'env' || secretsSourceRaw === 'keychain'
@@ -1476,9 +1499,74 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     if (secretsSourceRaw && secretsSource !== secretsSourceRaw) {
       fail(`--secrets-source must be 'auto', 'env', or 'keychain' (got: ${secretsSourceRaw})`);
     }
-
     const keychainService = String(values['keychain-service'] ?? '').trim() || 'happier/pipeline';
     const keychainAccount = String(values['keychain-account'] ?? '').trim() || undefined;
+    const npmReleaseArgs = [
+      '--channel',
+      channel,
+      ...(publishCli ? ['--publish-cli', publishCli] : []),
+      ...(publishStack ? ['--publish-stack', publishStack] : []),
+      ...(publishServer ? ['--publish-server', publishServer] : []),
+      ...(publishPluginSdk ? ['--publish-plugin-sdk', publishPluginSdk] : []),
+      ...(publishSdk ? ['--publish-sdk', publishSdk] : []),
+      ...(cliVersion ? ['--cli-version', cliVersion] : []),
+      ...(stackVersion ? ['--stack-version', stackVersion] : []),
+      ...(serverVersion ? ['--server-version', serverVersion] : []),
+      ...(pluginSdkVersion ? ['--plugin-sdk-version', pluginSdkVersion] : []),
+      ...(sdkVersion ? ['--sdk-version', sdkVersion] : []),
+      ...(authorizedSha ? ['--authorized-sha', authorizedSha] : []),
+      ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
+      ...(runTests ? ['--run-tests', runTests] : []),
+      ...(mode ? ['--mode', mode] : []),
+      ...(dryRun ? ['--dry-run'] : []),
+    ];
+
+    if (dryRun || mode === 'pack') {
+      assertReleaseControlWorktreeClean({ cwd: repoRoot });
+    }
+
+    // A dry-run is release planning, not a credentialed operation. Delegate
+    // parsing and validation to the one package-release owner before any
+    // pipeline env file or Keychain material is read.
+    if (dryRun) {
+      console.log(`[pipeline] npm release: channel=${channel} (dry-run)`);
+      runNpmReleasePackages({
+        repoRoot,
+        env: process.env,
+        dryRun: true,
+        args: npmReleaseArgs,
+      });
+      return;
+    }
+
+    if (mode === 'pack+publish') {
+      if (allowDirty) {
+        fail('DIRTY_NPM_RELEASE_PUBLICATION_DISABLED: real npm pack+publish requires a clean worktree; use pack-only or --dry-run for dirty local inspection.');
+      }
+      const publicSdkPackageNames = resolvePublicNpmPackageNames({
+        pluginSdk: publishPluginSdk.trim().toLowerCase() === 'true',
+        sdk: publishSdk.trim().toLowerCase() === 'true',
+      });
+      const checkedOutSha = authorizedSha
+        ? String(execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 10_000,
+        })).trim()
+        : '';
+      admitNpmPublication({
+        mode,
+        dryRun: false,
+        authorizedSha,
+        checkedOutSha,
+        packageNames: publicSdkPackageNames,
+      });
+      assertReleaseControlWorktreeClean({ cwd: repoRoot });
+      assertCleanWorktree({ cwd: repoRoot, allowDirty });
+    }
+
+    const { env, sources } = loadPipelineEnv({ repoRoot });
     const { env: mergedEnv, usedKeychain } = loadSecrets({
       baseEnv: env,
       secretsSource,
@@ -1493,47 +1581,17 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       console.log(`[pipeline] loaded secrets from Keychain service '${keychainService}'`);
     }
 
-    const publishCli = String(values['publish-cli'] ?? '').trim();
-    const publishStack = String(values['publish-stack'] ?? '').trim();
-    const publishServer = String(values['publish-server'] ?? '').trim();
-    const publishPluginSdk = String(values['publish-plugin-sdk'] ?? '').trim();
-    const publishSdk = String(values['publish-sdk'] ?? '').trim();
-    const cliVersion = String(values['cli-version'] ?? '').trim();
-    const stackVersion = String(values['stack-version'] ?? '').trim();
-    const serverVersion = String(values['server-version'] ?? '').trim();
-    const pluginSdkVersion = String(values['plugin-sdk-version'] ?? '').trim();
-    const sdkVersion = String(values['sdk-version'] ?? '').trim();
-    const runnerDir = String(values['server-runner-dir'] ?? '').trim();
-    const runTests = String(values['run-tests'] ?? '').trim();
-    const mode = String(values.mode ?? '').trim();
-    const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
-    const dryRun = values['dry-run'] === true;
-    if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
+    if (mode !== 'pack+publish') {
+      assertCleanWorktree({ cwd: repoRoot, allowDirty });
+    }
 
     console.log(`[pipeline] npm release: channel=${channel}`);
 
     runNpmReleasePackages({
       repoRoot,
       env: mergedEnv,
-      dryRun,
-      args: [
-        '--channel',
-        channel,
-        ...(publishCli ? ['--publish-cli', publishCli] : []),
-        ...(publishStack ? ['--publish-stack', publishStack] : []),
-        ...(publishServer ? ['--publish-server', publishServer] : []),
-        ...(publishPluginSdk ? ['--publish-plugin-sdk', publishPluginSdk] : []),
-        ...(publishSdk ? ['--publish-sdk', publishSdk] : []),
-        ...(cliVersion ? ['--cli-version', cliVersion] : []),
-        ...(stackVersion ? ['--stack-version', stackVersion] : []),
-        ...(serverVersion ? ['--server-version', serverVersion] : []),
-        ...(pluginSdkVersion ? ['--plugin-sdk-version', pluginSdkVersion] : []),
-        ...(sdkVersion ? ['--sdk-version', sdkVersion] : []),
-        ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
-        ...(runTests ? ['--run-tests', runTests] : []),
-        ...(mode ? ['--mode', mode] : []),
-        ...(dryRun ? ['--dry-run'] : []),
-      ],
+      dryRun: false,
+      args: npmReleaseArgs,
     });
 
     return;
@@ -4482,6 +4540,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
 
           const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
+          assertReleaseControlWorktreeClean({ cwd: repoRoot });
           if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
           assertNoStagedChanges({ cwd: repoRoot, allowDirty, dryRun });
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { admitRelease } from './admit-release.mjs';
+import { admitRelease, resolvePublicNpmPackageNames } from './admit-release.mjs';
 
 const base = {
   checksProfile: 'fast',
@@ -28,4 +28,66 @@ test('requires full checks for production and successful selected risk gates', (
     risks: { ...base.risks, trustRoots: true },
     gates: { ...base.gates, trustRoots: 'skipped' },
   }), /trust validation/);
+});
+
+test('npm publication consumes an exact admitted candidate and fails closed for public SDK readiness without an owner', () => {
+  const candidateSha = 'a'.repeat(40);
+
+  assert.throws(() => admitRelease({
+    ...base,
+    npmPublication: {
+      mode: 'pack+publish',
+      dryRun: false,
+      authorizedSha: '',
+      checkedOutSha: candidateSha,
+      packageNames: ['@happier-dev/relay-server'],
+    },
+  }), /release-admitted exact source SHA/);
+
+  assert.throws(() => admitRelease({
+    ...base,
+    npmPublication: {
+      mode: 'pack+publish',
+      dryRun: false,
+      authorizedSha: candidateSha,
+      checkedOutSha: 'b'.repeat(40),
+      packageNames: ['@happier-dev/relay-server'],
+    },
+  }), /does not match the checked-out source/);
+
+  assert.throws(() => admitRelease({
+    ...base,
+    npmPublication: {
+      mode: 'pack+publish',
+      dryRun: false,
+      authorizedSha: candidateSha,
+      checkedOutSha: candidateSha,
+      packageNames: ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui'],
+    },
+  }), /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/);
+});
+
+test('the public npm package names one release selection publishes have a single owner', () => {
+  assert.deepEqual(resolvePublicNpmPackageNames({}), []);
+  assert.deepEqual(
+    resolvePublicNpmPackageNames({ pluginSdk: true, sdk: true }),
+    ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui', '@happier-dev/sdk'],
+  );
+
+  const candidateSha = 'c'.repeat(40);
+  const npmPublication = {
+    mode: 'pack+publish',
+    dryRun: false,
+    authorizedSha: candidateSha,
+    checkedOutSha: candidateSha,
+  };
+
+
+
+  // Non-public packages stay publishable: the readiness owner must be able to
+  // stay silent, or it proves nothing when it fires.
+  assert.deepEqual(admitRelease({
+    ...base,
+    npmPublication: { ...npmPublication, packageNames: ['@happier-dev/relay-server', '@happier-dev/cli'] },
+  }), { admitted: true });
 });

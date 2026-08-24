@@ -6,6 +6,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
+const admittedSha = 'a'.repeat(40);
+
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-npm-provenance-'));
 }
@@ -73,6 +75,8 @@ function runPublishTarball({ githubActions }) {
       tarballPath,
       '--npm-version',
       '11.5.1',
+      '--authorized-sha',
+      admittedSha,
     ],
     { env, encoding: 'utf8' },
   );

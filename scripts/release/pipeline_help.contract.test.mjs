@@ -54,6 +54,8 @@ test('pipeline CLI supports help for npm-release', async () => {
   assert.match(out, /--publish-cli/);
   assert.match(out, /--publish-plugin-sdk/);
   assert.match(out, /--publish-sdk/);
+  assert.match(out, /--authorized-sha/);
+  assert.match(out, /PEP\/auth readiness owner is machine-readable/i);
   assert.match(out, /lockstep/i);
 });
 

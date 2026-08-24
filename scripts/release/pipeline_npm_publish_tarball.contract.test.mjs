@@ -11,12 +11,12 @@ import crypto from 'node:crypto';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-function createTarball(tmpDir) {
+function createTarball(tmpDir, packageName = '@happier/npm-contract-fixture') {
   const packageDir = path.join(tmpDir, 'package');
   fs.mkdirSync(packageDir, { recursive: true });
   fs.writeFileSync(
     path.join(packageDir, 'package.json'),
-    JSON.stringify({ name: '@happier/npm-contract-fixture', version: '1.2.3' }),
+    JSON.stringify({ name: packageName, version: '1.2.3' }),
     'utf8',
   );
   fs.writeFileSync(path.join(packageDir, 'index.js'), 'export {};\n', 'utf8');
@@ -99,8 +99,12 @@ process.exit(2);
   return binDir;
 }
 
-function runNpmPublication(tmpDir, mode, initialState, { githubOutput = false } = {}) {
-  const { tarballPath, integrity } = createTarball(tmpDir);
+function runNpmPublication(tmpDir, mode, initialState, {
+  githubOutput = false,
+  packageName = '@happier/npm-contract-fixture',
+  authorizedSha = 'a'.repeat(40),
+} = {}) {
+  const { tarballPath, integrity } = createTarball(tmpDir, packageName);
   const statePath = path.join(tmpDir, 'state.json');
   const callsPath = path.join(tmpDir, 'npm-calls.jsonl');
   const githubOutputPath = path.join(tmpDir, 'github-output');
@@ -127,6 +131,7 @@ function runNpmPublication(tmpDir, mode, initialState, { githubOutput = false } 
         tarballPath,
         '--npm-version',
         '',
+        ...(authorizedSha ? ['--authorized-sha', authorizedSha] : []),
         ...(githubOutput ? ['--github-output', githubOutputPath] : []),
       ],
       { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
@@ -257,6 +262,41 @@ test('pipeline npm publish fails closed when the existing version has different 
   assert.notEqual(result.error, undefined);
   assert.equal(result.state.publishCalls ?? 0, 0, 'integrity mismatch must not republish');
   assert.equal(result.state.distTagAdds ?? 0, 0, 'integrity mismatch must not mutate tags');
+});
+
+test('pipeline npm publish requires an admitted exact source identity before any npm operation', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-no-admission-'));
+  const result = runNpmPublication(tmpDir, 'exact', {
+    remoteIntegrity: undefined,
+    distTags: {},
+    integrityQueries: 0,
+  }, { authorizedSha: '' });
+
+  assert.notEqual(result.error, undefined);
+  assert.match(
+    `${String(result.error?.message ?? '')}\n${String(result.error?.stderr ?? '')}`,
+    /npm publication requires a release-admitted exact source SHA/,
+  );
+  assert.equal(result.state.calls ?? 0, 0, 'admission must reject before any npm operation');
+});
+
+test('pipeline npm publish blocks direct public SDK publication without a machine-readable readiness owner', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-public-sdk-'));
+  const result = runNpmPublication(tmpDir, 'exact', {
+    remoteIntegrity: undefined,
+    distTags: {},
+    integrityQueries: 0,
+  }, {
+    packageName: '@happier-dev/sdk',
+    authorizedSha: 'a'.repeat(40),
+  });
+
+  assert.notEqual(result.error, undefined);
+  assert.match(
+    `${String(result.error?.message ?? '')}\n${String(result.error?.stderr ?? '')}`,
+    /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/,
+  );
+  assert.equal(result.state.calls ?? 0, 0, 'admission must reject before any npm operation');
 });
 
 test('pipeline npm publish recovers an ambiguous publish by re-querying exact integrity', () => {

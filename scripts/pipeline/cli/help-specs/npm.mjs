@@ -15,7 +15,7 @@ export const COMMAND_HELP_NPM = {
   'npm-release': {
     summary: 'Pack and publish npm packages (CLI / stack / relay-server / public SDKs).',
     usage:
-      'node scripts/pipeline/run.mjs npm-release --channel <dev|preview|production> --publish-cli <true|false> --publish-stack <true|false> --publish-server <true|false> --publish-plugin-sdk <true|false> --publish-sdk <true|false> [--mode pack|pack+publish]',
+      'node scripts/pipeline/run.mjs npm-release --channel <dev|preview|production> --publish-cli <true|false> --publish-stack <true|false> --publish-server <true|false> --publish-plugin-sdk <true|false> --publish-sdk <true|false> [--authorized-sha <40-hex>] [--mode pack|pack+publish]',
     options: [
       '--channel <dev|preview|production> Required.',
       '--publish-cli <bool>              Publish apps/cli (default: false).',
@@ -26,6 +26,7 @@ export const COMMAND_HELP_NPM = {
       '--server-runner-dir <dir>         (default: packages/relay-server).',
       '--run-tests <auto|true|false>     (default: auto).',
       '--mode <pack|pack+publish>        (default: pack+publish).',
+      '--authorized-sha <40-hex>         Required for a real pack+publish; use the exact SHA emitted by release admission.',
       '--plugin-sdk-version <version>    Optional exact lockstep pair version.',
       '--sdk-version <version>           Optional exact SDK version.',
       '--allow-dirty <bool>              true|false (default: false).',
@@ -37,32 +38,37 @@ export const COMMAND_HELP_NPM = {
     bullets: [
       'Dev/preview publishes temporary versions (no commit) using the rolling release-ring suffix (for example X.Y.Z-dev.<sequence>).',
       'Public SDK releases use sandbox-only manifests; plugin-sdk and plugin-ui remain a single lockstep pair.',
+      'Pack-only and dry-run work without an admission identity. Real public-SDK publication is blocked until the PEP/auth readiness owner is machine-readable.',
       'Local auth: uses NPM_TOKEN if set, otherwise falls back to your local npm login state.',
     ],
     examples: [
-      'node scripts/pipeline/run.mjs npm-release --channel dev --publish-cli true --mode pack+publish',
-      'node scripts/pipeline/run.mjs npm-release --channel preview --publish-cli true --publish-stack true --mode pack+publish',
-      'node scripts/pipeline/run.mjs npm-release --channel preview --publish-server true --mode pack+publish',
+      'node scripts/pipeline/run.mjs npm-release --channel dev --publish-cli true --authorized-sha <release-admitted-sha> --mode pack+publish',
+      'node scripts/pipeline/run.mjs npm-release --channel preview --publish-cli true --publish-stack true --authorized-sha <release-admitted-sha> --mode pack+publish',
+      'node scripts/pipeline/run.mjs npm-release --channel preview --publish-server true --authorized-sha <release-admitted-sha> --mode pack+publish',
       'node scripts/pipeline/run.mjs npm-release --channel preview --publish-plugin-sdk true --publish-sdk false --mode pack',
     ],
   },
 
   'npm-publish': {
-    summary: 'Publish a pre-built .tgz tarball to npm (lower-level helper).',
+    summary: 'Dry-run npm publication for a pre-built .tgz tarball.',
     usage:
-      'node scripts/pipeline/run.mjs npm-publish --channel <dev|preview|production> (--tarball <path>|--tarball-dir <dir>) [--tag <distTag>] [--dry-run]',
+      'node scripts/pipeline/run.mjs npm-publish --channel <dev|preview|production> (--tarball <path>|--tarball-dir <dir>) [--tag <distTag>] [--authorized-sha <40-hex>] --dry-run',
     options: [
       '--channel <dev|preview|production> Required.',
       '--tarball <path>                 A single `.tgz` file to publish.',
       '--tarball-dir <dir>              Publish all `.tgz` files in the directory.',
       '--tag <distTag>                  Optional npm dist-tag override.',
-      '--allow-dirty <bool>             true|false (default: false).',
+      '--authorized-sha <40-hex>        Accepted for dry-run parity; real publication is disabled.',
+      '--allow-dirty <bool>             Accepted for dry-run parity (default: false).',
       '--dry-run',
       '--secrets-source <auto|env|keychain>',
       '--keychain-service <name>         (default: happier/pipeline).',
       '--keychain-account <name>',
     ],
-    bullets: ['Usually used by npm-release; use directly only when you already have a tarball.'],
+    bullets: [
+      'Real local publication is disabled with DIRECT_NPM_PUBLISH_DISABLED.',
+      'Use checkout-bound npm-release from the checkout that prepared the candidate for a real publication.',
+    ],
     examples: ['node scripts/pipeline/run.mjs npm-publish --channel dev --tarball dist/release-assets/cli/happier-cli.tgz --dry-run'],
   },
 

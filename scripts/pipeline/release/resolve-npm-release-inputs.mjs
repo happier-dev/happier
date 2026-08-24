@@ -23,13 +23,12 @@ function parseBoolean(value, name) {
  *   channel: string;
  *   npmTag: string;
  *   sourceRef: string;
+ *   authorizedSha: string;
  *   publishCli: boolean;
  *   publishStack: boolean;
  *   publishServer: boolean;
  *   publishPluginSdk: boolean;
  *   publishSdk: boolean;
- *   eventName?: string;
- *   refName?: string;
  * }} input
  */
 export function resolveNpmReleaseInputs(input) {
@@ -63,15 +62,12 @@ export function resolveNpmReleaseInputs(input) {
     throw new Error(`${label} releases must run from ${expectedSourceRef} (got source_ref='${sourceRef}').`);
   }
 
-  const eventName = String(input.eventName ?? '').trim();
-  const refName = String(input.refName ?? '').trim();
-  if (eventName === 'workflow_dispatch' && !['dev', 'preview', 'main'].includes(refName)) {
-    throw new Error(
-      `Refusing workflow_dispatch from untrusted ref '${refName || '<empty>'}'. Use dev, preview, or main.`,
-    );
+  const authorizedSha = String(input.authorizedSha ?? '').trim();
+  if (!/^[0-9a-f]{40}$/u.test(authorizedSha)) {
+    throw new Error('authorized_sha must be exactly 40 lowercase hexadecimal characters.');
   }
 
-  return { channel, npmTag, sourceRef };
+  return { channel, npmTag, sourceRef, authorizedSha };
 }
 
 function main() {
@@ -80,13 +76,12 @@ function main() {
       channel: { type: 'string' },
       'npm-tag': { type: 'string' },
       'source-ref': { type: 'string', default: 'auto' },
+      'authorized-sha': { type: 'string', default: '' },
       'publish-cli': { type: 'string', default: 'false' },
       'publish-stack': { type: 'string', default: 'false' },
       'publish-server': { type: 'string', default: 'false' },
       'publish-plugin-sdk': { type: 'string', default: 'false' },
       'publish-sdk': { type: 'string', default: 'false' },
-      'event-name': { type: 'string', default: '' },
-      'ref-name': { type: 'string', default: '' },
       'github-output': { type: 'string', default: '' },
     },
     allowPositionals: false,
@@ -96,20 +91,19 @@ function main() {
     channel: String(values.channel ?? ''),
     npmTag: String(values['npm-tag'] ?? ''),
     sourceRef: String(values['source-ref'] ?? 'auto'),
+    authorizedSha: String(values['authorized-sha'] ?? ''),
     publishCli: parseBoolean(values['publish-cli'], '--publish-cli'),
     publishStack: parseBoolean(values['publish-stack'], '--publish-stack'),
     publishServer: parseBoolean(values['publish-server'], '--publish-server'),
     publishPluginSdk: parseBoolean(values['publish-plugin-sdk'], '--publish-plugin-sdk'),
     publishSdk: parseBoolean(values['publish-sdk'], '--publish-sdk'),
-    eventName: String(values['event-name'] ?? ''),
-    refName: String(values['ref-name'] ?? ''),
   });
 
   const githubOutput = String(values['github-output'] ?? '').trim();
   if (githubOutput) {
     appendFileSync(
       githubOutput,
-      `channel=${result.channel}\nnpm_tag=${result.npmTag}\nsource_ref=${result.sourceRef}\n`,
+      `channel=${result.channel}\nnpm_tag=${result.npmTag}\nsource_ref=${result.sourceRef}\nauthorized_sha=${result.authorizedSha}\n`,
       'utf8',
     );
     return;

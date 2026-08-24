@@ -242,6 +242,9 @@ test('trusted bump orchestrator never executes a candidate-local bump script', a
       'apps/cli/package.json',
       'apps/stack/package.json',
       'packages/relay-server/package.json',
+      'packages/plugin-sdk/package.json',
+      'packages/plugin-ui/package.json',
+      'packages/sdk/package.json',
     ]) {
       await mkdir(dirname(join(candidateRoot, rel)), { recursive: true });
       await writeFile(join(candidateRoot, rel), '{"version":"1.0.0"}\n');

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -32,4 +35,52 @@ test('public SDK release packing schedules one exact-tarball validation phase be
   const firstPublishIndex = result.stdout.indexOf('publish-tarball.mjs');
   assert.ok(validationIndex >= 0);
   assert.ok(firstPublishIndex > validationIndex, 'publication must follow exact-tarball validation');
+});
+
+test('real package publication rejects a missing release-admitted candidate before package work', () => {
+  const result = spawnSync(process.execPath, [
+    releasePackagesPath,
+    '--channel', 'preview',
+    '--publish-plugin-sdk', 'true',
+    '--mode', 'pack+publish',
+    '--authorized-sha', '',
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /release-admitted exact source SHA/);
+});
+
+test('direct real package publication rejects a dirty candidate before package work', async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'happier-release-packages-dirty-'));
+  try {
+    execFileSync('git', ['init'], { cwd: temporaryRoot, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: temporaryRoot, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: temporaryRoot, stdio: 'ignore' });
+    await writeFile(join(temporaryRoot, 'tracked.txt'), 'initial\n', 'utf8');
+    execFileSync('git', ['add', 'tracked.txt'], { cwd: temporaryRoot, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: temporaryRoot, stdio: 'ignore' });
+    const admittedSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: temporaryRoot, encoding: 'utf8' }).trim();
+    await writeFile(join(temporaryRoot, 'tracked.txt'), 'dirty candidate\n', 'utf8');
+
+    const result = spawnSync(process.execPath, [
+      releasePackagesPath,
+      '--channel', 'preview',
+      '--publish-cli', 'true',
+      '--mode', 'pack+publish',
+      '--authorized-sha', admittedSha,
+    ], {
+      cwd: temporaryRoot,
+      encoding: 'utf8',
+    });
+
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.notEqual(result.status, 0);
+    assert.match(output, /git worktree is dirty/);
+    assert.doesNotMatch(output, /Expected package\.json missing/);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });

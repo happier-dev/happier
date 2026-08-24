@@ -13,6 +13,8 @@ import {
   normalizePublicReleaseChannel,
 } from '../release/lib/public-release-rings.mjs';
 import { resolveRollingPublishVersion } from '../release/lib/rolling-version-allocation.mjs';
+import { admitNpmPublication, resolvePublicNpmPackageNames } from '../release/admit-release.mjs';
+import { assertCleanWorktree } from '../git/ensure-clean-worktree.mjs';
 import { exportPackSandboxTarball } from '../../../apps/stack/scripts/pack.mjs';
 
 function fail(message) {
@@ -220,12 +222,18 @@ function packTo(repoRoot, pkgDir, outDir, outName, opts) {
  * @param {string} repoRoot
  * @param {string} channel
  * @param {string} tarballPath
- * @param {{ tag?: string }} publishOpts
+ * @param {{ tag?: string; authorizedSha?: string }} publishOpts
  * @param {{ dryRun: boolean }} opts
  */
 function publishTarball(repoRoot, channel, tarballPath, publishOpts, opts) {
   const script = withinRepo(repoRoot, 'scripts/pipeline/npm/publish-tarball.mjs');
-  const args = [script, '--channel', channel, '--tarball', tarballPath, ...(publishOpts.tag ? ['--tag', publishOpts.tag] : [])];
+  const args = [
+    script,
+    '--channel', channel,
+    '--tarball', tarballPath,
+    ...(publishOpts.tag ? ['--tag', publishOpts.tag] : []),
+    ...(publishOpts.authorizedSha ? ['--authorized-sha', publishOpts.authorizedSha] : []),
+  ];
   if (opts.dryRun) {
     console.log(
       `[dry-run] ${process.execPath} ${path.relative(repoRoot, script)} --channel ${channel} --tarball ${path.relative(repoRoot, tarballPath)}${publishOpts.tag ? ` --tag ${publishOpts.tag}` : ''}`,
@@ -250,6 +258,16 @@ function readPackageVersion(repoRoot, pkgDir) {
   const version = String(parsed.version ?? '').trim();
   if (!version) fail(`package.json missing version: ${pkgJson}`);
   return version;
+}
+
+/** @param {string} repoRoot */
+function readCheckedOutSourceSha(repoRoot) {
+  return String(execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 10_000,
+  })).trim();
 }
 
 /**
@@ -318,7 +336,7 @@ function publicSdkPublicationConfig(packageRelDir, version, peers) {
  * @param {'preview' | 'production'} channel
  * @param {string} sdkTarball
  * @param {string} uiTarball
- * @param {{ tag?: string }} publishOpts
+ * @param {{ tag?: string; authorizedSha?: string }} publishOpts
  * @param {{ dryRun: boolean }} opts
  */
 function publishPluginSdkPair(repoRoot, channel, sdkTarball, uiTarball, publishOpts, opts) {
@@ -329,6 +347,7 @@ function publishPluginSdkPair(repoRoot, channel, sdkTarball, uiTarball, publishO
     '--sdk-tarball', sdkTarball,
     '--ui-tarball', uiTarball,
     ...(publishOpts.tag ? ['--tag', publishOpts.tag] : []),
+    ...(publishOpts.authorizedSha ? ['--authorized-sha', publishOpts.authorizedSha] : []),
     ...(opts.dryRun ? ['--dry-run'] : []),
   ];
   execFileSync(process.execPath, args, {
@@ -384,6 +403,7 @@ async function main() {
       'server-version': { type: 'string', default: '' },
       'plugin-sdk-version': { type: 'string', default: '' },
       'sdk-version': { type: 'string', default: '' },
+      'authorized-sha': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -415,10 +435,28 @@ async function main() {
     plugin_sdk: String(values['plugin-sdk-version'] ?? '').trim(),
     sdk: String(values['sdk-version'] ?? '').trim(),
   };
+  const authorizedSha = String(values['authorized-sha'] ?? '').trim();
 
   const opts = { dryRun };
   if (mode !== 'pack' && mode !== 'pack+publish') {
     fail(`--mode must be 'pack' or 'pack+publish' (got: ${mode})`);
+  }
+
+  const publicSdkPackageNames = resolvePublicNpmPackageNames({
+    pluginSdk: publishPluginSdk,
+    sdk: publishSdk,
+  });
+  if (authorizedSha || (mode === 'pack+publish' && !dryRun)) {
+    admitNpmPublication({
+      mode,
+      dryRun,
+      authorizedSha,
+      checkedOutSha: authorizedSha ? readCheckedOutSourceSha(repoRoot) : '',
+      packageNames: publicSdkPackageNames,
+    });
+  }
+  if (!dryRun && mode === 'pack+publish') {
+    assertCleanWorktree({ cwd: repoRoot, allowDirty: false });
   }
 
   /** @type {Array<{ key: 'cli' | 'stack' | 'server'; dir: string; outDir: string; prepare: () => void; }>} */
@@ -466,7 +504,6 @@ async function main() {
     });
   }
 
-  /** @type {Array<{ key: 'plugin_sdk' | 'plugin_ui' | 'sdk'; packageRelDir: string; outDir: string; version: string; publication: Record<string, unknown> }>} */
   const publicSdkPackages = [];
   if (publishPluginSdk) {
     const sourceVersion = readPluginSdkPairVersion(repoRoot);
@@ -524,6 +561,7 @@ async function main() {
     });
   }
 
+
   if (packages.length === 0 && publicSdkPackages.length === 0) {
     fail('At least one npm publication target must be true');
   }
@@ -580,7 +618,10 @@ async function main() {
         const outName = `${pkg.key}-${nextVersion}.tgz`;
         const tarballPath = packTo(repoRoot, pkg.dir, pkg.outDir, outName, opts);
         if (mode === 'pack+publish') {
-          publishTarball(repoRoot, publishTarget.channel, tarballPath, { tag: publishTarget.tag }, opts);
+          publishTarball(repoRoot, publishTarget.channel, tarballPath, {
+            tag: publishTarget.tag,
+            authorizedSha,
+          }, opts);
         }
       } finally {
         if (restore) {
@@ -619,13 +660,17 @@ async function main() {
         publishTarget.channel,
         publicTarballs.plugin_sdk,
         publicTarballs.plugin_ui,
-        { tag: publishTarget.tag },
+        { tag: publishTarget.tag, authorizedSha },
         opts,
       );
     }
     if (mode === 'pack+publish' && publishSdk) {
-      publishTarball(repoRoot, publishTarget.channel, publicTarballs.sdk, { tag: publishTarget.tag }, opts);
+      publishTarball(repoRoot, publishTarget.channel, publicTarballs.sdk, {
+        tag: publishTarget.tag,
+        authorizedSha,
+      }, opts);
     }
+
   } finally {
     for (const restoreManifest of restorePackageManifests.reverse()) {
       restoreManifest();

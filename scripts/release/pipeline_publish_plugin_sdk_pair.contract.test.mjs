@@ -35,6 +35,8 @@ const statePath = process.env.NPM_PAIR_STATE;
 const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 const args = process.argv.slice(2);
 const persist = () => fs.writeFileSync(statePath, JSON.stringify(state));
+state.calls = [...(state.calls ?? []), args];
+persist();
 const packageNameFromTarball = (tarball) => JSON.parse(execFileSync('tar', ['-xOf', tarball, 'package/package.json'], { encoding: 'utf8' })).name;
 if (args[0] === 'view' && args[2] === 'dist.integrity') {
   const name = args[1].slice(0, args[1].lastIndexOf('@'));
@@ -99,7 +101,7 @@ test('plugin SDK pair publisher stages both tarballs before moving either public
   assert.doesNotMatch(out, /\bnpm publish\b/);
 });
 
-test('plugin SDK pair publisher emits both verified package identities only after the staged pair succeeds', () => {
+test('plugin SDK pair publisher blocks real public publication without a machine-readable readiness owner', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-plugin-sdk-pair-output-'));
   const version = '0.1.0-preview.7';
   const sdkTarball = createTarball(tempDir, '@happier-dev/plugin-sdk', version);
@@ -109,24 +111,30 @@ test('plugin SDK pair publisher emits both verified package identities only afte
   fs.writeFileSync(statePath, JSON.stringify({ integrities: {}, tags: {} }), 'utf8');
   const binDir = writeNpmStub(tempDir);
 
-  execFileSync(process.execPath, [
-    resolve(repoRoot, 'scripts', 'pipeline', 'npm', 'publish-plugin-sdk-pair.mjs'),
-    '--channel', 'preview',
-    '--tarball-dir', tempDir,
-    '--npm-version', '',
-    '--github-output', outputPath,
-  ], {
-    cwd: repoRoot,
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`, NPM_PAIR_STATE: statePath, GITHUB_ACTIONS: 'false' },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  let error;
+  try {
+    execFileSync(process.execPath, [
+      resolve(repoRoot, 'scripts', 'pipeline', 'npm', 'publish-plugin-sdk-pair.mjs'),
+      '--channel', 'preview',
+      '--tarball-dir', tempDir,
+      '--npm-version', '',
+      '--authorized-sha', 'a'.repeat(40),
+      '--github-output', outputPath,
+    ], {
+      cwd: repoRoot,
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`, NPM_PAIR_STATE: statePath, GITHUB_ACTIONS: 'false' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (caught) {
+    error = caught;
+  }
 
-  const output = fs.readFileSync(outputPath, 'utf8');
-  assert.match(output, /^plugin_sdk_package=@happier-dev\/plugin-sdk$/m);
-  assert.match(output, new RegExp(`^plugin_sdk_version=${version}$`, 'm'));
-  assert.match(output, /^plugin_sdk_integrity=sha512-/m);
-  assert.match(output, /^plugin_ui_package=@happier-dev\/plugin-ui$/m);
-  assert.match(output, new RegExp(`^plugin_ui_version=${version}$`, 'm'));
-  assert.match(output, /^plugin_ui_integrity=sha512-/m);
+  assert.notEqual(error, undefined);
+  assert.match(
+    `${String(error?.message ?? '')}\n${String(error?.stderr ?? '')}`,
+    /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/,
+  );
+  assert.deepEqual(JSON.parse(fs.readFileSync(statePath, 'utf8')), { integrities: {}, tags: {} });
+  assert.equal(fs.existsSync(outputPath), false, 'admission must reject before package identities are emitted');
 });

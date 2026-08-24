@@ -6,6 +6,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { admitNpmPublication } from '../release/admit-release.mjs';
 
 function fail(message) {
   console.error(message);
@@ -284,6 +285,7 @@ function main() {
       provenance: { type: 'string', default: 'auto' },
       'npm-version': { type: 'string', default: '11.5.1' },
       'github-output': { type: 'string', default: '' },
+      'authorized-sha': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -309,6 +311,18 @@ function main() {
     fail(`tarball does not exist: ${tarballPath}`);
   }
 
+  const dryRun = values['dry-run'] === true;
+  const authorizedSha = String(values['authorized-sha'] ?? '').trim();
+  const metadata = dryRun ? null : readTarballPackageMetadata(tarballPath);
+  if (metadata) {
+    admitNpmPublication({
+      mode: 'pack+publish',
+      dryRun: false,
+      authorizedSha,
+      packageNames: [metadata.name],
+    });
+  }
+
   const access = String(values.access ?? 'public').trim() || 'public';
   const provenanceRaw = String(values.provenance ?? '').trim().toLowerCase() || 'auto';
   if (provenanceRaw !== 'auto' && provenanceRaw !== 'true' && provenanceRaw !== 'false') {
@@ -330,7 +344,6 @@ function main() {
     provenance = provenanceRaw === 'true';
   }
   const npmVersion = String(values['npm-version'] ?? '').trim();
-  const dryRun = values['dry-run'] === true;
 
   const npmToken = String(process.env.NODE_AUTH_TOKEN ?? process.env.NPM_TOKEN ?? '').trim();
   /** @type {Record<string, string>} */
@@ -358,7 +371,7 @@ function main() {
     return;
   }
 
-  const metadata = readTarballPackageMetadata(tarballPath);
+  if (!metadata) fail('tarball metadata is unavailable for publication');
   const packageSpec = `${metadata.name}@${metadata.version}`;
   const existingIntegrity = queryPublishedIntegrity({
     npmVersion,

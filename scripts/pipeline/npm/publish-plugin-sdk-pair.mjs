@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmS
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { admitNpmPublication } from '../release/admit-release.mjs';
 
 function fail(message) {
   throw new Error(message);
@@ -73,7 +74,7 @@ function resolvePairTarballsFromDirectory(directory) {
   return { sdkTarball, uiTarball };
 }
 
-function invokeCanonicalPublisher({ repoRoot, channel, tarball, tag, dryRun, githubOutput, npmVersion }) {
+function invokeCanonicalPublisher({ repoRoot, channel, tarball, tag, dryRun, githubOutput, npmVersion, authorizedSha }) {
   const publisher = path.join(repoRoot, 'scripts', 'pipeline', 'npm', 'publish-tarball.mjs');
   const args = [
     publisher,
@@ -81,6 +82,7 @@ function invokeCanonicalPublisher({ repoRoot, channel, tarball, tag, dryRun, git
     '--tarball', tarball,
     '--tag', tag,
     ...(npmVersion !== '' ? ['--npm-version', npmVersion] : ['--npm-version', '']),
+    ...(authorizedSha ? ['--authorized-sha', authorizedSha] : []),
     ...(githubOutput ? ['--github-output', githubOutput] : []),
   ];
   const printable = `node ${path.relative(repoRoot, publisher)} --channel ${channel} --tarball ${tarball} --tag ${tag}`;
@@ -142,6 +144,7 @@ function main() {
       'staging-tag': { type: 'string', default: '' },
       'npm-version': { type: 'string', default: '11.5.1' },
       'github-output': { type: 'string', default: '' },
+      'authorized-sha': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -166,6 +169,7 @@ function main() {
   const stagingTag = normalizeTag(values['staging-tag'] || `${finalTag}-staging`, '--staging-tag');
   const npmVersion = String(values['npm-version'] ?? '').trim();
   const githubOutput = String(values['github-output'] ?? '').trim();
+  const authorizedSha = String(values['authorized-sha'] ?? '').trim();
   const dryRun = values['dry-run'] === true;
   const repoRoot = path.resolve(process.cwd());
   let identities = null;
@@ -183,6 +187,12 @@ function main() {
       fail(`Plugin SDK pair tarballs must share an exact version (got ${sdk.version} and ${ui.version})`);
     }
     identities = { sdk, ui };
+    admitNpmPublication({
+      mode: 'pack+publish',
+      dryRun: false,
+      authorizedSha,
+      packageNames: [sdk.name, ui.name],
+    });
   }
 
   // The existing publisher owns npm integrity verification and idempotent tag
@@ -196,7 +206,16 @@ function main() {
       [sdkTarball, finalTag, outputDirectory ? path.join(outputDirectory, 'plugin-sdk') : ''],
       [uiTarball, finalTag, outputDirectory ? path.join(outputDirectory, 'plugin-ui') : ''],
     ]) {
-      invokeCanonicalPublisher({ repoRoot, channel, tarball, tag, dryRun, githubOutput: output, npmVersion });
+      invokeCanonicalPublisher({
+        repoRoot,
+        channel,
+        tarball,
+        tag,
+        dryRun,
+        githubOutput: output,
+        npmVersion,
+        authorizedSha,
+      });
     }
     if (identities) {
       const sdk = readPublishedIdentity(path.join(outputDirectory, 'plugin-sdk'), identities.sdk);
