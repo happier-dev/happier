@@ -25,6 +25,7 @@ import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecyc
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
 import { waitForCondition } from '@/testkit/async/waitFor';
+import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { runScmCommand } from '@/scm/runtime';
 import {
@@ -7015,7 +7016,7 @@ describe('createCodexAppServerRuntime', () => {
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn() } as any,
+            session: createApiSessionClientFixture(),
         });
 
         await runtime.setSessionModel('gpt-5.6-sol');
@@ -7023,7 +7024,7 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
         await runtime.sendPrompt('priority-persist');
 
-        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        const requestLog = await readRequestLog(requestLogPath);
         const firstTurnStart = requestLog.find((entry) => entry.method === 'turn/start');
         expect(firstTurnStart).toMatchObject({
             params: expect.objectContaining({
