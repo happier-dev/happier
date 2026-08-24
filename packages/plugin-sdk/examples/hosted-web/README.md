@@ -9,6 +9,7 @@ start a new plugin with `happier plugins create` and declare ordinary contributi
 The strict `.happier-plugin/plugin.json` manifest demonstrates a hosted-web renderer with a declarative
 fallback. `pluginUiBuild.ts` is the public build input.
 
-This repository example is source and compile coverage for a blocked reference
-arm, not a template or distribution candidate. The manifest contains no
-invented artifact row or static-output placeholder.
+This repository example is source and compile coverage for the hosted-web
+reference arm, not a template or distribution candidate. It is not built,
+packed, or mounted here, so it makes no runtime-availability claim of its own.
+The manifest contains no invented artifact row or static-output placeholder.

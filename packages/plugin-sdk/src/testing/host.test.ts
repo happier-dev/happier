@@ -1092,16 +1092,17 @@ describe('createPluginTestkit', () => {
               observation.dispose();
             }
           });
-          api.actions.register('send', async (input, context) => {
+          api.actions.register('send', async (input, context): Promise<JsonValue> => {
             if (operation.current === undefined) throw new Error('No captured operation.');
             try {
-              return {
-                ok: true,
-                result: await context.services.actions.executeAdmittedTargetedOperation(
-                  operation.current,
-                  input as never,
-                ),
-              };
+              const result = await context.services.actions.executeAdmittedTargetedOperation(
+                operation.current,
+                input as never,
+              );
+              // The captured handle's default result type still admits `void`;
+              // an Action handler may only publish JSON, and this protocol's
+              // result schema always yields an object.
+              return { ok: true, result: result ?? null };
             } catch (error) {
               return {
                 ok: false,

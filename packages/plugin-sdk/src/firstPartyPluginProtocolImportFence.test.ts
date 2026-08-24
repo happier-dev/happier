@@ -9,12 +9,7 @@ import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from './ui/build/publicToolchai
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const pluginSourceRoot = join(workspaceRoot, 'packages', 'plugins');
-const channelsConnectionsResourceSource = join(
-  pluginSourceRoot,
-  'channels',
-  'src',
-  'connectionsResource.ts',
-);
+const channelsSourceRoot = join(pluginSourceRoot, 'channels', 'src');
 const apiSurfaceInventoryPath = join(workspaceRoot, 'packages', 'plugin-sdk', 'api-surface.json');
 const publicAgentRuntimeEntryPath = join(
   workspaceRoot,
@@ -26,13 +21,21 @@ const publicAgentRuntimeEntryPath = join(
   'index.ts',
 );
 
-const CHANNELS_RESOURCE_PUBLIC_TYPE_IMPORTS = {
-  '@happier-dev/plugin-sdk/storage': ['PluginAccountStorageScope'],
-  '@happier-dev/plugin-sdk/resources': [
-    'PluginDynamicResourceInvocationOptionsV1',
-    'PluginDynamicResourceRuntime',
-  ],
-} as const;
+const CHANNELS_RESOURCE_PUBLIC_TYPE_IMPORTS = [
+  {
+    sourcePath: join(channelsSourceRoot, 'requiredAccountStorage.ts'),
+    moduleSpecifier: '@happier-dev/plugin-sdk/storage',
+    symbols: ['PluginAccountStorageScope'],
+  },
+  {
+    sourcePath: join(channelsSourceRoot, 'connectionsResource.ts'),
+    moduleSpecifier: '@happier-dev/plugin-sdk/resources',
+    symbols: [
+      'PluginDynamicResourceInvocationOptionsV1',
+      'PluginDynamicResourceRuntime',
+    ],
+  },
+] as const;
 
 const AGENT_RUNTIME_EVENT_TEST_IMPORTS = {
   'packages/plugins/antigravity/src/agent/cliPrint/runtime.test.ts': [
@@ -179,33 +182,31 @@ function readAuthorReachableHappierPackages(): ReadonlySet<string> {
 
 async function readHostWorkspacePackageNames(): Promise<readonly string[]> {
   const packagesRoot = join(workspaceRoot, 'packages');
-  const names: string[] = [];
-  for (const entry of await readdir(packagesRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === 'plugins' || entry.name === 'node_modules') continue;
+  const names = await Promise.all((await readdir(packagesRoot, { withFileTypes: true })).map(async (entry) => {
+    if (!entry.isDirectory() || entry.name === 'plugins' || entry.name === 'node_modules') return null;
     let manifest: Readonly<{ name?: unknown; private?: unknown }>;
     try {
       manifest = JSON.parse(await readFile(join(packagesRoot, entry.name, 'package.json'), 'utf8'));
     } catch {
-      continue;
+      return null;
     }
-    if (manifest.private !== true || typeof manifest.name !== 'string') continue;
-    names.push(manifest.name);
-  }
-  return names;
+    return manifest.private === true && typeof manifest.name === 'string' ? manifest.name : null;
+  }));
+  return names.filter((name): name is string => name !== null);
 }
 
-async function* walkPluginRuntimeSources(directory: string): AsyncGenerator<string> {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+async function readPluginRuntimeSourcePaths(directory: string): Promise<readonly string[]> {
+  const paths = await Promise.all((await readdir(directory, { withFileTypes: true })).map(async (entry) => {
+    if (entry.name === 'node_modules' || entry.name === 'dist') return [];
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      yield* walkPluginRuntimeSources(path);
-      continue;
+      return await readPluginRuntimeSourcePaths(path);
     }
-    if (!/\.tsx?$/u.test(entry.name)) continue;
-    if (/\.(?:test|test-support|testkit)\.tsx?$/u.test(entry.name)) continue;
-    yield path;
-  }
+    if (!/\.tsx?$/u.test(entry.name)) return [];
+    if (/\.(?:test|test-support|testkit)\.tsx?$/u.test(entry.name)) return [];
+    return [path];
+  }));
+  return paths.flat();
 }
 
 /**
@@ -218,28 +219,40 @@ async function measurePluginRuntimeHostPackageReaches(
 ): Promise<Readonly<Record<string, readonly string[]>>> {
   const hostPackages = (await readHostWorkspacePackageNames())
     .filter((name) => !authorPackages.has(name));
+  const hostPackageSet = new Set(hostPackages);
   const reaches: Record<string, Set<string>> = {};
-  for (const entry of await readdir(pluginSourceRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === 'node_modules') continue;
+  await Promise.all((await readdir(pluginSourceRoot, { withFileTypes: true })).map(async (entry) => {
+    if (!entry.isDirectory() || entry.name === 'node_modules') return;
     const sourceRoot = join(pluginSourceRoot, entry.name, 'src');
     try {
       await readdir(sourceRoot);
     } catch {
-      continue;
+      return;
     }
-    for await (const path of walkPluginRuntimeSources(sourceRoot)) {
-      const source = await readFile(path, 'utf8');
-      for (const imported of ts.preProcessFile(source, true, true).importedFiles) {
-        const owner = hostPackages.find((name) => (
-          imported.fileName === name || imported.fileName.startsWith(`${name}/`)
-        ));
-        if (!owner) continue;
+    const sources = await Promise.all((await readPluginRuntimeSourcePaths(sourceRoot)).map(async (path) => ({
+      path,
+      source: await readFile(path, 'utf8'),
+    })));
+    for (const { source } of sources) {
+      if (!source.includes('@happier-dev/')) continue;
+      for (const imported of ts.preProcessFile(source, true, false).importedFiles) {
+        const owner = imported.fileName.split('/').slice(0, 2).join('/');
+        if (!hostPackageSet.has(owner)) continue;
         (reaches[entry.name] ??= new Set()).add(imported.fileName);
       }
     }
-  }
+  }));
   return Object.fromEntries(
     Object.keys(reaches).sort().map((plugin) => [plugin, [...reaches[plugin]!].sort()]),
+  );
+}
+
+let measuredPluginRuntimeHostPackageReaches:
+  Promise<Readonly<Record<string, readonly string[]>>> | undefined;
+
+function readMeasuredPluginRuntimeHostPackageReaches(): Promise<Readonly<Record<string, readonly string[]>>> {
+  return measuredPluginRuntimeHostPackageReaches ??= measurePluginRuntimeHostPackageReaches(
+    readAuthorReachableHappierPackages(),
   );
 }
 
@@ -289,14 +302,12 @@ describe('first-party plugin public SDK import fence', () => {
       PluginDynamicResourceRuntime: './resources',
     });
 
-    for (const [moduleSpecifier, expectedSymbols] of Object.entries(
-      CHANNELS_RESOURCE_PUBLIC_TYPE_IMPORTS,
-    )) {
-      expect(await readNamedImports(channelsConnectionsResourceSource, moduleSpecifier))
-        .toEqual(expect.arrayContaining([...expectedSymbols]));
+    for (const { sourcePath, moduleSpecifier, symbols } of CHANNELS_RESOURCE_PUBLIC_TYPE_IMPORTS) {
+      expect(await readNamedImports(sourcePath, moduleSpecifier))
+        .toEqual(expect.arrayContaining([...symbols]));
     }
     const rootImports = await readNamedImports(
-      channelsConnectionsResourceSource,
+      join(channelsSourceRoot, 'connectionsResource.ts'),
       '@happier-dev/plugin-sdk',
     );
     for (const symbol of Object.keys(expectedOwners)) {
@@ -311,14 +322,12 @@ describe('first-party plugin public SDK import fence', () => {
       '@happier-dev/plugin-ui',
     ]);
 
-    const measured = await measurePluginRuntimeHostPackageReaches(authorPackages);
+    const measured = await readMeasuredPluginRuntimeHostPackageReaches();
     expect(measured).toEqual(EXPECTED_PLUGIN_RUNTIME_HOST_PACKAGE_REACHES);
   });
 
   it('keeps Protocol out of first-party plugin runtime sources apart from the host-recognised Claude dialog source', async () => {
-    const reaches = await measurePluginRuntimeHostPackageReaches(
-      readAuthorReachableHappierPackages(),
-    );
+    const reaches = await readMeasuredPluginRuntimeHostPackageReaches();
     const protocolReaches = Object.fromEntries(
       Object.entries(reaches)
         .map(([plugin, specifiers]) => [

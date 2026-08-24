@@ -14,7 +14,7 @@ import { exerciseTestkit } from './testing.js';
 if (manifest.id !== 'example.inference' || typeof activate !== 'function') {
   throw new Error('definePlugin did not expose the expected named ABI');
 }
-if (!manifest.contributes.promptAssets.some((entry) => (
+if (!manifest.contributes.promptAssets?.some((entry) => (
   entry.id === 'external-skills'
   && entry.adapterDescriptor?.id === 'example.inference.skill'
 ))) {

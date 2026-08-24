@@ -148,7 +148,7 @@ describe('Plugin SDK public authoring documentation', () => {
         );
     });
 
-    it('teaches the author route, scoped Settings, and the retained-versus-available HostAccess boundary', () => {
+    it('teaches the author route, scoped Settings, Host Actions, and the retained-versus-available HostAccess boundary', () => {
         const navigation = JSON.parse(readFileSync(apiNavigationPath, 'utf8')) as Readonly<{
             pages: readonly string[];
         }>;
@@ -163,12 +163,12 @@ describe('Plugin SDK public authoring documentation', () => {
         const settingsGuide = readFileSync(settingsGuidePath, 'utf8');
         const sdkReadme = readFileSync(join(sdkRoot, 'README.md'), 'utf8');
 
-        expect(navigation.pages).not.toContain('host-actions');
+        expect(navigation.pages).toContain('host-actions');
         expect(manifestNavigation.pages).toContain('capabilities-and-permissions');
         expect(activationGuide).toContain('Ordinary root/daemon plugin modules use `definePlugin(...)`');
         expect(activationGuide).toContain('A client-target Action is different');
-        expect(activationGuide).toContain('## Low-level ABI conformance');
-        expect(activationGuide).toContain('not a second normal authoring path');
+        expect(activationGuide).toContain('## Low-level daemon ABI conformance');
+        expect(activationGuide).toMatch(/not a second\s+normal daemon authoring path/u);
         expect(actionsGuide).toContain('context.services.actions.execute(...)');
         expect(actionsGuide).toContain('Commands remain deferred for external');
         expect(actionsGuide).toContain('Exact packed external proof must cover Action invocation');
@@ -273,7 +273,7 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(installTrustGuide).toContain('`outcome_unknown`');
     });
 
-    it('documents notification category, channel, and service authoring as an available capability', () => {
+    it('documents notification category, channel, and service authoring as externally deferred', () => {
         const guide = readFileSync(notificationsGuidePath, 'utf8');
         const apiGuide = readFileSync(join(documentationRoot, 'index.mdx'), 'utf8');
         const entrypointGuide = readFileSync(entrypointGuidePath, 'utf8');
@@ -284,8 +284,10 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(guide).toContain('context.services.notifications.send');
         expect(guide).toContain('context.ui.notify(');
         expect(guide).toContain('examples/action-contract-producer');
+        expect(guide).toContain('Deferred for external authors');
+        expect(guide).toContain('first-party Preview');
         expect(guide).not.toContain('host-internal');
-        expect(guide).not.toContain('remains deferred');
+        expect(guide).toContain('remains operation-only');
         expect(apiGuide).toContain('- notification channels\n');
         expect(apiGuide).not.toContain('notification channels (deferred; host-internal)');
         expect(entrypointGuide).toContain('Host-mediated notification service, channel sender, and preference result types');

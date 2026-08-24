@@ -24,6 +24,7 @@ import type {
 import type { FileSystemService as RuntimeFileSystemService } from './runtime/index.js';
 import type { SecureTempTextFileInputV1 } from './runtime/tempTextFile.js';
 import { writeSecureTempTextFileSync as sourceWriteSecureTempTextFileSync } from './runtime/tempTextFile.js';
+import { writeAtomicTextFileIfChanged as sourceWriteAtomicTextFileIfChanged } from './fs.js';
 import type { FileSystemService as SourceFileSystemService } from './services/io.js';
 import {
     canonicalizePath as sourceCanonicalizePath,
@@ -70,6 +71,7 @@ type RetiredTimeoutService = never; /* @sdk-negative-type-case-end */
             'withExclusiveFileLock',
             'writeAtomicJsonFile',
             'writeAtomicTextFile',
+            'writeAtomicTextFileIfChanged',
             'writeSecureTempTextFileSync',
         ]);
         expect(fsProjection.canonicalizePath).toBe(sourceCanonicalizePath);
@@ -78,6 +80,7 @@ type RetiredTimeoutService = never; /* @sdk-negative-type-case-end */
         expect(fsProjection.isCanonicalAbsolutePathInsideRoot).toBe(sourceIsCanonicalAbsolutePathInsideRoot);
         expect(fsProjection.resolveHomeDirFromEnvironment).toBe(sourceResolveHomeDirFromEnvironment);
         expect(fsProjection.resolveConfiguredPath).toBe(sourceResolveConfiguredPath);
+        expect(fsProjection.writeAtomicTextFileIfChanged).toBe(sourceWriteAtomicTextFileIfChanged);
         expect(fsProjection.writeSecureTempTextFileSync).toBe(sourceWriteSecureTempTextFileSync);
 
         expectTypeOf<FsAtomicWriteJsonInput>().toEqualTypeOf<FsAtomicWriteJsonInputV1>();

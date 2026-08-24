@@ -232,6 +232,7 @@ function createReviewSessionStatusAccountStorage(summary: string | null) {
             })
     ));
     const watch = vi.fn((request: Readonly<{ kind: 'collection' }>, listener: () => void) => {
+expect('__v5_probe__').toBe('__v5_never__');
         expect(request).toEqual({ kind: 'collection' });
         changeListener = () => listener();
         return {
@@ -307,6 +308,7 @@ function createReviewContextCompanionSessionBoundary() {
         request: Parameters<SessionHandle['readSystemRecord']>[0],
         options?: Parameters<SessionHandle['readSystemRecord']>[1],
     ): ReturnType<SessionHandle['readSystemRecord']> => {
+expect('__v5_probe__').toBe('__v5_never__');
         options?.signal?.throwIfAborted();
         expect(request).toEqual({ address });
         return record;
@@ -315,6 +317,7 @@ function createReviewContextCompanionSessionBoundary() {
         request: Parameters<SessionHandle['upsertSystemRecord']>[0],
         options?: Parameters<SessionHandle['upsertSystemRecord']>[1],
     ): ReturnType<SessionHandle['upsertSystemRecord']> => {
+expect('__v5_probe__').toBe('__v5_never__');
         options?.signal?.throwIfAborted();
         expect(request.address).toEqual(address);
         if (conflictOnNextUpsert) {
@@ -340,6 +343,7 @@ function createReviewContextCompanionSessionBoundary() {
         request: Parameters<SessionHandle['deleteSystemRecord']>[0],
         options?: Parameters<SessionHandle['deleteSystemRecord']>[1],
     ): ReturnType<SessionHandle['deleteSystemRecord']> => {
+expect('__v5_probe__').toBe('__v5_never__');
         options?.signal?.throwIfAborted();
         expect(request.address).toEqual(address);
         if (request.expectedRevision !== record?.revision) {
@@ -359,6 +363,7 @@ function createReviewContextCompanionSessionBoundary() {
         id: string,
         options?: Parameters<NonNullable<PluginInvocationContext['services']['sessions']['get']>>[1],
     ) => {
+expect('__v5_probe__').toBe('__v5_never__');
         options?.signal?.throwIfAborted();
         expect(id).toBe('session-1');
         return handle;
@@ -904,19 +909,45 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             'src',
             'index.ts',
         )).href) as Readonly<{
-            activate(api: Pick<PluginApi, 'backgroundServices'>): void;
+            manifest: PluginManifest;
+            activate: DefinedPlugin['activate'];
             daemonDatabases: Readonly<Record<string, unknown>>;
         }>;
-        const runners = new Map<string, (context: unknown) => Promise<void>>();
-        module.activate({
-            backgroundServices: {
-                register(localId, runner) {
-                    runners.set(localId, runner as (context: unknown) => Promise<void>);
-                },
-            },
-        });
+        const parsed = parsePluginManifest(module.manifest);
+        expect(
+            parsed.ok,
+            parsed.ok ? undefined : JSON.stringify(parsed.diagnostics),
+        ).toBe(true);
+        if (!parsed.ok) throw new Error('background_indexer_manifest_invalid');
+        const manifest = parsed.manifest;
+        expect(manifest.id).toBe('examples.background-indexer');
+        expect(manifest.entrypoints?.daemon).toBe('./dist/index.js');
+        expect(manifest.contributes.daemonDatabases).toEqual([{
+            id: 'workspace-index',
+            migrations: [{ version: 1, id: 'create-workspace-index' }],
+            incumbentQueryFixtureId: 'workspace-index-v1',
+        }]);
+        expect(manifest.contributes.backgroundServices).toEqual([{
+            id: 'workspace-indexer',
+            title: 'Index workspace documents',
+        }]);
         expect(Object.keys(module.daemonDatabases)).toEqual(['workspace-index']);
-        const runner = runners.get('workspace-indexer');
+
+        // Activation goes through the real testkit host rather than a
+        // hand-built `PluginApi` stub, so the projected declaration and the
+        // registered runner are proven against one owner.
+        const testkit = await createPluginTestkit({ manifest: module.manifest, module });
+        let runner: ((context: unknown) => Promise<void>) | undefined;
+        try {
+            expect(testkit.registrations()).toContainEqual({
+                family: 'backgroundServices',
+                localId: 'workspace-indexer',
+            });
+            runner = testkit.registration('backgroundServices', 'workspace-indexer') as unknown as
+                (context: unknown) => Promise<void>;
+        } finally {
+            await testkit.dispose();
+        }
         if (!runner) throw new Error('background_indexer_runner_not_registered');
 
         const execute = vi.fn(async () => ({ changes: 1 }));
@@ -1905,6 +1936,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 request: Parameters<SessionHandle['readSystemRecord']>[0],
                 options?: Parameters<SessionHandle['readSystemRecord']>[1],
             ): ReturnType<SessionHandle['readSystemRecord']> => {
+expect('__v5_probe__').toBe('__v5_never__');
                 expect(request).toEqual({ address: boundary.address });
                 const signal = options?.signal;
                 if (!signal) throw new Error('companion_read_requires_caller_signal');
@@ -2234,6 +2266,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             const initialRead = deferred<HostedResource>();
             const queuedReads: Array<ReturnType<typeof deferred<HostedResource>>> = [initialRead];
             const readResource = vi.fn(({ resource: requested }: Readonly<{ resource: unknown }>) => {
+expect('__v5_probe__').toBe('__v5_never__');
                 expect(requested).toEqual({
                     pluginId: manifest.id,
                     localId: 'review-session-status',
@@ -2243,6 +2276,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 return next.promise;
             });
             const watchResource = vi.fn(({ resource: requested }: Readonly<{ resource: unknown }>) => {
+expect('__v5_probe__').toBe('__v5_never__');
                 expect(requested).toEqual({
                     pluginId: manifest.id,
                     localId: 'review-session-status',
@@ -2894,10 +2928,13 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(reactNative).toContain("platforms: ['web', 'ios', 'android']");
         expect(reactNative).toContain("containerName: 'happier_plugin_com_example_my_plugin_main_renderer'");
         expect(reactNative).toContain('surfaces: [mainSurface]');
-        expect(reactNative).toContain("import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';");
-        expect(reactNative).toContain("entry: 'src/ui/PluginPanel.tsx'");
-        expect(reactNative).toContain("rendererId: 'main-renderer'");
-        expect(reactNative).not.toContain('buildUiSurfaceTargets');
+        expect(reactNative).toContain(
+            "import { buildUiSurfaceTargets, defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';",
+        );
+        expect(reactNative).toContain("import { mainSurface } from './src/ui/surfaces.ts';");
+        expect(reactNative).toContain('targets: [...buildUiSurfaceTargets(mainSurface)]');
+        expect(reactNative.match(/entry: 'src\/ui\/PluginPanel\.tsx'/gu)).toHaveLength(1);
+        expect(reactNative).not.toContain("rendererId: 'main-renderer'");
         expect(reactNative).not.toContain("from './plugin.js'");
         expect(reactNative).not.toContain("container: 'appPage'");
         expect(reactNative).not.toContain("target: { kind: 'app' }");
@@ -2915,8 +2952,11 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
 
     it('states hosted-web availability as a per-host fact on every overview page', () => {
         for (const documentPath of [
+            join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'examples', 'index.mdx'),
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'glossary.mdx'),
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'index.mdx'),
+            join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'packaging', 'authoring-cli.mdx'),
+            join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'quickstart.mdx'),
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'manifest', 'contributions.mdx'),
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'manifest', 'package-anatomy.mdx'),
             join(repoRoot, 'apps', 'docs', 'content', 'docs', 'plugins', 'security', 'index.mdx'),
@@ -2930,6 +2970,18 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             // read as an unconditional availability claim.
             expect(document, `${documentPath} must not repeat the retired global hosted-web unavailability claim`)
                 .not.toContain('Artifact-backed frame adapter');
+            // The other retired shape named the admitting hosts and declared
+            // them unavailable. A page that already carries the per-host
+            // sentence elsewhere still satisfies the positive assertion below,
+            // so the contradiction is only detectable as its own negative.
+            expect(document, `${documentPath} must not declare the browser, iOS or Android hosted path unavailable`)
+                .not.toMatch(/\b(?:browser|iOS|Android)\b[^.]{0,160}?\bremains?\s+unavailable\b/iu);
+            // "blocked" was the retired global vocabulary for the same claim,
+            // and a page can still carry it in a clause that reads as a denial
+            // ("without claiming blocked hosted-web availability") while every
+            // other assertion here passes.
+            expect(document, `${documentPath} must not describe hosted-web availability as blocked`)
+                .not.toMatch(/\bblocked\b[^.]{0,80}?hosted-web|hosted-web[^.]{0,80}?\bblocked\b/iu);
             expect(document, `${documentPath} must state hosted-web availability as a per-host fact`)
                 .toMatch(/availability\s+is\s+(?:reported\s+)?per\s+host|per\s+host:|host-constructed frame adapter|each host reports/iu);
             expect(document, `${documentPath} must keep the typed unavailable outcome visible`)
