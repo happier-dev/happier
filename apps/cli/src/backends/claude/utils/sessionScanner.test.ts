@@ -1320,7 +1320,7 @@ describe('sessionScanner', () => {
     )
   }, 10_000)
 
-  it('classifies an unhooked diagnostic transcript once without replaying or following it', async () => {
+  it('emits an unhooked diagnostic transcript once without binding or following it', async () => {
     const diagnosticSessionId = '33333333-3333-4333-8333-333333333333'
     const diagnosticFile = join(projectDir, `${diagnosticSessionId}.jsonl`)
     const classifications: string[] = []
@@ -1363,7 +1363,7 @@ describe('sessionScanner', () => {
     await new Promise((resolve) => setTimeout(resolve, 250))
 
     expect(classifications).toEqual([diagnosticSessionId])
-    expect(collectedMessages).toHaveLength(0)
+    expect(collectedMessages.map((message) => message.uuid)).toEqual(['diagnostic-initial'])
   })
 
   it('drops rows whose sessionId differs from the bound session (hard per-row filter)', async () => {
