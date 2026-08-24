@@ -30,3 +30,4 @@ export {
   resolveHappierMinimumInteractiveTargetSize,
   useHappierNativeMinimumInteractiveTargetSize,
 } from './interactiveTarget.js';
+export { projectHappierUiEnvironment } from './projectEnvironment.js';

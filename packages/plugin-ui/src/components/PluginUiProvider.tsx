@@ -19,11 +19,8 @@ import {
   useHappierUiLocalization,
   useHappierUiTheme,
 } from '../environment/context.js';
-import type {
-  HappierUiAccessibility,
-  HappierUiEnvironment,
-  HappierUiLocalization,
-} from '../environment/types.js';
+import { projectHappierUiEnvironment } from '../environment/projectEnvironment.js';
+import type { HappierUiAccessibility } from '../environment/types.js';
 import { PluginUiDataProviderInternal } from '../data/context.js';
 import type { PluginUiDataClient } from '../data/types.js';
 import { PluginHostApiProviderInternal } from '../hostApi/context.js';
@@ -79,62 +76,6 @@ export type PluginUiProviderInternalProps = PluginUiProviderProps & Readonly<{
   presentationHost?: PluginUiPresentationHost;
   dataClient?: PluginUiDataClient;
 }>;
-
-/**
- * A SurfaceContext translation bundle is immutable for its snapshot. Reusing
- * its resolver keeps the localization capability stable when a host publishes
- * an unrelated fact such as safe-area insets, without memoizing the full
- * environment or making localization a second owner.
- */
-const translationResolvers = new WeakMap<Readonly<Record<string, string>>, PluginTranslate>();
-
-function resolveTranslationResolver(
-  translations: Readonly<Record<string, string>>,
-): PluginTranslate {
-  const existing = translationResolvers.get(translations);
-  if (existing) return existing;
-  const resolver: PluginTranslate = (key, fallback, values) => {
-    const translation = Object.prototype.hasOwnProperty.call(translations, key)
-      ? translations[key]
-      : undefined;
-    const resolved = typeof translation === 'string' ? translation : (fallback ?? '');
-    if (values === undefined) return resolved;
-    return resolved.replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, (placeholder, name: string) => (
-      Object.prototype.hasOwnProperty.call(values, name)
-        ? String(values[name])
-        : placeholder
-    ));
-  };
-  translationResolvers.set(translations, resolver);
-  return resolver;
-}
-
-function toLocalization(context: SurfaceContext): HappierUiLocalization {
-  return {
-    locale: context.locale,
-    direction: context.direction,
-    translate: resolveTranslationResolver(context.translations),
-  };
-}
-
-function toAccessibility(context: SurfaceContext): HappierUiAccessibility {
-  return {
-    textScale: context.textScale,
-    reducedMotion: context.reducedMotion,
-    screenReaderEnabled: context.screenReaderEnabled,
-    contrast: context.contrast,
-  };
-}
-
-function toEnvironment(context: SurfaceContext): HappierUiEnvironment {
-  return {
-    theme: context.theme,
-    localization: toLocalization(context),
-    accessibility: toAccessibility(context),
-    platform: { platform: context.platform, colorScheme: context.colorScheme },
-    insets: { safeArea: context.safeAreaInsets },
-  };
-}
 
 /**
  * The observed surface facts, keyed by the surface they belong to.
@@ -247,7 +188,7 @@ export function PluginUiProviderInternal({
 
   const effectiveContext = observed.context;
   const environment = useMemo(
-    () => (effectiveContext ? toEnvironment(effectiveContext) : null),
+    () => (effectiveContext ? projectHappierUiEnvironment(effectiveContext) : null),
     [effectiveContext],
   );
 
