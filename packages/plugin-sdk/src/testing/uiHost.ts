@@ -53,6 +53,7 @@ import {
     derivePluginUiTargetedSurfaceMountInstanceKeyV1,
     PluginUiTargetedContributionSurfaceV1Schema,
 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
+import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import { isPluginError, PluginError } from '../errors.js';
@@ -909,27 +910,6 @@ function sameReference(left: PluginReference, right: PluginReference, pluginId: 
     return key(left) === key(right);
 }
 
-function sameComposerReference(left: ComposerRefV1, right: ComposerRefV1): boolean {
-    switch (left.kind) {
-        case 'session':
-            return right.kind === 'session' && right.sessionId === left.sessionId;
-        case 'newSession':
-            return right.kind === 'newSession' && right.instanceId === left.instanceId;
-        case 'pendingMessage':
-            return right.kind === 'pendingMessage'
-                && right.sessionId === left.sessionId
-                && right.localId === left.localId;
-        case 'participantMessage':
-            return right.kind === 'participantMessage'
-                && right.sessionId === left.sessionId
-                && right.instanceId === left.instanceId;
-        case 'automationAuthoring':
-            return right.kind === 'automationAuthoring'
-                && right.sessionId === left.sessionId
-                && right.instanceId === left.instanceId;
-    }
-}
-
 function readComposerHostResourceRelease(value: void | Disposable): Disposable | undefined {
     if (value === undefined) return undefined;
     if (typeof value.dispose !== 'function') {
@@ -1706,14 +1686,14 @@ async function createPluginUiTestkitInternal<TSurface>(
             assertActive();
             const canonicalRef = ComposerRefV1Schema.parse(ref);
             const canonicalSnapshot = ComposerSnapshotV1Schema.parse(snapshot);
-            if (!sameComposerReference(canonicalRef, canonicalSnapshot.ref)) {
+            if (!composerRefsV1Equal(canonicalRef, canonicalSnapshot.ref)) {
                 throw fixtureError('invalid_payload', 'A Composer snapshot must match its observed Composer ref.');
             }
             for (const [subscriptionId, resource] of composerHostResources) {
                 if (
                     resource.method !== 'watchComposer'
                     || resource.controller.signal.aborted
-                    || !sameComposerReference(resource.ref, canonicalRef)
+                    || !composerRefsV1Equal(resource.ref, canonicalRef)
                 ) {
                     continue;
                 }

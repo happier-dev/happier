@@ -52,3 +52,23 @@ export const ComposerRefV1Schema = defineProtocolUnion([
   }, { policy: 'closed' }),
 ]);
 export type ComposerRefV1 = ReturnType<typeof ComposerRefV1Schema.parse>;
+
+/** Stable internal presentation/storage key for one exact Composer address. */
+export function composerRefV1Key(ref: ComposerRefV1): string {
+  switch (ref.kind) {
+    case 'session':
+      return JSON.stringify([ref.kind, ref.sessionId]);
+    case 'newSession':
+      return JSON.stringify([ref.kind, ref.instanceId]);
+    case 'pendingMessage':
+      return JSON.stringify([ref.kind, ref.sessionId, ref.localId]);
+    case 'participantMessage':
+    case 'automationAuthoring':
+      return JSON.stringify([ref.kind, ref.sessionId, ref.instanceId]);
+  }
+}
+
+/** The sole equality decision for exact Composer addresses. */
+export function composerRefsV1Equal(left: ComposerRefV1, right: ComposerRefV1): boolean {
+  return composerRefV1Key(left) === composerRefV1Key(right);
+}

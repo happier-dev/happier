@@ -17,7 +17,11 @@ import { PluginJsonValueV2Schema } from '../contributions/publicTypes.js';
 import { PLUGIN_UI_MAX_RENDERER_CHAIN_LENGTH } from '../contributions/ui/rendererChainBinding.js';
 import { PluginUiIconTokenV1Schema } from '../contributions/ui/tokens.js';
 import { PluginUiInstanceKeyV1Schema } from './semanticCommands.js';
-import { ComposerRefV1Schema, type ComposerRefV1 } from './composerRef.js';
+import {
+  ComposerRefV1Schema,
+  composerRefsV1Equal,
+  type ComposerRefV1,
+} from './composerRef.js';
 import { PluginUiImmutableGenerationIdV1Schema } from './targetedContributions.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -41,6 +45,7 @@ const ComposerRefV1ZodSchema = asProtocolZod(ComposerRefV1Schema);
  * this module keeps publishing it so every incumbent consumer is unchanged.
  */
 export { ComposerRefV1Schema } from './composerRef.js';
+export { composerRefV1Key, composerRefsV1Equal } from './composerRef.js';
 export type { ComposerRefV1 } from './composerRef.js';
 
 export const ComposerScopeKindV1Schema = z.enum([
@@ -334,24 +339,6 @@ export const ComposerSurfaceInputV1Schema = z.discriminatedUnion('role', [
 ]);
 export type ComposerSurfaceInputV1 = DeepReadonly<z.infer<typeof ComposerSurfaceInputV1Schema>>;
 
-function sameComposerRefV1(left: ComposerRefV1, right: ComposerRefV1): boolean {
-  switch (left.kind) {
-    case 'session':
-      return right.kind === 'session' && right.sessionId === left.sessionId;
-    case 'newSession':
-      return right.kind === 'newSession' && right.instanceId === left.instanceId;
-    case 'pendingMessage':
-      return right.kind === 'pendingMessage'
-        && right.sessionId === left.sessionId
-        && right.localId === left.localId;
-    case 'participantMessage':
-    case 'automationAuthoring':
-      return right.kind === left.kind
-        && right.sessionId === left.sessionId
-        && right.instanceId === left.instanceId;
-  }
-}
-
 function sameContributionIdentityV1(
   left: Readonly<{ pluginId: string; localId: string }>,
   right: Readonly<{ pluginId: string; localId: string }>,
@@ -382,7 +369,7 @@ export const ComposerSurfaceMountBindingV1Schema = z.object({
       message: 'Composer mount role must match its closed launch input.',
     });
   }
-  if (!sameComposerRefV1(mount.composer, mount.input.composer)) {
+  if (!composerRefsV1Equal(mount.composer, mount.input.composer)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['input', 'composer'],

@@ -11,6 +11,8 @@ import {
   ComposerDecorationSetV1Schema,
   ComposerOperationV1Schema,
   ComposerRefV1Schema,
+  composerRefV1Key,
+  composerRefsV1Equal,
   ComposerSnapshotV1Schema,
   ComposerSurfaceMountBindingV1Schema,
   ComposerSurfaceInputV1Schema,
@@ -85,6 +87,38 @@ function assertComposerAttachmentPublicValuesAreReadonly(
 void assertComposerAttachmentPublicValuesAreReadonly;
 
 describe('Composer protocol surface', () => {
+  it('owns exact Composer reference equality and presentation keys for every arm', () => {
+    const refs = [
+      { kind: 'session', sessionId: 'session-1' },
+      { kind: 'newSession', instanceId: 'instance-1' },
+      { kind: 'pendingMessage', sessionId: 'session-1', localId: 'pending-1' },
+      { kind: 'participantMessage', sessionId: 'session-1', instanceId: 'instance-1' },
+      { kind: 'automationAuthoring', sessionId: 'session-1', instanceId: 'instance-1' },
+    ].map((ref) => ComposerRefV1Schema.parse(ref));
+
+    for (const ref of refs) {
+      expect(composerRefsV1Equal(ref, { ...ref })).toBe(true);
+      expect(composerRefV1Key(ref)).toBe(composerRefV1Key({ ...ref }));
+    }
+    for (let left = 0; left < refs.length; left += 1) {
+      for (let right = 0; right < refs.length; right += 1) {
+        expect(composerRefsV1Equal(refs[left]!, refs[right]!)).toBe(left === right);
+        expect(composerRefV1Key(refs[left]!) === composerRefV1Key(refs[right]!)).toBe(left === right);
+      }
+    }
+
+    // Delimiters inside opaque ids cannot collapse two distinct addresses.
+    const delimiterA = ComposerRefV1Schema.parse({ kind: 'pendingMessage', sessionId: 'a', localId: 'b\u0000c' });
+    const delimiterB = ComposerRefV1Schema.parse({ kind: 'pendingMessage', sessionId: 'a\u0000b', localId: 'c' });
+    expect(composerRefsV1Equal(delimiterA, delimiterB)).toBe(false);
+    expect(composerRefV1Key(delimiterA)).not.toBe(composerRefV1Key(delimiterB));
+
+    const pendingA = ComposerRefV1Schema.parse({ kind: 'pendingMessage', sessionId: 'session-1', localId: 'pending-1' });
+    const pendingB = ComposerRefV1Schema.parse({ kind: 'pendingMessage', sessionId: 'session-1', localId: 'pending-2' });
+    expect(composerRefsV1Equal(pendingA, pendingB)).toBe(false);
+    expect(composerRefV1Key(pendingA)).not.toBe(composerRefV1Key(pendingB));
+  });
+
   it('owns the exact media type for a Resource-derived control-state document', () => {
     expect(COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1)
       .toBe('application/vnd.happier.composer-control-state+json;v=1');
