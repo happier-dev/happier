@@ -17,7 +17,10 @@ import {
   writeConnectedServiceStateSharingManifest,
 } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
 import { applyConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
-import type { ConnectedServiceSessionFileImportDetail } from '@/daemon/connectedServices/stateSharing/importConnectedServiceSessionFiles';
+import {
+  importConnectedServiceSessionFiles,
+  type ConnectedServiceSessionFileImportDetail,
+} from '@/daemon/connectedServices/stateSharing/importConnectedServiceSessionFiles';
 
 import { resolveConfiguredCodexSqliteHome } from './codexStateFileNames';
 
@@ -145,6 +148,24 @@ async function ensureNativeCodexSharedStateStore(sourceCodexHome: string): Promi
   }));
 }
 
+async function backfillPreviousCodexNonSessionState(params: Readonly<{
+  previousCodexHome?: string | null;
+  sourceCodexHome: string;
+}>): Promise<void> {
+  if (!params.previousCodexHome) return;
+  await importConnectedServiceSessionFiles({
+    roots: [{
+      sourceRoot: params.previousCodexHome,
+      destinationRoot: params.sourceCodexHome,
+      includeDirectory: (relativePath) =>
+        relativePath === 'memories' || relativePath.startsWith('memories/'),
+      includeFile: (relativePath) =>
+        relativePath.startsWith('memories/')
+        || (CODEX_SHARED_STATE_FILE_ENTRIES as readonly string[]).includes(relativePath),
+    }],
+  });
+}
+
 export async function syncCodexConnectedServiceHome(params: Readonly<{
   destinationCodexHome: string;
   previousCodexHome?: string | null;
@@ -173,6 +194,10 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
 
     await mkdir(params.destinationCodexHome, { recursive: true });
     if (settings.stateMode === 'shared') {
+      await backfillPreviousCodexNonSessionState({
+        previousCodexHome: params.previousCodexHome ?? null,
+        sourceCodexHome,
+      });
       await ensureNativeCodexSharedStateStore(sourceCodexHome);
     }
     const manifest = await readConnectedServiceStateSharingManifest(params.destinationCodexHome);

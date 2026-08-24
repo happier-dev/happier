@@ -199,6 +199,19 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
         join(materializedRoot, 'codex-home', relativeRolloutPath),
         '{"type":"session"}\n',
       );
+      await writeFile(
+        join(materializedRoot, 'codex-home', 'history.jsonl'),
+        '{"text":"previous prompt"}\n',
+      );
+      await writeFile(
+        join(materializedRoot, 'codex-home', 'session_index.jsonl'),
+        '{"id":"previous session"}\n',
+      );
+      await mkdir(join(materializedRoot, 'codex-home', 'memories'), { recursive: true });
+      await writeFile(
+        join(materializedRoot, 'codex-home', 'memories', 'raw_memories.md'),
+        '# Previous memory\n',
+      );
 
       const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
         agentId: 'codex',
@@ -223,6 +236,10 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
       expect(connectedServiceAuth).not.toBeNull();
       await expect(readFile(join(sourceCodexHome, relativeRolloutPath), 'utf8')).resolves.toBe('{"type":"session"}\n');
       await expect(readFile(join(connectedServiceAuth!.env.CODEX_HOME!, relativeRolloutPath), 'utf8')).resolves.toBe('{"type":"session"}\n');
+      await expect(readFile(join(sourceCodexHome, 'history.jsonl'), 'utf8')).resolves.toBe('{"text":"previous prompt"}\n');
+      await expect(readFile(join(sourceCodexHome, 'session_index.jsonl'), 'utf8')).resolves.toBe('{"id":"previous session"}\n');
+      await expect(readFile(join(sourceCodexHome, 'memories', 'raw_memories.md'), 'utf8')).resolves.toBe('# Previous memory\n');
+      await expect(readFile(join(connectedServiceAuth!.env.CODEX_HOME!, 'memories', 'raw_memories.md'), 'utf8')).resolves.toBe('# Previous memory\n');
     } finally {
       if (originalHome === undefined) delete process.env.HOME;
       else process.env.HOME = originalHome;

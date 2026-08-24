@@ -33,6 +33,35 @@ describe('importConnectedServiceSessionFiles', () => {
     await expect(readdir(join(destinationRoot, '2026', '05', '21'))).resolves.not.toContain('state.sqlite');
   });
 
+  it('does not traverse directory trees excluded by the root filter', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-session-import-directory-filter-'));
+    const sourceRoot = join(root, 'source');
+    const destinationRoot = join(root, 'destination');
+    await mkdir(join(sourceRoot, 'memories'), { recursive: true });
+    await mkdir(join(sourceRoot, 'sessions', '2026', '05', '21'), { recursive: true });
+    await writeFile(join(sourceRoot, 'history.jsonl'), '{"text":"previous prompt"}\n');
+    await writeFile(join(sourceRoot, 'memories', 'raw_memories.md'), '# Previous memory\n');
+    await writeFile(join(sourceRoot, 'sessions', '2026', '05', '21', 'rollout.jsonl'), '{"id":"session"}\n');
+
+    const result = await importConnectedServiceSessionFiles({
+      roots: [{
+        sourceRoot,
+        destinationRoot,
+        includeDirectory: (relativePath) =>
+          relativePath === 'memories' || relativePath.startsWith('memories/'),
+      }],
+    });
+
+    expect(result).toMatchObject({
+      imported: 2,
+      skippedIdentical: 0,
+      conflicted: 0,
+    });
+    await expect(readFile(join(destinationRoot, 'history.jsonl'), 'utf8')).resolves.toBe('{"text":"previous prompt"}\n');
+    await expect(readFile(join(destinationRoot, 'memories', 'raw_memories.md'), 'utf8')).resolves.toBe('# Previous memory\n');
+    await expect(readdir(destinationRoot)).resolves.not.toContain('sessions');
+  });
+
   it('preserves conflicting destination files and is idempotent for existing imported conflicts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-session-import-conflict-'));
     const sourceRoot = join(root, 'source');
