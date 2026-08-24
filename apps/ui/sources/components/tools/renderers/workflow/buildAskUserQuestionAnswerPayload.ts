@@ -75,8 +75,14 @@ export function buildAskUserQuestionAnswerPayload(params: Readonly<{
             : null;
         const key = question.responseKey ?? exactQuestion ?? exactHeader ?? '';
         const typed = params.freeformAnswers.get(questionIndex);
-        if (question.freeform?.allowEmpty === true || (typeof typed === 'string' && typed.trim().length > 0)) {
-            rawAnswers[key] = [typed ?? ''];
+        if (
+            typeof typed === 'string'
+            && (
+                typed.trim().length > 0
+                || (typed.length === 0 && question.freeform?.allowEmpty === true)
+            )
+        ) {
+            rawAnswers[key] = [typed];
             continue;
         }
         const selected = params.selections.get(questionIndex);
