@@ -552,26 +552,81 @@ export function projectCapabilityMatrix({
 
 const PUBLIC_SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
 
-function escapeForRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function containsQuotedLiteral(source, value) {
-  return source.includes(`'${value}'`) || source.includes(`"${value}"`);
-}
-
-function containsIdentifier(source, value) {
-  return new RegExp(`(^|[^A-Za-z0-9_$])${escapeForRegExp(value)}([^A-Za-z0-9_$]|$)`).test(source);
-}
-
-function containsNamedImportedCall(source, moduleSpecifier, importedName) {
-  const sourceFile = ts.createSourceFile(
+function sourceAst(source) {
+  return ts.createSourceFile(
     'capability-matrix-proving-consumer.ts',
     source,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,
   );
+}
+
+function astContains(file, predicate) {
+  let found = false;
+  const visit = (node) => {
+    if (found) return;
+    if (predicate(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+function hasModuleReference(file, specifier) {
+  return astContains(file, (node) => (
+    (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+    && node.moduleSpecifier
+    && ts.isStringLiteral(node.moduleSpecifier)
+    && node.moduleSpecifier.text === specifier
+  ));
+}
+
+function hasPropertyAccess(file, owner, property) {
+  return astContains(file, (node) => (
+    ts.isPropertyAccessExpression(node)
+    && node.name.text === property
+    && ts.isPropertyAccessExpression(node.expression)
+    && node.expression.name.text === owner
+  ));
+}
+
+function hasPropertyBelow(node, property) {
+  return astContains(node, (child) => (
+    (ts.isPropertyAssignment(child) || ts.isShorthandPropertyAssignment(child))
+    && propertyNameText(child.name) === property
+  ));
+}
+
+function hasHostAccessDeclaration(file, capability) {
+  return astContains(file, (node) => {
+    if (!ts.isPropertyAssignment(node) || propertyNameText(node.name) !== 'hostAccess') return false;
+    return astContains(node.initializer, (child) => ts.isStringLiteral(child) && child.text === capability);
+  });
+}
+
+function hasDefinePluginContribution(file, authorKey, leaf) {
+  const declaresAuthorKey = astContains(file, (node) => {
+    if (
+      !ts.isCallExpression(node)
+      || !ts.isIdentifier(node.expression)
+      || node.expression.text !== 'definePlugin'
+      || node.arguments.length === 0
+    ) return false;
+    const input = unwrapExpression(node.arguments[0]);
+    if (!input || !ts.isObjectLiteralExpression(input)) return false;
+    const author = objectProperty(input, authorKey);
+    if (!author) return false;
+    return author !== null;
+  });
+  return declaresAuthorKey && (leaf === null || hasPropertyBelow(file, leaf));
+}
+
+function containsNamedImportedCall(source, moduleSpecifier, importedName) {
+  const sourceFile = sourceAst(source);
   const importedLocalNames = new Set();
   for (const statement of sourceFile.statements) {
     if (
@@ -617,11 +672,12 @@ function containsNamedImportedCall(source, moduleSpecifier, importedName) {
  */
 export function capabilityMatrixProvingConsumerExerciseFailure(row, source) {
   if (typeof source !== 'string') return 'could not be read as source text';
+  const file = sourceAst(source);
   if (typeof row?.specifier === 'string') {
     const specifier = row.specifier === '.'
       ? PUBLIC_SDK_PACKAGE_NAME
       : `${PUBLIC_SDK_PACKAGE_NAME}/${row.specifier.replace(/^\.\//, '')}`;
-    return containsQuotedLiteral(source, specifier)
+    return hasModuleReference(file, specifier)
       ? null
       : `does not import ${specifier}`;
   }
@@ -636,12 +692,12 @@ export function capabilityMatrixProvingConsumerExerciseFailure(row, source) {
     ) {
       return null;
     }
-    return source.includes(`services.${row.serviceId}`)
+    return hasPropertyAccess(file, 'services', row.serviceId)
       ? null
       : `does not invoke services.${row.serviceId}`;
   }
   if (typeof row?.capability === 'string') {
-    return containsQuotedLiteral(source, row.capability)
+    return hasHostAccessDeclaration(file, row.capability)
       ? null
       : `does not declare the '${row.capability}' hostAccess capability`;
   }
@@ -650,14 +706,11 @@ export function capabilityMatrixProvingConsumerExerciseFailure(row, source) {
     if (typeof authorKey !== 'string' || authorKey === '') {
       return 'has no definePlugin author key to prove';
     }
-    if (!containsIdentifier(source, authorKey)) {
-      return `does not declare the '${authorKey}' definePlugin contribution key`;
-    }
     const leaf = row.manifestFamily.includes('.')
       ? row.manifestFamily.slice(row.manifestFamily.lastIndexOf('.') + 1)
       : null;
-    if (leaf && !containsIdentifier(source, leaf)) {
-      return `declares '${authorKey}' but not '${row.manifestFamily}'`;
+    if (!hasDefinePluginContribution(file, authorKey, leaf)) {
+      return `does not declare the '${authorKey}' definePlugin contribution key`;
     }
     return null;
   }

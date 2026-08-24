@@ -66,6 +66,32 @@ test('rejects storage guard text that is not a named SDK import and call', () =>
   }
 });
 
+test('rejects comments and unrelated literals as capability exercise evidence', () => {
+  const cases = [
+    [{ specifier: './events' }, "// import '@happier-dev/plugin-sdk/events';"],
+    [{ serviceId: 'events' }, "const note = 'context.services.events';"],
+    [{ capability: 'network.client' }, "const note = 'network.client';"],
+    [{ manifestFamily: 'actions', definePluginAuthorKey: 'actions' }, "// definePlugin({ actions: [] });"],
+  ];
+
+  for (const [row, source] of cases) {
+    assert.notEqual(capabilityMatrixProvingConsumerExerciseFailure(row, source), null);
+  }
+});
+
+test('accepts syntax-owned imports, service access, HostAccess, and definePlugin declarations', () => {
+  const cases = [
+    [{ specifier: './events' }, "import type { EventsService } from '@happier-dev/plugin-sdk/events';"],
+    [{ serviceId: 'events' }, 'export const run = (context) => context.services.events.plugin.emit(\'ready\');'],
+    [{ capability: 'network.client' }, "definePlugin({ hostAccess: { required: [{ capability: 'network.client' }] } });"],
+    [{ manifestFamily: 'mcp.discoverySources', definePluginAuthorKey: 'mcp' }, 'definePlugin({ mcp: { discoverySources: {} } });'],
+  ];
+
+  for (const [row, source] of cases) {
+    assert.equal(capabilityMatrixProvingConsumerExerciseFailure(row, source), null);
+  }
+});
+
 const CATALOG = Object.freeze([
   Object.freeze({
     manifestKey: 'actions',
@@ -252,14 +278,14 @@ test('declares the public Webhooks projection with its maintained SCM GitHub con
   });
 });
 
-test('declares protocol and contribution authoring with their maintained Channels manifest consumer', () => {
+test('declares protocol and contribution authoring with their maintained positive consumers', () => {
   assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./protocol'], {
     availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugins/channels/src/manifest.ts',
+    provingConsumer: 'packages/plugins/channels/src/bindingTransition.ts',
   });
   assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./contributions'], {
     availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugins/channels/src/manifest.ts',
+    provingConsumer: 'packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/public-protocol.ts',
   });
 });
 
@@ -306,7 +332,7 @@ test('declares transcript activities with the maintained Channels resource autho
   });
 });
 
-test('derives operation-only targeted contribution availability through the current catalog', () => {
+test('derives operation-only targeted contribution availability through the maintained PostHog manifest', () => {
   const targetedContributionCatalogEntry = PLUGIN_CONTRIBUTION_CATALOG_V2.find(
     (entry) => entry.manifestKey === 'targetedPluginContributions',
   );
@@ -325,7 +351,7 @@ test('derives operation-only targeted contribution availability through the curr
     specialistOwner: 'packages/protocol/src/plugins/contributions/catalog.ts#targetedPluginContributions',
     predecessorRemoval: `catalog-disposition:${targetedContributionCatalogEntry.disposition}`,
     availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugins/channel-discord/src/manifest.ts',
+    provingConsumer: 'packages/plugins/posthog/src/manifest.ts',
   });
 });
 
@@ -366,10 +392,10 @@ test('names the external Composer dogfood author as the maintained composer-cont
   });
 });
 
-test('declares network clients with their maintained Discord WebSocket runtime consumer', () => {
+test('declares network clients with their maintained out-of-tree socket provider consumer', () => {
   assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess['network.client'], {
     availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugins/channel-discord/src/discordGatewayWorker.ts',
+    provingConsumer: 'packages/tests/fixtures/plugin-platform/out-of-tree-channel-socket-provider/src/index.mjs',
   });
 });
 
@@ -753,7 +779,7 @@ test('rejects an available capability whose declared consumer never exercises th
   );
 });
 
-test('rejects an available manifest family whose declared consumer declares only its parent author key', async () => {
+test('rejects an available manifest family whose declared consumer has no matching definePlugin author key', async () => {
   const packageRoot = resolve(import.meta.dirname, '..');
   const apiInventory = await readCurrentApiInventory(packageRoot);
   await assert.rejects(
@@ -771,7 +797,7 @@ test('rejects an available manifest family whose declared consumer declares only
         }),
       }),
     }),
-    /manifestFamilies\.mcp\.discoverySources provingConsumer .* declares 'mcp' but not 'mcp\.discoverySources'/u,
+    /manifestFamilies\.mcp\.discoverySources provingConsumer .* does not declare the 'mcp' definePlugin contribution key/u,
   );
 });
 
@@ -803,15 +829,18 @@ test('selects each distinct available proving-consumer source path for package s
   assert.equal(Object.isFrozen(paths), true);
 });
 
-test('resolves current available proving-consumer source leaves for package staging', async () => {
+test('excludes first-party Preview examples from package staging when external availability is deferred', async () => {
   const packageRoot = resolve(import.meta.dirname, '..');
   const paths = await resolveAvailableCapabilityMatrixProvingConsumerSourcePaths({ packageRoot });
 
   assert.equal(paths.includes('packages/plugins/gemini/src/connectedAccounts/runtime.ts'), true);
   assert.equal(paths.includes('packages/plugins/channels/src/manifest.ts'), true);
   assert.equal(paths.includes('packages/plugins/channels/src/ingress.ts'), true);
-  assert.equal(paths.includes('packages/plugins/channel-discord/src/manifest.ts'), true);
-  assert.equal(paths.includes('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'), true);
+  assert.equal(paths.includes('packages/plugins/channels/src/bindingTransition.ts'), true);
+  assert.equal(paths.includes('packages/plugins/posthog/src/manifest.ts'), true);
+  assert.equal(paths.includes('packages/tests/fixtures/plugin-platform/out-of-tree-channel-socket-provider/src/index.mjs'), true);
+  assert.equal(paths.includes('packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/public-protocol.ts'), true);
+  assert.equal(paths.includes('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'), false);
   assert.equal(new Set(paths).size, paths.length);
   assert.deepEqual(paths, [...paths].sort());
 });

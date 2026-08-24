@@ -7,6 +7,28 @@ import { CAPABILITY_MATRIX_DECLARATIONS_V1 } from './capabilityMatrixMetadata.mj
 
 const EXTERNAL_AUTHOR_PROOF = 'packages/plugin-sdk/examples/action-contract-producer/src/index.ts';
 
+function assertDeferredExternalProof(declaration) {
+  assert.equal(declaration.availabilityDisposition, 'deferred');
+  assert.equal(declaration.provingConsumer, 'no current positive consumer');
+  assert.match(declaration.unblockCondition, /maintained operation-only external plugin/u);
+}
+
+test('does not advertise the first-party Triage preview pair as external capability proof', () => {
+  const declarations = [
+    ...['browserTargets', 'browserActions', 'notifications', 'notificationChannels', 'requestInterceptors']
+      .map((family) => CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]),
+    CAPABILITY_MATRIX_DECLARATIONS_V1.services.secrets,
+    CAPABILITY_MATRIX_DECLARATIONS_V1.services.notifications,
+    CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./browser'],
+    CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./notifications'],
+  ];
+
+  for (const declaration of declarations) {
+    assertDeferredExternalProof(declaration);
+    assert.notEqual(declaration.provingConsumer, EXTERNAL_AUTHOR_PROOF);
+  }
+});
+
 test('HostAccess declarations name the terminal session path and deferred declaration sources', () => {
   assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.terminal, {
     producer: 'apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners.ts',
@@ -41,10 +63,7 @@ test('HostAccess declarations name the terminal session path and deferred declar
 
 test('records the public request-interception pair without promoting unrelated HostAccess capabilities', () => {
   for (const family of ['browserTargets', 'browserActions', 'requestInterceptors']) {
-    assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family], {
-      availabilityDisposition: 'available',
-      provingConsumer: EXTERNAL_AUTHOR_PROOF,
-    });
+    assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]);
   }
   assert.equal(
     Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess, 'network.intercept'),
@@ -60,21 +79,18 @@ test('records the public request-interception pair without promoting unrelated H
   }
 });
 
-test('proves public browser descriptors and request policy through the external author example', async () => {
+test('retains public browser descriptor source coverage without claiming external lifecycle proof', async () => {
   const consumerPath = EXTERNAL_AUTHOR_PROOF;
   const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
 
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./browser'], {
-    availabilityDisposition: 'available',
-    provingConsumer: consumerPath,
-  });
+  assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./browser']);
   assert.equal(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess.browser.availabilityDisposition, 'deferred');
   assert.equal(
     Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.hostAccess, 'network.intercept'),
     false,
   );
   for (const family of ['browserTargets', 'browserActions', 'requestInterceptors']) {
-    assert.equal(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family].provingConsumer, consumerPath);
+    assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]);
   }
 
   const [browserEntrypoint, consumer] = await Promise.all([
@@ -114,17 +130,13 @@ test('keeps external Commands and Tools deferred until packed lifecycle proof', 
   assert.match(consumer, /tools:\s*\{/u);
 });
 
-test('proves notification category, channel, and service authoring through the external author example', async () => {
+test('retains notification source coverage without claiming external lifecycle proof', async () => {
   const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
-  const availableNotification = {
-    availabilityDisposition: 'available',
-    provingConsumer: EXTERNAL_AUTHOR_PROOF,
-  };
   for (const family of ['notifications', 'notificationChannels']) {
-    assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family], availableNotification);
+    assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies[family]);
   }
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.services.notifications, availableNotification);
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./notifications'], availableNotification);
+  assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.services.notifications);
+  assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths['./notifications']);
 
   const consumer = await readFile(resolve(repoRoot, EXTERNAL_AUTHOR_PROOF), 'utf8');
   assert.match(consumer, /from '@happier-dev\/plugin-sdk\/notifications'/u);
@@ -134,12 +146,9 @@ test('proves notification category, channel, and service authoring through the e
   assert.match(consumer, /context\.services\.notifications\.send\(/u);
 });
 
-test('proves the SecretsService through the external author example rotation flow', async () => {
+test('retains SecretsService source coverage without claiming external lifecycle proof', async () => {
   const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
-  assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.services.secrets, {
-    availabilityDisposition: 'available',
-    provingConsumer: EXTERNAL_AUTHOR_PROOF,
-  });
+  assertDeferredExternalProof(CAPABILITY_MATRIX_DECLARATIONS_V1.services.secrets);
 
   const consumer = await readFile(resolve(repoRoot, EXTERNAL_AUTHOR_PROOF), 'utf8');
   assert.match(consumer, /secrets:\s*\[\{\s*id:\s*DOCUMENT_REVIEW_WEBHOOK_TOKEN\s*\}\]/u);

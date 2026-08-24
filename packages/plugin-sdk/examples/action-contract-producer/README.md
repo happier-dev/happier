@@ -1,4 +1,4 @@
-# Cross-plugin Contribution Target
+# First-party Preview Cross-plugin Contribution Target
 
 This copyable plugin owns the `document-reviewers` contribution point. It
 imports the versioned `triage-sources` feature protocol, which declares the
@@ -6,6 +6,10 @@ source descriptor, required `review` Action role, and required detail surface.
 The paired contributor imports that same feature-owned value. Neither plugin
 recreates the protocol or imports the other plugin's implementation. The target
 has no contributor registry, runtime callback, or Action lookup.
+
+This pair is a first-party Preview reference because the Triage contract includes
+descriptor and embedded-surface roles. The externally supported author product
+remains operation-only; this example does not broaden that support promise.
 
 It also shows the public browser and request-policy declarations: a browser
 target, a browser Action bound to this plugin's canonical Action, and a

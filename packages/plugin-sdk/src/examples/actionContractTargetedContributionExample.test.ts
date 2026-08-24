@@ -104,8 +104,8 @@ describe('cross-plugin contribution public authoring example', () => {
         expect(JSON.parse(readFileSync(authoringSupportMetadataPath, 'utf8'))).toEqual({
             purpose: 'Example and fixture support guidance only; this does not define SDK capability availability.',
             assets: {
-                'examples/action-contract-producer': 'external-author-supported',
-                'examples/action-contract-consumer': 'external-author-supported',
+                'examples/action-contract-producer': 'first-party-preview',
+                'examples/action-contract-consumer': 'first-party-preview',
                 'examples/triage-source-target': 'first-party-preview',
                 'examples/triage-source-contributor': 'first-party-preview',
                 'fixtures/authoring-inference': 'SDK-inference-fixture',
