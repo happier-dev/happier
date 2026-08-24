@@ -169,6 +169,7 @@ function mockGithubAuthFeatures(action: 'provision' | 'login', mode: 'keyed' | '
         status: 'ready',
         features: {
             capabilities: {
+                server: {},
                 oauth: {
                     providers: {
                         github: { configured: true },

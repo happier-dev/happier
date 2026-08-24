@@ -65,7 +65,7 @@ function createFillHarness(params: Readonly<{
     const listContentHeightRef = { current: params.initialContentHeightPx };
     const listLayoutHeightRef = { current: params.layoutHeightPx };
     const isScrollable = vi.fn(() => listContentHeightRef.current > listLayoutHeightRef.current + 16);
-    const loadOlder = vi.fn(async () => {
+    const loadOlder = vi.fn<EntryHostDeps['loadOlder']>(async () => {
         nowMs += params.loadDurationMs;
         const growth = params.contentGrowthPerLoadPx[loadOlder.mock.calls.length - 1];
         if (growth === undefined) {

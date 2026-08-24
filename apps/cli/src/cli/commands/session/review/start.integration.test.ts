@@ -41,7 +41,7 @@ describe('happier session review start (integration)', () => {
 
     const { encodeBase64: encodeBase64Session, encryptWithDataKey } = await import('@/api/encryption');
     const metadataCiphertext = encodeBase64Session(
-      encryptWithDataKey({ path: '/tmp', flavor: 'claude' }, dek),
+      encryptWithDataKey({ path: '/tmp', flavor: 'claude', machineId: 'machine-integration-1' }, dek),
       'base64',
     );
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
@@ -58,8 +58,8 @@ describe('happier session review start (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
-              activeAt: 0,
+              active: true,
+              activeAt: 2,
               metadata: metadataCiphertext,
               metadataVersion: 0,
               agentState: null,
@@ -67,6 +67,7 @@ describe('happier session review start (integration)', () => {
               pendingCount: 0,
               pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
+              machineId: 'machine-integration-1',
               share: null,
             },
           }),
@@ -175,6 +176,8 @@ describe('happier session review start (integration)', () => {
       expect(parsed.data?.results?.length).toBe(2);
       expect(parsed.data?.results?.[0]?.key).toBe('claude');
       expect(parsed.data?.results?.[1]?.key).toBe('codex');
+      expect(parsed.data?.results?.every((result: { ok?: boolean }) => result.ok === true)).toBe(true);
+      expect(decryptedActionCalls).toHaveLength(2);
     } finally {
       output.restore();
     }
@@ -210,6 +213,7 @@ describe('happier session review start (integration)', () => {
 
       const parsed = output.json();
       expect(parsed.ok).toBe(true);
+      expect(parsed.data?.results?.[0]?.ok).toBe(true);
       expect(decryptedActionCalls).toHaveLength(1);
       expect(decryptedActionCalls[0]?.intentInput?.instructions).toBe('');
     } finally {

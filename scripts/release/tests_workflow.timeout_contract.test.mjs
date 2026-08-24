@@ -25,6 +25,8 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
     /name:\s*UI E2E \(Playwright\)[\s\S]*?timeout-minutes:\s*75\b/,
     'UI E2E job should reserve enough time to finish the slow multi-session Playwright scenarios on GitHub-hosted runners',
   );
+  assert.match(uiE2eJob, /shard:\s*\[1, 2, 3, 4, 5, 6, 7, 8, 9\]/);
+  assert.match(uiE2eJob, /--shard=\$\{\{ matrix\.shard \}\}\/9/);
 
   assert.match(
     uiJob,
@@ -55,6 +57,33 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
     /name:\s*Installer Smoke \(Windows\)[\s\S]*?timeout-minutes:\s*45\b/,
     'Windows installer smoke should reserve enough time to finish published-channel validation on GitHub-hosted runners',
   );
+});
+
+test('UI tests collect protocol, unit, and integration outcomes before failing the job', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
+  const uiJob = extractJobBlock(raw, 'ui');
+
+  for (const id of ['protocol-tests', 'unit-tests', 'integration-tests']) {
+    assert.match(uiJob, new RegExp(`id:\\s*${id}[\\s\\S]*?continue-on-error:\\s*true`));
+  }
+  assert.match(uiJob, /name:\s*Require all UI test lanes[\s\S]*?if:\s*always\(\)/);
+  assert.match(uiJob, /steps\.protocol-tests\.outcome/);
+  assert.match(uiJob, /steps\.unit-tests\.outcome/);
+  assert.match(uiJob, /steps\.integration-tests\.outcome/);
+});
+
+test('combined package jobs collect unit and integration outcomes before failing', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
+
+  for (const jobName of ['server', 'cli', 'stack']) {
+    const job = extractJobBlock(raw, jobName);
+    for (const id of ['unit-tests', 'integration-tests']) {
+      assert.match(job, new RegExp(`id:\\s*${id}[\\s\\S]*?continue-on-error:\\s*true`));
+    }
+    assert.match(job, new RegExp(`name:\\s*Require all ${jobName} test lanes[\\s\\S]*?if:\\s*always\\(\\)`));
+    assert.match(job, /steps\.unit-tests\.outcome/);
+    assert.match(job, /steps\.integration-tests\.outcome/);
+  }
 });
 
 test('typecheck enforces clean governance checks without running the known-red migration report', async () => {

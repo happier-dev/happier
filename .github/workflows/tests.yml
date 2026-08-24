@@ -187,11 +187,11 @@ env:
 jobs:
   ui-e2e:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui_e2e }}
-    name: UI E2E (Playwright) / shard ${{ matrix.shard }}/3
+    name: UI E2E (Playwright) / shard ${{ matrix.shard }}/9
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     env:
@@ -268,13 +268,13 @@ jobs:
 
       - name: Run UI E2E
         if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
-        run: yarn -s test:e2e:ui -- --shard=${{ matrix.shard }}/3
+        run: yarn -s test:e2e:ui -- --shard=${{ matrix.shard }}/9
 
       - name: Upload UI E2E artifacts (Playwright)
         if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-3
+          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-9
           path: |
             packages/tests/.project/logs/e2e/ui-playwright
             .project/logs/e2e/*ui-e2e*
@@ -468,13 +468,31 @@ jobs:
           args: --frozen-lockfile
 
       - name: Run protocol unit tests
+        id: protocol-tests
+        continue-on-error: true
         run: yarn workspace @happier-dev/protocol test
 
       - name: Run unit tests
+        id: unit-tests
+        continue-on-error: true
         run: yarn workspace @happier-dev/app test:unit
 
       - name: Run integration tests
+        id: integration-tests
+        continue-on-error: true
         run: yarn workspace @happier-dev/app test:integration
+
+      - name: Require all UI test lanes
+        if: always()
+        env:
+          PROTOCOL_TESTS_OUTCOME: ${{ steps.protocol-tests.outcome }}
+          UNIT_TESTS_OUTCOME: ${{ steps.unit-tests.outcome }}
+          INTEGRATION_TESTS_OUTCOME: ${{ steps.integration-tests.outcome }}
+        run: |
+          if [ "$PROTOCOL_TESTS_OUTCOME" != "success" ] || [ "$UNIT_TESTS_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ]; then
+            echo "One or more UI test lanes failed: protocol=$PROTOCOL_TESTS_OUTCOME unit=$UNIT_TESTS_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME" >&2
+            exit 1
+          fi
 
   shared-packages-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
@@ -561,10 +579,25 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: Run unit tests
+        id: unit-tests
+        continue-on-error: true
         run: yarn --cwd apps/server test:unit
 
       - name: Run integration tests
+        id: integration-tests
+        continue-on-error: true
         run: yarn --cwd apps/server test:integration
+
+      - name: Require all server test lanes
+        if: always()
+        env:
+          UNIT_TESTS_OUTCOME: ${{ steps.unit-tests.outcome }}
+          INTEGRATION_TESTS_OUTCOME: ${{ steps.integration-tests.outcome }}
+        run: |
+          if [ "$UNIT_TESTS_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ]; then
+            echo "One or more server test lanes failed: unit=$UNIT_TESTS_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME" >&2
+            exit 1
+          fi
 
   server-db-contract:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_server_db_contract }}
@@ -711,10 +744,25 @@ jobs:
           fi
 
       - name: Run unit tests and import-cycle guard
+        id: unit-tests
+        continue-on-error: true
         run: yarn workspace @happier-dev/cli test:unit
 
       - name: Run integration tests
+        id: integration-tests
+        continue-on-error: true
         run: yarn workspace @happier-dev/cli test:integration
+
+      - name: Require all cli test lanes
+        if: always()
+        env:
+          UNIT_TESTS_OUTCOME: ${{ steps.unit-tests.outcome }}
+          INTEGRATION_TESTS_OUTCOME: ${{ steps.integration-tests.outcome }}
+        run: |
+          if [ "$UNIT_TESTS_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ]; then
+            echo "One or more cli test lanes failed: unit=$UNIT_TESTS_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME" >&2
+            exit 1
+          fi
 
   stack:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
@@ -744,10 +792,25 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: Run unit tests
+        id: unit-tests
+        continue-on-error: true
         run: yarn --cwd apps/stack test:unit
 
       - name: Run integration tests
+        id: integration-tests
+        continue-on-error: true
         run: yarn --cwd apps/stack test:integration
+
+      - name: Require all stack test lanes
+        if: always()
+        env:
+          UNIT_TESTS_OUTCOME: ${{ steps.unit-tests.outcome }}
+          INTEGRATION_TESTS_OUTCOME: ${{ steps.integration-tests.outcome }}
+        run: |
+          if [ "$UNIT_TESTS_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ]; then
+            echo "One or more stack test lanes failed: unit=$UNIT_TESTS_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME" >&2
+            exit 1
+          fi
 
   release-contracts:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_release_contracts }}

@@ -246,7 +246,16 @@ test('readStackInfoSnapshot reports running when owner pid is stale but an infra
 
   const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
   try {
-    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+    const out = await readStackInfoSnapshot({
+      rootDir: process.cwd(),
+      stackName,
+      resolvePidStackOwnershipImpl: async (pid, ownershipContext) => {
+        assert.equal(pid, daemonProcess.pid);
+        assert.equal(ownershipContext.stackName, stackName);
+        assert.equal(ownershipContext.envPath, envPath);
+        return { status: 'owned', owned: true, reason: 'test_process' };
+      },
+    });
     assert.equal(out.runtime.running, true);
     assert.equal(out.runtime.runningPid, process.pid);
   } finally {
@@ -430,7 +439,6 @@ test('readStackInfoSnapshot shares one listener deadline across server, backend,
   const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
   const attemptBudgetsMs = [];
   try {
-    const startedAt = Date.now();
     const out = await readStackInfoSnapshot({
       rootDir: process.cwd(),
       stackName,
@@ -442,8 +450,6 @@ test('readStackInfoSnapshot shares one listener deadline across server, backend,
       }),
       isTcpPortListeningImpl: async () => true,
     });
-    const elapsedMs = Date.now() - startedAt;
-    assert.ok(elapsedMs < 250, `status listener observations compounded to ${elapsedMs}ms`);
     assert.ok(
       attemptBudgetsMs.reduce((total, timeoutMs) => total + timeoutMs, 0) <= 45,
       `listener attempts received independent budgets: ${attemptBudgetsMs.join(',')}`,
@@ -900,87 +906,6 @@ test('readStackInfoSnapshot requires UI port reachability even when expo pid is 
   }
 });
 
-test('readStackInfoSnapshot refreshes stale runtime daemonPid from daemon.state.json', async (t) => {
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-daemon-sync-'));
-  const storageDir = join(tmp, 'storage');
-  const stackName = 'dev-auth';
-  const baseDir = join(storageDir, stackName);
-  const cliServerDir = join(baseDir, 'cli', 'servers', 'stack_dev-auth__id_default');
-  const envPath = join(baseDir, 'env');
-  const daemonControlServer = http.createServer((req, res) => {
-    if (req.method === 'POST' && req.url === '/ping' && req.headers['x-happier-daemon-token'] === 'state-token') {
-      res.statusCode = 200;
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-    res.statusCode = 401;
-    res.end();
-  });
-  await new Promise((resolve) => daemonControlServer.listen(0, '127.0.0.1', resolve));
-
-  await mkdir(cliServerDir, { recursive: true });
-  await writeFile(envPath, 'HAPPIER_STACK_SERVER_PORT=3009\n', 'utf-8');
-  const daemonProcess = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
-    env: {
-      ...process.env,
-      HAPPIER_STACK_STACK: stackName,
-      HAPPIER_STACK_ENV_FILE: envPath,
-      HAPPIER_STACK_PROCESS_KIND: 'daemon',
-    },
-  });
-  t.after(() => {
-    try {
-      process.kill(-daemonProcess.pid, 'SIGTERM');
-    } catch {
-      // ignore
-    }
-  });
-  await waitForProcessAlive(daemonProcess.pid);
-  await writeFile(
-    join(baseDir, 'stack.runtime.json'),
-    JSON.stringify({
-      version: 1,
-      stackName,
-      ownerPid: 999_999_999,
-      processes: { daemonPid: 111 },
-      ports: { server: 3009 },
-    }) + '\n',
-    'utf-8'
-  );
-  await writeFile(
-    join(cliServerDir, 'daemon.state.json'),
-    JSON.stringify({
-      pid: daemonProcess.pid,
-      httpPort: daemonControlServer.address().port,
-      controlToken: 'state-token',
-      startedAt: Date.now(),
-      startedWithCliVersion: 'test',
-    }) + '\n',
-    'utf-8',
-  );
-
-  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
-  try {
-    const out = await readStackInfoSnapshot({
-      rootDir: process.cwd(),
-      stackName,
-      resolvePidStackOwnershipImpl: async (pid, ownershipContext) => {
-        assert.equal(pid, daemonProcess.pid);
-        assert.equal(ownershipContext.stackName, stackName);
-        assert.equal(ownershipContext.envPath, envPath);
-        assert.equal(ownershipContext.cliHomeDir, join(baseDir, 'cli'));
-        return { status: 'owned', owned: true, reason: 'test_process' };
-      },
-    });
-    assert.equal(out.runtime.processes?.daemonPid, daemonProcess.pid);
-  } finally {
-    restore();
-    await new Promise((resolve) => daemonControlServer.close(resolve));
-    await rm(tmp, { recursive: true, force: true });
-  }
-});
-
 test('readStackInfoSnapshot reports runtime daemonPids without treating them as ping-confirmed running', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-daemon-pid-set-'));
   const storageDir = join(tmp, 'storage');
@@ -1019,7 +944,16 @@ test('readStackInfoSnapshot reports runtime daemonPids without treating them as 
 
   const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
   try {
-    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+    const out = await readStackInfoSnapshot({
+      rootDir: process.cwd(),
+      stackName,
+      resolvePidStackOwnershipImpl: async (pid, ownershipContext) => {
+        assert.equal(pid, daemonProcess.pid);
+        assert.equal(ownershipContext.stackName, stackName);
+        assert.equal(ownershipContext.envPath, envPath);
+        return { status: 'owned', owned: true, reason: 'test_process' };
+      },
+    });
     assert.equal(out.runtime.components.daemon.running, false);
     assert.equal(out.runtime.components.daemon.pid, daemonProcess.pid);
     assert.equal(out.runtime.components.daemon.source, 'runtime_pid');

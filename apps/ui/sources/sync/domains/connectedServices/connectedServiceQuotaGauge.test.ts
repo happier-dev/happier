@@ -270,7 +270,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         });
     });
 
-    it('does not summarize stale aggregate recovery credits when detailed credits are all unusable', () => {
+    it('uses the authoritative aggregate recovery summary when detailed credits are incomplete', () => {
         const viewModel = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: {
                 ...snapshot([
@@ -291,7 +291,11 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
             formatter,
         });
 
-        expect(viewModel?.recoveryCreditSummary).toBeNull();
+        expect(viewModel?.recoveryCreditSummary).toEqual({
+            availableCount: 2,
+            nextExpiresAtMs: 12_000,
+            providerCreditId: null,
+        });
     });
 
     it('returns null when no reliable quota meter exists', () => {

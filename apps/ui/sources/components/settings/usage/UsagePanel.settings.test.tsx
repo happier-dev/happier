@@ -152,13 +152,12 @@ describe('UsagePanel settings behavior', () => {
                 },
             ],
         });
-        const dateSpy = vi.spyOn(Date.prototype, 'toLocaleDateString').mockReturnValue('2 janv.');
-
         const { UsagePanel } = await import('./UsagePanel');
-        await renderScreen(<UsagePanel />);
+        const { UsageChart } = await import('./UsageChart');
+        const screen = await renderScreen(<UsagePanel />);
         await flushHookEffects();
 
-        expect(dateSpy).toHaveBeenCalledWith('fr-CH', { month: 'short', day: 'numeric' });
+        expect(screen.root.findByType(UsageChart).props.locale).toBe('fr-CH');
     });
 
     it('uses theme token colors for the active period control', async () => {

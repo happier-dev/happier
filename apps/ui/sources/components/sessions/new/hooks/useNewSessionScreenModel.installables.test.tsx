@@ -175,6 +175,7 @@ const storageState = vi.hoisted(() => ({
 
 const getMockStorageState = vi.hoisted(() => () => ({
     settings: settingsRuntimeState.current ?? testSettingsDefaults,
+    sessions: {},
     workspaceLocations: storageState.workspaceLocations,
     workspaceCheckouts: storageState.workspaceCheckouts,
     sessionListViewDataByServerId: storageState.sessionListViewDataByServerId,
