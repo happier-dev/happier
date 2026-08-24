@@ -68,6 +68,8 @@ import { createMachineSocketOwnershipRegistry } from "./socket/machineSocketOwne
 import { createPeerMediationViewerSocketOwnershipVerifier } from "./socket/viewerSocketOwnership";
 import { activityCache } from "@/app/presence/sessionCache";
 import {
+    EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES,
+    EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES,
     PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
     EXTERNAL_SESSION_OPERATION_SOCKET_MAX_BATCH_ITEMS_V1,
     resolveExternalSessionOperationSocketBatchLimitsV1,
@@ -87,7 +89,10 @@ import {
     writeAccountStoredContentCompatibilityForSocket,
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 
-export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
+export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = Math.max(
+    EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES,
+    EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES,
+);
 // Socket.IO adds its event name, acknowledgement id, and packet framing around the
 // serialized command. Keep that reserve beside the one live transport ceiling.
 export const EXTERNAL_SESSION_OPERATION_SOCKET_ENVELOPE_RESERVE_BYTES = 64 * 1024;
@@ -98,6 +103,18 @@ export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string
     if (!raw) return DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE;
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE;
+    if (
+        parsed < EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES
+        || parsed < EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES
+    ) {
+        throw new Error(
+            "Socket.IO maxHttpBufferSize must be at least "
+            + EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES
+            + " bytes for external Action relay requests and "
+            + EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES
+            + " bytes for responses",
+        );
+    }
     return parsed;
 }
 

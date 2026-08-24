@@ -1,4 +1,7 @@
-import { MachineOperationProtocolCapabilitiesV1Schema } from "@happier-dev/protocol";
+import {
+    ExternalActionMachineBootstrapV1Schema,
+    MachineOperationProtocolCapabilitiesV1Schema,
+} from "@happier-dev/protocol";
 
 export type MachineSerializationRow = Readonly<{
     id: string;
@@ -73,4 +76,18 @@ export function serializeMachineRow(row: MachineSerializationRow) {
         createdAt: row.createdAt.getTime(),
         updatedAt: row.updatedAt.getTime(),
     };
+}
+
+export function serializeExternalActionMachineBootstrapRow(
+    row: Pick<
+        MachineSerializationRow,
+        "id" | "active" | "revokedAt" | "replacedByMachineId"
+    >,
+) {
+    return ExternalActionMachineBootstrapV1Schema.parse({
+        id: row.id,
+        active: row.active,
+        revokedAt: row.revokedAt ? row.revokedAt.getTime() : null,
+        replacedByMachineId: row.replacedByMachineId ?? null,
+    });
 }

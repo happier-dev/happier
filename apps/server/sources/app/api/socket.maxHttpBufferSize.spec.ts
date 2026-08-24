@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+    EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES,
+    EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES,
+} from '@happier-dev/protocol/actions';
+
+import {
     resolveSocketFastDisconnectLogThresholdMsFromEnv,
     resolveExternalSessionOperationSocketBatchLimitsForMaxHttpBufferSize,
     resolveSocketMaxHttpBufferSizeFromEnv,
@@ -12,14 +17,26 @@ import {
 } from './socket';
 
 describe('resolveSocketMaxHttpBufferSizeFromEnv', () => {
-    it('defaults to a buffer size large enough for SCM commit diffs', () => {
+    it('defaults to a buffer size large enough for both external Action relay directions', () => {
         expect(resolveSocketMaxHttpBufferSizeFromEnv({})).toBe(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE);
-        expect(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE).toBeGreaterThanOrEqual(2_000_000);
+        expect(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE).toBe(34_603_008);
+        expect(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE)
+            .toBeGreaterThanOrEqual(EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES);
+        expect(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE)
+            .toBeGreaterThanOrEqual(EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES);
     });
 
     it('reads an explicit size from env', () => {
-        expect(resolveSocketMaxHttpBufferSizeFromEnv({ HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE: '5000000' })).toBe(5_000_000);
-        expect(resolveSocketMaxHttpBufferSizeFromEnv({ HAPPY_SOCKET_MAX_HTTP_BUFFER_SIZE: '6000000' })).toBe(6_000_000);
+        expect(resolveSocketMaxHttpBufferSizeFromEnv({ HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE: '34603008' }))
+            .toBe(34_603_008);
+        expect(resolveSocketMaxHttpBufferSizeFromEnv({ HAPPY_SOCKET_MAX_HTTP_BUFFER_SIZE: '34603009' }))
+            .toBe(34_603_009);
+    });
+
+    it('rejects an explicit size below either external Action relay carrier minimum', () => {
+        expect(() => resolveSocketMaxHttpBufferSizeFromEnv({
+            HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE: '34603007',
+        })).toThrow(/at least 34603008 bytes/);
     });
 
     it('falls back to the default on invalid values', () => {
@@ -32,12 +49,8 @@ describe('resolveSocketMaxHttpBufferSizeFromEnv', () => {
     });
 
     it('derives historical-import batch capacity below the configured live socket ceiling', () => {
-        const socketMaxHttpBufferSize = resolveSocketMaxHttpBufferSizeFromEnv({
-            HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE: '550000',
-        });
-
         expect(resolveExternalSessionOperationSocketBatchLimitsForMaxHttpBufferSize(
-            socketMaxHttpBufferSize,
+            550_000,
         )).toEqual({
             ok: true,
             limits: {

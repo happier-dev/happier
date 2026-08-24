@@ -4,15 +4,17 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import {
     EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
+    ExternalActionActionIdV1Schema,
     ExternalActionRequestEnvelopeV1Schema,
+    type ExternalActionServerPrincipalV1,
+    projectExternalActionResponseEnvelopeV1,
     projectExternalActionHttpErrorV1,
+    serializeExternalActionResponseEnvelopeV1,
     type ExternalActionHttpErrorCodeV1,
 } from "@happier-dev/protocol/actions";
 
-import { auth } from "@/app/auth/auth";
 import {
     type ExternalActionDaemonDispatcher,
-    type ExternalActionServerPrincipal,
 } from "@/app/api/socket/externalActionDispatcher";
 
 import type { Fastify } from "../../types";
@@ -21,28 +23,33 @@ type ExternalActionRouteParams = Readonly<{
     actionId: string;
 }>;
 
-export type VerifyExternalActionPat = typeof auth.verifyPat;
-
 export type RegisterExternalActionRoutesDependencies = Readonly<{
-    verifyPat?: VerifyExternalActionPat;
     dispatch?: ExternalActionDaemonDispatcher;
 }>;
-
-function readBearerAuthorization(value: string | string[] | undefined): string | null {
-    if (typeof value !== "string") return null;
-    const match = /^Bearer ([^\s]+)$/.exec(value);
-    return match ? match[1] : null;
-}
 
 function sendExternalActionJson(reply: FastifyReply, statusCode: number, payload: unknown): FastifyReply {
     const serialized = JSON.stringify(payload);
     const body = typeof serialized === "string" ? serialized : "null";
+    return sendExternalActionSerializedJson(reply, statusCode, body, Buffer.byteLength(body, "utf8"));
+}
+
+function sendExternalActionSerializedJson(
+    reply: FastifyReply,
+    statusCode: number,
+    body: string,
+    byteLength: number,
+): FastifyReply {
     return reply
         .code(statusCode)
         .header("cache-control", "no-store")
         .header("content-type", "application/json; charset=utf-8")
-        .header("content-length", String(Buffer.byteLength(body, "utf8")))
+        .header("content-length", String(byteLength))
         .send(body);
+}
+
+function sendExternalActionResponse(reply: FastifyReply, payload: unknown): FastifyReply {
+    const serialized = serializeExternalActionResponseEnvelopeV1(payload);
+    return sendExternalActionSerializedJson(reply, 200, serialized.body, serialized.byteLength);
 }
 
 function sendExternalActionHttpError(
@@ -58,6 +65,17 @@ function isFastifyBodyLimitError(error: unknown): boolean {
         && error !== null
         && "code" in error
         && error.code === "FST_ERR_CTP_BODY_TOO_LARGE";
+}
+
+function isFastifyExternalActionBodyParseError(error: unknown): boolean {
+    return typeof error === "object"
+        && error !== null
+        && "code" in error
+        && (
+            error.code === "FST_ERR_CTP_INVALID_JSON_BODY"
+            || error.code === "FST_ERR_CTP_EMPTY_JSON_BODY"
+            || error.code === "FST_ERR_CTP_INVALID_MEDIA_TYPE"
+        );
 }
 
 function createRequestLifetime(
@@ -85,20 +103,24 @@ function createRequestLifetime(
     };
 }
 
-function placementFailureResponse(params: Readonly<{
-    actionId: string;
-    requestId?: string;
-    code: "target_required" | "target_not_local" | "target_unavailable";
-}>) {
+function readExternalActionRequestPrincipal(
+    request: FastifyRequest,
+): ExternalActionServerPrincipalV1 | null {
+    const verified = request.apiTokenPrincipal;
+    if (
+        request.authTokenKind !== "api_token"
+        || request.authAuthority !== "account_automation"
+        || !verified
+        || verified.authority !== "account_automation"
+        || verified.accountId !== request.userId
+    ) {
+        return null;
+    }
     return {
-        v: 1 as const,
-        actionId: params.actionId,
-        ...(params.requestId === undefined ? {} : { requestId: params.requestId }),
-        execution: {
-            ok: false as const,
-            errorCode: params.code,
-            error: params.code,
-        },
+        accountId: verified.accountId,
+        principalId: verified.principalId,
+        credentialId: verified.credentialId,
+        authority: verified.authority,
     };
 }
 
@@ -111,56 +133,53 @@ export function registerExternalActionRoutes(
     app: Fastify,
     dependencies: RegisterExternalActionRoutesDependencies = {},
 ): void {
-    const verifyPat = dependencies.verifyPat ?? auth.verifyPat.bind(auth);
     const dispatch = dependencies.dispatch ?? app.forwardExternalActionToMachine;
 
     // Explicitly shadow global CORS handling: this public Action endpoint is
     // bearer-only and must not become browser-callable through preflight.
     app.options<{ Params: ExternalActionRouteParams }>("/v1/actions/:actionId", {
         config: { cors: false },
-    }, async (_request, reply) => reply.code(404).send());
+    }, async (_request, reply) => reply.header("cache-control", "no-store").code(404).send());
 
     app.post<{
         Params: ExternalActionRouteParams;
         Body: unknown;
     }>("/v1/actions/:actionId", {
         bodyLimit: EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
-        config: { allowApiToken: true, cors: false },
+        config: { allowApiToken: true, cors: false, connectionAuthFailureError: "invalid_token" },
         errorHandler: (error, _request, reply) => {
             if (isFastifyBodyLimitError(error)) {
                 sendExternalActionHttpError(reply, "request_too_large");
                 return;
             }
+            if (isFastifyExternalActionBodyParseError(error)) {
+                sendExternalActionHttpError(reply, "invalid_envelope");
+                return;
+            }
             throw error;
         },
-        preHandler: [
-            async (_request, reply) => {
-                reply.header("cache-control", "no-store");
-            },
-            async (request, reply) => {
-                if (!readBearerAuthorization(request.headers.authorization)) {
-                    return sendExternalActionJson(reply, 401, { error: "invalid_token" });
-                }
-            },
-            app.authenticate,
-        ],
+        onRequest: async (request, reply) => {
+            reply.header("cache-control", "no-store");
+            await app.authenticate(request, reply);
+            if (reply.sent) return;
+            if (!readExternalActionRequestPrincipal(request)) {
+                return sendExternalActionJson(reply, 401, { error: "invalid_token" });
+            }
+        },
     }, async (request, reply) => {
         const lifetime = createRequestLifetime(request, reply);
         try {
-            // `authenticate` establishes only connection admission. Re-read
-            // the PAT to retain immutable credential provenance for the daemon.
-            const token = readBearerAuthorization(request.headers.authorization);
-            if (
-                !token
-                || request.authTokenKind !== "api_token"
-                || request.authAuthority !== "account_automation"
-            ) {
+            // The onRequest admission verified the bearer once and stamped
+            // its immutable PAT provenance on this request. Do not retain or
+            // forward the plaintext bearer beyond that boundary.
+            const principal = readExternalActionRequestPrincipal(request);
+            if (!principal) {
                 return sendExternalActionJson(reply, 401, { error: "invalid_token" });
             }
 
-            const verified = await verifyPat(token, lifetime.signal);
-            if (!verified.ok || verified.accountId !== request.userId) {
-                return sendExternalActionJson(reply, 401, { error: "invalid_token" });
+            const actionId = ExternalActionActionIdV1Schema.safeParse(request.params.actionId);
+            if (!actionId.success) {
+                return sendExternalActionHttpError(reply, "invalid_action");
             }
 
             const envelope = ExternalActionRequestEnvelopeV1Schema.safeParse(request.body);
@@ -168,30 +187,33 @@ export function registerExternalActionRoutes(
                 return sendExternalActionHttpError(reply, "invalid_envelope");
             }
 
-            const principal: ExternalActionServerPrincipal = {
-                accountId: verified.accountId,
-                principalId: verified.principalId,
-                credentialId: verified.credentialId,
-                authority: verified.authority,
-            };
             const result = await dispatch({
-                actionId: request.params.actionId,
+                actionId: actionId.data,
                 envelope: envelope.data,
                 principal,
             }, { signal: lifetime.signal });
             if (result.kind === "placement_error") {
-                return sendExternalActionJson(reply, 200, placementFailureResponse({
-                    actionId: request.params.actionId,
+                const response = projectExternalActionResponseEnvelopeV1({
+                    v: 1,
+                    actionId: actionId.data,
                     ...(envelope.data.requestId === undefined
                         ? {}
                         : { requestId: envelope.data.requestId }),
-                    code: result.code,
-                }));
+                    execution: {
+                        ok: false,
+                        errorCode: result.code,
+                        error: result.code,
+                    },
+                });
+                if (!response) {
+                    throw new Error("Protocol rejected external Action placement response");
+                }
+                return sendExternalActionResponse(reply, response);
             }
-            if (!result.response.execution.ok && result.response.execution.errorCode === "invalid_action") {
-                return sendExternalActionHttpError(reply, "invalid_action");
+            if (result.kind === "invalid_request") {
+                return sendExternalActionHttpError(reply, result.errorCode);
             }
-            return sendExternalActionJson(reply, 200, result.response);
+            return sendExternalActionResponse(reply, result.response);
         } finally {
             lifetime.dispose();
         }

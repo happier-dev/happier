@@ -25,7 +25,10 @@ import {
     verifyMachineInstallationRegistration,
     type VerifiedMachineInstallationIdentity,
 } from "@/app/machines/installationProof";
-import { serializeMachineRow } from "@/app/machines/machineSerialization";
+import {
+    serializeExternalActionMachineBootstrapRow,
+    serializeMachineRow,
+} from "@/app/machines/machineSerialization";
 import {
     isPlainMachineDataKeyMarker,
     machineStoredContentMatchesAccountMode,
@@ -867,6 +870,9 @@ export function machinesRoutes(app: Fastify) {
             where: { accountId: userId },
             orderBy: { lastActiveAt: 'desc' }
         });
+        if (request.authTokenKind === "api_token") {
+            return machines.map(serializeExternalActionMachineBootstrapRow);
+        }
         if (
             machines.some((machine) =>
                 isPlainMachineDataKeyMarker(machine.dataEncryptionKey)

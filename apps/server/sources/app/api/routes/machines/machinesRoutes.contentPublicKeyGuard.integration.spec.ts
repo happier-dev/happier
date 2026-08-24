@@ -401,6 +401,41 @@ describe("machinesRoutes (contentPublicKey guard)", () => {
         );
     });
 
+    it("keeps the legacy full machine response for an ordinary authenticated session", async () => {
+        dbMocks.db.machine.findMany.mockResolvedValue([existingMachine]);
+        const route = await createMachinesReadRoute("/v1/machines");
+        const { response } = await route.invoke({
+            userId: "u1",
+            authTokenKind: "account",
+            accountStoredContentCompatibility: currentStoredContentCompatibility,
+        });
+
+        expect(response).toEqual([{
+            id: "m1",
+            metadata: "meta-old",
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+            dataEncryptionKey: "AAkJCQ==",
+            installationId: null,
+            installationPublicKey: null,
+            contentPublicKeyFingerprint: null,
+            operationProtocolCapabilities: null,
+            operationProtocolCapabilitiesRevision: null,
+            replacedByMachineId: null,
+            replacedAt: null,
+            replacementReason: null,
+            replacementSource: null,
+            replacementActorUserId: null,
+            seq: 1,
+            active: true,
+            activeAt: 1,
+            revokedAt: null,
+            createdAt: 1,
+            updatedAt: 1,
+        }]);
+    });
+
     it("requires current caller support before returning marked Machine detail", async () => {
         dbMocks.db.machine.findFirst.mockResolvedValue({
             ...existingMachine,

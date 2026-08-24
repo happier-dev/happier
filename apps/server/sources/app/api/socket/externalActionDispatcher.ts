@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
 
 import {
-    type ActionExecuteResult,
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+    projectExternalActionDaemonDispatchResultV1,
+    type ExternalActionActionIdV1,
+    type ExternalActionDaemonDispatchRequestV1,
+    type ExternalActionDaemonDispatchResultV1,
+    type ExternalActionDaemonPlacementV1,
     type ExternalActionRequestEnvelopeV1,
+    type ExternalActionServerPrincipalV1,
 } from "@happier-dev/protocol/actions";
 import { ACTION_API_SERVER_ORIGIN } from "@happier-dev/protocol/rpc";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
@@ -26,51 +31,26 @@ import type { RpcAckResponseEmitter, RpcForwardTargetGuard } from "./rpc/_types"
  */
 export { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 };
 
-export type ExternalActionServerPrincipal = Readonly<{
-    accountId: string;
-    principalId: string;
-    credentialId: string;
-    authority: "account_automation";
-}>;
-
-export type ExternalActionDaemonPlacement = Readonly<{
-    machineId: string;
-    target: Readonly<{ kind: "machine"; machineId: string }>;
-}>;
-
-export type ExternalActionDaemonDispatchRequest = Readonly<{
-    actionId: string;
-    envelope: ExternalActionRequestEnvelopeV1;
-    principal: ExternalActionServerPrincipal;
-    placement: ExternalActionDaemonPlacement;
-}>;
-
 /**
- * The server deliberately does not validate a public Action id. That is the
- * target daemon's Action-owner decision; this boundary only proves that a
- * response belongs to the requested relay.
+ * Internal relay data after public ingress has validated only the bounded
+ * Action-id path segment. The daemon remains the canonical owner of Action
+ * semantics; this boundary only proves that a response belongs to the
+ * requested relay.
  */
-export type ExternalActionDaemonResponse = Readonly<{
-    v: 1;
-    actionId: string;
-    requestId?: string;
-    execution: ActionExecuteResult;
-}>;
-
 export type ExternalActionPlacementErrorCode =
     | "target_required"
     | "target_not_local"
     | "target_unavailable";
 
 export type ExternalActionDaemonDispatchResult =
-    | Readonly<{ kind: "response"; response: ExternalActionDaemonResponse }>
+    | ExternalActionDaemonDispatchResultV1
     | Readonly<{ kind: "placement_error"; code: ExternalActionPlacementErrorCode }>;
 
 export type ExternalActionDaemonDispatcher = (
     request: Readonly<{
-        actionId: string;
+        actionId: ExternalActionActionIdV1;
         envelope: ExternalActionRequestEnvelopeV1;
-        principal: ExternalActionServerPrincipal;
+        principal: ExternalActionServerPrincipalV1;
     }>,
     options?: Readonly<{ signal?: AbortSignal }>,
 ) => Promise<ExternalActionDaemonDispatchResult>;
@@ -96,57 +76,22 @@ type SessionPublisherPresenceForExternalAction = Pick<
 
 type SocketDataCarrier = Readonly<{ data?: unknown }>;
 
-function hasOwn(value: Record<string, unknown>, key: string): boolean {
-    return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function readRecord(value: unknown): Record<string, unknown> | null {
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
-}
-
 function parseDaemonResponse(
     raw: unknown,
-    expected: Readonly<{ actionId: string; requestId?: string }>,
-): ExternalActionDaemonResponse | null {
-    const response = readRecord(raw);
-    if (!response || response.v !== 1 || response.actionId !== expected.actionId) return null;
+    expected: Readonly<{ actionId: ExternalActionActionIdV1; requestId?: string }>,
+): ExternalActionDaemonDispatchResultV1 | null {
+    const result = projectExternalActionDaemonDispatchResultV1(raw);
+    if (!result || result.kind === "invalid_request") return result;
+    const response = result.response;
+    if (response.actionId !== expected.actionId) return null;
 
     if (expected.requestId === undefined) {
-        if (hasOwn(response, "requestId")) return null;
+        if (response.requestId !== undefined) return null;
     } else if (response.requestId !== expected.requestId) {
         return null;
     }
 
-    const execution = readRecord(response.execution);
-    if (!execution) return null;
-    if (execution.ok === true && hasOwn(execution, "result")) {
-        return {
-            v: 1,
-            actionId: expected.actionId,
-            ...(expected.requestId === undefined ? {} : { requestId: expected.requestId }),
-            execution: { ok: true, result: execution.result },
-        };
-    }
-    if (
-        execution.ok === false
-        && typeof execution.errorCode === "string"
-        && typeof execution.error === "string"
-    ) {
-        return {
-            v: 1,
-            actionId: expected.actionId,
-            ...(expected.requestId === undefined ? {} : { requestId: expected.requestId }),
-            execution: {
-                ok: false,
-                errorCode: execution.errorCode,
-                error: execution.error,
-                ...(hasOwn(execution, "details") ? { details: execution.details } : {}),
-            },
-        };
-    }
-    return null;
+    return { kind: "response", response };
 }
 
 async function resolveMachineFromServer(params: Readonly<{
@@ -249,10 +194,6 @@ function createExactMachineDaemonGuard(params: Readonly<{
                 return { status: "unavailable" };
             }
             const value = await operation();
-            const latestTargetAfterResponse = await readLatestTarget();
-            if (!latestTargetAfterResponse || !exact(latestTargetAfterResponse) || !await current()) {
-                return { status: "unavailable" };
-            }
             return { status: "current", value };
         },
     };
@@ -329,7 +270,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             return { kind: "placement_error", code: "target_unavailable" };
         }
 
-        const placement: ExternalActionDaemonPlacement = {
+        const placement: ExternalActionDaemonPlacementV1 = {
             machineId,
             target: { kind: "machine", machineId },
         };
@@ -372,7 +313,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                     envelope: request.envelope,
                     principal: request.principal,
                     placement,
-                } satisfies ExternalActionDaemonDispatchRequest,
+                } satisfies ExternalActionDaemonDispatchRequestV1,
                 authorization: ACTION_API_SERVER_ORIGIN,
                 targetGuard,
                 ...(cancellation ? { cancellation } : {}),
@@ -384,12 +325,12 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         }
         if (!forwarded.ok) return { kind: "placement_error", code: "target_unavailable" };
 
-        const response = parseDaemonResponse(forwarded.result, {
+        const result = parseDaemonResponse(forwarded.result, {
             actionId: request.actionId,
             ...(request.envelope.requestId === undefined ? {} : { requestId: request.envelope.requestId }),
         });
-        return response
-            ? { kind: "response", response }
+        return result
+            ? result
             : { kind: "placement_error", code: "target_unavailable" };
     };
 }

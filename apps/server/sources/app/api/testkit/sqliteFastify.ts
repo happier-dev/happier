@@ -6,8 +6,13 @@ import {
     PRESENT_USER_REQUIRED_ERROR,
 } from "../utils/apiTokenRouteAdmission";
 
-export function createAuthenticatedTestApp() {
-    const app = Fastify();
+export function createAuthenticatedTestApp(
+    options: Readonly<{ bodyLimit?: number }> = {},
+) {
+    // Fastify's own 1 MiB default would answer 413 for a route that declares no
+    // ceiling at all, so a body-limit test must be able to reproduce the
+    // production application limit and let the route ceiling be the only bound.
+    const app = Fastify(options.bodyLimit === undefined ? {} : { bodyLimit: options.bodyLimit });
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
@@ -26,6 +31,27 @@ export function createAuthenticatedTestApp() {
         request.authAuthority = request.authTokenKind === "account"
             ? "present_user"
             : "account_automation";
+        if (request.authTokenKind === "api_token") {
+            const accountId = request.headers["x-test-api-token-account-id"];
+            const principalId = request.headers["x-test-api-token-principal-id"];
+            const credentialId = request.headers["x-test-api-token-credential-id"];
+            if (
+                typeof accountId === "string"
+                && typeof principalId === "string"
+                && typeof credentialId === "string"
+                && accountId.length > 0
+                && principalId.length > 0
+                && credentialId.length > 0
+            ) {
+                request.apiTokenPrincipal = {
+                    accountId,
+                    principalId,
+                    credentialId,
+                    authority: "account_automation",
+                    expiresAt: null,
+                };
+            }
+        }
         if (isApiTokenDeniedForRoute(request)) {
             return reply.code(403).send({ error: PRESENT_USER_REQUIRED_ERROR });
         }

@@ -6,6 +6,7 @@ import { auth } from "@/app/auth/auth";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
 
 import { machinesRoutes } from "./machinesRoutes";
 
@@ -44,10 +45,27 @@ describe("machinesRoutes API-token admission (integration)", () => {
         await harness.close();
     });
 
-    it("admits a PAT to the explicit read-only machine discovery route", async () => {
+    it("returns PAT callers only the strict machine-selection bootstrap projection", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: '{"t":"plain","v":{"host":"workstation"}}',
+                daemonState: '{"t":"plain","v":{"status":"running"}}',
+                dataEncryptionKey: new Uint8Array(
+                    Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64"),
+                ),
+                installationId: "installation-1",
+                installationPublicKey: new Uint8Array([1, 2, 3]),
+                contentPublicKeyFingerprint: "sensitive-fingerprint",
+                replacedByMachineId: "machine-2",
+                active: false,
+                revokedAt: new Date(1234),
+            },
         });
         const pat = await auth.createApiToken({
             accountId: account.id,
@@ -64,7 +82,12 @@ describe("machinesRoutes API-token admission (integration)", () => {
             });
 
             expect(response.statusCode).toBe(200);
-            expect(response.json()).toEqual([]);
+            expect(response.json()).toEqual([{
+                id: "machine-1",
+                active: false,
+                revokedAt: 1234,
+                replacedByMachineId: "machine-2",
+            }]);
         } finally {
             await app.close();
         }
