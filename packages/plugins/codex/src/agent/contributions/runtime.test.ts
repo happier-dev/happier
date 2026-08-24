@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
+import * as catalogContribution from './catalog.js';
 import * as runtimeContribution from './runtime.js';
 
 type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
@@ -56,6 +58,29 @@ type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
 const moduleWithA16y3Exports = runtimeContribution as CodexRuntimeContributionModule;
 
 describe('Codex runtime contribution leaves', () => {
+  it('keeps the static catalog leaf clear of the legacy runtime and descriptor-heavy installable module', () => {
+    const catalogSource = readFileSync(new URL('./catalog.ts', import.meta.url), 'utf8');
+
+    expect(catalogSource).not.toMatch(/from ['"]\.\/runtime(?:\.js)?['"]/u);
+    expect(catalogSource).not.toMatch(/\.\.\/installables\/codexAcp/u);
+    expect(catalogSource).toMatch(/\.\.\/installables\/runtimeAdapter/u);
+  });
+
+  it('keeps the static catalog leaf and legacy runtime entrypoint behavior-identical', async () => {
+    const catalog = catalogContribution as CodexRuntimeContributionModule;
+
+    expect(catalog.CODEX_AGENT_RUNTIME_CONTRIBUTION)
+      .toBe(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION);
+    expect(catalog.readCodexConnectedServiceId)
+      .toBe(runtimeContribution.readCodexConnectedServiceId);
+    expect(catalog.materializeCodexAuthEnvironment)
+      .toBe(runtimeContribution.materializeCodexAuthEnvironment);
+    expect(await catalog.materializeCodexAuthEnvironment({
+      connectedAccountMaterializationAuthority: 'qualified',
+      rootDir: '/tmp/happier-codex-catalog-leaf',
+    })).toEqual({ env: { CODEX_HOME: '/tmp/happier-codex-catalog-leaf' } });
+  });
+
   it('binds the manifest-declared Codex CLI system tool to the Agent runtime', () => {
     const codexCliSystemTool = PLUGIN_MANIFEST.contributes.systemTools?.find(
       (systemTool) => systemTool.id === 'codex-cli',

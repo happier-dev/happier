@@ -21,6 +21,10 @@
     "./agent/contributions/runtime": {
       "types": "./dist/agent/contributions/runtime.d.ts",
       "default": "./dist/agent/contributions/runtime.js"
+    },
+    "./agent/contributions/catalog": {
+      "types": "./dist/agent/contributions/catalog.d.ts",
+      "default": "./dist/agent/contributions/catalog.js"
     }
   },
   "files": [

@@ -48,6 +48,12 @@ describe('Kiro agent definition', () => {
         allowedModes: ['default'],
       },
     });
+    expect(definition.runtimeContributions).toEqual({
+      agentCatalogEntry: {
+        importName: 'KIRO_AGENT_RUNTIME_CONTRIBUTION',
+        source: './agent/contributions/catalog',
+      },
+    });
     expect(definition).not.toHaveProperty('agentCliRuntime');
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli).toMatchObject({
       executable: { binaryName: 'kiro-cli' },

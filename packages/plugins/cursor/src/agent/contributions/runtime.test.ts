@@ -3,8 +3,15 @@ import { describe, expect, it } from 'vitest';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { CURSOR_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
+import { CURSOR_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION } from './catalog.js';
 
 describe('Cursor agent runtime contribution', () => {
+  it('keeps the legacy runtime entrypoint aligned with the static catalog leaf', () => {
+    expect(CURSOR_AGENT_RUNTIME_CONTRIBUTION).toBe(CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION);
+    expect(CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls)
+      .toBe(CURSOR_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls);
+  });
+
   it('probes Cursor models through the provider-owned preflight hook', async () => {
     const launches: unknown[] = [];
     const executable = { kind: 'systemTool' as const, id: 'cursor-agent' };

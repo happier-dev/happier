@@ -27,4 +27,11 @@ describe('AGENT_DEFINITION', () => {
             ]),
         });
     });
+
+    it('declares its catalog contribution from the static contribution leaf', () => {
+        expect(AGENT_DEFINITION.runtimeContributions?.agentCatalogEntry).toEqual({
+            importName: 'CLAUDE_AGENT_RUNTIME_CONTRIBUTION',
+            source: './agent/contributions/catalog',
+        });
+    });
 });

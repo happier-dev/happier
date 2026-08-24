@@ -79,7 +79,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'CLAUDE_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/runtime',
+      source: './agent/contributions/catalog',
     },
     protocolMemoryDefaults: {
       kind: 'providerMemoryDefaultsV1',

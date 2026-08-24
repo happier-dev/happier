@@ -1,5 +1,5 @@
 import { purchasesDefaults, purchasesParse, type Purchases } from '@/sync/domains/purchases/purchases';
-import { profileDefaults, tryParseProfile, type Profile } from '@/sync/domains/profiles/profile';
+import { profileDefaults, profileParse, type Profile } from '@/sync/domains/profiles/profile';
 import { serverAccountScopedStorageKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 import { getPersistenceStorage } from './persistenceStorage';
@@ -28,18 +28,13 @@ function findFirstLegacyScopeWithValue(
 }
 
 export function loadAccountProfile(scope: ServerAccountScope): Profile {
-    const storage = getPersistenceStorage();
-    const key = scopedKey(ACCOUNT_PROFILE_KEY_PREFIX, scope);
-    const raw = storage.getString(key);
+    const raw = getPersistenceStorage().getString(scopedKey(ACCOUNT_PROFILE_KEY_PREFIX, scope));
     if (!raw) return { ...profileDefaults };
     try {
-        const profile = tryParseProfile(JSON.parse(raw) as unknown);
-        if (profile) return profile;
+        return profileParse(JSON.parse(raw) as unknown);
     } catch {
-        // Fall through to discard the malformed cached projection.
+        return { ...profileDefaults };
     }
-    storage.delete(key);
-    return { ...profileDefaults };
 }
 
 export function saveAccountProfile(scope: ServerAccountScope, profile: Profile): void {

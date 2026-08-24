@@ -28,6 +28,10 @@
       "types": "./dist/agent/contributions/runtime.d.ts",
       "default": "./dist/agent/contributions/runtime.js"
     },
+    "./agent/contributions/catalog": {
+      "types": "./dist/agent/contributions/catalog.d.ts",
+      "default": "./dist/agent/contributions/catalog.js"
+    },
     "./protocol/runtimeDescriptorV1": {
       "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
       "default": "./dist/protocol/runtimeDescriptorV1.js"

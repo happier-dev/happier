@@ -10,6 +10,10 @@ import {
   materializeClaudeAuthEnvironment,
   verifyClaudeResumeReachability,
 } from './runtime.js';
+import {
+  CLAUDE_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CLAUDE_AGENT_RUNTIME_CONTRIBUTION,
+  materializeClaudeAuthEnvironment as materializeCatalogClaudeAuthEnvironment,
+} from './catalog.js';
 
 type CliSessionCommandContribution = Readonly<{
   backendIdForSessionRuntime: string;
@@ -96,6 +100,17 @@ function legacyClaudeTranscriptStart(sessionId: string): string {
 }
 
 describe('Claude runtime contribution CLI command options', () => {
+  it('keeps the legacy runtime entrypoint aligned with the static catalog leaf', async () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION).toBe(CATALOG_CLAUDE_AGENT_RUNTIME_CONTRIBUTION);
+    expect(materializeClaudeAuthEnvironment).toBe(materializeCatalogClaudeAuthEnvironment);
+    await expect(Promise.resolve(CATALOG_CLAUDE_AGENT_RUNTIME_CONTRIBUTION
+      .sessionRuntimePreferences.resolve({
+        settings: { claudeUnifiedTerminalResumeChoice: 'resume_full_session' },
+        processEnv: {},
+        startedBy: 'terminal',
+      }))).resolves.toEqual({ claudeUnifiedTerminalResumeChoice: 'resume_full_session' });
+  });
+
   it.each([
     {
       name: 'fresh terminal-local start',

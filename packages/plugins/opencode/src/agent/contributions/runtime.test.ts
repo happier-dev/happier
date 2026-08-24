@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
+import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION } from './catalog.js';
+import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION as LEGACY_RUNTIME_CONTRIBUTION } from './runtime.js';
 
 type SessionControlAdapter = Readonly<{
   normalizeRuntimeKindOverride?: (value: unknown) => 'server' | 'acp' | null;
@@ -28,6 +29,17 @@ type RuntimeContributionWithSessionControl = Readonly<{
 }>;
 
 describe('OPENCODE_AGENT_RUNTIME_CONTRIBUTION', () => {
+  it('preserves the legacy runtime entrypoint through the static catalog leaf', () => {
+    expect(OPENCODE_AGENT_RUNTIME_CONTRIBUTION).toBe(LEGACY_RUNTIME_CONTRIBUTION);
+    expect(OPENCODE_AGENT_RUNTIME_CONTRIBUTION.sessionRuntimePreferences.resolve({
+      settings: { opencodeBackendMode: 'server' },
+      processEnv: {},
+    })).toEqual({
+      opencodeBackendMode: 'server',
+      opencodeServerBaseUrlExplicit: false,
+    });
+  });
+
   it('binds native OpenCode launches to the declared CLI system tool', () => {
     const contribution: RuntimeContributionWithSessionControl = OPENCODE_AGENT_RUNTIME_CONTRIBUTION;
 

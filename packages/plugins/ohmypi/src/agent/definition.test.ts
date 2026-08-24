@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CONTRIBUTION } from './contributions/catalog.js';
+import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION as LEGACY_RUNTIME_CONTRIBUTION } from './contributions/runtime.js';
 
 describe('OhMyPi agent definition', () => {
   it('advertises Claude subscription credentials as token-only', () => {
@@ -23,5 +25,20 @@ describe('OhMyPi agent definition', () => {
       auth: { support: 'manual_only', machineLoginKey: 'oh-my-pi' },
     });
     expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');
+  });
+
+  it('binds the bundled catalog projection to its static catalog contribution leaf', () => {
+    expect(AGENT_DEFINITION.runtimeContributions?.agentCatalogEntry).toEqual({
+      importName: 'OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION',
+      source: './agent/contributions/catalog',
+    });
+  });
+
+  it('preserves runtime contribution behavior through the catalog leaf', () => {
+    expect(CATALOG_CONTRIBUTION).toBe(LEGACY_RUNTIME_CONTRIBUTION);
+    expect(CATALOG_CONTRIBUTION.sessionRuntimePreferences.resolve({
+      settings: {},
+      processEnv: {},
+    })).toEqual({});
   });
 });

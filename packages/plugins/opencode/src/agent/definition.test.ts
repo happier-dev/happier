@@ -49,7 +49,7 @@ describe('OpenCode AGENT_DEFINITION', () => {
     expect(AGENT_DEFINITION.runtimeContributions).toMatchObject({
       agentCatalogEntry: {
         importName: 'OPENCODE_AGENT_RUNTIME_CONTRIBUTION',
-        source: './agent/contributions/runtime',
+        source: './agent/contributions/catalog',
       },
       sessionControlAdapter: {
         kind: 'providerSessionControlAdapter',

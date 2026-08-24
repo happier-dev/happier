@@ -1,7 +1,2 @@
-export const KILO_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
-  agentId: 'kilo',
-  preflightSessionControls: {
-    failureCacheStrategy: 'cooldown',
-    cliModelsCommandArgs: ['models'],
-  },
-} as const);
+// Compatibility entrypoint for existing plugin consumers.
+export * from './catalog.js';

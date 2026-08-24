@@ -56,7 +56,7 @@ export const AGENT_DEFINITION = Object.freeze({
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/runtime',
+      source: './agent/contributions/catalog',
     },
   },
 });

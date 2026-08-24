@@ -48,7 +48,7 @@ describe('Antigravity agent definition', () => {
       runtimeContributions: {
         agentCatalogEntry: {
           importName: 'ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION',
-          source: './agent/contributions/runtime',
+          source: './agent/contributions/catalog',
         },
       },
     });

@@ -22,6 +22,10 @@
       "types": "./dist/agent/contributions/runtime.d.ts",
       "default": "./dist/agent/contributions/runtime.js"
     },
+    "./agent/contributions/catalog": {
+      "types": "./dist/agent/contributions/catalog.d.ts",
+      "default": "./dist/agent/contributions/catalog.js"
+    },
     "./agent/hooks/settings": {
       "types": "./dist/agent/hooks/settings.d.ts",
       "default": "./dist/agent/hooks/settings.js"

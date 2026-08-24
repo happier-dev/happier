@@ -47,7 +47,7 @@ describe('AGENT_DEFINITION', () => {
     expect(AGENT_DEFINITION.runtimeContributions).toEqual({
       agentCatalogEntry: {
         importName: 'CODEX_AGENT_RUNTIME_CONTRIBUTION',
-        source: './agent/contributions/runtime',
+        source: './agent/contributions/catalog',
       },
       sessionControlAdapter: {
         kind: 'providerSessionControlAdapter',

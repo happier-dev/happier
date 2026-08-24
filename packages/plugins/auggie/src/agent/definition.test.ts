@@ -6,7 +6,7 @@ describe('Auggie agent definition', () => {
   it('declares the provider-owned runtime contribution for model preflight', () => {
     expect(AGENT_DEFINITION.runtimeContributions?.agentCatalogEntry).toEqual({
       importName: 'AUGGIE_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/runtime',
+      source: './agent/contributions/catalog',
     });
   });
 });

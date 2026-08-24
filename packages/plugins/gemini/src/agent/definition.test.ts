@@ -2,15 +2,23 @@ import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { GEMINI_AGENT_RUNTIME_CONTRIBUTION } from './contributions/runtime.js';
+import { GEMINI_AGENT_RUNTIME_CONTRIBUTION as CATALOG_GEMINI_AGENT_RUNTIME_CONTRIBUTION } from './contributions/catalog.js';
 
 describe('Gemini agent definition runtime contributions', () => {
   it('exports a plugin-owned provider catalog runtime contribution', () => {
     expect(AGENT_DEFINITION.runtimeContributions).toMatchObject({
       agentCatalogEntry: {
         importName: 'GEMINI_AGENT_RUNTIME_CONTRIBUTION',
-        source: './agent/contributions/runtime',
+        source: './agent/contributions/catalog',
       },
     });
+  });
+
+  it('keeps the legacy runtime entrypoint aligned with the static catalog leaf', async () => {
+    expect(GEMINI_AGENT_RUNTIME_CONTRIBUTION).toBe(CATALOG_GEMINI_AGENT_RUNTIME_CONTRIBUTION);
+    await expect(CATALOG_GEMINI_AGENT_RUNTIME_CONTRIBUTION.cloudConnect.customAuthenticator.authenticate())
+      .resolves.toMatchObject({ ok: false, code: 'unsupported' });
   });
 
   it('does not advertise deferred OAuth, ADC, or machine-login auth facts', () => {

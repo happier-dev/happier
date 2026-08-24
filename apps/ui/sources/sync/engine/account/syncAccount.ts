@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { deletePushToken as deletePushTokenApi, registerPushToken as registerPushTokenApi } from '@/sync/api/session/apiPush';
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { Profile } from '@/sync/domains/profiles/profile';
-import { profileParse, tryParseProfile } from '@/sync/domains/profiles/profile';
+import { profileParse } from '@/sync/domains/profiles/profile';
 import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '@/sync/domains/settings/settings';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import {
@@ -57,25 +57,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
         applySettings(settings, version);
     };
 
-    const hasQualifiedConnectedAccountsUpdate =
-        accountUpdate.connectedAccountsV4 !== undefined
-        || accountUpdate.connectedAccountGroupsV4 !== undefined;
-    const qualifiedConnectedAccountsProjection = hasQualifiedConnectedAccountsUpdate
-        ? tryParseProfile({
-            ...currentProfile,
-            connectedAccountsV4: accountUpdate.connectedAccountsV4 !== undefined
-                ? accountUpdate.connectedAccountsV4
-                : currentProfile.connectedAccountsV4,
-            connectedAccountGroupsV4: accountUpdate.connectedAccountGroupsV4 !== undefined
-                ? accountUpdate.connectedAccountGroupsV4
-                : currentProfile.connectedAccountGroupsV4,
-        })
-        : null;
-    if (hasQualifiedConnectedAccountsUpdate && !qualifiedConnectedAccountsProjection) {
-        log.log('Ignored invalid Connected Accounts V4 profile update');
-    }
-
-    // Build updated profile with new data.
+    // Build updated profile with new data
     const updatedProfile: Profile = {
         ...currentProfile,
         firstName: accountUpdate.firstName !== undefined ? accountUpdate.firstName : currentProfile.firstName,
@@ -92,16 +74,6 @@ export async function handleUpdateAccountSocketUpdate(params: {
             accountUpdate.connectedServicesV2 !== undefined
                 ? accountUpdate.connectedServicesV2
                 : currentProfile.connectedServicesV2,
-        connectedServiceCredentialRevisionsV1:
-            accountUpdate.connectedServiceCredentialRevisionsV1 !== undefined
-                ? accountUpdate.connectedServiceCredentialRevisionsV1
-                : currentProfile.connectedServiceCredentialRevisionsV1,
-        connectedAccountsV4:
-            qualifiedConnectedAccountsProjection?.connectedAccountsV4
-                ?? currentProfile.connectedAccountsV4,
-        connectedAccountGroupsV4:
-            qualifiedConnectedAccountsProjection?.connectedAccountGroupsV4
-                ?? currentProfile.connectedAccountGroupsV4,
         timestamp: updateCreatedAt, // Update timestamp to latest
     };
 

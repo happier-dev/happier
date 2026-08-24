@@ -84,7 +84,7 @@ export const AGENT_DEFINITION = Object.freeze({
   runtimeContributions: {
     agentCatalogEntry: {
       importName: 'GEMINI_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/runtime',
+      source: './agent/contributions/catalog',
     },
     protocolBuiltInBackendProfiles: {
       kind: 'providerBuiltInBackendProfilesV1',

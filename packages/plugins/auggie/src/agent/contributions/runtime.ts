@@ -1,6 +1,3 @@
-import { AUGGIE_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
-
-export const AUGGIE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
-  agentId: 'auggie',
-  preflightSessionControls: AUGGIE_PREFLIGHT_SESSION_CONTROLS,
-} as const);
+// Compatibility entrypoint for existing imports. Bundled catalog projection
+// imports `./catalog` directly.
+export * from './catalog.js';

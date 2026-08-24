@@ -30,17 +30,8 @@ Object.freeze(profileDefaults);
 // Parsing
 //
 
-function parseProfile(profile: unknown) {
-    return AccountProfileSchema.safeParse(profile);
-}
-
-export function tryParseProfile(profile: unknown): Profile | null {
-    const parsed = parseProfile(profile);
-    return parsed.success ? parsed.data : null;
-}
-
 export function profileParse(profile: unknown): Profile {
-    const parsed = parseProfile(profile);
+    const parsed = AccountProfileSchema.safeParse(profile);
     if (!parsed.success) {
         console.error('Failed to parse profile:', parsed.error);
         return { ...profileDefaults };
