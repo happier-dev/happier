@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     compareVersions,
+    getVersionSupportState,
     isVersionSupported,
     parseVersion,
     MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
@@ -65,6 +66,15 @@ describe('versionUtils', () => {
             expect(isVersionSupported('0.1.0-dev.5', MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION)).toBe(true);
             expect(isVersionSupported('0.1.0-preview.2', MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION)).toBe(true);
             expect(isVersionSupported('0.0.9', MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION)).toBe(false);
+        });
+    });
+
+    describe('getVersionSupportState', () => {
+        it('distinguishes an opaque version from a proven unsupported version', () => {
+            expect(getVersionSupportState('custom-build', MINIMUM_CLI_VERSION)).toBe('unknown');
+            expect(getVersionSupportState(undefined, MINIMUM_CLI_VERSION)).toBe('unknown');
+            expect(getVersionSupportState('0.0.9', MINIMUM_CLI_VERSION)).toBe('unsupported');
+            expect(getVersionSupportState('0.1.0', MINIMUM_CLI_VERSION)).toBe('supported');
         });
     });
 

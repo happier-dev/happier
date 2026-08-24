@@ -2,6 +2,7 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { isNonSteerablePromptPayload, type PendingRequestedActionV1 } from '@happier-dev/protocol';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
+    getVersionSupportState,
     isVersionSupported,
     MINIMUM_CLI_PENDING_QUEUE_V2_VERSION,
 } from '@/utils/system/versionUtils';
@@ -183,7 +184,10 @@ export function getPendingQueueSubmitSupportState(session: Session | null): Pend
 
     const cliVersion = readSessionOwnerMetadataView(session)?.version;
     const trimmedCliVersion = typeof cliVersion === 'string' ? cliVersion.trim() : '';
-    if (trimmedCliVersion && !isVersionSupported(trimmedCliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION)) {
+    if (
+        trimmedCliVersion
+        && getVersionSupportState(trimmedCliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION) === 'unsupported'
+    ) {
         return 'unsupported_cli_version';
     }
 

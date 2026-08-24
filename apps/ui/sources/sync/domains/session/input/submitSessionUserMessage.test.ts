@@ -70,6 +70,22 @@ describe('submitSessionUserMessage Pending action ownership', () => {
         );
     });
 
+    it('keeps Pending custody when the runtime version is opaque rather than proven legacy', async () => {
+        const session = createSession({
+            metadata: {
+                machineId: 'm1', path: '/tmp/project', host: 'host', flavor: 'unknown-agent', version: 'custom-build',
+                claudeSessionId: 'claude-1', claudeTranscriptPath: '/tmp/claude-1.jsonl',
+            },
+        });
+        const { port, enqueuePendingMessage, sendMessage } = createPort();
+
+        await expect(submitSessionUserMessage(port, submitOptions(session))).resolves.toMatchObject({
+            persistence: 'pending', localId: 'pending-1',
+        });
+        expect(enqueuePendingMessage).toHaveBeenCalledTimes(1);
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
     it('forwards host Voice admission to the durable Pending owner', async () => {
         const session = createSession();
         const { port, enqueuePendingMessage } = createPort();
