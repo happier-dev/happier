@@ -61,6 +61,36 @@ async function expectResolvesWithin<T>(promise: Promise<T>, ms = 250): Promise<T
 }
 
 describe('PermissionHandler (AskUserQuestion)', () => {
+  it('publishes Claude implicit freeform answers through the shared SDK permission path', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('s-claude-freeform');
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+    const input = askUserQuestionToolUseMessage().message.content[0]!.input;
+    const controller = new AbortController();
+
+    const pending = handler.handleToolCall(
+      'AskUserQuestion',
+      input,
+      defaultMode,
+      { signal: controller.signal, toolUseId: 'toolu_ask_freeform_1' },
+    );
+
+    expect(client.getAgentStateSnapshot().requests.toolu_ask_freeform_1).toMatchObject({
+      arguments: {
+        questions: [
+          expect.objectContaining({ freeform: {} }),
+        ],
+      },
+    });
+
+    await client.rpcHandlerManager.getHandler('permission')?.({
+      id: 'toolu_ask_freeform_1',
+      approved: false,
+      reason: 'test complete',
+    } satisfies PermissionRpcPayload);
+    await expect(pending).resolves.toMatchObject({ behavior: 'deny' });
+  });
+
   it('denies AskUserQuestion with the provided reason, and does not abort the remote loop', async () => {
     const { session, client } = createPermissionHandlerSessionStub('s1');
 
