@@ -1,4 +1,4 @@
-import { getActionSpec, type ActionId } from '@happier-dev/protocol';
+import { getActionSpec, type ActionContextualDefaults, type ActionId } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 export type SessionBoundActionToolContext = Readonly<{
@@ -28,7 +28,7 @@ function resolveContextValue(
     : normalizeContextValue(context.defaultSessionMachineId);
 }
 
-function getContextualDefaults(actionId: string): Readonly<Record<string, 'current_session' | 'current_session_machine'>> {
+function getContextualDefaults(actionId: string): ActionContextualDefaults {
   try {
     return getActionSpec(actionId as ActionId).contextualDefaults ?? {};
   } catch {
