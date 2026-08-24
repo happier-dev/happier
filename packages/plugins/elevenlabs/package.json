@@ -43,10 +43,14 @@
     "zod": "4.3.6"
   },
   "peerDependencies": {
-    "@livekit/react-native": ">=2.12.0"
+    "@livekit/react-native": ">=2.12.0",
+    "react-native": "*"
   },
   "peerDependenciesMeta": {
     "@livekit/react-native": {
+      "optional": true
+    },
+    "react-native": {
       "optional": true
     }
   },

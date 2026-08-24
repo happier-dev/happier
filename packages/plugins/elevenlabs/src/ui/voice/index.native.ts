@@ -1,4 +1,4 @@
-import { registerGlobals } from '@livekit/react-native';
+import { NativeModules, Platform } from 'react-native';
 import {
   createConnection,
   setSetupStrategy,
@@ -6,13 +6,16 @@ import {
 } from '@elevenlabs/client/internal';
 
 import {
-  activate,
+  activate as activateWebRuntime,
   createElevenLabsVoiceProviderRuntime,
 } from './runtime.js';
+import { loadLiveKitRegisterGlobals } from './runtime/liveKitReactNative.js';
 import { installElevenLabsNativeSessionStrategy } from './runtime/nativeSessionStrategy.js';
 
-installElevenLabsNativeSessionStrategy({
-  registerGlobals,
+const nativeSessionStrategyInstallation = installElevenLabsNativeSessionStrategy({
+  nativeWebRtcModule: NativeModules.WebRTCModule,
+  requiresAudioDeviceModuleBridge: Platform.OS !== 'android',
+  loadRegisterGlobals: loadLiveKitRegisterGlobals,
   setSetupStrategy,
   createConnection,
   setupWebRTCSession,
@@ -24,7 +27,16 @@ installElevenLabsNativeSessionStrategy({
  */
 export { VOICE_PROVIDER_PRESENTATIONS } from './entries.js';
 
-export {
-  activate,
-  createElevenLabsVoiceProviderRuntime,
-};
+export function activate(
+  ...args: Parameters<typeof activateWebRuntime>
+): ReturnType<typeof activateWebRuntime> {
+  if (nativeSessionStrategyInstallation.kind === 'unavailable') {
+    throw Object.assign(
+      new Error('ElevenLabs Voice requires a current iOS WebRTC native module.'),
+      { code: nativeSessionStrategyInstallation.code },
+    );
+  }
+  return activateWebRuntime(...args);
+}
+
+export { createElevenLabsVoiceProviderRuntime };

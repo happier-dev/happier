@@ -1,13 +1,8 @@
 import {
-  MediaStream as NativeMediaStream,
-  RTCPeerConnection as NativeRTCPeerConnection,
-  type MediaStreamTrack as NativeMediaStreamTrack,
-} from '@livekit/react-native-webrtc';
-
-import {
   createWebRtcConnection,
   type VoiceWebRtcRemoteOutputAttachment,
 } from './VoiceRealtimeConnection';
+import { getVoiceNativeWebRtcRuntime } from '@/voice/runtime/nativeWebRtcRuntime';
 
 type NativeVolumeTrack = Readonly<{
   _setVolume?: (volume: number) => void;
@@ -48,14 +43,14 @@ export function attachNativeRemoteStream(
 export const createHostWebRtcConnection: typeof createWebRtcConnection = (input) => (
   createWebRtcConnection({
     ...input,
-    createPeerConnection: () => (
-      new NativeRTCPeerConnection() as unknown as RTCPeerConnection
-    ),
-    createMediaStream: (tracks) => (
-      new NativeMediaStream(
-        tracks as unknown as NativeMediaStreamTrack[],
-      ) as unknown as MediaStream
-    ),
+    createPeerConnection: () => {
+      const { RTCPeerConnection } = getVoiceNativeWebRtcRuntime();
+      return new RTCPeerConnection() as RTCPeerConnection;
+    },
+    createMediaStream: (tracks) => {
+      const { MediaStream } = getVoiceNativeWebRtcRuntime();
+      return new MediaStream(tracks as unknown[]) as MediaStream;
+    },
     attachRemoteStream: (stream) => attachNativeRemoteStream(stream, input.duckGain),
   })
 );
