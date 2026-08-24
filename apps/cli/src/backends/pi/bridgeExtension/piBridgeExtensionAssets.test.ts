@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -46,8 +46,11 @@ describe('pi bridge extension assets', () => {
 
     // Rewrite with the same content must not touch the file.
     const firstContent = readFileSync(path, 'utf8');
+    const preservedTime = new Date('2020-01-02T03:04:05.000Z');
+    utimesSync(path, preservedTime, preservedTime);
     await ensurePiBridgeExtensionAsset(agentDir);
     expect(readFileSync(path, 'utf8')).toBe(firstContent);
+    expect(statSync(path).mtimeMs).toBe(preservedTime.getTime());
   });
 
   it('contains no process-specific launch configuration', async () => {

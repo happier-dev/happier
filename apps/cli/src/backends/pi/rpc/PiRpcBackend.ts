@@ -1962,9 +1962,6 @@ export class PiRpcBackend implements AgentBackend {
         } else if (this.pendingTurn.providerFailureDiagnostic) {
           this.surfacePiProviderFailure(this.pendingTurn.providerFailureDiagnostic);
           return;
-        } else if (this.pendingTurn.providerFailureDiagnostic) {
-          this.surfacePiProviderFailure(this.pendingTurn.providerFailureDiagnostic);
-          return;
         } else {
           this.pendingTurn.agentEndObserved = true;
           this.pendingTurn.agentEndActivityEpoch = this.pendingTurn.activityEpoch;

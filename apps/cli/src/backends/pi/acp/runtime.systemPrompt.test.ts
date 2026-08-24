@@ -329,7 +329,6 @@ describe('Pi ACP runtime spawn system prompt', () => {
 
       await runtime.startOrLoad({});
 
-      expect(createCalls[0]?.appendSystemPromptText ?? '').not.toContain('Happier tools are available through the CLI bridge');
       expect(createCalls[0]?.happyToolsBridge).toBeUndefined();
     } finally {
       removeTempDirSync(notADir);

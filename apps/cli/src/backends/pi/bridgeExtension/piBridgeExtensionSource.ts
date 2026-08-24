@@ -81,7 +81,16 @@ function truncateToolOutput(value) {
   let content = lines.slice(0, TOOL_OUTPUT_MAX_LINES).join("\\n");
   const contentByteLimit = TOOL_OUTPUT_MAX_BYTES - TOOL_OUTPUT_NOTICE_RESERVE_BYTES;
   if (Buffer.byteLength(content, "utf8") > contentByteLimit) {
-    content = Buffer.from(content, "utf8").subarray(0, contentByteLimit).toString("utf8");
+    const bytes = Buffer.from(content, "utf8");
+    let end = contentByteLimit;
+    while (end > 0) {
+      try {
+        content = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end));
+        break;
+      } catch {
+        end -= 1;
+      }
+    }
   }
   const truncated = totalLines > TOOL_OUTPUT_MAX_LINES || totalBytes > Buffer.byteLength(content, "utf8");
   if (!truncated) return { content, truncated: false };
@@ -200,6 +209,17 @@ async function callHappierTool(config, toolName, args, toolCallId, signal, cwd) 
   });
   if (result.killed) return { ok: false, error: { code: "bridge_cancelled", message: "Happier tool call was cancelled" } };
   if (result.outputLimited) return { ok: false, error: { code: "bridge_output_limit", message: "Happier tools bridge output exceeded its bounded transport limit" } };
+  if (!result.stdout.trim() && result.code !== 0) {
+    const diagnostic = result.stderr.trim().slice(0, 500);
+    const exit = result.code === null ? "unavailable" : String(result.code);
+    return {
+      ok: false,
+      error: {
+        code: "bridge_process_failed",
+        message: "Happier tools bridge exited with code " + exit + (diagnostic ? ": " + diagnostic : ""),
+      },
+    };
+  }
   return parseEnvelope(result.stdout);
 }
 

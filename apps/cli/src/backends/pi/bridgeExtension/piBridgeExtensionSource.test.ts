@@ -108,8 +108,13 @@ if (args.input.value === 'fail') {
   process.stdout.write(JSON.stringify({ ok: false, error: { code: 'action_failed', message: 'expected failure' } }) + '\\n');
 } else if (args.input.value === 'large') {
   process.stdout.write(JSON.stringify({ ok: true, data: { output: 'x'.repeat(100000) } }) + '\\n');
+} else if (args.input.value === 'unicode-large') {
+  process.stdout.write(JSON.stringify({ ok: true, data: { output: '😀'.repeat(30000) } }) + '\\n');
 } else if (args.input.value === 'transport-overflow') {
   process.stdout.write('x'.repeat(2 * 1024 * 1024));
+} else if (args.input.value === 'process-failure') {
+  process.stderr.write('deterministic bridge diagnostic');
+  process.exitCode = 7;
 } else if (args.input.value === 'wait') {
   setInterval(() => {}, 1000);
 } else {
@@ -185,6 +190,15 @@ if (args.input.value === 'fail') {
       expect(largeResult.content[0]!.text).toContain('[Output truncated');
       expect(largeResult.details).not.toHaveProperty('envelope');
 
+      const unicodeLargeResult = await harness.tools[0]!.execute(
+        'call-unicode-large',
+        { value: 'unicode-large' },
+        new AbortController().signal,
+        undefined,
+        { cwd: dir },
+      ) as { content: Array<{ text: string }> };
+      expect(unicodeLargeResult.content[0]!.text).not.toContain('�');
+
       await expect(harness.tools[0]!.execute(
         'call-4',
         { value: 'transport-overflow' },
@@ -192,6 +206,14 @@ if (args.input.value === 'fail') {
         undefined,
         { cwd: dir },
       )).rejects.toThrow('bridge_output_limit');
+
+      await expect(harness.tools[0]!.execute(
+        'call-process-failure',
+        { value: 'process-failure' },
+        new AbortController().signal,
+        undefined,
+        { cwd: dir },
+      )).rejects.toThrow('bridge_process_failed — Happier tools bridge exited with code 7: deterministic bridge diagnostic');
 
       const controller = new AbortController();
       const waitingCall = harness.tools[0]!.execute(

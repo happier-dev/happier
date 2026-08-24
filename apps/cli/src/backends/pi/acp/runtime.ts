@@ -92,7 +92,8 @@ export function createPiAcpRuntime(params: {
       // that used to build the prompt, so the tools the extension registers always
       // match the guidance it appends. The extension delivers the Happier base prompt
       // blocks (session title, response options, attachments, linked workspace, memory
-      // recall) and the bridge tool guidance itself, driven by `--happy-*` flags. When
+      // recall) and the bridge tool guidance itself. Prompt/tool policy travels in a
+      // protected session manifest selected by the `happy-tools-config` flag. When
       // `PI_CODING_AGENT_DIR` is not set (daemon regular-process spawns do not carry
       // it), fall back to pi's native default agent dir (`~/.pi/agent`, resolved from
       // HOME) — the same root the connected-services materializer uses — so every
