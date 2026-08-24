@@ -83,6 +83,7 @@ const EXTERNAL_TARGET_PUBLIC_IMPORTS = new Set([
   '@happier-dev/plugin-sdk/actions',
   '@happier-dev/plugin-sdk/agents/runtime',
   '@happier-dev/plugin-sdk/contributions',
+  '@happier-dev/plugin-sdk/manifest',
   '@happier-dev/plugin-sdk/protocol',
   '@happier-dev/plugin-sdk/ui',
   '@happier-dev/plugin-sdk/ui/build',

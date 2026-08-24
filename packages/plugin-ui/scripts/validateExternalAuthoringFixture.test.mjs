@@ -303,10 +303,12 @@ test('external targeted package boundary accepts public SDK/UI imports and rejec
       peerDependencies: { react: '19.2.0' },
     }));
     await writeFile(join(sourceRoot, 'selection.ts'), [
+      "import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';",
       "import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';",
       "import { TargetedSurface } from '@happier-dev/plugin-ui';",
       "export { localValue } from './value.js';",
       'export type FixtureContext = SurfaceContext;',
+      'export const parseFixtureManifest = parsePluginManifest;',
       'export const FixtureSurface = TargetedSurface;',
     ].join('\n'));
     await writeFile(join(sourceRoot, 'value.ts'), 'export const localValue = true;\n');
