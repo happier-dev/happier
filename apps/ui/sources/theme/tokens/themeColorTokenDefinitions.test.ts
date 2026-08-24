@@ -31,6 +31,7 @@ const requiredTokenIds = [
     'border.default',
     'border.surface',
     'border.strong',
+    'border.focus',
     'border.modal',
     'effect.surfaceHighlight',
     'chrome.header.background',

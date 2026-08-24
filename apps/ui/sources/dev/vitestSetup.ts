@@ -674,6 +674,7 @@ vi.mock('react-native-unistyles', () => {
                 default: '#eaeaea',
                 surface: 'transparent',
                 strong: '#d6d6d6',
+                focus: '#007AFF',
                 modal: 'rgba(0, 0, 0, 0.1)',
             },
             glass: {

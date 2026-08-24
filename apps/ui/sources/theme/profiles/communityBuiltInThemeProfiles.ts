@@ -26,6 +26,14 @@ type CuratedThemePalette = Readonly<{
     activeBackground: string;
     activeBorder: string;
     activeForeground: string;
+    /**
+     * The keyboard focus ring, when the palette's `activeForeground` is not legible enough to be
+     * one. Defaults to `activeForeground`, which is the semantically right ring and clears WCAG
+     * 1.4.11's 3:1 for most palettes; a few curated palettes place their accent too close to their
+     * own raised surfaces, and those name a brighter member of the SAME palette here rather than
+     * shipping a ring the user cannot see. `themeContrast.test.ts` is the gate.
+     */
+    focusRing?: string;
     successForeground: string;
     successBackground: string;
     successBorder: string;
@@ -74,6 +82,12 @@ const createCuratedThemeOverrides = (palette: CuratedThemePalette): ThemeProfile
     'border.default': palette.borderDefault,
     'border.surface': palette.borderSurface,
     'border.strong': palette.borderStrong,
+    // A curated palette repaints both the ring and the surfaces under it, so it cannot inherit the
+    // base theme's focus colour and stay legible — five of these profiles measured 2.60-2.96:1
+    // against their own surfaces before this line existed. The palette's active-control colour is
+    // the right ring for that palette; `focusRing` overrides it where the accent is not legible
+    // enough against that palette's own raised surfaces.
+    'border.focus': palette.focusRing ?? palette.activeForeground,
     'border.modal': palette.borderModal,
     'effect.surfaceHighlight': 'transparent',
     'chrome.header.background': palette.base,
@@ -245,7 +259,7 @@ export const COMMUNITY_BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefi
         canvas: '#181818', base: '#1F1F1F', inset: '#141414', elevated: '#2A2A2A', selected: '#313131', pressed: '#3A3A3A',
         pressedOverlay: 'rgba(204,204,204,0.08)', sectionTint: 'rgba(255,255,255,0.014)', ripple: 'rgba(204,204,204,0.12)', borderDefault: '#2B2B2B', borderSurface: '#3C3C3C', borderStrong: '#5A5A5A', borderModal: '#454545', highlight: 'rgba(255,255,255,0.035)',
         textPrimary: '#CCCCCC', textSecondary: '#A6A6A6', textTertiary: '#858585', textLink: '#0078D4', textDestructive: '#F14C4C', textPlaceholder: '#858585', textDisabled: '#6E7681',
-        activeBackground: 'rgba(0,120,212,0.16)', activeBorder: 'rgba(0,120,212,0.40)', activeForeground: '#0078D4', successForeground: '#89D185', successBackground: 'rgba(137,209,133,0.12)', successBorder: 'rgba(137,209,133,0.25)', warningForeground: '#CCA700', warningBackground: 'rgba(204,167,0,0.12)', warningBorder: 'rgba(204,167,0,0.25)', dangerForeground: '#F14C4C', dangerBackground: 'rgba(241,76,76,0.13)', dangerBorder: 'rgba(241,76,76,0.27)', infoForeground: '#0078D4', infoBackground: 'rgba(0,120,212,0.13)', infoBorder: 'rgba(0,120,212,0.28)', neutralBackground: 'rgba(166,166,166,0.10)', neutralBorder: 'rgba(166,166,166,0.20)',
+        activeBackground: 'rgba(0,120,212,0.16)', activeBorder: 'rgba(0,120,212,0.40)', activeForeground: '#0078D4', focusRing: '#569CD6', successForeground: '#89D185', successBackground: 'rgba(137,209,133,0.12)', successBorder: 'rgba(137,209,133,0.25)', warningForeground: '#CCA700', warningBackground: 'rgba(204,167,0,0.12)', warningBorder: 'rgba(204,167,0,0.25)', dangerForeground: '#F14C4C', dangerBackground: 'rgba(241,76,76,0.13)', dangerBorder: 'rgba(241,76,76,0.27)', infoForeground: '#0078D4', infoBackground: 'rgba(0,120,212,0.13)', infoBorder: 'rgba(0,120,212,0.28)', neutralBackground: 'rgba(166,166,166,0.10)', neutralBorder: 'rgba(166,166,166,0.20)',
         buttonBackground: '#313131', buttonDisabled: '#3A3A3A', inputBackground: '#313131', switchActive: '#0078D4', radioDot: '#181818', syntaxKeyword: '#569CD6', syntaxString: '#CE9178', syntaxComment: '#6A9955', syntaxNumber: '#B5CEA8', syntaxFunction: '#DCDCAA', diffAddedForeground: '#B5F2B1', diffRemovedForeground: '#FFC9C9', diffHunkForeground: '#9CDCFE', permissionPlan: '#C586C0', permissionReadOnly: '#9CDCFE', overlayScrimSoft: 'rgba(0,0,0,0.52)', overlayScrim: 'rgba(0,0,0,0.70)', overlayScrimStrong: 'rgba(0,0,0,0.84)', overlayScrimWizard: 'rgba(0,0,0,0.78)',
     }),
     createDarkProfile('graphiteDark', 'Graphite Dark', {

@@ -398,7 +398,7 @@ const stylesheet = StyleSheet.create((theme) => ({
             web: {
                 outlineStyle: 'solid',
                 outlineWidth: 2,
-                outlineColor: theme.colors.border.strong,
+                outlineColor: theme.colors.border.focus,
                 outlineOffset: -2,
             },
             default: {},

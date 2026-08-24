@@ -50,7 +50,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     buttonFocused: {
         borderWidth: 1,
-        borderColor: theme.colors.border.strong,
+        borderColor: theme.colors.border.focus,
     },
     buttonDisabled: {
         opacity: 0.5,

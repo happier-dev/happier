@@ -125,6 +125,16 @@ export const lightTheme = {
             default: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
             surface: 'transparent',
             strong: Platform.select({ ios: '#d6d6d6', default: '#d6d6d6' }),
+            // The keyboard focus ring, and the ONE token any focus-visible treatment may use.
+            // It is a semantic role, not a border weight: WCAG 1.4.11 requires a focus indicator to
+            // reach 3:1 against every surface it can land on, and no *border* token in this theme
+            // does — `border.strong` measures 1.26–1.45:1, so the ring it used to paint was very
+            // close to unseeable in both themes and worse under several shipped theme profiles.
+            // Tracks `state.active.foreground` (see `profiles/deriveThemeColors.ts`), which is
+            // already the app's "this control is active" colour and measures 3.68–9.71:1 across
+            // every surface in both themes. Do not point a focus style back at `border.strong`;
+            // that token keeps its real job of drawing higher-emphasis edges.
+            focus: '#007AFF',
             modal: 'rgba(0, 0, 0, 0.1)',
             // Half the weight of `default`, for seams and for controls whose border should imply an
             // edge without competing with the content inside it. Introduced for the sidebar/content
@@ -450,6 +460,8 @@ export const darkTheme = {
             default: 'rgba(255,255,255,0.050)',
             surface: 'rgba(255,255,255,0.056)',
             strong: 'rgba(255,255,255,0.090)',
+            // See the light theme's note. Tracks dark `state.active.foreground`.
+            focus: '#9EB9FF',
             modal: 'rgba(255,255,255,0.064)',
             subtle: 'rgba(255,255,255,0.040)',
         },

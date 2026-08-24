@@ -51,6 +51,17 @@ const textOnCanvasAndSurface = [
 
 const stateContrast = (backgroundTokenId: string) => [{ tokenId: backgroundTokenId, minRatio: 4.5 }] as const;
 
+// WCAG 1.4.11 asks 3:1 of a non-text indicator, not the 4.5:1 body text needs. A focus ring has to
+// clear it against every surface a focusable control can sit on, which is why this lists four
+// backgrounds rather than one: a ring tuned only against `surface.base` disappears inside an inset
+// field or a grouped card.
+const focusIndicatorContrast = [
+    { tokenId: 'background.canvas', minRatio: 3 },
+    { tokenId: 'surface.base', minRatio: 3 },
+    { tokenId: 'surface.inset', minRatio: 3 },
+    { tokenId: 'surface.elevated', minRatio: 3 },
+] as const;
+
 const defineEditableThemeColorToken = <TDefinition extends EditableThemeColorTokenDefinitionInput>(definition: TDefinition) => definition;
 
 export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
@@ -65,7 +76,8 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'surface.sectionTint', path: ['surface', 'sectionTint'], group: 'surface', label: 'Section tint', description: 'Barely-there baked opacity tint for grouped item sections that need a hair of separation from the base surface without reading as a recessed inset.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.default', path: ['border', 'default'], group: 'border', label: 'Default border', description: 'Standard separators and divider lines.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'border.surface', path: ['border', 'surface'], group: 'border', label: 'Surface border', description: 'Outer stroke for cards, popovers, dropdowns, composer panels, and other bounded surfaces.', valueKind: 'color' }),
-    defineEditableThemeColorToken({ id: 'border.strong', path: ['border', 'strong'], group: 'border', label: 'Strong border', description: 'Higher-emphasis outline for elevated or focused surface boundaries.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'border.strong', path: ['border', 'strong'], group: 'border', label: 'Strong border', description: 'Higher-emphasis outline for elevated or selected surface boundaries. Not the keyboard focus ring — that is border.focus.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'border.focus', path: ['border', 'focus'], group: 'border', label: 'Focus ring', description: 'Keyboard focus-visible ring for every focusable control. Must stay legible against the surfaces a control sits on.', valueKind: 'color', contrastPairs: focusIndicatorContrast }),
     defineEditableThemeColorToken({ id: 'border.modal', path: ['border', 'modal'], group: 'border', label: 'Modal border', description: 'Border color for modal card and dialog chrome surfaces.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'effect.surfaceHighlight', path: ['effect', 'surfaceHighlight'], group: 'effect', label: 'Surface highlight', description: 'Surface chrome accent for bounded cards, popovers, and composer surfaces.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'chrome.header.background', path: ['chrome', 'header', 'background'], group: 'chrome', label: 'Header background', description: 'Navigation and screen header background color.', valueKind: 'color' }),

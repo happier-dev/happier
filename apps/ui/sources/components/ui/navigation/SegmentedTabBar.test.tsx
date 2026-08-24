@@ -576,7 +576,7 @@ describe('SegmentedTabBar', () => {
         const focusedStyle = flattenStyle(requireTabSurface(screen, 'seg:beta').props.style);
         expect(focusedStyle.outlineStyle).toBe('solid');
         expect(focusedStyle.outlineWidth).toBeGreaterThanOrEqual(2);
-        expect(focusedStyle.outlineColor).toBe(theme.colors.border.strong);
+        expect(focusedStyle.outlineColor).toBe(theme.colors.border.focus);
         expect(requireTab(screen, 'seg:beta').props.accessibilityState).toEqual({ selected: false, disabled: false });
 
         await act(async () => {

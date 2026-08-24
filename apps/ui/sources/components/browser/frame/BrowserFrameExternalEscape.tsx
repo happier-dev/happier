@@ -34,7 +34,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.pressed,
     },
     escapeFocused: {
-        borderColor: theme.colors.border.strong,
+        borderColor: theme.colors.border.focus,
     },
     label: {
         // `Typography.pillLabel()` rather than a bare `fontWeight:'600'`: a named Inter face ignores

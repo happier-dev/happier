@@ -51,11 +51,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     focusRingActive: {
         ...(Platform.select({
             web: {
-                // 2px ring sourced from the theme's focused-input outline token.
+                // 2px ring sourced from the theme's focus role (`border.focus`).
                 // Use a soft inset+outset combo so the ring stays crisp on
                 // both light and dark themes without painting through the input
                 // background.
-                boxShadow: `0 0 0 2px ${theme.colors.border.strong}`,
+                boxShadow: `0 0 0 2px ${theme.colors.border.focus}`,
             },
             default: {},
         }) as object),

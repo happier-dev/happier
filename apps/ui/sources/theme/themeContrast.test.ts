@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { BUILT_IN_THEME_PROFILES } from './profiles/builtInThemeProfiles';
+import { resolveThemeProfile } from './profiles/resolveThemeProfile';
+
 import { darkTheme, lightTheme } from '.';
 
 /**
@@ -146,6 +149,81 @@ const CORRIDOR_PAIRINGS: readonly CorridorPairing[] = [
     { foreground: 'status.error', background: 'surface.inset', minRatio: 3, renderedBy: 'browser/launchpad/BrowserLaunchpadUrlEntry.tsx invalid field border' },
     { foreground: 'state.neutral.foreground', background: 'surface.base', minRatio: 3, renderedBy: 'sessions/localServices/ServiceStatusDot.tsx idle dot' },
 ];
+
+/**
+ * The keyboard focus ring, across every theme a user can actually be looking at.
+ *
+ * Before this guard the focus ring was `border.strong` — a border-*weight* token — at
+ * **1.26-1.45:1** against every surface, where WCAG 1.4.11 asks 3:1 of any indicator that conveys
+ * a control's state. It was worse under the shipped profiles, several of which override
+ * `border.strong` to values like `rgba(255,255,255,0.075)`. The defect was not that the value was
+ * badly chosen; it was that the token system had no focus *role*, so eleven call sites and the
+ * whole plugin-UI theme projection borrowed the nearest-looking border and inherited its weight.
+ *
+ * `border.focus` is that missing role. This asserts it stays legible in the base themes **and in
+ * every built-in profile**, because a profile is free to repaint both the ring and the surfaces
+ * under it — which is exactly how the old ring got quietly worse than the base theme suggested.
+ */
+/**
+ * The resting surfaces a focusable control sits on.
+ *
+ * `surface.pressed` is deliberately absent. WCAG 2.4.11 measures a focus indicator against the
+ * adjacent colours of the component in its **unfocused resting** state, and the pressed fill exists
+ * only while a pointer or key is held down — the one moment the user is certain which control they
+ * are acting on. It is not a free pass: six curated profiles measure 2.39-2.76:1 against their own
+ * pressed fill, recorded in the Q2 lane report, and the only fix that would clear it for every
+ * palette is a two-tone ring, which is a component change across eleven call sites rather than a
+ * token value. `surface.selected` IS included, because a selected row stays selected.
+ */
+const FOCUS_RING_BACKGROUNDS = [
+    'background.canvas',
+    'surface.base',
+    'surface.inset',
+    'surface.elevated',
+    'surface.selected',
+] as const;
+
+const FOCUS_RING_MIN_RATIO = 3;
+
+function focusRingFailures(colors: unknown, label: string): string[] {
+    const canvas = readTokenPath(colors, 'background.canvas');
+    const ring = readTokenPath(colors, 'border.focus');
+    return FOCUS_RING_BACKGROUNDS.flatMap((background) => {
+        const ratio = contrastRatio(ring, readTokenPath(colors, background), canvas);
+        return ratio >= FOCUS_RING_MIN_RATIO
+            ? []
+            : [`${label}: border.focus (${ring}) on ${background} = ${ratio.toFixed(2)}:1 `
+                + `(needs ${FOCUS_RING_MIN_RATIO}:1)`];
+    });
+}
+
+describe('focus indicator contrast', () => {
+    it('keeps the focus ring legible on every surface in both base themes', () => {
+        expect([
+            ...focusRingFailures(lightTheme.colors, 'light'),
+            ...focusRingFailures(darkTheme.colors, 'dark'),
+        ]).toEqual([]);
+    });
+
+    it('keeps the focus ring legible in every built-in theme profile', () => {
+        const failures = BUILT_IN_THEME_PROFILES.flatMap((definition) => (
+            (['light', 'dark'] as const).flatMap((mode) => {
+                const theme = resolveThemeProfile({ mode, profile: definition.profile });
+                return focusRingFailures(theme.colors, `${definition.presetId}/${mode}`);
+            })
+        ));
+
+        expect(failures).toEqual([]);
+    });
+
+    it('does not reuse the border-weight token as the focus ring', () => {
+        // `border.strong` keeps its real job (elevated and selected edges) and is deliberately NOT
+        // legible enough to be a focus indicator. If a future change makes these equal, a focus
+        // style pointed at either token would look correct while re-introducing the defect.
+        expect(lightTheme.colors.border.focus).not.toBe(lightTheme.colors.border.strong);
+        expect(darkTheme.colors.border.focus).not.toBe(darkTheme.colors.border.strong);
+    });
+});
 
 describe('browser and local-services corridor contrast', () => {
     for (const [themeName, theme] of [['light', lightTheme], ['dark', darkTheme]] as const) {

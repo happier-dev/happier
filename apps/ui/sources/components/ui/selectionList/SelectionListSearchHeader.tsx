@@ -87,7 +87,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     inputWrapFocused: {
         ...(Platform.select({
             web: {
-                boxShadow: `0 0 0 2px ${theme.colors.border.strong}`,
+                boxShadow: `0 0 0 2px ${theme.colors.border.focus}`,
             },
             default: {},
         }) as object),

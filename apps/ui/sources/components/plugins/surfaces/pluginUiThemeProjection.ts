@@ -28,8 +28,10 @@ export const PLUGIN_UI_THEME_COLOR_TOKEN_IDS = Object.freeze({
     // A bounded surface's own outline; `divider` is the separator between rows.
     border: 'border.surface',
     divider: 'border.default',
-    // The app's focus ring colour (`ItemRowActions`, `SegmentedTabBar`).
-    focus: 'border.strong',
+    // The app's focus ring role. Was `border.strong`, a border-weight token measuring 1.26-1.45:1
+    // against every surface where WCAG 1.4.11 asks 3:1 — so every plugin surface inherited an
+    // effectively invisible focus ring too.
+    focus: 'border.focus',
     accent: 'control.button.primary.background',
     onAccent: 'control.button.primary.foreground',
     success: 'state.success.foreground',
@@ -83,7 +85,7 @@ export function projectPluginUiTheme(theme: Theme): PluginUiThemeV1 {
             mutedText: theme.colors.text.tertiary,
             border: theme.colors.border.surface,
             divider: theme.colors.border.default,
-            focus: theme.colors.border.strong,
+            focus: theme.colors.border.focus,
             accent: theme.colors.button.primary.background,
             onAccent: theme.colors.button.primary.tint,
             success: theme.colors.state.success.foreground,

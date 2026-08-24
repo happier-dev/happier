@@ -62,10 +62,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.inset,
     },
-    // Focus-visible is the same treatment `IconButton` uses for its focus ring, so keyboard focus
-    // reads identically across the chrome instead of only being tracked and never drawn.
+    // Focus-visible, through the theme's focus-indicator ROLE.
+    //
+    // The field used to track `focused` and draw nothing (U-3). The obvious fix was to copy
+    // `IconButton`'s `border.strong`, but Q2 measured that token at 1.37:1 light / 1.28:1 dark
+    // against `surface.inset` — SC 1.4.11 asks 3:1 for a state indicator, so it would have shipped a
+    // focus ring nobody can see. `border.focus` is the role Q2 added at the theme owner for exactly
+    // this; consuming it keeps one answer app-wide instead of a local colour choice here.
     fieldRowFocused: {
-        borderColor: theme.colors.border.strong,
+        borderColor: theme.colors.border.focus,
     },
     fieldRowInvalid: {
         borderColor: theme.colors.status.error,
