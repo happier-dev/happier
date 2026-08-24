@@ -26,7 +26,7 @@ import {
 } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
-type AccountServerActionDeps = Pick<
+export type AccountServerActionDeps = Pick<
   ActionExecutorDeps,
   | 'accountSessionsSignOutEverywhereAction'
   | 'accountApiTokensCreateAction'

@@ -43,6 +43,7 @@ import {
     createProviderBindingSecurityFingerprintV1,
     createProviderMachineGrantFingerprintV1,
     AccountSettingsSchema,
+    ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
     DEFAULT_PROVIDER_SETTINGS_V1,
     FeaturesResponseSchema,
     createPlainSessionOwnerMetadataEnvelopeV1,
@@ -84,6 +85,8 @@ import type {
 } from '@/plugins/projection/registry/types';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
+import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
     readTerminalHostAttachmentInfo,
     removeTerminalHostAttachmentInfo,
@@ -486,7 +489,7 @@ const getActiveAccountSettingsSnapshotMock = vi.hoisted(() => vi.fn<
     () => Readonly<{
         settings: AccountSettings | null;
         settingsSecretsReadKeys: readonly Uint8Array[];
-    }>
+    }> | null
 >(() => ({
     settings: null,
     settingsSecretsReadKeys: [],
@@ -621,6 +624,9 @@ const getConnectedServiceRuntimeAuthAdapterMock = vi.hoisted(
 const recoveryIntentFileStoresMock = vi.hoisted(() => ({
     storesByPath: new Map<string, Map<string, unknown>>(),
     effectClaimsByPath: new Map<string, Map<string, string>>(),
+}));
+const getActiveAccountSettingsSnapshotActual = vi.hoisted(() => ({
+    current: null as null | (() => ActiveAccountSettingsSnapshot | null),
 }));
 const applyConnectedServiceAuthGenerationToTrackedSessionMock = vi.hoisted(() => vi.fn<
     (input: ApplyConnectedServiceAuthGenerationToTrackedSessionInput) => Promise<SessionConnectedServiceAuthSwitchResult>
@@ -1145,6 +1151,7 @@ vi.mock(
         const actual = await importOriginal<
             typeof import('@/settings/accountSettings/activeAccountSettingsSnapshot')
         >();
+        getActiveAccountSettingsSnapshotActual.current = actual.getActiveAccountSettingsSnapshot;
         return {
             ...actual,
             getActiveAccountSettingsSnapshot:
@@ -1179,7 +1186,8 @@ vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
     updateSessionMetadataWithRetry: updateSessionMetadataWithRetryMock,
 }));
 
-vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
+vi.mock('@/plugins/runtime/reload/runtimeLease', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/plugins/runtime/reload/runtimeLease')>(),
     acquireAuthoritativePluginRuntimeRegistryLease: acquireAuthoritativePluginRuntimeRegistryLeaseMock,
 }));
 
@@ -1348,15 +1356,46 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('mounts the Account-bound public Action ingress through the control-server boundary', async () => {
+        getActiveAccountSettingsSnapshotMock.mockImplementation(
+            () => getActiveAccountSettingsSnapshotActual.current?.() ?? null,
+        );
+        resetInMemoryAccountSettingsContextForTests();
+        vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
+        onTestFinished(() => {
+            vi.unstubAllEnvs();
+            resetInMemoryAccountSettingsContextForTests();
+        });
         const runtimeActionExecute = vi.fn(async () => ({ ok: true }));
         const externalSessionHostAction = vi.fn(async () => ({
             ok: true as const,
             result: { items: [], nextCursor: null },
         }));
+        const hookManagementAction = vi.fn(async (actionId: string) => ({
+            ok: true as const,
+            result: actionId === 'plugins.sessionHooks.status.get'
+                ? {
+                    ok: true as const,
+                    rows: [],
+                    nextCursor: null,
+                    diagnostics: [],
+                }
+                : {
+                    ok: true as const,
+                    status: {
+                        state: 'installed_enabled' as const,
+                        installationId: 'installation-1',
+                    },
+                },
+        }));
+        const sessionHookAgent = {
+            pluginId: 'happier.agent.codex',
+            localId: 'codex',
+        } as const;
         const startParams = {
             machineId: 'machine-external-action-ingress',
             credentials: {
                 token: 'token-daemon',
+                credentialProvenance: 'stored_session' as const,
                 encryption: {
                     type: 'legacy' as const,
                     secret: new Uint8Array(32).fill(1),
@@ -1386,6 +1425,9 @@ describe('startDaemonSessionControlRuntime', () => {
             currentMachineHost: 'daemon-host',
             currentMachineHomeDir: '/home/daemon',
             resolveExternalSessionHostAction: () => externalSessionHostAction,
+            externalSessionPluginAdmissionOwner: {
+                hookManagementAction,
+            },
             resolveSessionSpawnDirectTargetTransport: () => undefined,
         };
         const runtime = await startDaemonSessionControlRuntime(
@@ -1415,9 +1457,9 @@ describe('startDaemonSessionControlRuntime', () => {
                 status: 200,
                 data: {
                     tokens: [{
-                        tokenId: 'token-listed-through-daemon',
+                        tokenId: '11111111-1111-4111-8111-111111111111',
                         label: 'Daemon external Action',
-                        displayPrefix: 'hap_v1_token…',
+                        displayPrefix: 'hap_1234abcd',
                         createdAt: '2026-08-23T10:00:00.000Z',
                         lastUsedAt: null,
                         expiresAt: null,
@@ -1437,9 +1479,9 @@ describe('startDaemonSessionControlRuntime', () => {
                 ok: true,
                 result: {
                     tokens: [{
-                        tokenId: 'token-listed-through-daemon',
+                        tokenId: '11111111-1111-4111-8111-111111111111',
                         label: 'Daemon external Action',
-                        displayPrefix: 'hap_v1_token…',
+                        displayPrefix: 'hap_1234abcd',
                         createdAt: '2026-08-23T10:00:00.000Z',
                         lastUsedAt: null,
                         expiresAt: null,
@@ -1447,7 +1489,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
             });
             expect(accountApiTokensPost).toHaveBeenCalledWith(
-                expect.stringMatching(/\/v1\/account\/api-tokens\/list$/),
+                expect.stringMatching(new RegExp(`${ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1}$`)),
                 {},
                 expect.objectContaining({
                     headers: expect.objectContaining({
@@ -1455,6 +1497,83 @@ describe('startDaemonSessionControlRuntime', () => {
                     }),
                 }),
             );
+            expect(createCliActionExecutorFromCredentialsMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    invokeContributedAction: expect.any(Function),
+                    listContributedActionDefinitions: expect.any(Function),
+                }),
+            );
+
+            await expect(externalActionApi?.executor.execute(
+                'plugins.sessionHooks.status.get',
+                { intent: 'passive_inventory' },
+                {
+                    surface: 'api',
+                    authority: 'account_automation',
+                    actionCaller: { kind: 'host' },
+                },
+            )).resolves.toEqual({
+                ok: true,
+                result: {
+                    ok: true,
+                    rows: [],
+                    nextCursor: null,
+                    diagnostics: [],
+                },
+            });
+
+            for (const actionId of [
+                'plugins.sessionHooks.install',
+                'plugins.sessionHooks.disable',
+                'plugins.sessionHooks.enable',
+                'plugins.sessionHooks.uninstall',
+            ] as const) {
+                await expect(externalActionApi?.executor.execute(
+                    actionId,
+                    actionId === 'plugins.sessionHooks.install'
+                        ? {
+                            agent: sessionHookAgent,
+                            expectedPreviewId: `hook-install-preview:v1:${'1'.repeat(64)}`,
+                        }
+                        : {
+                            agent: sessionHookAgent,
+                            installationId: 'installation-1',
+                        },
+                    {
+                        surface: 'api',
+                        authority: 'account_automation',
+                        actionCaller: { kind: 'host' },
+                    },
+                )).resolves.toEqual({
+                    ok: false,
+                    errorCode: 'present_user_required',
+                    error: 'present_user_required',
+                });
+            }
+            expect(hookManagementAction).toHaveBeenCalledTimes(1);
+
+            await expect(externalActionApi?.executor.execute(
+                'plugins.sessionHooks.install',
+                {
+                    agent: sessionHookAgent,
+                    expectedPreviewId: `hook-install-preview:v1:${'1'.repeat(64)}`,
+                },
+                {
+                    surface: 'api',
+                    authority: 'present_user',
+                    actionCaller: { kind: 'host' },
+                },
+            )).resolves.toEqual({
+                ok: true,
+                result: {
+                    ok: true,
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-1',
+                    },
+                },
+            });
+            expect(hookManagementAction).toHaveBeenCalledTimes(2);
         } finally {
             await runtime.stopControlServer();
         }
@@ -7387,7 +7506,7 @@ describe('startDaemonSessionControlRuntime', () => {
             }),
         ).resolves.toBe(true);
         const activeRetainedProviderSettings =
-            getActiveAccountSettingsSnapshotMock().settings
+            getActiveAccountSettingsSnapshotMock()?.settings
                 ?.providerSettingsV1;
         if (!activeRetainedProviderSettings) {
             throw new Error(

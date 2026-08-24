@@ -9,7 +9,11 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { configuration } from '@/configuration';
 import { readSettings, type StoredCredentials } from '@/persistence';
-import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import {
+  isFullSessionId,
+  resolveSessionIdOrPrefixFromSessionList,
+  type SessionSelectorListPage,
+} from '@/session/query/resolveSessionId';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -17,6 +21,7 @@ import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import {
   getActionSpec,
   PublicActionIdSchema,
+  SessionListResultSchema,
   projectSessionSpawnNewApiRequest,
   type ActionExecuteResult,
   type ActionExecutorContext,
@@ -55,6 +60,10 @@ type PatActionTransportPlan =
   | Readonly<{ kind: 'settled'; result: ActionExecuteResult }>;
 type PatReadyActionTransportPlan = Extract<PatActionTransportPlan, Readonly<{ kind: 'ready' }>>;
 
+type CliActionSessionTarget =
+  | Readonly<{ ok: true; sessionId: string }>
+  | Readonly<{ ok: false; code: string; candidates?: readonly string[] }>;
+
 function readNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
@@ -65,6 +74,19 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
     : null;
+}
+
+function readPatSessionListPage(value: unknown): SessionSelectorListPage {
+  const parsed = SessionListResultSchema.safeParse(value);
+  if (!parsed.success) throw new Error('invalid_session_list_result');
+  return {
+    sessions: parsed.data.sessions.map((session) => ({
+      id: session.id,
+      ...(session.tag ? { tag: session.tag } : {}),
+    })),
+    nextCursor: parsed.data.nextCursor ?? null,
+    hasNext: parsed.data.hasNext === true,
+  };
 }
 
 function sessionResolutionFailure(params: Readonly<{
@@ -100,6 +122,47 @@ async function resolveConfiguredMachineTarget(): Promise<ActionTarget | null> {
   const settings = await readSettings();
   const machineId = readNonEmptyString(settings.machineId);
   return machineId ? { kind: 'machine', machineId } : null;
+}
+
+async function resolvePatSessionTarget(params: Readonly<{
+  credentials: StoredCredentials;
+  idOrPrefix: string;
+  signal?: AbortSignal;
+}>): Promise<CliActionSessionTarget> {
+  if (isFullSessionId(params.idOrPrefix)) {
+    return { ok: true, sessionId: params.idOrPrefix };
+  }
+  const machineTarget = await resolveConfiguredMachineTarget();
+  if (!machineTarget) {
+    return { ok: false, code: 'unsupported' };
+  }
+  return await resolveSessionIdOrPrefixFromSessionList({
+    idOrPrefix: params.idOrPrefix,
+    ...(params.signal ? { signal: params.signal } : {}),
+    listPage: async ({ limit, cursor, archivedOnly }) => {
+      const client = connect({
+        endpoint: configuration.apiServerUrl,
+        token: params.credentials.token,
+      });
+      try {
+        const result = await client.actions.execute(
+          'session.list',
+          {
+            limit,
+            archivedOnly,
+            ...(cursor ? { cursor } : {}),
+          },
+          {
+            target: machineTarget,
+            ...(params.signal ? { signal: params.signal } : {}),
+          },
+        );
+        return readPatSessionListPage(result);
+      } finally {
+        client.close();
+      }
+    },
+  });
 }
 
 function combineInvocationSignals(
@@ -148,7 +211,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   const requestedSessionId = readNonEmptyString(params.context?.defaultSessionId)
     ?? (spec.executionPlacement === 'session' ? inputSessionId : null);
   if (requestedSessionId) {
-    const resolved = await resolveSessionIdOrPrefix({
+    const resolved = await resolvePatSessionTarget({
       credentials: params.credentials,
       idOrPrefix: requestedSessionId,
       ...(signal ? { signal } : {}),
@@ -266,6 +329,8 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   revalidatePluginActionCallerMaterialization?: RevalidatePluginActionCallerMaterialization;
   revalidatePluginActionCallerImmutableGeneration?: RevalidatePluginActionCallerImmutableGeneration;
   runtimeActionExecute?: RuntimeActionExecute;
+  /** Current committed contributed Action declarations for catalog discovery. */
+  listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   /** The committed plugin-runtime owner for the built-in `action.invoke` Action. */
   invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
@@ -290,6 +355,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   transcriptFollowLeaseRegistry?: SessionTranscriptFollowLeaseRegistry;
 }>): ReturnType<typeof createCliActionExecutor> & Readonly<{
   bindInvocation(signal: AbortSignal): ReturnType<typeof createCliActionExecutor>;
+  resolveSessionTarget(idOrPrefix: string): Promise<CliActionSessionTarget>;
 }> {
   const createFollowLeaseRegistry = (): SessionTranscriptFollowLeaseRegistry => (
     params.transcriptFollowLeaseRegistry
@@ -309,7 +375,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
 
     return createCliActionExecutor({
       ...cryptoContext,
-      ...createAccountServerActionDeps({ token: credentials.token }),
+      accountServerActionDeps: createAccountServerActionDeps({ token: credentials.token }),
       token: credentials.token,
       credentials,
       sessionId: 'cli-global',
@@ -330,6 +396,9 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
         : {}),
       ...(params.invokeContributedAction
         ? { invokeContributedAction: params.invokeContributedAction }
+        : {}),
+      ...(params.listContributedActionDefinitions
+        ? { listContributedActionDefinitions: params.listContributedActionDefinitions }
         : {}),
       ...(params.hostExternalSessionAction
         ? { hostExternalSessionAction: params.hostExternalSessionAction }
@@ -378,6 +447,9 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
     transcriptFollowLeaseRegistry: ReturnType<typeof createFollowLeaseRegistry>,
     invocationSignal?: AbortSignal,
   ): CliActionExecutor => {
+    const readCurrentCredentials = async (): Promise<StoredCredentials | null> => params.readCredentials
+      ? await params.readCredentials().catch(() => null)
+      : params.credentials;
     const fixedExecutor = params.readCredentials
       ? null
       : shouldUsePatPublicActionTransport(params.credentials, undefined)
@@ -385,9 +457,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
         : createExecutor(params.credentials, transcriptFollowLeaseRegistry);
     return {
       prepare: async (...args) => {
-        const credentials = params.readCredentials
-          ? await params.readCredentials().catch(() => null)
-          : params.credentials;
+        const credentials = await readCurrentCredentials();
         if (!credentials) {
           return {
             kind: 'settled' as const,
@@ -422,9 +492,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
         return await executor.prepare(...args);
       },
       execute: async (...args) => {
-        const credentials = params.readCredentials
-          ? await params.readCredentials().catch(() => null)
-          : params.credentials;
+        const credentials = await readCurrentCredentials();
         if (!credentials) {
           return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
         }
@@ -446,8 +514,28 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
   };
 
   const executor = createCredentialRefreshingExecutor(createFollowLeaseRegistry());
+  const resolveSessionTarget = async (idOrPrefix: string): Promise<CliActionSessionTarget> => {
+    const credentials = params.readCredentials
+      ? await params.readCredentials().catch(() => null)
+      : params.credentials;
+    if (!credentials) {
+      return { ok: false, code: 'not_authenticated' };
+    }
+    if (shouldUsePatPublicActionTransport(credentials, { surface: 'cli' })) {
+      return await resolvePatSessionTarget({ credentials, idOrPrefix });
+    }
+    const resolved = await resolveSessionTransportContext({ credentials, idOrPrefix });
+    return resolved.ok
+      ? { ok: true, sessionId: resolved.sessionId }
+      : {
+          ok: false,
+          code: resolved.code,
+          ...(resolved.candidates ? { candidates: resolved.candidates } : {}),
+        };
+  };
   return Object.freeze({
     ...executor,
+    resolveSessionTarget,
     bindInvocation(signal: AbortSignal) {
       if (params.transcriptFollowLeaseRegistry) {
         return createCredentialRefreshingExecutor(params.transcriptFollowLeaseRegistry, signal);

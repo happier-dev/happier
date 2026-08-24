@@ -20,16 +20,21 @@ import type { ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/prot
 import type {
   ExternalSessionPluginAdmissionOwner,
 } from './externalSessions/pluginExternalSessionAdmissionOwner';
+import type { AccountServerActionDeps } from '@/api/accountServerActionDeps';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0]
   & CliTranscriptActionExecutorOptions
   & Readonly<{
     runtimeActionExecute?: RuntimeActionExecute;
+    /** Current committed contributed Action declarations for catalog discovery. */
+    listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
     externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
     /** The committed plugin-runtime owner for the built-in `action.invoke` Action. */
     invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
     /** The exact daemon external-session RPC owner for host-stamped API requests. */
     hostExternalSessionAction?: ActionExecutorDeps['hostExternalSessionAction'];
+    /** Thin adapters to the canonical Account-server-owned auth routes. */
+    accountServerActionDeps?: AccountServerActionDeps;
   }>;
 
 export function createCredentialedTargetActionCurrentIntent(
@@ -59,9 +64,13 @@ export function createCliActionExecutor(
       ...(params.invokeContributedAction
         ? { invokeContributedAction: params.invokeContributedAction }
         : {}),
+      ...(params.listContributedActionDefinitions
+        ? { listContributedActionDefinitions: params.listContributedActionDefinitions }
+        : {}),
       ...(params.hostExternalSessionAction
         ? { hostExternalSessionAction: params.hostExternalSessionAction }
         : {}),
+      ...(params.accountServerActionDeps ?? {}),
       sessionTranscriptAction: async ({ actionId, input, context }) => await executeCliTranscriptAction({
         actionId,
         input,

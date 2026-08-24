@@ -110,10 +110,16 @@ import {
 } from '@/api/session/transcriptQueries';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
+import type {
+    ExternalSessionPluginAdmissionOwner,
+} from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
 import type { ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol/actions';
 import { createAccountServerPatIntrospector } from '../auth/accountServerPatIntrospector';
 import { createDaemonPatVerifier } from '../auth/daemonPatVerifier';
-import { createDaemonExternalActionContributedInvoker } from '../externalActions/createDaemonExternalActionContributedInvoker';
+import {
+    createDaemonExternalActionContributedDefinitionLister,
+    createDaemonExternalActionContributedInvoker,
+} from '../externalActions/createDaemonExternalActionContributedInvoker';
 import { createDaemonExternalActionTargetResolver } from '../externalActions/daemonExternalActionTargetResolver';
 import type { ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
 
@@ -1971,6 +1977,8 @@ export async function startDaemonSessionControlRuntime(
         resolveExternalSessionHostAction?: () =>
             | ActionExecutorDeps['hostExternalSessionAction']
             | undefined;
+        /** Canonical daemon owner for External Session hook installation mutations. */
+        externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
         /** Current exact daemon spawn transport; it may change after machine sync. */
         resolveSessionSpawnDirectTargetTransport?: () =>
             | SessionSpawnDirectTargetTransport
@@ -10507,10 +10515,14 @@ export async function startDaemonSessionControlRuntime(
             requestCurrentIntent: pluginActionCurrentIntent,
         })
         : null;
+    const externalActionContributedDefinitionLister = externalActionAccountId
+        ? createDaemonExternalActionContributedDefinitionLister()
+        : null;
     const externalActionIngressOwner: ExternalActionIngressOwner | undefined = (
         externalActionAccountId
         && externalActionTranscriptFollowLeaseRegistry
         && externalActionContributedInvoker
+        && externalActionContributedDefinitionLister
     )
         ? {
             currentServerId: configuration.activeServerId,
@@ -10539,8 +10551,16 @@ export async function startDaemonSessionControlRuntime(
                             ? { runtimeActionExecute: params.runtimeActionExecute }
                             : {}),
                         invokeContributedAction: externalActionContributedInvoker,
+                        listContributedActionDefinitions:
+                            externalActionContributedDefinitionLister,
                         ...(hostExternalSessionAction
                             ? { hostExternalSessionAction }
+                            : {}),
+                        ...(params.externalSessionPluginAdmissionOwner
+                            ? {
+                                externalSessionPluginAdmissionOwner:
+                                    params.externalSessionPluginAdmissionOwner,
+                            }
                             : {}),
                         ...(sessionSpawnDirectTargetTransport
                             ? { sessionSpawnDirectTargetTransport }
