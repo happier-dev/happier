@@ -4183,10 +4183,44 @@ function SessionViewLoaded({
         armedContinuationSubmission: liveArmedContinuationSubmission,
         clearArmedContinuation,
     } = inSessionAgentPicker;
-    const clearArmedContinuationNonDraftSubmissionIfCurrent = React.useCallback((
+    const clearArmedContinuationSubmissionDraftsIfCurrent = React.useCallback((
         submission: SessionArmedAgentContinuationSubmission,
     ) => {
         const currentness = submission.currentness;
+        let didClearSemantic = false;
+        clearComposerAfterOutboundHandoff({
+            snapshot: {
+                sessionId,
+                text: currentness?.text ?? submission.input.text,
+            },
+            clearDraftForSessionIfCurrentValueMatches,
+            clearTransientInputState: inputComposerClearTransientStateRef.current,
+            ...(currentness && draftScope
+                ? {
+                    clearSemanticDraftValues: () => {
+                        const currentMentions = existingSessionDraftSemanticValues.read(
+                            draftScope,
+                            sessionId,
+                            'structuredInput.mentions',
+                        );
+                        if (JSON.stringify(currentMentions ?? []) !== JSON.stringify(currentness.mentions)) return;
+                        existingSessionDraftSemanticValues.clear(
+                            draftScope,
+                            sessionId,
+                            'structuredInput.mentions',
+                        );
+                        didClearSemantic = true;
+                    },
+                }
+                : {}),
+        });
+        if (didClearSemantic && draftScope) {
+            fireAndForget(
+                existingSessionDraftSemanticValues.flush(draftScope, sessionId),
+                { tag: 'SessionView.clearArmedContinuationSemanticDraft' },
+            );
+        }
+
         if (currentness && currentness.attachmentDraftIds.length > 0) {
             const submittedAttachmentDraftIds = new Set(currentness.attachmentDraftIds);
             const currentAttachmentDrafts = attachmentDraftsSnapshotRef.current;
@@ -4210,7 +4244,14 @@ function SessionViewLoaded({
         if (JSON.stringify(currentReviewComments) === JSON.stringify(submittedReviewComments)) {
             clearSentReviewCommentDrafts();
         }
-    }, [clearSentReviewCommentDrafts, includedReviewCommentDrafts, replaceSessionAttachmentDrafts, sessionId]);
+    }, [
+        clearDraftForSessionIfCurrentValueMatches,
+        clearSentReviewCommentDrafts,
+        draftScope,
+        includedReviewCommentDrafts,
+        replaceSessionAttachmentDrafts,
+        sessionId,
+    ]);
     const appliedArmedContinuationDraftClearRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         const outcome = activeArmedContinuationOutcome;
@@ -4221,7 +4262,7 @@ function SessionViewLoaded({
         const submission = liveArmedContinuationSubmission;
         if (submission?.localId !== outcome.localId) return;
         appliedArmedContinuationDraftClearRef.current = clearKey;
-        clearArmedContinuationNonDraftSubmissionIfCurrent(submission);
+        clearArmedContinuationSubmissionDraftsIfCurrent(submission);
         // Draft currentness controls only whether this exact text can be removed.
         // Canonical custody still spends the submitted transition: otherwise a
         // rewritten draft would retain its prior localId and could collide with
@@ -4240,7 +4281,7 @@ function SessionViewLoaded({
         activeServerAccountScopeKey,
         armedContinuationDisposition,
         clearArmedContinuation,
-        clearArmedContinuationNonDraftSubmissionIfCurrent,
+        clearArmedContinuationSubmissionDraftsIfCurrent,
         liveArmedContinuationLocalId,
         liveArmedContinuation,
         liveArmedContinuationSubmission,
@@ -4265,7 +4306,7 @@ function SessionViewLoaded({
         const clearKey = `${activeServerAccountScopeKey}\u0000${submission.localId}`;
         if (appliedArmedContinuationDraftClearRef.current === clearKey) return;
         appliedArmedContinuationDraftClearRef.current = clearKey;
-        clearArmedContinuationNonDraftSubmissionIfCurrent(submission);
+        clearArmedContinuationSubmissionDraftsIfCurrent(submission);
         if (
             liveArmedContinuation !== null
             && liveArmedContinuationLocalId === submission.localId
@@ -4277,7 +4318,7 @@ function SessionViewLoaded({
         activeServerAccountScopeKey,
         armedContinuationSubmissionCustody,
         clearArmedContinuation,
-        clearArmedContinuationNonDraftSubmissionIfCurrent,
+        clearArmedContinuationSubmissionDraftsIfCurrent,
         liveArmedContinuation,
         liveArmedContinuationLocalId,
         liveArmedContinuationSubmission,

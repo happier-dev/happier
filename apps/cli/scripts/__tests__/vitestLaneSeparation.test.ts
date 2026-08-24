@@ -26,7 +26,8 @@ describe('Vitest lane separation', () => {
         expect(include).toContain('src/**/*.slow.test.ts');
     });
 
-    it('allows empty integration shards to exit cleanly', () => {
+    it('allows empty unit and integration shards to exit cleanly', () => {
+        expect(unitConfig.test?.passWithNoTests).toBe(true);
         expect(integrationConfig.test?.passWithNoTests).toBe(true);
     });
 

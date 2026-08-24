@@ -132,6 +132,16 @@ vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
     useHappierVoiceSupport: () => true,
 }));
 
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({
+        importOriginal,
+        overrides: {
+            useSetting: createUseSettingMock({ values: { useEnhancedSessionWizard: true } }),
+        },
+    });
+});
+
 vi.mock('@/hooks/session/sessionRouteServerScope', () => ({
     buildScopedSessionRouteHref: () => '/session/test',
 }));

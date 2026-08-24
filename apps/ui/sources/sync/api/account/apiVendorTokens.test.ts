@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createSuccessfulServerReachabilityProbeResponse, isServerReachabilityProbeRequest } from '@/dev/testkit';
 import { HappyError } from '@/utils/errors/errors';
 import { connectVendorToken, disconnectVendorToken } from './apiVendorTokens';
 
@@ -21,8 +22,8 @@ function stubFetch(responseFactory: () => Promise<unknown>) {
         'fetch',
         vi.fn(async (input: unknown) => {
             const url = String(input);
-            if (url.endsWith('/health')) {
-                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            if (isServerReachabilityProbeRequest(url)) {
+                return createSuccessfulServerReachabilityProbeResponse();
             }
             return await responseFactory();
         }) as unknown as typeof fetch,

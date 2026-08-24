@@ -162,7 +162,7 @@ describe('ProfileEditForm default persistence mode', () => {
         expect(saveRef.current).toBeTruthy();
         const result = saveRef.current?.();
         expect(result).toBe(true);
-        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        expect(onSave.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             compatibilityByTargetKey: {
                 'agent:codex': true,
                 [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: true,

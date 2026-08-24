@@ -20,7 +20,8 @@ vi.mock('@/integrations/watcher/awaitFileExist', () => ({
   }),
 }));
 
-vi.mock('./utils/claudeCheckSession', () => ({
+vi.mock('./utils/claudeCheckSession', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./utils/claudeCheckSession')>()),
   claudeCheckSession: vi.fn(() => false),
 }));
 

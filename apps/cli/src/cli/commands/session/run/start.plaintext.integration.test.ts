@@ -34,7 +34,7 @@ describe('happier session run start (plaintext integration)', () => {
         seq: 1,
         createdAt: 1,
         updatedAt: 2,
-        active: false,
+        active: true,
         activeAt: 0,
         encryptionMode: 'plain',
         metadata: metadataPlain,
@@ -77,7 +77,6 @@ describe('happier session run start (plaintext integration)', () => {
     process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
-
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
@@ -132,7 +131,7 @@ describe('happier session run start (plaintext integration)', () => {
       );
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_plain_123');
       expect(parsed.data?.runId).toBe('run_1');

@@ -411,6 +411,7 @@ export const settingsState = {
 function getMockStorageState() {
     return {
         settings: { ...settingsDefaults, ...settingsState },
+        sessions: {},
         profileScope: activeServerAccountScopeState.value,
         createSessionActionDraft: createSessionActionDraftMock,
         workspaceLocations: workspaceGraphState.workspaceLocations,

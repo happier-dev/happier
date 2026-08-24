@@ -6,14 +6,16 @@ import {
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
+import { storage } from '@/sync/domains/state/storage';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 const machineCapabilitiesInvoke = vi.fn();
 
 const state: any = {
   settings: {
     backendEnabledByTargetKey: {
-      [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: false,
-      [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'team-review' })]: false,
+      'agent:gemini': false,
+      'acpBackend:team-review': false,
     },
     acpCatalogSettingsV1: {
       v: 2,
@@ -40,16 +42,9 @@ const state: any = {
   },
 };
 
-installVoiceToolActionImplCommonModuleMocks({
-  storage: async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-      storage: {
-        getState: () => state,
-      } as typeof import('@/sync/domains/state/storage').storage,
-    });
-  },
-});
+installVoiceToolActionImplCommonModuleMocks();
+
+const initialStorageState = storage.getState();
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
@@ -63,8 +58,8 @@ describe('agent catalog voice tools', () => {
   beforeEach(() => {
     machineCapabilitiesInvoke.mockReset();
     state.settings.backendEnabledByTargetKey = {
-      [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: false,
-      [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'team-review' })]: false,
+      'agent:gemini': false,
+      'acpBackend:team-review': false,
     };
     state.settings.acpCatalogSettingsV1 = {
       v: 2,
@@ -88,6 +83,14 @@ describe('agent catalog voice tools', () => {
         updatedAt: 1,
       }],
     };
+    storage.setState(initialStorageState, true);
+    storage.setState({
+      settings: {
+        ...settingsDefaults,
+        backendEnabledByTargetKey: state.settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: state.settings.acpCatalogSettingsV1,
+      },
+    });
     resetDynamicModelProbeCacheForTests();
   });
 
@@ -133,8 +136,8 @@ describe('agent catalog voice tools', () => {
 
     expect(models?.items?.map((item: any) => item.label)).toEqual([
       'Default',
+      'Opus 5',
       'Fable 5',
-      'Opus 4.8',
     ]);
   });
 

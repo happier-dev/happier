@@ -109,13 +109,12 @@ describe('ToolCallsGroupView (motion wiring)', () => {
             toolMessages,
         });
 
-        expect(screen.findByTestId('ionicons:layers-outline')).not.toBeNull();
-        expect(screen.findByTestId('ionicons:chevron-down-outline')).toBeNull();
-        expect(screen.findByTestId('ionicons:chevron-up-outline')).toBeNull();
+        expect(screen.findAllByType('Icon').map((icon) => icon.props.name)).toContain('stack-simple');
+        expect(screen.findAllByType('Icon').map((icon) => icon.props.name)).not.toContain('caret-up');
 
         await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
 
-        expect(screen.findByTestId('ionicons:chevron-up-outline')).not.toBeNull();
+        expect(screen.findAllByType('Icon').map((icon) => icon.props.name)).toContain('caret-up');
     });
 
     it('applies a group background only when enabled in tool feed mode', async () => {

@@ -78,6 +78,7 @@ function notifyProfileStateChanged() {
 
 function createProfileSnapshot(groups: unknown[] = []) {
     return {
+        connectedServiceCredentialRevisionsV1: [],
         connectedServicesV2: [
             {
                 serviceId: 'openai-codex',

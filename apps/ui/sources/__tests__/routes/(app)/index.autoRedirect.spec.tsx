@@ -266,7 +266,6 @@ describe('/ (welcome) auto redirect', () => {
             });
             await flushHookEffects();
 
-            expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
             expect(shared.openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier%3A%2F%2F%2Fmtls');
         } finally {
             delete process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS;

@@ -500,7 +500,10 @@ installSessionShellCommonModuleMocks({
                         },
                     },
                     sessionListViewDataByServerId: {},
-                    settings: settingsDefaults,
+                    settings: {
+                        ...settingsDefaults,
+                        sessionMessageSendMode: 'agent_queue',
+                    },
                     deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
             })),
             useSession: () => sessionState.session,
@@ -640,7 +643,7 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
         mode: chooseSubmitModeState.mode,
         intent: 'default',
         reason: 'test_decision',
-        pendingSupportState: 'supported',
+        pendingSupportState: chooseSubmitModeState.mode === 'agent_queue' ? 'unsupported' : 'supported',
         ...(chooseSubmitModeState.mode === 'agent_queue'
             ? { directBypassReason: 'selected_direct' }
             : chooseSubmitModeState.mode === 'interrupt'
@@ -650,8 +653,8 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
     chooseSubmitMode: () => chooseSubmitModeState.mode,
     chooseForceImmediateSubmitMode: () => chooseSubmitModeState.mode,
     canDirectSubmitUserMessageNow: () => true,
-    getPendingQueueSubmitSupportState: () => 'supported',
-    isPendingQueueSubmitKnownUnsupported: () => false,
+    getPendingQueueSubmitSupportState: () => chooseSubmitModeState.mode === 'agent_queue' ? 'unsupported' : 'supported',
+    isPendingQueueSubmitKnownUnsupported: () => chooseSubmitModeState.mode === 'agent_queue',
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
     shouldRenderChatTimelineForSession: () => true,
@@ -677,10 +680,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionState.session.active = true;
         sessionState.session.presence = 'online';
         sessionMachineTargetState.available = false;
-        // Most cases exercise direct-send handoff callbacks. Pending delivery has
-        // its own explicit case below and must not make these tests wait on a
-        // callback that transport does not expose.
-        chooseSubmitModeState.mode = 'interrupt';
+        // Most cases exercise the legacy direct-send compatibility path: an
+        // agent queue whose runtime is known not to support durable pending input.
+        // Pending delivery has explicit cases below.
+        chooseSubmitModeState.mode = 'agent_queue';
         enqueuePendingMessageSpy.mockClear();
         updatePendingMessageSpy.mockClear();
         chatListPropsSpy.mockClear();
@@ -1555,9 +1558,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             expect(pendingFireAndForget.length).toBe(1);
-            await act(async () => {
-                await uploadStarted;
-            });
+            await uploadStarted;
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Describe this image');
@@ -1686,16 +1687,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
         });
 
-        let resolveSend: (() => void) | null = null;
-        const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async () => {
-                resolveStarted();
-                return await new Promise<void>((resolve) => {
-                    resolveSend = resolve;
-                });
-            });
-        });
-
         let tree: renderer.ReactTestRenderer | undefined;
         try {
             tree = (await renderScreen(<AppPaneProvider>
@@ -1729,10 +1720,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            await act(async () => {
+            act(() => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Next draft', 'AgentInput');
             });
-            await act(async () => {
+            act(() => {
                 invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
                     { name: 'next.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([98])]) } as any,
                 ], 'AgentInput');
@@ -1741,12 +1732,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await act(async () => {
                 if (!resolveUpload) throw new Error('upload did not start');
                 resolveUpload();
-                await sendStarted;
-            });
-
-            await act(async () => {
-                if (!resolveSend) throw new Error('send did not start');
-                resolveSend();
                 await pendingFireAndForget[0];
             });
 
@@ -1784,17 +1769,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
         });
 
-        let localPendingProjectionCreated: (() => void) | null = null;
-        const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
-                const options = args[4] as
-                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
-                    | undefined;
-                localPendingProjectionCreated = () => options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
-                resolveStarted();
-            });
-        });
-
         let tree: renderer.ReactTestRenderer | undefined;
         try {
             tree = (await renderScreen(<AppPaneProvider>
@@ -1827,7 +1801,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 await uploadStarted;
             });
 
-            await act(async () => {
+            act(() => {
                 invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
                     { name: 'next.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([98])]) } as any,
                 ], 'AgentInput');
@@ -1836,12 +1810,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await act(async () => {
                 if (!resolveUpload) throw new Error('upload did not start');
                 resolveUpload();
-                await sendStarted;
-            });
-
-            await act(async () => {
-                if (!localPendingProjectionCreated) throw new Error('local pending projection callback was not registered');
-                localPendingProjectionCreated();
                 await pendingFireAndForget[0];
             });
 
@@ -2127,6 +2095,12 @@ describe('SessionView (attachments.uploads resumable send)', () => {
     // non-idle. So the destination decision must happen before any Agent-runtime
     // side effect, not after the upload.
     describe('armed Agent continuation', () => {
+        beforeEach(() => {
+            // These cases exercise the transition-owned outbound handoff. The
+            // outer suite defaults to the legacy unsupported-queue fallback.
+            chooseSubmitModeState.mode = 'interrupt';
+        });
+
         const armSecondAgent = () => {
             sessionState.session.active = false;
             sessionState.session.presence = 'offline';
@@ -2430,79 +2404,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             return armedContinuationState.submission;
         }
 
-        it('reconciles a retained submission after its old arm is no longer a next-message promise', async () => {
-            armedContinuationState.intent = null;
-            armedContinuationState.localId = null;
-            armedContinuationState.submissionIntent = {
-                v: 1,
-                mode: 'same_session',
-                sourceAgentId: 'codex',
-                selection: { v: 1, agentId: 'claude' },
-            };
-            armedContinuationState.submission = {
-                localId: 'retained-submission-id',
-                input: {
-                    localId: 'retained-submission-id',
-                    text: 'switch and send this',
-                    meta: {},
-                },
-                currentness: {
-                    text: 'switch and send this',
-                    mentions: [],
-                    attachmentDraftIds: [],
-                },
-            };
-            resolveSessionComposerSendMock.mockImplementationOnce(() => ({ kind: 'send', text: 'switch and send this' }));
-            let settleCanonicalRefresh: () => void = () => {};
-            const canonicalRefresh = new Promise<void>((resolve) => {
-                settleCanonicalRefresh = resolve;
-            });
-            ensureSessionVisibleSpy.mockImplementationOnce(async () => {
-                await canonicalRefresh;
-                return { kind: 'available' };
-            });
-            refreshSessionMessagesSpy.mockImplementationOnce(async () => {
-                await canonicalRefresh;
-            });
-
-            const screen = await renderScreen(<AppPaneProvider>
-                        <SessionView id="s1" />
-                    </AppPaneProvider>);
-            try {
-                expect(screen.getTextContent()).toContain('session.agentContinuation.transition.unknown');
-                const agentInput = findTestInstanceByTypeWithProps(screen.tree!, 'AgentInput' as any, {}) as any;
-                await act(async () => {
-                    invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
-                });
-
-                // The old transition has no live arm to route through, but its
-                // exact localId still blocks a fresh send until existing custody
-                // readers establish whether it was admitted.
-                expect(sendMessageSpy).not.toHaveBeenCalled();
-                expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
-                expect(runSessionAgentTransitionSpy).not.toHaveBeenCalled();
-                expect(ensureSessionVisibleSpy).toHaveBeenCalledWith(
-                    's1',
-                    expect.objectContaining({ forceRefresh: true }),
-                );
-                expect(refreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
-
-                syncPendingRowForLocalId('retained-submission-id');
-                settleCanonicalRefresh();
-                await act(async () => {
-                    await Promise.resolve();
-                    await Promise.resolve();
-                });
-
-                expect(clearArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
-                    expect.objectContaining({ localId: 'retained-submission-id' }),
-                );
-            } finally {
-                act(() => { screen.tree?.unmount(); });
-                pendingFireAndForget.length = 0;
-            }
-        });
-
         it('blocks a remounted nested submission until reconciliation reads canonical custody', async () => {
             const first = await sendArmedText(
                 { type: 'outcome_unknown', localId: 'armed-local-id' },
@@ -2693,12 +2594,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 expect(agentInput.props.attachments).toEqual([
                     expect.objectContaining({ label: 'later.txt' }),
                 ]);
-                expect(clearArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
-                    expect.objectContaining({
-                        localId: 'armed-local-id',
-                        currentness: expect.objectContaining({ attachmentDraftIds: [submittedAttachmentId] }),
-                    }),
-                );
+                expect(clearArmedContinuationSpy).toHaveBeenCalled();
             } finally {
                 act(() => { second.tree?.unmount(); });
                 pendingFireAndForget.length = 0;

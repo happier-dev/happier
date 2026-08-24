@@ -3,6 +3,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { createServerFetchWithReachabilityProbe } from '@/dev/testkit';
 
 const machineRpcSpy = vi.hoisted(() => vi.fn());
 const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
@@ -86,10 +87,10 @@ function installScopedFallback(): Readonly<{
         initializeMachines: vi.fn(async () => {}),
         getMachineEncryption: vi.fn(() => machineEncryption),
     });
-    vi.stubGlobal('fetch', vi.fn(async () => ({
+    vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => ({
         ok: true,
         json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-    })));
+    }))));
     const emitWithAck = vi.fn(async () => ({ ok: true, result: 'scoped-encrypted-result' }));
     createEphemeralSocketSpy.mockResolvedValueOnce({
         timeout: vi.fn(() => ({ emitWithAck })),
@@ -428,10 +429,10 @@ describe('machineRpcWithServerScope', () => {
             getMachineEncryption: vi.fn(() => machineEncryption),
         });
 
-        vi.stubGlobal('fetch', vi.fn(async () => ({
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => ({
             ok: true,
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-        })));
+        }))));
 
         const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
@@ -508,10 +509,10 @@ describe('machineRpcWithServerScope', () => {
             getMachineEncryption: vi.fn(() => machineEncryption),
         });
 
-        vi.stubGlobal('fetch', vi.fn(async () => ({
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => ({
             ok: true,
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-        })));
+        }))));
 
         const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
@@ -563,10 +564,10 @@ describe('machineRpcWithServerScope', () => {
             getMachineEncryption: vi.fn(() => machineEncryption),
         });
 
-        vi.stubGlobal('fetch', vi.fn(async () => ({
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => ({
             ok: true,
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-        })));
+        }))));
 
         const emitWithAck = vi.fn(async () => ({ ok: true, result: ['encrypted-result'] }));
         const fakeSocket = {
@@ -608,10 +609,10 @@ describe('machineRpcWithServerScope', () => {
             getMachineEncryption: vi.fn(() => machineEncryption),
         });
 
-        vi.stubGlobal('fetch', vi.fn(async () => ({
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => ({
             ok: true,
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-        })));
+        }))));
 
         const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
@@ -669,10 +670,10 @@ describe('machineRpcWithServerScope', () => {
             getMachineEncryption: vi.fn(() => machineEncryption),
         });
 
-        vi.stubGlobal('fetch', vi.fn(async () => ({
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => ({
             ok: true,
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-        })));
+        }))));
 
         const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
@@ -739,10 +740,10 @@ describe('machineRpcWithServerScope', () => {
             getMachineEncryption: vi.fn(() => machineEncryption),
         });
 
-        vi.stubGlobal('fetch', vi.fn(async () => ({
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => ({
             ok: true,
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-        })));
+        }))));
 
         const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {
@@ -799,10 +800,10 @@ describe('machineRpcWithServerScope', () => {
             getMachineEncryption: vi.fn(() => machineEncryption),
         });
 
-        vi.stubGlobal('fetch', vi.fn(async () => ({
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async () => ({
             ok: true,
             json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-        })));
+        }))));
 
         const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
         const fakeSocket = {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createSuccessfulServerReachabilityProbeResponse, isServerReachabilityProbeRequest } from '@/dev/testkit';
 
 vi.mock('@/utils/timing/time', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/timing/time')>();
@@ -44,8 +45,8 @@ describe('apiConnectedServicesV3', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
-        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      if (isServerReachabilityProbeRequest(url)) {
+        return createSuccessfulServerReachabilityProbeResponse();
       }
       return { ok: true, status: 200, json: async () => ({ success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' }) };
     });
@@ -90,8 +91,8 @@ describe('apiConnectedServicesV3', () => {
   it('classifies exact server-v0.2.1 mutation success as legacy and unfenced', async () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === 'https://api.example.test/health') {
-        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      if (isServerReachabilityProbeRequest(input)) {
+        return createSuccessfulServerReachabilityProbeResponse();
       }
       // Exact strict body accepted by server-v0.2.1 commit
       // 4913c1e533c872a0712ba1c25b3104fd470aacc2.
@@ -141,8 +142,8 @@ describe('apiConnectedServicesV3', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
-        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      if (isServerReachabilityProbeRequest(url)) {
+        return createSuccessfulServerReachabilityProbeResponse();
       }
       return { ok: false, status: 404, json: async () => ({ error: 'connect_credential_not_found' }) };
     });
@@ -167,8 +168,8 @@ describe('apiConnectedServicesV3', () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
-        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      if (isServerReachabilityProbeRequest(url)) {
+        return createSuccessfulServerReachabilityProbeResponse();
       }
       return { ok: true, status: 200, json: async () => ({ success: true }) };
     });
@@ -203,8 +204,8 @@ describe('apiConnectedServicesV3', () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
-      if (url === 'https://api.example.test/health') {
-        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      if (isServerReachabilityProbeRequest(url)) {
+        return createSuccessfulServerReachabilityProbeResponse();
       }
       return {
         ok: true,
@@ -228,8 +229,8 @@ describe('apiConnectedServicesV3', () => {
   it('rejects a plaintext credential whose embedded binding differs from the requested route', async () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === 'https://api.example.test/health') {
-        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      if (isServerReachabilityProbeRequest(input)) {
+        return createSuccessfulServerReachabilityProbeResponse();
       }
       return {
         ok: true,

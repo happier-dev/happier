@@ -5,26 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -75,8 +55,13 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     isExecutionRunNotRunningSendError: vi.fn(() => false),
 }));
 
+const pendingFireAndForget = vi.hoisted(() => [] as Promise<unknown>[]);
 vi.mock('@/utils/system/fireAndForget', () => ({
-    fireAndForget: (promise: Promise<unknown>) => void promise,
+    fireAndForget: (promise: Promise<unknown>, options?: { tag?: string }) => {
+        if (options?.tag === 'SessionParticipantComposer.sendMessage') {
+            pendingFireAndForget.push(promise);
+        }
+    },
 }));
 
 vi.mock('@/log', () => ({
@@ -93,13 +78,12 @@ vi.mock('@/voice/context/voiceHooks', () => ({
     },
 }));
 
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { RpcError } from '@happier-dev/protocol/rpcErrors';
-
 import { renderScreen } from '@/dev/testkit';
+import { resetReactNativeMmkvStub } from '@/dev/testkit/mocks/mmkv';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { Encryption } from '@/sync/encryption/encryption';
 import { HappyError } from '@/utils/errors/errors';
 
@@ -142,10 +126,11 @@ function readLatestAgentInputProps(): {
 describe('SessionParticipantComposer auth send surface', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
-        kvStore.clear();
+        resetReactNativeMmkvStub();
         appStateAddListener.mockClear();
         agentInputSpy.mockClear();
         modalAlertSpy.mockClear();
+        pendingFireAndForget.length = 0;
     });
 
     afterEach(() => {
@@ -154,6 +139,11 @@ describe('SessionParticipantComposer auth send surface', () => {
 
     it('surfaces not_authenticated from the real pending send path instead of silently enqueueing', async () => {
         const sessionId = 's_auth_surface';
+        const activeServer = upsertAndActivateServer({ serverUrl: 'https://relay.example.test' });
+        storage.getState().activateProfileScope({
+            serverId: activeServer.id,
+            accountId: 'account-auth-surface',
+        });
         storage.getState().applySessions([createActiveSession(sessionId)]);
         storage.getState().applySettingsLocal({ sessionMessageSendMode: 'agent_queue' });
 
@@ -163,16 +153,15 @@ describe('SessionParticipantComposer auth send surface', () => {
         const { sync } = await import('@/sync/sync');
         sync.encryption = encryption;
         vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(
-            new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE),
+            new HappyError('Authentication required', false, {
+                kind: 'auth',
+                code: 'not_authenticated',
+            }),
         );
+        const emitWithAck = vi.fn();
         const send = vi.fn();
         sync.setMessageTransport({
-            emitWithAck: vi.fn(async () => {
-                throw new HappyError('Authentication required', false, {
-                    kind: 'auth',
-                    code: 'not_authenticated',
-                });
-            }),
+            emitWithAck,
             send,
         });
 
@@ -191,11 +180,12 @@ describe('SessionParticipantComposer auth send surface', () => {
         await act(async () => {
             readLatestAgentInputProps().onSend();
             await flushHookEffects({ cycles: 2, turns: 2 });
+            await Promise.allSettled(pendingFireAndForget);
         });
 
-        await vi.waitFor(() => {
-            expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'Authentication required');
-        });
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'Authentication required');
+        expect(apiSocket.sessionRPC).toHaveBeenCalledTimes(1);
+        expect(emitWithAck).not.toHaveBeenCalled();
         expect(send).not.toHaveBeenCalled();
         expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
     });
