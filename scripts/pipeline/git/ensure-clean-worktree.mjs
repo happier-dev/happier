@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 
 const RELEASE_CONTROL_PATHS = [
   'scripts/pipeline/',
+  '.github/workflows/release.yml',
   '.github/workflows/release-npm.yml',
 ];
 

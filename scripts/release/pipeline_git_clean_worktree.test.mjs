@@ -43,7 +43,7 @@ test('assertCleanWorktree fails when repo has uncommitted changes (unless allowD
   assert.doesNotThrow(() => assertCleanWorktree({ cwd: dir, allowDirty: true }));
 });
 
-test('release-control cleanliness includes the npm workflow but permits unrelated product dirt', async () => {
+test('release-control cleanliness includes both dispatched workflows but permits unrelated product dirt', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'happier-git-release-control-'));
   git(dir, ['init']);
   git(dir, ['config', 'user.email', 'test@example.com']);
@@ -51,11 +51,18 @@ test('release-control cleanliness includes the npm workflow but permits unrelate
 
   await writeFile(path.join(dir, 'product.txt'), 'product\n', 'utf8');
   await mkdir(path.join(dir, '.github', 'workflows'), { recursive: true });
+  await writeFile(path.join(dir, '.github', 'workflows', 'release.yml'), 'name: release\n', 'utf8');
   await writeFile(path.join(dir, '.github', 'workflows', 'release-npm.yml'), 'name: release\n', 'utf8');
-  git(dir, ['add', 'product.txt', '.github/workflows/release-npm.yml']);
+  git(dir, ['add', 'product.txt', '.github/workflows/release.yml', '.github/workflows/release-npm.yml']);
   git(dir, ['commit', '-m', 'init']);
 
   await writeFile(path.join(dir, 'product.txt'), 'changed product\n', 'utf8');
+  assert.doesNotThrow(() => assertReleaseControlWorktreeClean({ cwd: dir }));
+
+  await writeFile(path.join(dir, '.github', 'workflows', 'release.yml'), 'name: changed release\n', 'utf8');
+  assert.throws(() => assertReleaseControlWorktreeClean({ cwd: dir }), /RELEASE_CONTROL_WORKTREE_DIRTY/);
+
+  await writeFile(path.join(dir, '.github', 'workflows', 'release.yml'), 'name: release\n', 'utf8');
   assert.doesNotThrow(() => assertReleaseControlWorktreeClean({ cwd: dir }));
 
   await writeFile(path.join(dir, '.github', 'workflows', 'release-npm.yml'), 'name: changed release\n', 'utf8');
