@@ -67,6 +67,52 @@ describe('Pi ACP runtime spawn system prompt', () => {
     }
   });
 
+  it('preserves canonical base-before-supplemental ordering inside the bridge prompt', async () => {
+    const agentDir = createTempDirSync('happier-pi-bridge-runtime-');
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+    try {
+      const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+      createCatalogAcpBackendSpy(createCalls);
+      const session = Object.assign(createApiSessionClientFixture(), {
+        sessionId: 'happy-session-ordered-prompt',
+      });
+
+      const runtime = createPiAcpRuntime({
+        directory: '/tmp/repo',
+        machineId: 'machine-1',
+        session,
+        messageBuffer: createMessageBufferFixture(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange() {},
+        getPermissionMode: () => 'default',
+        providerInputConsumer: createSessionProviderInputConsumerFixture(),
+        credentials,
+        fallbackToolDelivery: 'shell_bridge',
+        accountSettings: {
+          executionRunsGuidanceEnabled: true,
+          executionRunsGuidanceEntries: [{
+            id: 'ordered-supplement',
+            description: 'SUPPLEMENTAL_PROFILE_GUIDANCE',
+            enabled: true,
+          }],
+        },
+      });
+
+      await runtime.startOrLoad({});
+
+      const promptAddition = createCalls[0]?.happyToolsBridge?.sessionConfig.promptAddition ?? '';
+      expect(createCalls[0]?.appendSystemPromptText).toBeUndefined();
+      expect(promptAddition).toContain('<options>');
+      expect(promptAddition).toContain('SUPPLEMENTAL_PROFILE_GUIDANCE');
+      expect(promptAddition.indexOf('<options>')).toBeLessThan(
+        promptAddition.indexOf('SUPPLEMENTAL_PROFILE_GUIDANCE'),
+      );
+    } finally {
+      removeTempDirSync(agentDir);
+    }
+  });
+
   it('binds memory guidance to the machine id through the bridge, not the spawn prompt', async () => {
     const agentDir = createTempDirSync('happier-pi-bridge-runtime-');
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);

@@ -130,10 +130,10 @@ export function createPiAcpRuntime(params: {
         logger.debug('[pi] tools-bridge extension resolution failed; spawning without bridge args', error);
       }
 
-      // Prompt preparation is load-bearing, not best-effort: a session whose Happier
-      // prompt addition (or, in the no-bridge fallback, its whole tool-delivery appendix)
-      // cannot be composed must not silently spawn without it. Rejection propagates
-      // through ensureBackend and fails the session start.
+      // Prompt preparation is load-bearing, not best-effort. With the bridge, residual
+      // profile/provider/run blocks are appended to the host-resolved base inside the
+      // protected bridge config so Pi sees one canonically ordered addition. Without
+      // the bridge, the complete prompt rides --append-system-prompt instead.
       const text = await resolveEffectiveCodingPromptText({
         credentials: params.credentials,
         settings: params.accountSettings ?? null,
@@ -145,12 +145,9 @@ export function createPiAcpRuntime(params: {
         }).state === 'enabled',
         ...(happyToolsBridge
           ? {
-            // The bridge extension delivers the Happier base blocks (session title,
-            // response options, attachments, linked workspace) and the memory-recall
-            // guidance from its launch flags; the daemon must not duplicate them in
-            // the append content. Only residual user content (prompt stacks,
-            // execution-runs guidance) is composed here — with none configured the
-            // append content is omitted entirely (the backend then drops the flag).
+            // The bridge resolver already produced the Happier base/tool guidance.
+            // Resolve only the remaining profile/provider/run blocks here, then join
+            // them after that base in the protected bridge configuration below.
             baseOverride: null,
             memoryRecallGuidanceEnabled: false,
           }
@@ -162,12 +159,25 @@ export function createPiAcpRuntime(params: {
             toolDeliveryDirectory: params.directory,
           }),
       });
-      const appendSystemPromptText = typeof text === 'string' ? text.trim() || undefined : undefined;
+      const resolvedPromptText = typeof text === 'string' && text.trim() ? text : undefined;
 
-       return {
-         ...(appendSystemPromptText ? { appendSystemPromptText } : {}),
-         ...(happyToolsBridge ? { happyToolsBridge } : {}),
-       };
+      if (happyToolsBridge) {
+        const promptFragments = [happyToolsBridge.sessionConfig.promptAddition, resolvedPromptText]
+          .filter((fragment): fragment is string => typeof fragment === 'string' && fragment.trim().length > 0);
+        happyToolsBridge = {
+          ...happyToolsBridge,
+          sessionConfig: {
+            ...happyToolsBridge.sessionConfig,
+            // Pi applies --append-system-prompt before extension hooks. Keeping the
+            // entire Happier addition here preserves the canonical order: base/tool
+            // guidance first, then profile stacks and provider/run supplements.
+            promptAddition: promptFragments.join('\n\n'),
+          },
+        };
+        return { happyToolsBridge };
+      }
+
+      return resolvedPromptText ? { appendSystemPromptText: resolvedPromptText } : {};
      },
    });
  }

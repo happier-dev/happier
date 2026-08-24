@@ -721,11 +721,10 @@ export async function runStandardAcpProvider(
           });
         }
         // The backend delivers the effective coding system prompt at process
-        // spawn — for pi, residual user content via --append-system-prompt plus
-        // the Happier base blocks the tools-bridge extension appends from its
-        // launch flags. The first-message prepend must not duplicate any of it;
-        // only an explicit per-message base override, which cannot ride either
-        // path, still reaches the provider this way.
+        // spawn. Pi uses one canonically ordered protected bridge config when its
+        // native extension binds, or --append-system-prompt for the fallback. The
+        // first-message prepend must not duplicate either path; only an explicit
+        // per-message base override, unavailable at spawn, still rides here.
         return typeof baseOverride === 'string' && baseOverride.trim()
           ? baseOverride.trim()
           : '';

@@ -17,12 +17,9 @@ export interface PiBackendOptions extends AgentFactoryOptions {
   permissionMode?: PermissionMode;
   happierSessionId?: string | null;
   /**
-   * Residual user prompt content (prompt stacks, execution-runs guidance) appended to
-   * pi's default system prompt. The Happier base prompt blocks (session title, response
-   * options, attachments, linked workspace, memory recall) and the bridge tool guidance
-   * are delivered by the tools-bridge extension itself when it binds — they must not ride
-   * this path too. Applied once at process startup (pi has no runtime RPC command to
-   * change it mid-session) and delivered as a protected temporary file passed to
+   * Complete Happier prompt fallback used only when the native tools bridge cannot bind.
+   * Applied once at process startup (pi has no runtime RPC command to change it
+   * mid-session) and delivered as a protected temporary file passed to
    * `--append-system-prompt` (pi re-reads an existing path on resource reload): literal
    * argv would be process-list-visible and unbounded.
    */
@@ -30,10 +27,9 @@ export interface PiBackendOptions extends AgentFactoryOptions {
   /**
    * Tools-bridge extension binding for this session. When present (together with
    * `happierSessionId`), the launcher passes `--extension <path>` plus the
-   * `--happy-session-id` binding flag and the `--happy-*` config flags. The extension
-   * derives both its registered tools and the system-prompt addition it appends on
-   * `before_agent_start` from those flags, so tool inventory and prompt guidance can
-   * never drift.
+   * protected config binding. The extension derives both its registered tools and the
+   * complete ordered Happier system-prompt addition from that config, so tool inventory
+   * and prompt guidance cannot drift or be reordered by Pi's append-prompt lifecycle.
    */
   happyToolsBridge?: Readonly<{
     extensionPath: string;
