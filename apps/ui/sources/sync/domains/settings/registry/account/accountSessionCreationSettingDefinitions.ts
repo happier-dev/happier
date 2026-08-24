@@ -30,8 +30,11 @@ export const NEW_SESSION_WIZARD_SECTION_PRESENTATIONS = [
     'dropdown',
 ] as const;
 
+export const NEW_SESSION_DRAFT_ENTRY_MODES = ['resumePrevious', 'alwaysFresh'] as const;
+
 export type NewSessionWizardSelectionSectionId = typeof NEW_SESSION_WIZARD_SELECTION_SECTION_IDS[number];
 export type NewSessionWizardSectionPresentation = typeof NEW_SESSION_WIZARD_SECTION_PRESENTATIONS[number];
+export type NewSessionDraftEntryMode = typeof NEW_SESSION_DRAFT_ENTRY_MODES[number];
 
 const NewSessionWizardSelectionSectionIdSchema = z.enum(NEW_SESSION_WIZARD_SELECTION_SECTION_IDS);
 const NewSessionWizardSectionPresentationSchema = z.enum(NEW_SESSION_WIZARD_SECTION_PRESENTATIONS);
@@ -104,6 +107,19 @@ const SessionTranscriptStorageModeByTargetKeySchema = z.preprocess((value) => {
 }, z.record(BackendTargetKeySchema, SessionTranscriptStorageModeSchema).default({}));
 
 export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinitions({
+    newSessionDraftEntryMode: {
+        schema: z.enum(NEW_SESSION_DRAFT_ENTRY_MODES),
+        default: 'resumePrevious',
+        description: 'Whether ordinary New session entry resumes its device-local draft or always starts fresh',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'enum',
+            privacy: 'safe',
+            identityScope: 'person',
+        },
+    },
     lastUsedAgent: {
         schema: z.string().nullable(),
         default: null,

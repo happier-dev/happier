@@ -22,13 +22,24 @@ function sameReferences(
     return previous.length === next.length && previous.every((item, index) => item === next[index]);
 }
 
+function selectAllActionOperations(
+    state: ActionOperationStoreState,
+    accountId: string,
+): readonly ActionOperationSnapshotV1[] {
+    return Array.from(state.operationsById.values()).filter(
+        (operation) => operation.scope.accountId === accountId
+            && !state.dismissedOperationIds.has(operation.operationId),
+    );
+}
+
+export function readAllActionOperations(accountId: string): readonly ActionOperationSnapshotV1[] {
+    return selectAllActionOperations(actionOperationStore.getState(), accountId);
+}
+
 export function createAllActionOperationsSelector(accountId: string) {
     let previous: readonly ActionOperationSnapshotV1[] = [];
     return (state: ActionOperationStoreState): readonly ActionOperationSnapshotV1[] => {
-        const next = Array.from(state.operationsById.values()).filter(
-            (operation) => operation.scope.accountId === accountId
-                && !state.dismissedOperationIds.has(operation.operationId),
-        );
+        const next = selectAllActionOperations(state, accountId);
         if (sameReferences(previous, next)) return previous;
         previous = next;
         return previous;

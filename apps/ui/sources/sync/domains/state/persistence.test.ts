@@ -1327,7 +1327,7 @@ describe('persistence', () => {
             expect(loadNewSessionDraft(sessionLocalScopeA)).toBeNull();
         });
 
-        it('drops legacy new session launch drafts during scope activation', () => {
+        it('moves a legacy new session launch draft into the active scope for repository migration', () => {
             const legacyDraft = {
                 input: 'legacy launch must not cross accounts',
                 selectedMachineId: 'legacy-machine',
@@ -1348,7 +1348,7 @@ describe('persistence', () => {
             persistenceModule.prepareSessionLocalStateScopeForActivation(sessionLocalScopeB);
 
             expect(loadNewSessionDraft()).toBeNull();
-            expect(loadNewSessionDraft(sessionLocalScopeB)).toBeNull();
+            expect(loadNewSessionDraft(sessionLocalScopeB)).toEqual(legacyDraft);
         });
 
         it('migrates legacy workspace review comment drafts during scope activation', () => {

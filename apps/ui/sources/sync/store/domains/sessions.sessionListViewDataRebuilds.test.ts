@@ -1510,7 +1510,7 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         expect(get().sessionListViewData).not.toBe(initial);
     });
 
-    it('does not rebuild sessionListViewData when updating a draft for a loaded session', async () => {
+    it('drops a legacy Session draft field when applySessions merges a loaded session update', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
@@ -1536,46 +1536,6 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
                 presence: 1,
             } as any,
         ]);
-
-        const initial = get().sessionListViewData;
-        expect(Array.isArray(initial)).toBe(true);
-
-        domain.updateSessionDraft('s1', 'hello');
-        expect(get().sessionListViewData).toBe(initial);
-    });
-
-    it('does not resurrect a cleared draft when applySessions merges a loaded session update', async () => {
-        vi.doMock('../../runtime/orchestration/projectManager', () => ({
-            projectManager: { updateSessions: vi.fn() },
-        }));
-        mockSessionPersistenceBoundaries();
-
-        const { createSessionsDomain } = await import('./sessions');
-        const { get, domain } = createHarness(createSessionsDomain);
-
-        domain.applySessions([
-            {
-                id: 's1',
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-                active: true,
-                activeAt: 1,
-                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
-                metadataVersion: 1,
-                agentState: null,
-                agentStateVersion: 0,
-                thinking: false,
-                thinkingAt: 0,
-                presence: 1,
-            } as any,
-        ]);
-
-        domain.updateSessionDraft('s1', 'local draft');
-        expect(get().sessions.s1?.draft).toBe('local draft');
-
-        domain.updateSessionDraft('s1', null);
-        expect(get().sessions.s1?.draft).toBeNull();
 
         domain.applySessions([
             {
@@ -1596,7 +1556,7 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
             } as any,
         ]);
 
-        expect(get().sessions.s1?.draft).toBeNull();
+        expect(Object.prototype.hasOwnProperty.call(get().sessions.s1, 'draft')).toBe(false);
     });
 
     it('does not rebuild sessionListViewData when marking optimistic thinking', async () => {

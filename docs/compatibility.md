@@ -109,6 +109,25 @@ Every retained compatibility path records:
 
 Remove the path when its support window has ended and evidence shows no supported reader, writer, or stored shape still requires it. Do not remove a released-data reader merely because current writers stopped producing that shape.
 
+### Session draft rollout
+
+Synchronized Session drafts are negotiated through the `sessions.drafts` server feature bit. A new
+client fails closed when that bit or the typed routes are unavailable and retains the incumbent
+local-only behavior; it does not send draft records through generic Account KV routes. A capable
+server reserves the draft KV prefix so old generic-KV clients cannot read or overwrite typed draft
+rows.
+
+The first capable client imports the retired local existing-Session text/semantic stores and the
+singleton new-Session draft into the canonical draft repository. It removes each legacy value only
+after the corresponding canonical record is durably acknowledged, so an interrupted import remains
+recoverable. The legacy readers are migration adapters, not parallel writers, and may be removed
+when supported persisted local state no longer requires them.
+
+Draft documents preserve unknown extension fields as JSON. This lets a client without a newer
+composer contribution edit fields it understands without deleting newer semantic data; it does not
+authorize that client to execute the unknown contribution. Raw files, handles, secrets, and other
+device-only state remain outside the compatibility shape.
+
 ## Migration history
 
 Migration source has a stricter authoring boundary than ordinary internal code:

@@ -13,6 +13,7 @@ function buildPlanned(partial: {
     unsupportedChanges?: PlannedChangeActions['unsupportedChanges'];
     invalidate?: Partial<PlannedChangeActions['invalidate']>;
     kv?: PlannedChangeActions['kv'];
+    sessionDraftAddresses?: PlannedChangeActions['sessionDraftAddresses'];
 }): PlannedChangeActions {
     return {
         changes: partial.changes ?? [],
@@ -32,6 +33,7 @@ function buildPlanned(partial: {
             ...(partial.invalidate ?? {}),
         },
         kv: partial.kv ?? { type: 'none' },
+        sessionDraftAddresses: partial.sessionDraftAddresses ?? [],
         sessionFolderAssignments: { mode: 'none' },
         sessionOrganization: { mode: 'none' },
     };
@@ -924,5 +926,30 @@ describe('changesApplier', () => {
             blockedCursor: '1',
             blockedReason: 'pending-not-converged',
         });
+    });
+
+    it('materializes an exact draft before advancing its Account change cursor', async () => {
+        const address = { kind: 'session', sessionId: 'session-a' } as const;
+        const change = buildChange({
+            cursor: 2,
+            kind: 'account',
+            entityId: 'session-draft:session/session-a',
+            hint: { v: 1, sessionDraft: true, address, revision: 4, status: 'present' },
+        });
+        const materializeSessionDraft = vi.fn(async () => {});
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({ changes: [change], sessionDraftAddresses: [address] }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: {},
+            invalidateMessagesForSession: async () => {},
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+            materializeSessionDraft,
+        });
+
+        expect(materializeSessionDraft).toHaveBeenCalledWith(address);
+        expect(result).toMatchObject({ status: 'complete', safeAdvanceCursor: '2' });
     });
 });

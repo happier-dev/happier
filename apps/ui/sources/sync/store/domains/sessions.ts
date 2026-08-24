@@ -27,7 +27,6 @@ import {
 import { nowServerMs } from '../../runtime/time';
 import { clearSessionTranscriptDerivedCachesForSession } from '../../runtime/sessionTranscriptDerivedCaches';
 import {
-    loadSessionDrafts,
     loadSessionLastViewed,
     loadSessionModelModeUpdatedAts,
     loadSessionModelModes,
@@ -37,7 +36,6 @@ import {
     loadSessionReviewCommentsDrafts,
     loadWorkspaceReviewCommentsDrafts,
     prepareSessionLocalStateScopeForActivation,
-    saveSessionDrafts,
     saveSessionLastViewed,
     saveSessionModelModeUpdatedAts,
     saveSessionModelModes,
@@ -97,7 +95,8 @@ import {
     shouldRebuildOnSessionPlacementFieldsChange,
 } from './sessionListRenderableCommit';
 import { clearAgentInputLocalUiStateForSession } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
-import { clearSessionDraftValues } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import { deleteSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     createWarmCacheSaveScheduler,
     WARM_CACHE_PROGRESS_SAVE_DEBOUNCE_MS,
@@ -180,7 +179,6 @@ export type SessionsDomain = {
     getSessionRepositoryTreeExpandedPaths: (sessionId: string) => string[];
     setSessionRepositoryTreeExpandedPaths: (sessionId: string, paths: string[]) => void;
     clearSessionRepositoryTreeExpandedPaths: (sessionId: string) => void;
-    updateSessionDraft: (sessionId: string, draft: string | null) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionResuming: (sessionId: string) => void;
@@ -488,7 +486,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     get: StoreGet<S>;
 }): SessionsDomain {
     let sessionLocalStateScope: ServerAccountScope | null = null;
-    let sessionDrafts = loadSessionDrafts();
     let sessionPermissionModes = loadSessionPermissionModes();
     let sessionModelModes = loadSessionModelModes();
     let sessionPermissionModeUpdatedAts = loadSessionPermissionModeUpdatedAts();
@@ -544,9 +541,13 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         getWarmCacheSaveScheduler().schedule(state);
     };
 
+    const stripLegacySessionDraftField = <T extends object>(value: T): Omit<T, 'draft'> => {
+        const { draft: _discardedLegacyDraft, ...withoutDraft } = value as T & Readonly<{ draft?: unknown }>;
+        return withoutDraft;
+    };
+
     const stripLocalSessionFields = (session: Session): Session => ({
-        ...session,
-        draft: null,
+        ...stripLegacySessionDraftField(session),
         permissionMode: null,
         permissionModeUpdatedAt: undefined,
         modelMode: undefined,
@@ -555,7 +556,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
     const applyLocalSessionFields = (session: Session): Session => ({
         ...stripLocalSessionFields(session),
-        draft: sessionDrafts[session.id] ?? null,
         ...(sessionPermissionModes[session.id]
             ? {
                 permissionMode: sessionPermissionModes[session.id],
@@ -583,7 +583,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
     const hydrateSessionLocalState = (scope: ServerAccountScope | null): void => {
         sessionLocalStateScope = scope;
-        sessionDrafts = loadSessionDrafts(scope);
         sessionPermissionModes = loadSessionPermissionModes(scope);
         sessionModelModes = loadSessionModelModes(scope);
         sessionPermissionModeUpdatedAts = loadSessionPermissionModeUpdatedAts(scope);
@@ -685,7 +684,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         clearSessionLocalStateScope: () => {
             clearDeferredWarmCacheSave();
             hydrateSessionLocalState(null);
-            sessionDrafts = {};
             sessionPermissionModes = {};
             sessionModelModes = {};
             sessionPermissionModeUpdatedAts = {};
@@ -738,12 +736,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             () => set((state) => {
             const localNowMs = Date.now();
 
-            // Drafts are persisted out-of-band from the session payload, so we must always consult the
-            // persisted draft map when hydrating a session. This ensures drafts written for a session
-            // before it is loaded (e.g. fork "branch and edit" draft restore) are applied when the
-            // session first appears in the store.
-            // Persisted maps must be consulted for any session that appears after bootstrap (deep links, pagination,
-            // socket-delivered sessions, etc.), not only when the sessions store is initially empty.
+            // Persisted local mode maps must be consulted for any session that appears after bootstrap
+            // (deep links, pagination, socket-delivered sessions, etc.), not only when the sessions store
+            // is initially empty.
             const savedPermissionModes = sessionPermissionModes;
             const savedModelModes = sessionModelModes;
             const savedPermissionModeUpdatedAts = sessionPermissionModeUpdatedAts;
@@ -776,14 +771,13 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // Update sessions with calculated presence using centralized resolver
             sessions.forEach(incomingSession => {
                 const previousSession = state.sessions[incomingSession.id];
-                const session = resolveOrderedSessionApply(previousSession, incomingSession);
+                const session = stripLegacySessionDraftField(
+                    resolveOrderedSessionApply(previousSession, incomingSession),
+                );
                 // Use centralized resolver for consistent state management
                 const presence = resolveSessionOnlineState(session);
 
-                // Preserve existing draft and permission mode if they exist, or load from saved data
-                const hasLoadedSession = previousSession !== undefined;
-                const existingDraft = previousSession?.draft;
-                const savedDraft = sessionDrafts[session.id];
+                // Preserve existing local mode selections, or load them from persisted local state.
                 const existingPermissionMode = previousSession?.permissionMode;
                 const savedPermissionMode = savedPermissionModes[session.id];
                 const existingModelMode = previousSession?.modelMode;
@@ -981,9 +975,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     thinking: runtimePresence.thinking,
                     thinkingAt: runtimePresence.thinkingAt,
                     presence,
-                    draft: hasLoadedSession
-                        ? (existingDraft ?? null)
-                        : (savedDraft ?? session.draft ?? null),
                     optimisticThinkingAt: mergedOptimisticThinkingAt,
                     resumingAt: mergedResumingAt,
                     thinkingGraceUntil: mergedThinkingGraceUntil,
@@ -1520,45 +1511,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     ...state.sessionScmStatus,
                     [sessionId]: status
                 }
-            };
-        }),
-        updateSessionDraft: (sessionId: string, draft: string | null) => set((state) => {
-            const session = state.sessions[sessionId];
-            // Don't store empty strings, convert to null
-            const normalizedDraft = draft?.trim() ? draft : null;
-
-            // Preserve drafts for sessions that have not been materialized into this store slice yet.
-            const allDrafts: Record<string, string> = { ...sessionDrafts };
-            Object.entries(state.sessions).forEach(([id, sess]) => {
-                if (sess.draft?.trim()) {
-                    allDrafts[id] = sess.draft;
-                } else {
-                    delete allDrafts[id];
-                }
-            });
-            if (normalizedDraft) {
-                allDrafts[sessionId] = normalizedDraft;
-            } else {
-                delete allDrafts[sessionId];
-            }
-
-            // Persist drafts
-            saveSessionDrafts(allDrafts, sessionLocalStateScope);
-            sessionDrafts = allDrafts;
-
-            if (!session) return state;
-
-            const updatedSessions = {
-                ...state.sessions,
-                [sessionId]: {
-                    ...session,
-                    draft: normalizedDraft
-                }
-            };
-
-            return {
-                ...state,
-                sessions: updatedSessions,
             };
         }),
         upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => set((state) => {
@@ -2153,12 +2105,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const { [sessionId]: _deletedActionDrafts, ...remainingActionDrafts } = state.actionDraftsBySessionId;
             actionDraftsBySessionId = remainingActionDrafts;
             
-            // Clear drafts and permission modes from persistent storage
-            const drafts = loadSessionDrafts(sessionLocalStateScope);
-            delete drafts[sessionId];
-            saveSessionDrafts(drafts, sessionLocalStateScope);
-            sessionDrafts = drafts;
-
+            // Clear canonical draft and permission modes from persistent storage.
             const reviewDrafts = loadSessionReviewCommentsDrafts(sessionLocalStateScope);
             delete reviewDrafts[sessionId];
             saveSessionReviewCommentsDrafts(reviewDrafts, sessionLocalStateScope);
@@ -2167,7 +2114,15 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             delete actionDrafts[sessionId];
             saveSessionActionDrafts(actionDrafts, sessionLocalStateScope);
 
-            clearSessionDraftValues(sessionLocalStateScope, sessionId, { lifecycle: 'sessionDeleted' });
+            if (sessionLocalStateScope) {
+                fireAndForget(
+                    deleteSessionDraft({
+                        scope: sessionLocalStateScope,
+                        address: { kind: 'session', sessionId },
+                    }),
+                    { tag: 'sessions.sessionDeleted.deleteSessionDraft' },
+                );
+            }
             clearAgentInputLocalUiStateForSession(sessionLocalStateScope, sessionId);
             
             const modes = loadSessionPermissionModes(sessionLocalStateScope);

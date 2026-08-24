@@ -15,12 +15,13 @@ import {
 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import { structuredInputMentionSurvivesText } from '@/components/sessions/agentInput/structuredInputMentions';
 import {
-    clearSessionDraftValue,
-    flushSessionDraftValues,
-    readSessionDraftValue,
-    writeSessionDraftValue,
     type ComposerStructuredInputMention,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+} from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
+import {
+    getSessionDraftSnapshot,
+    subscribeSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
     areServerAccountScopesEqual,
     serverAccountScopeKeySuffix,
@@ -29,6 +30,7 @@ import {
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useAgentInputComposerDraftGarbageCollection } from './useAgentInputComposerDraftGarbageCollection';
 import { useWebLifecycleFlush } from './useWebLifecycleFlush';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type SessionAgentInputComposerPersistence = Readonly<{
     expanded: boolean;
@@ -137,9 +139,9 @@ function readStructuredMentions(
     owner: AgentInputDraftOwner | null,
     text: string | undefined,
 ): readonly ComposerStructuredInputMention[] {
-    if (!owner || owner.kind !== 'session') return [];
+    if (!scope || !owner || owner.kind !== 'session') return [];
     return filterMentionsForText(
-        readSessionDraftValue(scope, owner.sessionId, 'structuredInput.mentions') ?? [],
+        existingSessionDraftSemanticValues.read(scope, owner.sessionId, 'structuredInput.mentions') ?? [],
         text,
     );
 }
@@ -227,6 +229,15 @@ export function useSessionAgentInputComposerPersistence({
     useAgentInputComposerDraftGarbageCollection(scope);
     const isFocused = useIsFocused();
     const owner = React.useMemo(() => createSessionDraftOwner(sessionId), [sessionId]);
+    const subscribeToSemanticDraft = React.useCallback((listener: () => void) => {
+        if (!scope || owner?.kind !== 'session') return () => undefined;
+        return subscribeSessionDraft(scope, { kind: 'session', sessionId: owner.sessionId }, listener);
+    }, [owner, scope]);
+    const readSemanticDraftSnapshot = React.useCallback(() => {
+        if (!scope || owner?.kind !== 'session') return null;
+        return getSessionDraftSnapshot(scope, { kind: 'session', sessionId: owner.sessionId });
+    }, [owner, scope]);
+    React.useSyncExternalStore(subscribeToSemanticDraft, readSemanticDraftSnapshot, readSemanticDraftSnapshot);
     const inputStateReadOptions = React.useMemo(() => ({ textLength, fontScale }), [fontScale, textLength]);
     const scopedStateReadOptions = React.useMemo(() => ({ text, textLength, fontScale }), [fontScale, text, textLength]);
     const previousOwnerRef = React.useRef<Readonly<{
@@ -246,7 +257,7 @@ export function useSessionAgentInputComposerPersistence({
         : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
     const expanded = currentScopedState.expanded;
     const inputState = currentScopedState.inputState;
-    const structuredInputMentions = currentScopedState.structuredInputMentions;
+    const structuredInputMentions = readStructuredMentions(scope, owner, text);
     // One-way latch per owner/scope: flips when the persisted basis first
     // becomes applicable to the live text (draft adopted after an async load on
     // session open), so restoreToken changes exactly once at the moment the
@@ -278,19 +289,6 @@ export function useSessionAgentInputComposerPersistence({
     ) => {
         setScopedState(readScopedComposerPersistenceState(nextScope, nextOwner, nextOptions));
     }, []);
-    const setScopedStateWithStructuredMentions = React.useCallback((
-        mentions: readonly ComposerStructuredInputMention[],
-    ) => {
-        setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
-                ? current
-                : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
-            return {
-                ...base,
-                structuredInputMentions: mentions,
-            };
-        });
-    }, [owner, scope, scopedStateReadOptions]);
     const setScopedStateWithExpanded = React.useCallback((nextExpanded: boolean) => {
         setScopedState((current) => {
             const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
@@ -315,7 +313,10 @@ export function useSessionAgentInputComposerPersistence({
     }, [inputStateReadOptions, owner, scope, scopedStateReadOptions]);
     const pendingFlushScopeRef = React.useRef<ServerAccountScope | null | undefined>(undefined);
     const pendingFlushTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const pendingStructuredFlushScopeRef = React.useRef<ServerAccountScope | null | undefined>(undefined);
+    const pendingStructuredFlushTargetRef = React.useRef<Readonly<{
+        scope: ServerAccountScope;
+        sessionId: string;
+    }> | null>(null);
     const pendingStructuredFlushTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const flushPendingUiState = React.useCallback((targetScope?: ServerAccountScope | null) => {
@@ -333,18 +334,24 @@ export function useSessionAgentInputComposerPersistence({
         }
     }, []);
 
-    const flushPendingStructuredInput = React.useCallback((targetScope?: ServerAccountScope | null) => {
+    const flushPendingStructuredInput = React.useCallback((target?: Readonly<{
+        scope: ServerAccountScope;
+        sessionId: string;
+    }> | null) => {
         if (pendingStructuredFlushTimeoutRef.current) {
             clearTimeout(pendingStructuredFlushTimeoutRef.current);
             pendingStructuredFlushTimeoutRef.current = null;
         }
-        const scopeToFlush = typeof targetScope === 'undefined'
-            ? pendingStructuredFlushScopeRef.current
-            : targetScope;
-        if (typeof scopeToFlush === 'undefined') return;
-        flushSessionDraftValues(scopeToFlush);
-        if (pendingStructuredFlushScopeRef.current === scopeToFlush) {
-            pendingStructuredFlushScopeRef.current = undefined;
+        const targetToFlush = typeof target === 'undefined'
+            ? pendingStructuredFlushTargetRef.current
+            : target;
+        if (!targetToFlush) return;
+        fireAndForget(
+            existingSessionDraftSemanticValues.flush(targetToFlush.scope, targetToFlush.sessionId),
+            { tag: 'useSessionAgentInputComposerPersistence.flushSemanticDraft' },
+        );
+        if (pendingStructuredFlushTargetRef.current === targetToFlush) {
+            pendingStructuredFlushTargetRef.current = null;
         }
     }, []);
 
@@ -355,7 +362,11 @@ export function useSessionAgentInputComposerPersistence({
             && (!areOwnersEqual(previous.owner, owner) || !areNullableScopesEqual(previous.scope, scope))
         ) {
             flushPendingUiState(previous.scope);
-            flushPendingStructuredInput(previous.scope);
+            flushPendingStructuredInput(
+                previous.scope && previous.owner?.kind === 'session'
+                    ? { scope: previous.scope, sessionId: previous.owner.sessionId }
+                    : null,
+            );
         }
 
         previousOwnerRef.current = { owner, scope };
@@ -368,15 +379,11 @@ export function useSessionAgentInputComposerPersistence({
         if (!isFocused) return;
         setScopedStateFromStore(scope, owner, scopedStateReadOptions);
         const mentions = readStructuredMentions(scope, owner, text);
-        if (owner.kind === 'session') {
-            const persistedMentions = readSessionDraftValue(scope, owner.sessionId, 'structuredInput.mentions') ?? [];
+        if (scope && owner.kind === 'session') {
+            const persistedMentions = existingSessionDraftSemanticValues.read(scope, owner.sessionId, 'structuredInput.mentions') ?? [];
             if (!areMentionListsEqual(mentions, persistedMentions)) {
-                if (mentions.length === 0) {
-                    clearSessionDraftValue(scope, owner.sessionId, 'structuredInput.mentions', { flush: false });
-                } else {
-                    writeSessionDraftValue(scope, owner.sessionId, 'structuredInput.mentions', mentions, { flush: false });
-                }
-                flushSessionDraftValues(scope);
+                existingSessionDraftSemanticValues.write(scope, owner.sessionId, 'structuredInput.mentions', mentions);
+                flushPendingStructuredInput({ scope, sessionId: owner.sessionId });
             }
         }
     }, [flushPendingStructuredInput, flushPendingUiState, isFocused, owner, scope, scopedStateReadOptions, setScopedStateFromStore, text]);
@@ -384,7 +391,9 @@ export function useSessionAgentInputComposerPersistence({
     React.useEffect(() => {
         const flushForBackground = () => {
             flushPendingUiState(scope);
-            flushPendingStructuredInput(scope);
+            flushPendingStructuredInput(
+                scope && owner?.kind === 'session' ? { scope, sessionId: owner.sessionId } : null,
+            );
         };
 
         const handleAppStateChange = (nextAppState: AppStateStatus) => {
@@ -397,12 +406,14 @@ export function useSessionAgentInputComposerPersistence({
         return () => {
             subscription.remove();
         };
-    }, [flushPendingStructuredInput, flushPendingUiState, scope]);
+    }, [flushPendingStructuredInput, flushPendingUiState, owner, scope]);
 
     const flushForWebLifecycle = React.useCallback(() => {
         flushPendingUiState(scope);
-        flushPendingStructuredInput(scope);
-    }, [flushPendingStructuredInput, flushPendingUiState, scope]);
+        flushPendingStructuredInput(
+            scope && owner?.kind === 'session' ? { scope, sessionId: owner.sessionId } : null,
+        );
+    }, [flushPendingStructuredInput, flushPendingUiState, owner, scope]);
     useWebLifecycleFlush(true, flushForWebLifecycle);
 
     React.useEffect(() => {
@@ -410,7 +421,11 @@ export function useSessionAgentInputComposerPersistence({
             const previous = previousOwnerRef.current;
             if (previous) {
                 flushPendingUiState(previous.scope);
-                flushPendingStructuredInput(previous.scope);
+                flushPendingStructuredInput(
+                    previous.scope && previous.owner?.kind === 'session'
+                        ? { scope: previous.scope, sessionId: previous.owner.sessionId }
+                        : null,
+                );
             }
         };
     }, [flushPendingStructuredInput, flushPendingUiState]);
@@ -425,13 +440,16 @@ export function useSessionAgentInputComposerPersistence({
         }, SESSION_AGENT_INPUT_SCROLL_SELECTION_PERSISTENCE_DEBOUNCE_MS);
     }, [flushPendingUiState]);
 
-    const scheduleStructuredInputFlush = React.useCallback((targetScope: ServerAccountScope | null) => {
-        pendingStructuredFlushScopeRef.current = targetScope;
+    const scheduleStructuredInputFlush = React.useCallback((target: Readonly<{
+        scope: ServerAccountScope;
+        sessionId: string;
+    }>) => {
+        pendingStructuredFlushTargetRef.current = target;
         if (pendingStructuredFlushTimeoutRef.current) {
             clearTimeout(pendingStructuredFlushTimeoutRef.current);
         }
         pendingStructuredFlushTimeoutRef.current = setTimeout(() => {
-            flushPendingStructuredInput(targetScope);
+            flushPendingStructuredInput(target);
         }, SESSION_AGENT_INPUT_STRUCTURED_MENTION_PERSISTENCE_DEBOUNCE_MS);
     }, [flushPendingStructuredInput]);
 
@@ -539,16 +557,11 @@ export function useSessionAgentInputComposerPersistence({
     }, [inputStateReadOptions, owner, scope, scopedStateReadOptions]);
 
     const onStructuredMentionsChange = React.useCallback((mentions: readonly ComposerStructuredInputMention[]) => {
-        if (!owner || owner.kind !== 'session') return;
+        if (!scope || !owner || owner.kind !== 'session') return;
         const nextMentions = [...mentions];
-        setScopedStateWithStructuredMentions(nextMentions);
-        if (nextMentions.length === 0) {
-            clearSessionDraftValue(scope, owner.sessionId, 'structuredInput.mentions', { flush: false });
-        } else {
-            writeSessionDraftValue(scope, owner.sessionId, 'structuredInput.mentions', nextMentions, { flush: false });
-        }
-        scheduleStructuredInputFlush(scope);
-    }, [owner, scheduleStructuredInputFlush, scope, setScopedStateWithStructuredMentions]);
+        existingSessionDraftSemanticValues.write(scope, owner.sessionId, 'structuredInput.mentions', nextMentions);
+        scheduleStructuredInputFlush({ scope, sessionId: owner.sessionId });
+    }, [owner, scheduleStructuredInputFlush, scope]);
 
     const inputPersistence = React.useMemo(() => ({
         ...(typeof inputState?.scrollY === 'number' ? { initialScrollY: inputState.scrollY } : {}),

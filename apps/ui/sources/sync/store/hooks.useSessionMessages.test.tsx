@@ -368,6 +368,128 @@ describe('useSessionMessages', () => {
     });
 });
 
+describe('useSessionTranscriptIds retained-content window', () => {
+    const messagesById = {
+        'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
+        'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: false } as any,
+    };
+
+    function seedLoadedTranscript(): void {
+        storage.setState((state) => ({
+            ...state,
+            sessionMessages: {
+                ...state.sessionMessages,
+                's-retained': {
+                    messageIdsOldestFirst: ['m-1', 'm-2'],
+                    messagesById,
+                    messagesMap: messagesById,
+                    reducerState: {} as any,
+                    latestThinkingMessageId: null,
+                    latestThinkingMessageActivityAtMs: null,
+                    latestReadyEventSeq: null,
+                    latestReadyEventAt: null,
+                    messagesVersion: 1,
+                    lastAppliedAgentStateVersion: null,
+                    isLoaded: true,
+                } as any,
+            },
+        }));
+    }
+
+    /**
+     * `resetSessionMessages` empties the ids for the reset -> refetch window while
+     * `useSessionMessages` keeps serving its cached rows. Every consumer that decides whether the
+     * transcript has anything to show reads this hook, so the window has to be reported — reading
+     * `ids.length` alone says "nothing here" and unmounts a transcript the reader is looking at.
+     */
+    it('reports retained content while a real reset empties the ids, and stops once loaded', async () => {
+        const previousState = storage.getState();
+        try {
+            seedLoadedTranscript();
+            const hook = await renderHook(() => useSessionTranscriptIds('s-retained'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(hook.getCurrent().ids).toHaveLength(2);
+            expect(hook.getCurrent().hasRetainedContent).toBe(false);
+
+            await act(async () => {
+                storage.getState().resetSessionMessages('s-retained');
+            });
+            const afterReset = await hook.rerender();
+
+            // The window: ids are gone, the entry is not, the load has not finished.
+            expect(afterReset.ids).toHaveLength(0);
+            expect(afterReset.isLoaded).toBe(false);
+            expect(afterReset.hasRetainedContent).toBe(true);
+
+            // The refetch lands: retention ends, the real content takes over.
+            await act(async () => {
+                seedLoadedTranscript();
+            });
+            const afterRefetch = await hook.rerender();
+            expect(afterRefetch.ids).toHaveLength(2);
+            expect(afterRefetch.hasRetainedContent).toBe(false);
+
+            await hook.unmount();
+        } finally {
+            await act(async () => {
+                storage.setState(previousState);
+            });
+        }
+    });
+
+    it('reports no retained content for an evicted entry or a genuinely empty loaded transcript', async () => {
+        const previousState = storage.getState();
+        try {
+            seedLoadedTranscript();
+            const hook = await renderHook(() => useSessionTranscriptIds('s-retained'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(hook.getCurrent().ids).toHaveLength(2);
+
+            // Eviction removes the entry entirely. Nothing may be retained for a session whose
+            // transcript memory was released — that is the no-mounted-surface path.
+            await act(async () => {
+                storage.getState().evictSessionMessages('s-retained');
+            });
+            const afterEvict = await hook.rerender();
+            expect(afterEvict.ids).toHaveLength(0);
+            expect(afterEvict.hasRetainedContent).toBe(false);
+
+            // A loaded transcript that is simply empty is a terminal state, not a window.
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionMessages: {
+                        ...state.sessionMessages,
+                        's-retained': {
+                            messageIdsOldestFirst: [],
+                            messagesById: {},
+                            messagesMap: {},
+                            reducerState: {} as any,
+                            latestThinkingMessageId: null,
+                            latestThinkingMessageActivityAtMs: null,
+                            latestReadyEventSeq: null,
+                            latestReadyEventAt: null,
+                            messagesVersion: 0,
+                            lastAppliedAgentStateVersion: null,
+                            isLoaded: true,
+                        } as any,
+                    },
+                }));
+            });
+            const afterEmptyLoaded = await hook.rerender();
+            expect(afterEmptyLoaded.hasRetainedContent).toBe(false);
+
+            await hook.unmount();
+        } finally {
+            await act(async () => {
+                storage.setState(previousState);
+            });
+        }
+    });
+});
+
 describe('useSessionSubagentSourceMessages', () => {
     it('does not rescan ordinary streamed text when subagent source inputs are unchanged', async () => {
         const previousState = storage.getState();

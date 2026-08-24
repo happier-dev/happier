@@ -436,7 +436,7 @@ describe('machineSpawnNewSession error mapping', () => {
       options.sourceContext,
     ]);
     expect(machineRpcWithServerScopeMock.mock.calls
-      .filter(([call]) => call.method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE))
+      .filter(([call]) => call.method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE))
       .toHaveLength(0);
   });
 

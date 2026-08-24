@@ -387,6 +387,11 @@ import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as f
 import { planSyncActionsFromChanges } from './runtime/orchestration/changesPlanner';
 import { applyPlannedChangeActions } from './runtime/orchestration/changesApplier';
 import { runSocketReconnectCatchUpViaChanges } from './runtime/orchestration/socketReconnectViaChanges';
+import {
+    SessionDraftRuntimeHydrationGate,
+    materializeSessionDraftSocketWake,
+    parseSessionDraftSocketWake,
+} from './runtime/orchestration/sessionDraftSyncRuntime';
 import { verifyChangesCursorMaterializationProofs } from './runtime/orchestration/cursorMaterializationDetector';
 import { fetchAndApplySessionFolderAssignments } from '@/sync/ops/sessionOrganization';
 import { readMachineControlTargetForSession, readMachineTargetForSession } from './ops/sessionMachineTarget';
@@ -403,6 +408,17 @@ import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc'
 import { isRpcMethodNotAvailableError, readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { getRandomBytes } from '@/platform/cryptoRandom';
+import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { createApiSessionDraftsTransport } from '@/sync/api/account/apiSessionDrafts';
+import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
+import {
+    configureSessionDraftRepository,
+    ensureSessionDraftRepositoryHydrated,
+    materializeExactSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { migrateLegacySessionDrafts } from '@/sync/domains/input/drafts/sessionDraftLegacyMigration';
 import { serverFetch } from './http/client';
 import { logNativeUpdateFetchFailure } from '@/sync/runtime/nativeUpdate/logNativeUpdateFetchFailure';
 import {
@@ -1031,6 +1047,10 @@ class Sync {
 	    private settingsSecretsReadKeys: readonly Uint8Array[] = [];
 	    private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
     private updatesSubscribed = false;
+    private sessionDraftSyncEnabled = false;
+    private sessionDraftOfflineCatchUpPending = false;
+    private sessionDraftRepositoryConfiguredScope: ServerAccountScope | null = null;
+    private readonly sessionDraftRuntimeHydrationGate = new SessionDraftRuntimeHydrationGate();
 
     // Generic locking mechanism
     private recalculationLockCount = 0;
@@ -1539,6 +1559,87 @@ class Sync {
           }
       }
 
+      public reconfigureSessionDraftRepositoryForAccountMode(
+          credentials: AuthCredentials,
+          accountMode: 'plain' | 'e2ee',
+      ): void {
+          const scope = getActiveServerAccountScope();
+          if (!scope || !this.encryption || credentials.token !== this.credentials?.token) {
+              throw new Error('Session draft repository scope is unavailable');
+          }
+          configureSessionDraftRepository({
+              transport: this.sessionDraftSyncEnabled
+                  ? createApiSessionDraftsTransport({ credentials })
+                  : undefined,
+              cipher: createSessionDraftCipher({
+                  accountMode,
+                  accountCryptoMaterial: resolveAccountScopedCryptoMaterialFromCredentials(credentials),
+                  getSessionContext: (sessionId) => {
+                      const session = storage.getState().sessions[sessionId] ?? null;
+                      if (!session) return null;
+                      if (session.encryptionMode === 'plain') return { mode: 'plain' };
+                      return {
+                          mode: 'e2ee',
+                          encryption: this.encryption.getSessionEncryption(sessionId),
+                      };
+                  },
+                  randomBytes: getRandomBytes,
+              }),
+              syncEnabled: this.sessionDraftSyncEnabled,
+          });
+      }
+
+      private ensureSessionDraftRepositoryRuntimeReady(params: Readonly<{
+          forceSnapshotHydration?: boolean;
+      }> = {}): Promise<void> {
+          const scope = getActiveServerAccountScope();
+          const credentials = this.credentials;
+          if (!scope || !credentials || !this.encryption) {
+              return Promise.resolve();
+          }
+          const capturedScope = scope;
+          const capturedGeneration = this.serverScopeGeneration;
+          const shouldContinue = () => (
+              this.serverScopeGeneration === capturedGeneration
+              && areServerAccountScopesEqual(getActiveServerAccountScope(), capturedScope)
+          );
+          return this.sessionDraftRuntimeHydrationGate.run({
+            scope: capturedScope,
+            force: params.forceSnapshotHydration === true,
+            hydrate: async () => {
+              if (
+                  params.forceSnapshotHydration === true
+                  || !areServerAccountScopesEqual(this.sessionDraftRepositoryConfiguredScope, capturedScope)
+              ) {
+                  const serverId = capturedScope.serverId;
+                  const syncEnabled = await isRuntimeFeatureEnabled({
+                      featureId: 'sessions.drafts',
+                      serverId,
+                  });
+                  if (!shouldContinue()) return false;
+                  this.sessionDraftSyncEnabled = syncEnabled;
+                  if (syncEnabled) {
+                      const mode = await fetchAccountEncryptionMode(credentials);
+                      if (!shouldContinue()) return false;
+                      this.reconfigureSessionDraftRepositoryForAccountMode(credentials, mode.mode);
+                  } else {
+                      configureSessionDraftRepository({ syncEnabled: false });
+                  }
+                  this.sessionDraftRepositoryConfiguredScope = capturedScope;
+              }
+              if (!shouldContinue()) return false;
+              await migrateLegacySessionDrafts(capturedScope);
+              if (!shouldContinue()) return false;
+              await ensureSessionDraftRepositoryHydrated(capturedScope);
+              if (!shouldContinue()) return false;
+              if (params.forceSnapshotHydration === true) {
+                  this.sessionDraftOfflineCatchUpPending = false;
+              }
+              return true;
+            },
+          });
+      }
+
       /**
        * Decrypted plaintext deliberately does NOT hang off the transcript-derived-cache
        * seam.
@@ -1827,6 +1928,11 @@ class Sync {
     }
 
     private resetServerScopedRuntimeState = () => {
+        this.sessionDraftSyncEnabled = false;
+        this.sessionDraftOfflineCatchUpPending = false;
+        this.sessionDraftRepositoryConfiguredScope = null;
+        this.sessionDraftRuntimeHydrationGate.reset();
+        configureSessionDraftRepository({ syncEnabled: false });
         this.userRequestLeases.clear();
         this.deferredWebVisibilityTeardown = null;
         this.stopJsThreadLagTelemetryRuntime();
@@ -4293,6 +4399,13 @@ class Sync {
                       return;
                   }
 
+                  await this.ensureSessionDraftRepositoryRuntimeReady({
+                      forceSnapshotHydration: reason === 'manual' || this.sessionDraftOfflineCatchUpPending,
+                  });
+                  if (!shouldContinue()) {
+                      return;
+                  }
+
                   const { status, refreshedByCatchUp } = await this.resumeViaChanges({ accountId, shouldContinue });
                   if (status === 'aborted') {
                       return;
@@ -4363,11 +4476,17 @@ class Sync {
         };
 
       private bootstrapSync = async (): Promise<void> => {
+          if (this.isBootstrapSyncRunning) {
+              return;
+          }
           if (this.pauseController.isPaused()) {
               return;
           }
           await this.pauseController.waitUntilResumed();
           if (!this.credentials) {
+              return;
+          }
+          if (this.isBootstrapSyncRunning) {
               return;
           }
           this.isBootstrapSyncRunning = true;
@@ -4393,6 +4512,8 @@ class Sync {
                   ],
                   bootstrapConcurrencyLimit
               );
+
+              await this.ensureSessionDraftRepositoryRuntimeReady();
 
               await this.rearmPendingOutboxForActiveScope();
 
@@ -4456,6 +4577,8 @@ class Sync {
               ],
               concurrencyLimit
           );
+
+          await this.ensureSessionDraftRepositoryRuntimeReady({ forceSnapshotHydration: true });
 
           // Catch up transcripts only for sessions that are already loaded locally AND are live
           // content consumers right now. The catch-up policy already no-ops for hidden
@@ -5515,11 +5638,21 @@ class Sync {
           }
       }
 
+      /**
+       * §13: the catch-up signal describes a DELIBERATE catch-up (resume, recovery), never the
+       * steady-state tail poll. `useDirectSessionRuntime` re-invalidates this path on a
+       * self-rescheduling timer — 250ms while the agent is running, 2s otherwise — so bracketing
+       * the probe itself raised and lowered the UI-observable signal several times a second for
+       * the life of an open direct session, against the overlay's own stated contract ("never
+       * around normal streaming"). The sibling incremental path gates the same signal on
+       * `isCatchUpWork`; `surfaceCatchUp` is its direct-session equivalent.
+       */
       private async catchUpDirectSessionMessages(
           sessionId: string,
           directSessionLink: ReturnType<typeof readDirectSessionLink> extends infer T ? Exclude<T, null> : never,
+          options?: Readonly<{ surfaceCatchUp?: boolean }>,
       ): Promise<void> {
-          await this.withSessionCatchUpNewer(sessionId, async () => {
+          const probeAndApply = async (): Promise<void> => {
               const shouldContinue = this.createServerScopeGuard();
               const cursor = this.getDirectSessionTailCursor(sessionId) ?? 'tail';
               const tail = await machineDirectSessionTranscriptReadAfter({
@@ -5536,8 +5669,13 @@ class Sync {
               }
 
               if (tail.truncated === true) {
-                  this.resetSessionTranscriptState(sessionId);
-                  await this.fetchDirectSessionMessages(sessionId, directSessionLink);
+                  // Real catch-up whatever triggered the probe: the transcript is dropped and
+                  // refetched, which is exactly the window the overlay exists to cover. The
+                  // bracket is ref-counted, so nesting inside `surfaceCatchUp` is safe.
+                  await this.withSessionCatchUpNewer(sessionId, async () => {
+                      this.resetSessionTranscriptState(sessionId);
+                      await this.fetchDirectSessionMessages(sessionId, directSessionLink);
+                  });
                   return;
               }
 
@@ -5546,7 +5684,13 @@ class Sync {
                   this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
               }
               this.setDirectSessionTailCursor(sessionId, tail.nextCursor ?? null);
-          });
+          };
+
+          if (options?.surfaceCatchUp === true) {
+              await this.withSessionCatchUpNewer(sessionId, probeAndApply);
+              return;
+          }
+          await probeAndApply();
       }
 
       private collectLoadedDirectSessionsForResume(): Array<{ sessionId: string; directSessionLink: DirectSessionLink }> {
@@ -5568,7 +5712,9 @@ class Sync {
           await runTasksWithLimit(
               loadedDirectSessions.map(({ sessionId, directSessionLink }) => async () => {
                   try {
-                      await this.catchUpDirectSessionMessages(sessionId, directSessionLink);
+                      // Resume IS the deliberate catch-up the overlay describes: the app was away
+                      // and the transcript may be far behind, unlike the steady-state tail poll.
+                      await this.catchUpDirectSessionMessages(sessionId, directSessionLink, { surfaceCatchUp: true });
                   } catch (error) {
                       syncReliabilityTelemetry.recordCritical('sync.directSession.resumeCatchUpFailed', {
                           sessionId,
@@ -6619,6 +6765,7 @@ class Sync {
 	              if (status === 'connected') {
 	                  if (this.lastSocketDisconnectedAtMs != null) {
 	                      this.lastSocketOfflineDurationMs = Date.now() - this.lastSocketDisconnectedAtMs;
+                          this.sessionDraftOfflineCatchUpPending = true;
                           this.socketOfflineCatchUpConsumedSessionIds.clear();
 	                  }
 	                  this.lastSocketDisconnectedAtMs = null;
@@ -6993,6 +7140,19 @@ class Sync {
                             });
                         },
                         convergePendingForSession: (sessionId) => this.fetchPendingMessages(sessionId),
+                        materializeSessionDraft: async (address) => {
+                            const scope = getActiveServerAccountScope();
+                            if (!scope || !shouldContinue()) {
+                                throw new Error('Session draft scope changed before materialization');
+                            }
+                            await materializeExactSessionDraft(scope, address);
+                            if (
+                                !shouldContinue()
+                                || !areServerAccountScopesEqual(getActiveServerAccountScope(), scope)
+                            ) {
+                                throw new Error('Session draft scope changed during materialization');
+                            }
+                        },
                         concurrencyLimit: this.syncTuning.resumeConcurrencyLimit,
                     });
                 },
@@ -7159,6 +7319,17 @@ class Sync {
     }
 
     private handleEphemeralUpdate = (update: unknown) => {
+        if (parseSessionDraftSocketWake(update)) {
+            const capturedScope = getActiveServerAccountScope();
+            if (!capturedScope) return;
+            fireAndForget(materializeSessionDraftSocketWake({
+                payload: update,
+                capturedScope,
+                readActiveScope: getActiveServerAccountScope,
+                materializeExact: materializeExactSessionDraft,
+            }), { tag: 'Sync.handleSessionDraftSocketWake' });
+            return;
+        }
         const sourceServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
         const { shouldContinue } = createSyncGenerationGuard({
             getCurrentGeneration: () => this.serverScopeGeneration,
