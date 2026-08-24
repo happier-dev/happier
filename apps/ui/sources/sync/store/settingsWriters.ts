@@ -16,6 +16,10 @@ export function useApplySettings(): (delta: Partial<Settings>) => void {
   }, []);
 }
 
+export function applySystemSettings(delta: Partial<Settings>): void {
+  getSyncSingleton().applySettings(delta, { source: 'system' satisfies SettingsAnalyticsSource });
+}
+
 export function useApplyLocalSettings(): (delta: Partial<LocalSettings>) => void {
   return React.useCallback((delta: Partial<LocalSettings>) => {
     applyLocalSettingsFromStore(delta, 'ui');

@@ -758,6 +758,7 @@ describe('/session/[id]/info', () => {
             childSessionId: 'child-session',
             parentSessionId: 'session-1234567890abcdef',
             navigate: expect.any(Function),
+            serverId: 'server-b',
         });
 
         const helperParams = completeSessionForkNavigationSpy.mock.calls[0]?.[0] as any;

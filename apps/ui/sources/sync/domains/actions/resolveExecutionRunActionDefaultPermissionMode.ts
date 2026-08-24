@@ -1,11 +1,13 @@
 import type { ActionId } from '@happier-dev/protocol';
 
-export function resolveExecutionRunActionDefaultPermissionMode(actionId: ActionId): string | null {
+import type { ExecutionRunActionPermissionMode } from './executionRunActionPermissionMode';
+
+export function resolveExecutionRunActionDefaultPermissionMode(actionId: ActionId): ExecutionRunActionPermissionMode | null {
     if (actionId === 'review.start' || actionId === 'subagents.plan.start') {
-        return 'read-only';
+        return 'read_only';
     }
     if (actionId === 'subagents.delegate.start') {
-        return 'safe-yolo';
+        return 'workspace_write';
     }
     return null;
 }

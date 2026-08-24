@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 import { resetScopedSessionDataKeyCacheForTests } from './resolveScopedSessionDataKey';
+import { createServerFetchWithReachabilityProbe } from '@/dev/testkit';
 
 const sessionListByIdFixture = {
   id: 'session-1',
@@ -183,7 +184,7 @@ describe('sessionRpcWithServerScope', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn(createServerFetchWithReachabilityProbe(async () => ({
         ok: true,
         json: async () => ({
           session: {
@@ -192,7 +193,7 @@ describe('sessionRpcWithServerScope', () => {
             dataEncryptionKey: null,
           },
         }),
-      })),
+      }))),
     );
 
     const emitWithAck = vi.fn(async () => ({ ok: true, result: { decodedPlain: true } }));
@@ -251,7 +252,7 @@ describe('sessionRpcWithServerScope', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn(createServerFetchWithReachabilityProbe(async () => ({
         ok: true,
         json: async () => ({
           session: {
@@ -260,7 +261,7 @@ describe('sessionRpcWithServerScope', () => {
             dataEncryptionKey: null,
           },
         }),
-      })),
+      }))),
     );
 
     const emitWithAck = vi.fn(async () => ({ ok: true, result: { decodedPlain: true } }));
@@ -320,10 +321,10 @@ describe('sessionRpcWithServerScope', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn(createServerFetchWithReachabilityProbe(async () => ({
         ok: true,
         json: async () => ({ session: sessionListByIdFixture }),
-      })),
+      }))),
     );
 
     const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result' }));
@@ -388,10 +389,10 @@ describe('sessionRpcWithServerScope', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn(createServerFetchWithReachabilityProbe(async () => ({
         ok: true,
         json: async () => ({ session: sessionListByIdFixture }),
-      })),
+      }))),
     );
 
     const emitWithAck = vi.fn(async () => ({ ok: true, result: 'encrypted-result-alt' }));
@@ -444,7 +445,7 @@ describe('sessionRpcWithServerScope', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn(createServerFetchWithReachabilityProbe(async () => ({
         ok: true,
         json: async () => ({
           session: {
@@ -453,7 +454,7 @@ describe('sessionRpcWithServerScope', () => {
             dataEncryptionKey: null,
           },
         }),
-      })),
+      }))),
     );
 
     const emitWithAck = vi.fn(async () => ({ ok: true, result: { decodedPlain: true } }));
@@ -521,10 +522,10 @@ describe('sessionRpcWithServerScope', () => {
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn(createServerFetchWithReachabilityProbe(async () => ({
         ok: true,
         json: async () => ({ session: sessionListByIdFixture }),
-      })),
+      }))),
     );
 
     const emitWithAck = vi.fn();
@@ -571,7 +572,7 @@ describe('sessionRpcWithServerScope', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn(createServerFetchWithReachabilityProbe(async () => ({
         ok: true,
         json: async () => ({
           session: {
@@ -580,7 +581,7 @@ describe('sessionRpcWithServerScope', () => {
             dataEncryptionKey: null,
           },
         }),
-      })),
+      }))),
     );
 
     const emitWithAck = vi.fn(() => new Promise<unknown>(() => {}));

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createSuccessfulServerReachabilityProbeResponse, isServerReachabilityProbeRequest } from '@/dev/testkit';
 import { HappyError } from '@/utils/errors/errors';
 
 vi.mock('@/utils/timing/time', async (importOriginal) => {
@@ -44,8 +45,8 @@ describe('setAccountUsername', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
-                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            if (isServerReachabilityProbeRequest(url)) {
+                return createSuccessfulServerReachabilityProbeResponse();
             }
             return { ok: true, status: 200, json: async () => ({ username: 'alice' }) };
         });
@@ -71,8 +72,8 @@ describe('setAccountUsername', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
-                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            if (isServerReachabilityProbeRequest(url)) {
+                return createSuccessfulServerReachabilityProbeResponse();
             }
             return { ok: false, status: 409, json: async () => ({ error: 'username-taken' }) };
         });
@@ -93,8 +94,8 @@ describe('setAccountUsername', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
-                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            if (isServerReachabilityProbeRequest(url)) {
+                return createSuccessfulServerReachabilityProbeResponse();
             }
             return { ok: false, status: 400, json: async () => ({ error: 'invalid-username' }) };
         });
@@ -115,8 +116,8 @@ describe('setAccountUsername', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
-                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            if (isServerReachabilityProbeRequest(url)) {
+                return createSuccessfulServerReachabilityProbeResponse();
             }
             return { ok: false, status: 400, json: async () => ({ error: 'username-disabled' }) };
         });
@@ -138,8 +139,8 @@ describe('setAccountUsername', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
-                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            if (isServerReachabilityProbeRequest(url)) {
+                return createSuccessfulServerReachabilityProbeResponse();
             }
             return {
                 ok: false,
@@ -167,8 +168,8 @@ describe('setAccountUsername', () => {
         mockServerConfig();
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
-            if (url === 'https://api.example.test/health') {
-                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            if (isServerReachabilityProbeRequest(url)) {
+                return createSuccessfulServerReachabilityProbeResponse();
             }
             return { ok: true, status: 200, json: async () => ({ ok: true }) };
         });

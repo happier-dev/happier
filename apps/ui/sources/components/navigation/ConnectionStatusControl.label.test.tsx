@@ -67,19 +67,6 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        eyebrow: () => ({}),
-        keyHint: () => ({}),
-        pillLabel: () => ({}),
-        rowMeta: () => ({}),
-        rowTitle: () => ({}),
-        tabular: () => ({}),
-        timestamp: () => ({}),
-    },
-}));
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));

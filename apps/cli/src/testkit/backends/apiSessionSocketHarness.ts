@@ -22,6 +22,29 @@ export type ApiSessionSocketStub = {
     getHandlers: (event: string) => SocketEventHandler[];
 };
 
+export function resolveApiSessionSocketDefaultAck(event: string, payload: unknown): unknown {
+    if (event === 'ping') return { v: 1 };
+    if (event === 'session-runtime-activity-snapshot') {
+        const request = payload as Readonly<{
+            sessionId?: unknown;
+            mutationId?: unknown;
+            snapshot?: Readonly<{ state?: unknown; activeCount?: unknown }>;
+        }>;
+        return {
+            status: 'applied',
+            sessionId: request.sessionId,
+            mutationId: request.mutationId,
+            projection: {
+                state: request.snapshot?.state,
+                activeCount: request.snapshot?.activeCount,
+                observedAt: 1,
+                revision: 1,
+            },
+        };
+    }
+    return { ok: true, id: 'm1', seq: 1, localId: 'l1' };
+}
+
 export function createApiSessionSocketStub(options: {
     id?: string;
     connected?: boolean;
@@ -92,7 +115,10 @@ export function createApiSessionSocketStub(options: {
             if (options.emitWithAck) {
                 return options.emitWithAck(event, payload, socket);
             }
-            return options.emitWithAckResult ?? { ok: true, id: 'm1', seq: 1, localId: 'l1' };
+            if (event === 'ping' || event === 'session-runtime-activity-snapshot') {
+                return resolveApiSessionSocketDefaultAck(event, payload);
+            }
+            return options.emitWithAckResult ?? resolveApiSessionSocketDefaultAck(event, payload);
         }),
         volatile: {
             emit: vi.fn(),

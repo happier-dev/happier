@@ -701,7 +701,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         const screen = await renderScreen(<DesktopPetOverlayRoute />);
         const status = screen.findByTestId('desktop-pet-overlay-tray-status-session-status-waiting');
 
-        expect(status?.props['data-pet-status-icon']).toBe('time-outline');
+        expect(status?.props['data-pet-status-icon']).toBe('clock');
         expect(status?.props.accessibilityRole).toBeUndefined();
         expect(status?.props.onPress).toBeUndefined();
     });

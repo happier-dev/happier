@@ -1829,10 +1829,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     expect(afterCreated).toHaveBeenCalledTimes(2);
-    expect(modalAlertSpy.mock.calls).toContainEqual([
-      'common.error',
-      'Attachment validation failed',
-    ]);
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'newSession.createdWithSetupIssueTitle',
+      expect.stringContaining('Attachment validation failed'),
+    );
 
     await hook.unmount();
   });
@@ -1980,7 +1980,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledTimes(1);
-    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'timeout');
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'newSession.createdWithSetupIssueTitle',
+      expect.stringContaining('timeout'),
+    );
     expect(router.replace).not.toHaveBeenCalledWith(
       '/session/session-created?serverId=server-a',
       expect.anything(),
@@ -2141,7 +2144,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     expect(router.replace).not.toHaveBeenCalled();
-    expect(modalAlertSpy.mock.calls).toContainEqual(['common.error', 'invalid_parameters']);
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'newSession.createdWithSetupIssueTitle',
+      expect.stringContaining('invalid_parameters'),
+    );
 
     await act(async () => {
       await hook.getCurrent().handleCreateSession({ initialMessage: 'skip', afterCreated });
@@ -2221,10 +2227,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(afterCreated).toHaveBeenCalledTimes(1);
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
-    expect(modalAlertSpy.mock.calls).toContainEqual([
-      'common.error',
-      'Machine transfer is disabled on the selected server',
-    ]);
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'newSession.createdWithSetupIssueTitle',
+      expect.stringContaining('Machine transfer is disabled on the selected server'),
+    );
     const retryAlerts = modalAlertSpy.mock.calls.filter((call) => {
       const buttons = call[2];
       return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');

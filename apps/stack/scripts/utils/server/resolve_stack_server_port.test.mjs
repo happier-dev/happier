@@ -337,6 +337,7 @@ test('non-main stack does not reuse a healthy runtime port without stack-owned l
       runtimeStatePath,
       defaultPort: 3005,
       listenerObservationScope,
+      waitForTcpPortFreeImpl: async () => ({ status: 'occupied', reason: 'address-in-use' }),
     });
 
     assert.notEqual(out, port);

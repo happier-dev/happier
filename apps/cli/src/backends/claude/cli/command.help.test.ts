@@ -119,7 +119,7 @@ describe('happier (default claude) help output', () => {
       expect(stdout).toContain('--webapp-url');
       expect(stdout).toContain('--public-server-url');
       expect(stdout).toContain('--server ');
-      expect(stdout).toContain('--profile');
+      expect(stdout).toContain('--launch-profile');
       expect(stdout).toContain('happier profiles list');
       expect(stdout).not.toContain('--claude-env');
 

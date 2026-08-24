@@ -273,7 +273,7 @@ describe('startHappyServer (MCP integration)', () => {
     }
   });
 
-  it('keeps execution-run actions discoverable and can start/get/action a review run over HTTP transport', async () => {
+  it('keeps session-agent execution-run actions discoverable and can start/list/action a review run over HTTP transport', async () => {
     const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
 
     const rpcHandlerManager = new RpcHandlerManager({
@@ -371,27 +371,17 @@ describe('startHappyServer (MCP integration)', () => {
       const started = parseMcpJsonText(startedRaw);
       expect(String(started.runId)).toMatch(/^run_/);
 
-      const gotNoStructuredRaw = await client.callTool({
+      const listedRaw = await client.callTool({
         name: 'action_execute',
         arguments: {
-          actionId: 'execution.run.get',
-          input: { runId: started.runId },
+          actionId: 'execution.run.list',
+          input: {},
         },
       });
-      const gotNoStructured = parseMcpJsonText(gotNoStructuredRaw);
-      expect(gotNoStructured.run?.runId).toBe(started.runId);
-      expect(gotNoStructured.structuredMeta).toBeUndefined();
-
-      const gotStructuredRaw = await client.callTool({
-        name: 'action_execute',
-        arguments: {
-          actionId: 'execution.run.get',
-          input: { runId: started.runId, includeStructured: true },
-        },
-      });
-      const gotStructured = parseMcpJsonText(gotStructuredRaw);
-      expect(gotStructured.structuredMeta?.kind).toBe('review_findings.v2');
-      expect(gotStructured.structuredMeta?.payload?.runRef?.runId).toBe(started.runId);
+      const listed = parseMcpJsonText(listedRaw);
+      expect(listed.runs, JSON.stringify(listed)).toEqual(
+        expect.arrayContaining([expect.objectContaining({ runId: started.runId })]),
+      );
 
       const actionRaw = await client.callTool({
         name: 'action_execute',

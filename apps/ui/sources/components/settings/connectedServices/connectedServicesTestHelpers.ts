@@ -57,6 +57,10 @@ export function resetConnectedServicesCommonModuleMockState() {
  * Call this AT MODULE SCOPE (alongside `installConnectedServicesCommonModuleMocks`).
  */
 export function installConnectedServiceDetailShellMocks() {
+    vi.mock('@react-navigation/native', () => ({
+        useIsFocused: () => true,
+    }));
+
     vi.mock('@/components/ui/navigation/SegmentedTabBar', () => {
         const React = require('react');
         type Tab = { id: string; label: string };

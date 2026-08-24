@@ -429,6 +429,8 @@ describe('PendingMessagesTranscriptBlock', () => {
             agentStateVersion: 1,
             runtimeActivityState: 'active',
             runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: Date.now(),
+            runtimeActivityRevision: 1,
         };
 
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
