@@ -593,7 +593,7 @@ export class PiRpcBackend implements AgentBackend {
 
   private process: ChildProcessWithoutNullStreams | null = null;
   private appendSystemPromptArtifact: ProtectedTempTextArtifact | null = null;
-  private readonly availableCommandNames = new Set<string>();
+  private readonly availableCommandSources = new Map<string, string | null>();
   private stdoutLineReader: PiRpcJsonlLineReader | null = null;
   private stderrLineReader: PiRpcJsonlLineReader | null = null;
   private readonly messageHandlers = new Set<AgentMessageHandler>();
@@ -920,10 +920,20 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   isProviderNativeCommand(prompt: string): boolean {
+    const name = this.resolveProviderNativeCommandName(prompt);
+    return name !== null && this.availableCommandSources.has(name);
+  }
+
+  private isProviderNativeCommandHandledBeforeTurn(prompt: string): boolean {
+    const name = this.resolveProviderNativeCommandName(prompt);
+    return name !== null && this.availableCommandSources.get(name) === 'extension';
+  }
+
+  private resolveProviderNativeCommandName(prompt: string): string | null {
     const trimmed = prompt.trimStart();
-    if (!trimmed.startsWith('/')) return false;
+    if (!trimmed.startsWith('/')) return null;
     const name = trimmed.slice(1).split(/\s/u, 1)[0]?.trim().toLowerCase() ?? '';
-    return name.length > 0 && this.availableCommandNames.has(name);
+    return name.length > 0 ? name : null;
   }
 
   async sendPromptWithEvidence(
@@ -1022,9 +1032,9 @@ export class PiRpcBackend implements AgentBackend {
       }
 
       await this.ensureConnectedBrokerReadyForProviderCommand();
-      const providerNativeCommand = this.isProviderNativeCommand(message);
-      const turn = this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
-      const pendingTurn = this.pendingTurn;
+      const providerNativeCommandHandledBeforeTurn = this.isProviderNativeCommandHandledBeforeTurn(message);
+      const pendingTurn = this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
+      const turn = pendingTurn.promise;
       providerSendAttempted = true;
       try {
         await this.sendCommand({ type: 'prompt', message }, 30_000, { processAlreadyEnsured: true });
@@ -1039,14 +1049,13 @@ export class PiRpcBackend implements AgentBackend {
       }
       settleAdmission({ status: 'accepted' });
       if (
-        providerNativeCommand
-        && pendingTurn
-        && this.pendingTurn === pendingTurn
+        providerNativeCommandHandledBeforeTurn
+        && this.isPendingTurnCurrent(pendingTurn)
         && !pendingTurn.agentStartObserved
       ) {
         const state = await this.getState().catch(() => null);
         if (
-          this.pendingTurn === pendingTurn
+          this.isPendingTurnCurrent(pendingTurn)
           && !pendingTurn.agentStartObserved
           && state?.isStreaming !== true
           && state?.isCompacting !== true
@@ -1180,45 +1189,82 @@ export class PiRpcBackend implements AgentBackend {
 
     const child = this.process;
     this.process = null;
-    const artifact = this.appendSystemPromptArtifact;
-    this.appendSystemPromptArtifact = null;
     if (!child) {
-      await artifact?.cleanup();
+      await this.releaseAppendSystemPromptArtifact();
       return;
     }
 
     await stopPiRpcProcess(child);
-    await artifact?.cleanup();
+    await this.releaseAppendSystemPromptArtifact();
   }
 
   private async ensureProcess(): Promise<void> {
-    if (this.disposed) {
-      throw new Error('Pi backend is disposed');
-    }
-    if (this.processTransitionInFlight) {
-      await this.processTransitionInFlight;
-    }
-    if (this.process) return;
-    if (this.sessionId) {
-      // Best-effort recovery: if we have an established session id but the process is gone, attempt to
-      // restart and reattach to the same session via `--session`.
-      await this.restartAndContinue();
-      return;
-    }
+    for (;;) {
+      if (this.disposed) {
+        throw new Error('Pi backend is disposed');
+      }
+      if (this.processTransitionInFlight) {
+        await this.processTransitionInFlight;
+      }
+      if (this.process) return;
+      if (this.sessionId) {
+        // Best-effort recovery: if we have an established session id but the process is gone, attempt to
+        // restart and reattach to the same session via `--session`.
+        await this.restartAndContinue();
+        return;
+      }
 
-    this.spawnRpcProcess({
-      args: [...this.options.args, ...(await this.resolveAppendSystemPromptArgs())],
-    });
+      await this.runProcessTransition(async () => {
+        if (this.disposed) throw new Error('Pi backend is disposed');
+        if (this.process || this.sessionId) return;
+        await this.spawnRpcProcessWithAppendSystemPrompt(this.options.args);
+      });
+    }
   }
 
   private async resolveAppendSystemPromptArgs(): Promise<string[]> {
     const text = this.options.appendSystemPromptText;
     if (!text) return [];
-    this.appendSystemPromptArtifact ??= await materializeProtectedTempTextArtifact({
+    const existing = this.appendSystemPromptArtifact;
+    if (existing) return ['--append-system-prompt', existing.path];
+
+    const artifact = await materializeProtectedTempTextArtifact({
       prefix: 'happier-pi-append-system-prompt-',
       contents: text,
     });
-    return ['--append-system-prompt', this.appendSystemPromptArtifact.path];
+    if (this.disposed) {
+      await artifact.cleanup();
+      throw new Error('Pi backend is disposed');
+    }
+    if (this.appendSystemPromptArtifact) {
+      await artifact.cleanup();
+      return ['--append-system-prompt', this.appendSystemPromptArtifact.path];
+    }
+    this.appendSystemPromptArtifact = artifact;
+    return ['--append-system-prompt', artifact.path];
+  }
+
+  private async releaseAppendSystemPromptArtifact(): Promise<void> {
+    const artifact = this.appendSystemPromptArtifact;
+    this.appendSystemPromptArtifact = null;
+    await artifact?.cleanup();
+  }
+
+  private async spawnRpcProcessWithAppendSystemPrompt(
+    baseArgs: readonly string[],
+    trailingArgs: readonly string[] = [],
+  ): Promise<void> {
+    const appendSystemPromptArgs = await this.resolveAppendSystemPromptArgs();
+    if (this.disposed) {
+      await this.releaseAppendSystemPromptArtifact();
+      throw new Error('Pi backend is disposed');
+    }
+    try {
+      this.spawnRpcProcess({ args: [...baseArgs, ...appendSystemPromptArgs, ...trailingArgs] });
+    } catch (error) {
+      await this.releaseAppendSystemPromptArtifact();
+      throw error;
+    }
   }
 
   private spawnRpcProcess(params: Readonly<{ args: string[] }>): void {
@@ -1248,6 +1294,17 @@ export class PiRpcBackend implements AgentBackend {
     this.stdoutLineReader = stdoutLineReader;
     this.stderrLineReader = stderrLineReader;
 
+    const detachSpawnedChild = (): boolean => {
+      if (this.process !== spawnedChild) return false;
+      this.process = null;
+      stdoutLineReader.close();
+      stderrLineReader.close();
+      if (this.stdoutLineReader === stdoutLineReader) this.stdoutLineReader = null;
+      if (this.stderrLineReader === stderrLineReader) this.stderrLineReader = null;
+      void this.releaseAppendSystemPromptArtifact();
+      return true;
+    };
+
     const handleIoError = (error: unknown) => {
       if (this.process !== spawnedChild) return;
       const resolved = asError(error);
@@ -1276,6 +1333,7 @@ export class PiRpcBackend implements AgentBackend {
       });
       this.rejectAllPending(new Error(`Pi process error: ${error instanceof Error ? error.message : String(error)}`));
       this.rejectPendingTurn(new Error('Pi process terminated'));
+      detachSpawnedChild();
     });
 
     child.on('exit', (code, signal) => {
@@ -1298,11 +1356,7 @@ export class PiRpcBackend implements AgentBackend {
       } else {
         this.rejectPendingTurn(new Error('Pi process exited'));
       }
-      this.process = null;
-      stdoutLineReader.close();
-      stderrLineReader.close();
-      if (this.stdoutLineReader === stdoutLineReader) this.stdoutLineReader = null;
-      if (this.stderrLineReader === stderrLineReader) this.stderrLineReader = null;
+      detachSpawnedChild();
     });
   }
 
@@ -1476,14 +1530,10 @@ export class PiRpcBackend implements AgentBackend {
     lifecycle?: PiRpcSessionOpenLifecycle;
   }>): Promise<PiRpcStateData> {
     await this.stopRpcProcessForRestart();
-    this.spawnRpcProcess({
-      args: [
-        ...this.options.args,
-        ...(await this.resolveAppendSystemPromptArgs()),
-        '--session',
-        params.sessionArg,
-      ],
-    });
+    await this.spawnRpcProcessWithAppendSystemPrompt(this.options.args, [
+      '--session',
+      params.sessionArg,
+    ]);
 
     try {
       const lifecycle = params.lifecycle ?? this.createSessionOpenLifecycle();
@@ -2013,9 +2063,9 @@ export class PiRpcBackend implements AgentBackend {
     return true;
   }
 
-  private createPendingTurn(timeoutMs: number): Promise<void> {
+  private createPendingTurn(timeoutMs: number): PendingTurn {
     if (this.pendingTurn) {
-      return Promise.reject(new Error('Pi pending turn already exists'));
+      throw new Error('Pi pending turn already exists');
     }
     let resolveTurn: (() => void) | null = null;
     let rejectTurn: ((error: Error) => void) | null = null;
@@ -2055,7 +2105,11 @@ export class PiRpcBackend implements AgentBackend {
     };
     this.pendingTurn = pending;
     this.armPendingTurnInactivityTimer(pending);
-    return promise;
+    return pending;
+  }
+
+  private isPendingTurnCurrent(pending: PendingTurn): boolean {
+    return this.pendingTurn === pending;
   }
 
   private resolvePendingTurn(): boolean {
@@ -2752,15 +2806,18 @@ export class PiRpcBackend implements AgentBackend {
       },
     });
 
-    this.availableCommandNames.clear();
     try {
       const commands = await this.getCommands();
       const commandList = Array.isArray(commands.commands) ? commands.commands : [];
+      const nextCommandSources = new Map<string, string | null>();
       const availableCommands = commandList
         .map((entry) => {
           const item = asRecord(entry);
           const name = asNonEmptyString(item?.name);
           if (!name) return null;
+          const normalizedName = name.replace(/^\/+/, '').trim().toLowerCase();
+          if (!normalizedName) return null;
+          nextCommandSources.set(normalizedName, asNonEmptyString(item?.source)?.toLowerCase() ?? null);
           const description = asNonEmptyString(item?.description) ?? undefined;
           return {
             name: name.startsWith('/') ? name : `/${name}`,
@@ -2769,10 +2826,8 @@ export class PiRpcBackend implements AgentBackend {
         })
         .filter((entry): entry is { name: string; description?: string } => entry !== null);
 
-      for (const command of availableCommands) {
-        const name = command.name.slice(1).trim().toLowerCase();
-        if (name) this.availableCommandNames.add(name);
-      }
+      this.availableCommandSources.clear();
+      for (const [name, source] of nextCommandSources) this.availableCommandSources.set(name, source);
 
       this.emitMessage({
         type: 'event',
