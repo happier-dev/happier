@@ -46,7 +46,6 @@ import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/p
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
-import { listDisabledActionIdsForSurfaceFromEnv } from '@/settings/actionsSettings';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/promptLibrary/resolveCliMemoryRecallGuidanceEnabled';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import type { AgentToolsDeliveryAvailabilityResolver } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
@@ -141,8 +140,7 @@ export type StandardAcpProviderConfig = {
     getAbortSignal: () => AbortSignal;
     setThinking: (value: boolean) => void;
     memoryRecallGuidanceEnabled: boolean;
-    sessionToolsEnabled?: boolean;
-    disabledSessionAgentActionIds?: readonly string[];
+    toolDelivery: 'native_mcp' | 'shell_bridge' | 'unsupported';
     pendingQueueDrainMaxPopPerWake?: number;
     providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
     turnAssistantPreviewTracker: TurnAssistantPreviewTracker;
@@ -509,8 +507,7 @@ export async function runStandardAcpProvider(
     getAbortSignal: () => abortController.signal,
     setThinking: setThinkingState,
     memoryRecallGuidanceEnabled,
-    sessionToolsEnabled: resolveCliFeatureDecision({ featureId: 'pi.sessionTools', env: process.env }).state === 'enabled',
-    disabledSessionAgentActionIds: listDisabledActionIdsForSurfaceFromEnv('session_agent'),
+    toolDelivery,
     pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: providerInputConsumer as SessionProviderInputConsumer<unknown, unknown>,
     turnAssistantPreviewTracker,

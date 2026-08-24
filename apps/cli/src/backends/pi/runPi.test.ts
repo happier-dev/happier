@@ -64,7 +64,7 @@ describe('runPi', () => {
     });
   });
 
-  it('forwards the daemon-projected disabled session-agent actions to the Pi runtime', async () => {
+  it('forwards the resolved tool delivery mode to the Pi runtime fallback', async () => {
     await runPi({ credentials });
 
     const config = runStandardAcpProviderMock.mock.calls[0]?.[1];
@@ -82,13 +82,12 @@ describe('runPi', () => {
       getPermissionMode: () => 'default',
       getAbortSignal: () => new AbortController().signal,
       memoryRecallGuidanceEnabled: false,
-      sessionToolsEnabled: true,
-      disabledSessionAgentActionIds: ['session.message.send'],
+      toolDelivery: 'unsupported',
       providerInputConsumer: {},
     });
 
     expect(createPiAcpRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
-      disabledSessionAgentActionIds: ['session.message.send'],
+      fallbackToolDelivery: 'unsupported',
     }));
   });
 

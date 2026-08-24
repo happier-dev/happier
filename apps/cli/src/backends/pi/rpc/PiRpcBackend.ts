@@ -657,7 +657,10 @@ export class PiRpcBackend implements AgentBackend {
       args: [...options.args],
       env: { ...(options.env ?? {}) },
       happierSessionId: asNonEmptyString(options.happierSessionId) ?? null,
-      appendSystemPromptText: asNonEmptyString(options.appendSystemPromptText) ?? null,
+      appendSystemPromptText:
+        typeof options.appendSystemPromptText === 'string' && options.appendSystemPromptText.trim().length > 0
+          ? options.appendSystemPromptText
+          : null,
       toolsBridgeConfigText: asNonEmptyString(options.toolsBridgeConfigText) ?? null,
     };
   }
@@ -1225,8 +1228,11 @@ export class PiRpcBackend implements AgentBackend {
       return;
     }
 
-    await stopPiRpcProcess(child);
-    await this.cleanupProtectedSpawnArtifacts();
+    try {
+      await stopPiRpcProcess(child);
+    } finally {
+      await this.cleanupProtectedSpawnArtifacts();
+    }
   }
 
   private async ensureProcess(): Promise<void> {
@@ -1946,13 +1952,19 @@ export class PiRpcBackend implements AgentBackend {
           this.cancelPendingTurnAgentEndSettle(this.pendingTurn);
           this.armPendingTurnInactivityTimer(this.pendingTurn);
         } else if (
-          this.pendingTurn.recoverableAssistantErrorObserved ||
-          this.pendingTurn.providerFailureDiagnostic
+          this.pendingTurn.recoverableAssistantErrorObserved
+          && normalizedEvent.willRetry !== false
         ) {
           this.pendingTurn.agentEndObserved = false;
           this.pendingTurn.agentEndActivityEpoch = null;
           this.cancelPendingTurnAgentEndSettle(this.pendingTurn);
           this.armPendingTurnInactivityTimer(this.pendingTurn);
+        } else if (this.pendingTurn.providerFailureDiagnostic) {
+          this.surfacePiProviderFailure(this.pendingTurn.providerFailureDiagnostic);
+          return;
+        } else if (this.pendingTurn.providerFailureDiagnostic) {
+          this.surfacePiProviderFailure(this.pendingTurn.providerFailureDiagnostic);
+          return;
         } else {
           this.pendingTurn.agentEndObserved = true;
           this.pendingTurn.agentEndActivityEpoch = this.pendingTurn.activityEpoch;
@@ -2461,9 +2473,13 @@ export class PiRpcBackend implements AgentBackend {
     }
 
     if (
-      type === 'message_update' ||
-      type === 'tool_execution_start' ||
-      type === 'tool_execution_end'
+      pending.recoverableAssistantErrorObserved
+      && (
+        type === 'message_update'
+        || type === 'tool_execution_start'
+        || type === 'tool_execution_update'
+        || type === 'tool_execution_end'
+      )
     ) {
       // Provider work after a recoverable assistant error proves that Pi resumed
       // the same turn. Do not let the earlier diagnostic poison its final agent_end.

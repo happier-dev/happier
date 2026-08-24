@@ -10,7 +10,6 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import { resolveSessionCodingPromptSettings } from '@/agent/prompting/coding/resolveSessionCodingPromptSettings';
-import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { logger } from '@/ui/logger';
 
@@ -29,10 +28,7 @@ export function createPiAcpRuntime(params: {
   onThinkingChange: (thinking: boolean) => void;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   memoryRecallGuidanceEnabled?: boolean;
-  /** Register the full session-agent tool surface in the pi bridge (off by default). */
-  sessionToolsEnabled?: boolean;
-  /** Daemon-resolved action ids disabled for the `session_agent` surface. */
-  disabledSessionAgentActionIds?: readonly string[];
+  fallbackToolDelivery: 'native_mcp' | 'shell_bridge' | 'unsupported';
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
   providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
@@ -123,9 +119,6 @@ export function createPiAcpRuntime(params: {
           settings: mergedSettings,
           memoryRecallGuidanceEnabled,
           memoryMachineId: params.machineId,
-          // Full session-agent tool surface: opt-in per spawn while the surface rolls out.
-          sessionToolsEnabled: params.sessionToolsEnabled === true,
-          disabledActionIds: params.disabledSessionAgentActionIds,
         });
         if (resolved) {
           happyToolsBridge = resolved;
@@ -164,7 +157,7 @@ export function createPiAcpRuntime(params: {
           : {
             memoryRecallGuidanceEnabled,
             memoryMachineId: params.machineId,
-            toolDelivery: resolveAgentToolsDelivery('pi'),
+            toolDelivery: params.fallbackToolDelivery,
             toolDeliverySessionId: session.sessionId,
             toolDeliveryDirectory: params.directory,
           }),

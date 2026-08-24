@@ -493,37 +493,6 @@ describe('runStandardAcpProvider', () => {
     expect(receivedStrictInitialResume).toBe(true);
   });
 
-  it('projects disabled session-agent actions from daemon settings into the provider runtime', async () => {
-    const harness = createHarness();
-    const previous = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
-      v: 1,
-      actions: {
-        'session.message.send': {
-          enabled: true,
-          disabledSurfaces: ['session_agent'],
-          disabledPlacements: [],
-        },
-      },
-    });
-    let disabledActionIds: readonly string[] | undefined;
-    const createRuntimeOriginal = harness.config.createRuntime;
-    harness.config.createRuntime = (params: Parameters<typeof createRuntimeOriginal>[0]) => {
-      disabledActionIds = params.disabledSessionAgentActionIds;
-      return createRuntimeOriginal(params);
-    };
-
-    try {
-      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
-    } finally {
-      if (previous === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previous;
-    }
-
-    expect(disabledActionIds).toContain('session.message.send');
-    expect(disabledActionIds).not.toContain('session.list');
-  });
-
   it('passes resolved MCP servers to the provider runtime', async () => {
     const harness = createHarness();
     harness.config.flavor = 'claude';

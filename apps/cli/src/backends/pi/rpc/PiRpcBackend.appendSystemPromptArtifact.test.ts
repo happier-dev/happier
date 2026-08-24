@@ -53,6 +53,19 @@ afterEach(async () => {
 });
 
 describe('PiRpcBackend append-system-prompt artifact delivery', () => {
+  it('preserves the original non-blank prompt bytes', () => {
+    const candidate = new PiRpcBackend({
+      cwd: '/tmp',
+      command: process.execPath,
+      args: [],
+      appendSystemPromptText: '\n  PRESERVE-ME  \n',
+    });
+    backend = candidate;
+
+    expect((candidate as unknown as { options: { appendSystemPromptText: string | null } }).options.appendSystemPromptText)
+      .toBe('\n  PRESERVE-ME  \n');
+  });
+
   it('serializes concurrent first-process preparation into one spawn', async () => {
     const candidate = new PiRpcBackend({
       cwd: '/tmp',

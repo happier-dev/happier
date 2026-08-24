@@ -33,7 +33,7 @@ function resolveActionsSettings(settings: Record<string, unknown> | null | undef
   const environmentOverride = readActionsSettingsOverrideFromEnv();
   if (environmentOverride) return environmentOverride;
   const parsed = ActionsSettingsV1Schema.safeParse(settings?.actionsSettingsV1);
-  return parsed.success ? parsed.data : { v: 1, actions: {} };
+  return parsed.success ? parsed.data : ActionsSettingsV1Schema.parse({ v: 1, actions: {} });
 }
 
 /**
@@ -50,8 +50,6 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   settings: Record<string, unknown> | null | undefined;
   memoryRecallGuidanceEnabled: boolean;
   memoryMachineId?: string | null;
-  sessionToolsEnabled?: boolean;
-  disabledActionIds?: readonly string[];
 }>): Promise<HappyToolsBridgeBackendOptions | null> {
   if (!params.agentDir) return null;
 
@@ -61,7 +59,19 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     && params.memoryMachineId.trim()
     ? params.memoryMachineId.trim()
     : null;
-  const actionsSettings = resolveActionsSettings(params.settings);
+  const configuredActionsSettings = resolveActionsSettings(params.settings);
+  const actionsSettings: ActionsSettingsV1 = sessionRenameMode === 'disabled'
+    ? {
+        ...configuredActionsSettings,
+        actions: {
+          ...configuredActionsSettings.actions,
+          'session.title.set': {
+            ...configuredActionsSettings.actions['session.title.set'],
+            enabled: false,
+          },
+        },
+      }
+    : configuredActionsSettings;
   const isActionEnabled = (id: ActionId) => isActionEnabledByActionsSettings(id, actionsSettings, {
     surface: 'session_agent',
   });
@@ -75,9 +85,7 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
     defaultSessionMachineId,
     requiredDirectActionIds,
   });
-  const directTools = sessionRenameMode === 'disabled'
-    ? resolvedTools.filter((tool) => tool.name !== 'change_title')
-    : resolvedTools;
+  const directTools = resolvedTools;
   const directToolNames = new Set(directTools.map((tool) => tool.name));
   const memoryGuidanceEnabled = params.memoryRecallGuidanceEnabled === true
     && directToolNames.has('memory_search')

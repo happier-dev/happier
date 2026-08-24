@@ -9,7 +9,7 @@ import type { AgentMessage } from '@/agent/core';
 import { PiRpcBackend } from './PiRpcBackend';
 
 type PrivatePendingTurnBackend = {
-  createPendingTurn(timeoutMs: number): Promise<void>;
+  createPendingTurn(timeoutMs: number): { promise: Promise<void> };
 };
 
 type PrivateEventBackend = {
@@ -621,25 +621,25 @@ describe('PiRpcBackend pending turn lifecycle', () => {
     const backendWithPrivate = backend as unknown as PrivatePendingTurnBackend;
     let firstRejected: Error | null = null;
     const firstTurn = backendWithPrivate.createPendingTurn(10_000);
-    firstTurn.catch((error: Error) => {
+    firstTurn.promise.catch((error: Error) => {
       firstRejected = error;
     });
 
     try {
-      const secondTurn = backendWithPrivate.createPendingTurn(10_000);
-      const secondOutcome = await Promise.race([
-        secondTurn.then(
+      expect(() => backendWithPrivate.createPendingTurn(10_000)).toThrow(/pending turn/i);
+      const firstOutcome = await Promise.race([
+        firstTurn.promise.then(
           () => 'resolved',
           (error: Error) => error.message,
         ),
         delay(0).then(() => 'pending'),
       ]);
 
-      expect(secondOutcome).toMatch(/pending turn/i);
+      expect(firstOutcome).toBe('pending');
       expect(firstRejected).toBeNull();
     } finally {
       await backend.dispose();
-      await firstTurn.catch(() => undefined);
+      await firstTurn.promise.catch(() => undefined);
     }
   });
 

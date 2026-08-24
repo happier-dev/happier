@@ -99,9 +99,9 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
    */
   private shouldDenySessionTitleToolCall(toolName: string, input: unknown): boolean {
     return shouldDenyAgentSessionTitleToolCall({
-      settings: resolveSessionCodingPromptSettings({
+      settings: resolveSessionCodingPromptSettingsFromSession({
         settings: this.getAccountSettingsSnapshot() ?? {},
-        profileId: this.session.getMetadataSnapshot()?.profileId ?? null,
+        session: this.session,
       }),
       toolName,
       input,
@@ -116,16 +116,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       return null;
     }
 
-    if (shouldDenyAgentSessionTitleToolCall({
-      // Same merged decision the prompt and tools bridge consume: a profile override
-      // that disables title updates must also disable it at this deny layer.
-      settings: resolveSessionCodingPromptSettingsFromSession({
-        settings: this.getAccountSettingsSnapshot() ?? {},
-        session: this.session,
-      }),
-      toolName,
-      input,
-    })) {
+    if (this.shouldDenySessionTitleToolCall(toolName, input)) {
       return { decision: 'denied' };
     }
 

@@ -195,28 +195,6 @@ Provider-owned probing:
 - Fail closed to the static catalog. A probe that cannot authenticate returns `null` rather than
   probing with whatever credential happens to be in the daemon's environment.
 
-### Pi session-agent native tools
-
-Pi's bundled tools-bridge can register the Happier CLI tool catalog as native Pi tools. The full
-surface is development-gated by `pi.sessionTools` and remains off by default. When enabled, the
-catalog is intentionally broader than the default direct-tool exposure mode: the purpose of the
-extension is to make the CLI tools native to Pi.
-
-The daemon remains the Actions-settings policy owner. At spawn it resolves the action ids disabled
-for the `session_agent` surface and passes that projection through
-`--happy-session-disabled-actions <json-array>`. The generated extension uses the flag to:
-
-- omit disabled directly bound tools from Pi registration;
-- omit the corresponding curated title and memory tools; and
-- reject a disabled target passed through the `action_execute` umbrella.
-
-The generated asset contains schemas and action-to-tool identities, not account policy. It is shared
-across sessions and refreshed write-if-changed; per-session policy travels only through launch flags.
-A missing disabled-actions flag means no actions are disabled by that projection. A malformed value
-fails closed for action-tool registration.
-
----
-
 ## Adding a new agent/provider (end-to-end)
 
 ### Step 0 — pick the id contract (critical)

@@ -222,15 +222,6 @@ export default function HappierPiToolsBridgeExtension(pi) {
     description: "Protected Happier session tools-bridge configuration path",
     type: "string",
   });
-  pi.registerFlag(SESSION_TOOLS_FLAG, {
-    description: "Enable the full Happier session-agent tool surface (session_list, session_message_send, session_spawn_new, ...)",
-    type: "boolean",
-    default: false,
-  });
-  pi.registerFlag(DISABLED_ACTION_IDS_FLAG, {
-    description: "JSON array of action ids disabled by the daemon for the session_agent surface",
-    type: "string",
-  });
 
   let registered = false;
   pi.on("session_start", () => {
@@ -267,37 +258,6 @@ export default function HappierPiToolsBridgeExtension(pi) {
       });
     }
 
-    // Full session-agent tool surface: opt-in via the SESSION_TOOLS_FLAG launch flag.
-    // Every row bridges 1:1 through the same 'happier tools call' path as the curated
-    // tools above; the only difference is that parameters are converted from the
-    // inlined JSON Schema (serialized from the protocol action specs at generation
-    // time) instead of being hand-written typebox objects.
-    if (actionPolicyValid && readFlagBool(pi, SESSION_TOOLS_FLAG)) {
-      for (const def of SESSION_AGENT_TOOL_DEFS) {
-        if (def.actionId && disabledActionIds.has(def.actionId)) continue;
-        pi.registerTool({
-          name: def.name,
-          label: def.title,
-          description: def.description,
-          parameters: jsonSchemaToTypebox(def.inputSchema),
-          async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            if (def.name === "action_execute") {
-              const requestedActionId = typeof params?.actionId === "string" ? params.actionId.trim() : "";
-              if (requestedActionId && disabledActionIds.has(requestedActionId)) {
-                return toolResult({
-                  ok: false,
-                  error: {
-                    code: "action_disabled",
-                    message: "This action is disabled for the session agent surface: " + requestedActionId,
-                  },
-                });
-              }
-            }
-            return toolResult(await callHappierTool(pi, ctx, def.name, params));
-          },
-        });
-      }
-    }
   });
 }
 `;

@@ -46,8 +46,8 @@ describe('Pi ACP runtime spawn system prompt', () => {
         getPermissionMode: () => 'default',
         providerInputConsumer: createSessionProviderInputConsumerFixture(),
         credentials,
+        fallbackToolDelivery: 'shell_bridge',
         accountSettings: {},
-        disabledSessionAgentActionIds: ['session.message.send'],
       });
 
       await runtime.startOrLoad({});
@@ -88,6 +88,7 @@ describe('Pi ACP runtime spawn system prompt', () => {
         getPermissionMode: () => 'default',
         providerInputConsumer: createSessionProviderInputConsumerFixture(),
         credentials,
+        fallbackToolDelivery: 'shell_bridge',
         accountSettings: {},
         memoryRecallGuidanceEnabled: true,
       });
@@ -130,6 +131,7 @@ describe('Pi ACP runtime spawn system prompt', () => {
         getPermissionMode: () => 'default',
         providerInputConsumer: createSessionProviderInputConsumerFixture(),
         credentials,
+        fallbackToolDelivery: 'shell_bridge',
         accountSettings: {
           codingPromptBehaviorV1: {
             v: 1,
@@ -188,6 +190,7 @@ describe('Pi ACP runtime spawn system prompt', () => {
         getPermissionMode: () => 'default',
         providerInputConsumer: createSessionProviderInputConsumerFixture(),
         credentials,
+        fallbackToolDelivery: 'shell_bridge',
         accountSettings: {
           codingPromptBehaviorV1: {
             v: 1,
@@ -234,6 +237,7 @@ describe('Pi ACP runtime spawn system prompt', () => {
         getPermissionMode: () => 'default',
         providerInputConsumer: createSessionProviderInputConsumerFixture(),
         credentials,
+        fallbackToolDelivery: 'shell_bridge',
         accountSettings: {},
       });
 
@@ -245,6 +249,41 @@ describe('Pi ACP runtime spawn system prompt', () => {
       expect(appendSystemPromptText).toContain('Happier tools are available through the CLI bridge');
       expect(appendSystemPromptText).toContain("'--session-id' 'happy-session-5'");
       expect(appendSystemPromptText).toContain("'--directory' '/tmp/repo'");
+      expect(createCalls[0]?.happyToolsBridge).toBeUndefined();
+    } finally {
+      removeTempDirSync(notADir);
+    }
+  });
+
+  it('does not advertise the shell bridge when runtime availability resolved to unsupported', async () => {
+    const notADir = createTempDirSync('happier-pi-bridge-notadir-');
+    const agentDir = join(notADir, 'agent-file');
+    writeFileSync(agentDir, 'not a directory', 'utf8');
+    vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+    try {
+      const createCalls: CatalogAcpRuntimeCreateCall[] = [];
+      createCatalogAcpBackendSpy(createCalls);
+      const session = Object.assign(createApiSessionClientFixture(), {
+        sessionId: 'happy-session-unsupported',
+      });
+      const runtime = createPiAcpRuntime({
+        directory: '/tmp/repo',
+        machineId: 'machine-1',
+        session,
+        messageBuffer: createMessageBufferFixture(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange() {},
+        getPermissionMode: () => 'default',
+        providerInputConsumer: createSessionProviderInputConsumerFixture(),
+        credentials,
+        accountSettings: {},
+        fallbackToolDelivery: 'unsupported',
+      });
+
+      await runtime.startOrLoad({});
+
+      expect(createCalls[0]?.appendSystemPromptText ?? '').not.toContain('Happier tools are available through the CLI bridge');
       expect(createCalls[0]?.happyToolsBridge).toBeUndefined();
     } finally {
       removeTempDirSync(notADir);

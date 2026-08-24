@@ -17,10 +17,6 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
   // kill-switch restores the legacy restart-notice path.
   'providers.claude.unifiedTerminal.tuiRuntimeControl': (env) =>
     parseBooleanEnv(env.HAPPIER_FEATURE_CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL__ENABLED, true),
-  // Full session-agent tool surface in the pi bridge: opt-in while it rolls out. The
-  // catalog entry is fail-closed; this local entry keeps the surface off unless the
-  // env flag explicitly enables it per deployment.
-  'pi.sessionTools': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_PI_SESSION_TOOLS__ENABLED, false),
 };
 
 export function resolveCliLocalFeaturePolicyEnabled(featureId: FeatureId, env: NodeJS.ProcessEnv): boolean {

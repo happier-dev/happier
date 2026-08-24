@@ -443,12 +443,6 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
-  'pi.sessionTools': {
-    description: 'Full session-agent tool surface registration in the Pi tools-bridge extension (cross-session tools: session_list, session_message_send, session_spawn_new, ...).',
-    defaultFailMode: 'fail_closed',
-    dependencies: [],
-    representation: 'client',
-  },
 } as const;
 
 export const FEATURE_CATALOG = defineFeatureCatalog(FEATURE_CATALOG_DEFINITION);

@@ -70,7 +70,14 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
       memoryRecallGuidanceEnabled: false,
     });
     expect(disabled?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('change_title');
+    expect(disabled?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('session_title_set');
     expect(disabled?.sessionConfig.promptAddition).not.toContain('change_title');
+    expect(JSON.parse(disabled?.sessionConfig.launch.env.HAPPIER_ACTIONS_SETTINGS_V1 ?? '{}')).toMatchObject({
+      actions: {
+        'session.title.set': { enabled: false },
+      },
+    });
+    const disabledExtensionContent = readFileSync(disabled!.extensionPath, 'utf8');
 
     const initial = await resolveHappyToolsBridgeBackendOptions({
       agentDir,
@@ -80,7 +87,34 @@ describe('resolveHappyToolsBridgeBackendOptions', () => {
     });
     expect(initial?.sessionConfig.directTools.map((tool) => tool.name)).toContain('change_title');
     expect(initial?.sessionConfig.promptAddition).toContain('change_title');
-    expect(readFileSync(initial!.extensionPath, 'utf8')).toBe(readFileSync(disabled!.extensionPath, 'utf8'));
+    expect(readFileSync(initial!.extensionPath, 'utf8')).toBe(disabledExtensionContent);
+  });
+
+  it('does not expose a user-promoted title action when the effective profile disables titles', async () => {
+    const resolved = await resolveHappyToolsBridgeBackendOptions({
+      agentDir: tempAgentDir(),
+      sessionId: 'happy-session-1',
+      settings: {
+        codingPromptBehaviorV1: { sessionTitleUpdates: 'disabled' },
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'session.title.set': {
+              enabled: true,
+              toolExposureModes: { session_agent: 'direct' },
+            },
+          },
+        },
+      },
+      memoryRecallGuidanceEnabled: false,
+    });
+
+    expect(resolved?.sessionConfig.directTools.map((tool) => tool.name)).not.toContain('session_title_set');
+    expect(JSON.parse(resolved?.sessionConfig.launch.env.HAPPIER_ACTIONS_SETTINGS_V1 ?? '{}')).toMatchObject({
+      actions: {
+        'session.title.set': { enabled: false },
+      },
+    });
   });
 
   it('registers memory from the guidance requirement without probing mutable index readiness', async () => {
