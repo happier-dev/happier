@@ -95,6 +95,122 @@ function readCurrentPackageSourceReport() {
   return currentPackageSourceReportPromise;
 }
 
+// These are the three author-owned publication specs. Keep the census exact:
+// generated convenience barrels are outputs, while these files are the source
+// of truth for what each package subpath may publish.
+const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
+  './voice': Object.freeze([
+    'ConnectedAccountHttpHeadersRequest',
+    'PluginVoiceProviderDefinition',
+    'VoiceAccountOperationService',
+    'VoiceAvailabilityPlatform',
+    'VoiceCredentialAccess',
+    'VoiceCredentialAccessPhase',
+    'VoiceCredentialDeclaration',
+    'VoiceCredentialOperationProjection',
+    'VoiceCredentialSlotId',
+    'VoiceCredentialSlotIdSchema',
+    'VoiceModelPackContributionV1',
+    'VoiceModelPackContributionV1Schema',
+    'VoiceModelPackDirectoryArtifactV1',
+    'VoiceModelPackDirectoryArtifactV1Schema',
+    'VoiceModelPackExecutionHostV1',
+    'VoiceModelPackExecutionHostV1Schema',
+    'VoiceModelPackFileArtifactV1',
+    'VoiceModelPackFileArtifactV1Schema',
+    'VoiceModelPackKokoroArtifactsV1',
+    'VoiceModelPackKokoroArtifactsV1Schema',
+    'VoiceModelPackLicenseV1',
+    'VoiceModelPackLicenseV1Schema',
+    'VoiceModelPackLocalIdV1Schema',
+    'VoiceModelPackManifestV1',
+    'VoiceModelPackManifestV1Schema',
+    'VoiceModelPackRuntimeV1',
+    'VoiceModelPackRuntimeV1Schema',
+    'VoiceModelPackSupportArtifactKindV1',
+    'VoiceModelPackSupportArtifactKindV1Schema',
+    'VoiceModelPackSupportArtifactV1',
+    'VoiceModelPackSupportArtifactV1Schema',
+    'VoiceModelPackTransducerArtifactsV1',
+    'VoiceModelPackTransducerArtifactsV1Schema',
+    'VoiceProviderContribution',
+    'VoiceProviderContributionSchema',
+    'VoiceProviderSettings',
+    'VoiceProvidersRegistrationApi',
+    'VoiceRawCredentialAccess',
+    'VoiceRawCredentialGrantDeclaration',
+    'VoiceSchema',
+    'VoiceSettingReadinessDeclaration',
+    'VoiceSettingsActionContext',
+    'classifyVoiceProviderHttpFailure',
+    'createVoiceRecordSchema',
+    'withVoiceSchemaField',
+  ]),
+  './voice/client': Object.freeze([
+    'HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE',
+    'HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE',
+    'PluginVoiceAgentSessionRealtimeService',
+    'RealtimeVoiceProviderProtocol',
+    'RealtimeVoiceProviderRuntime',
+    'RealtimeVoiceProviderSettingsOperations',
+    'VoiceClientAuthArtifact',
+    'VoiceClientToolAgentPromptOptions',
+    'VoiceClientToolDefinition',
+    'VoiceConnectionMediaHost',
+    'VoiceConversationCapabilities',
+    'VoiceConversationProviderRole',
+    'VoiceConversationToolCapabilities',
+    'VoiceConversationToolEffectCalls',
+    'VoiceGuidanceAvailability',
+    'VoiceHostedConversationService',
+    'VoiceMicSession',
+    'VoiceMicrophoneMode',
+    'VoiceOutputFocusApplication',
+    'VoiceOutputFocusState',
+    'VoiceOutputInterruptionResolution',
+    'VoiceProviderConversationService',
+    'VoiceProviderExecutionAuthority',
+    'VoiceRealtimeCanonicalEvent',
+    'VoiceRealtimeConnection',
+    'VoiceRealtimeConnectionCloseReason',
+    'VoiceRealtimeJsonValue',
+    'VoiceRealtimeJsonValueSchema',
+    'VoiceRealtimePreflight',
+    'VoiceRealtimePreparation',
+    'VoiceRealtimeToolCall',
+    'VoiceRealtimeToolCallV1Schema',
+    'VoiceRealtimeToolResult',
+    'VoiceRealtimeToolResultV1Schema',
+    'VoiceRuntimePlatform',
+    'VoiceSdkHandleConnectionDriver',
+    'VoiceTranscriptCanonicalEvent',
+    'VoiceTranscriptCanonicalEventV1Schema',
+    'VoiceTranscriptLadderMapper',
+    'VoiceTranscriptLadderMode',
+    'VoiceTranscriptLadderObservation',
+    'VoiceTurnControlAction',
+    'buildVoiceClientToolAgentPrompt',
+    'createVoiceTranscriptLadderMapper',
+    'describeActionForVoiceTool',
+    'describeActionInputFieldForVoice',
+    'isVoiceSdkSafeActionSpec',
+    'listVoiceSdkSafeToolActionSpecs',
+  ]),
+  './voice/speech': Object.freeze([
+    'SpeechProviderRuntime',
+    'VoiceProviderCatalogItem',
+    'VoiceSpeechCatalogDeclaration',
+    'VoiceSpeechInputMimeType',
+    'VoiceSpeechOperationContext',
+    'VoiceSpeechProviderLimits',
+    'VoiceSpeechProviderRole',
+    'VoiceSpeechSynthesizeRequest',
+    'VoiceSpeechSynthesizeResult',
+    'VoiceSpeechTranscribeRequest',
+    'VoiceSpeechTranscribeResult',
+  ]),
+});
+
 const INVENTORY = Object.freeze({
   schemaVersion: 1,
   entrypoints: Object.freeze([
@@ -152,6 +268,14 @@ const INVENTORY = Object.freeze({
     }),
     Object.freeze({
       specifier: './host/registration',
+      exportName: 'createPluginActionHandlerNotStartedError',
+      kind: 'value',
+      sourceModule: 'src/host/registration/actionHandlerInvocation.ts',
+      sourceExport: 'createPluginActionHandlerNotStartedError',
+      realm: 'any',
+    }),
+    Object.freeze({
+      specifier: './host/registration',
       exportName: 'createPluginRegistrationScope',
       kind: 'value',
       sourceModule: 'src/host/registration/scope.ts',
@@ -192,6 +316,14 @@ const INVENTORY = Object.freeze({
       kind: 'value',
       sourceModule: 'src/targetedContributionAuthoring.ts',
       sourceExport: 'decodeTargetedContributionPointSemantics',
+      realm: 'daemon',
+    }),
+    Object.freeze({
+      specifier: './host/targeted-contributions',
+      exportName: 'projectDefinedTargetedContributionPointSemanticRefs',
+      kind: 'value',
+      sourceModule: 'src/targetedContributionAuthoring.ts',
+      sourceExport: 'projectDefinedTargetedContributionPointSemanticRefs',
       realm: 'daemon',
     }),
     Object.freeze({
@@ -278,9 +410,15 @@ async function createPackageFixture(root = undefined) {
     "export type { PluginAgentRuntimeRegistration } from './scope.js';",
     "export type { PluginRegistrationRight } from './scope.js';",
     "export type { PluginRuntimeRegistration } from './scope.js';",
+    "export { createPluginActionHandlerNotStartedError } from './actionHandlerInvocation.js';",
     "export { createPluginRegistrationScope } from './scope.js';",
     '',
   ].join('\n'));
+  await writeFixtureFile(
+    root,
+    'src/host/registration/actionHandlerInvocation.ts',
+    'export function createPluginActionHandlerNotStartedError() { return new Error(); }\n',
+  );
   await writeFixtureFile(
     root,
     'src/host/registration/scope.ts',
@@ -317,6 +455,7 @@ async function createPackageFixture(root = undefined) {
       'export type TargetedContributionPointSemanticProjection = Readonly<{ point: string }>;',
       'export type TargetedContributionPointSemanticSurface = Readonly<{ id: string }>;',
       'export function decodeTargetedContributionPointSemantics() { return null; }',
+      'export function projectDefinedTargetedContributionPointSemanticRefs() { return []; }',
       'export function readTargetedContributionPointSemanticRefs() { return []; }',
       '',
     ].join('\n'),
@@ -327,6 +466,7 @@ async function createPackageFixture(root = undefined) {
     "export type { TargetedContributionPointSemanticProjection } from '../../targetedContributionAuthoring.js';",
     "export type { TargetedContributionPointSemanticSurface } from '../../targetedContributionAuthoring.js';",
     "export { decodeTargetedContributionPointSemantics } from '../../targetedContributionAuthoring.js';",
+    "export { projectDefinedTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';",
     "export { readTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';",
     '',
   ].join('\n'));
@@ -872,14 +1012,68 @@ test('source harness keeps local export declarations out of direct Protocol sche
   }
 });
 
-test('SDK source inventory publishes the mutable manifest author input beside its readonly projection', async () => {
+test('SDK source inventory assigns Voice exports to the three author publication specs', async () => {
+  const report = await readCurrentPackageSourceReport();
+  const voiceRows = report.inventory.symbols.filter(({ specifier }) => (
+    Object.hasOwn(VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT, specifier)
+  ));
+
+  assert.deepEqual(
+    [...new Set(voiceRows.map(({ specifier }) => specifier))].sort(),
+    Object.keys(VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT).sort(),
+  );
+  for (const [specifier, expectedExports] of Object.entries(VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT)) {
+    assert.deepEqual(
+      voiceRows
+        .filter((row) => row.specifier === specifier)
+        .map(({ exportName }) => exportName)
+        .sort(),
+      expectedExports,
+      `Voice exports drifted for the authoritative ${specifier}/index.public.ts owner`,
+    );
+  }
+
+  assert.equal(
+    voiceRows.some(({ exportName }) => exportName === 'VoiceProviderRuntime'),
+    false,
+    'the retired generic VoiceProviderRuntime alias must not be published by any Voice spec',
+  );
+});
+
+test('SDK source inventory publishes the mutable manifest author input with its Agent UI dependency', async () => {
   const report = await readCurrentPackageSourceReport();
   const manifestTypeExports = report.inventory.symbols
     .filter((symbol) => symbol.specifier === './manifest' && symbol.kind === 'type')
     .map((symbol) => symbol.exportName);
 
   assert.equal(manifestTypeExports.includes('PluginManifestAuthorInput'), true);
+  assert.equal(manifestTypeExports.includes('PluginAgentUiContribution'), true);
   assert.equal(manifestTypeExports.includes('PluginManifest'), true);
+});
+
+test('SDK source inventory publishes the review scope producer with its result type', async () => {
+  const report = await readCurrentPackageSourceReport();
+  const reviewScopeExports = report.inventory.symbols
+    .filter((symbol) => (
+      symbol.specifier === './reviews'
+      && ['ScmPullRequestReviewScopeProductionV1', 'produceScmPullRequestReviewScope'].includes(symbol.exportName)
+    ))
+    .map(({ exportName, sourceExport, kind, realm }) => ({ exportName, sourceExport, kind, realm }));
+
+  assert.deepEqual(reviewScopeExports, [
+    {
+      exportName: 'ScmPullRequestReviewScopeProductionV1',
+      sourceExport: 'ScmPullRequestReviewScopeProductionV1',
+      kind: 'type',
+      realm: 'daemon',
+    },
+    {
+      exportName: 'produceScmPullRequestReviewScope',
+      sourceExport: 'produceScmPullRequestReviewScope',
+      kind: 'value',
+      realm: 'daemon',
+    },
+  ]);
 });
 
 test('SDK source inventory assigns client realm ownership to client Action service exports', async () => {
@@ -3181,6 +3375,11 @@ test('current author signature closure terminates for recursive public author gr
         realm: 'daemon',
       },
       {
+        exportName: 'projectDefinedTargetedContributionPointSemanticRefs',
+        kind: 'value',
+        realm: 'daemon',
+      },
+      {
         exportName: 'readTargetedContributionPointSemanticRefs',
         kind: 'value',
         realm: 'daemon',
@@ -3892,6 +4091,7 @@ test('current Actions canonical source does not reach its generated entrypoint b
       'export type TargetedContributionPointSemanticProjection = Readonly<{ point: string }>;',
       'export type TargetedContributionPointSemanticSurface = Readonly<{ id: string }>;',
       'export function decodeTargetedContributionPointSemantics() { return null; }',
+      'export function projectDefinedTargetedContributionPointSemanticRefs() { return []; }',
       'export function readTargetedContributionPointSemanticRefs() { return []; }',
       '',
     ].join('\n'));
@@ -3913,6 +4113,7 @@ test('current Actions canonical source does not reach its generated entrypoint b
       "export type { TargetedContributionPointSemanticProjection } from '../../apiSurfaceTargetedContributionsProbe.js';",
       "export type { TargetedContributionPointSemanticSurface } from '../../apiSurfaceTargetedContributionsProbe.js';",
       "export { decodeTargetedContributionPointSemantics } from '../../apiSurfaceTargetedContributionsProbe.js';",
+      "export { projectDefinedTargetedContributionPointSemanticRefs } from '../../apiSurfaceTargetedContributionsProbe.js';",
       "export { readTargetedContributionPointSemanticRefs } from '../../apiSurfaceTargetedContributionsProbe.js';",
       '',
     ].join('\n'));

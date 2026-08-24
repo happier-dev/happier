@@ -342,6 +342,13 @@ describe('normal SDK declaration closure identities', () => {
             sessions: emittedDeclaration('./services/sessions.ts'),
         };
 
+        // Every module is compared in ONE assertion. A per-module `expect`
+        // inside the loop throws on the first violation, which silently stops
+        // the remaining modules from being checked at all: while `manifest`
+        // carries a leak, the `connectedAccounts` seam below is unreachable and
+        // a regression there passes unnoticed.
+        const protocolSpecifiersByModule: Record<string, readonly string[]> = {};
+        const zodBearingModules: string[] = [];
         for (const [name, declaration] of Object.entries(declarations)) {
             const sourceFile = parseSource(`${name}.d.ts`, declaration);
             const externalSpecifiers = sourceFile.statements.flatMap((statement) => {
@@ -355,29 +362,37 @@ describe('normal SDK declaration closure identities', () => {
                 return [];
             });
 
-            const protocolSpecifiers = externalSpecifiers.filter((specifier) => (
+            protocolSpecifiersByModule[name] = [...new Set(externalSpecifiers.filter((specifier) => (
                 specifier === '@happier-dev/protocol'
                 || specifier.startsWith('@happier-dev/protocol/')
-            ));
-            if (name === 'connectedAccounts') {
-                expect(new Set(protocolSpecifiers), name).toEqual(new Set([
-                    '@happier-dev/protocol/account/settings/connected-services',
-                    '@happier-dev/protocol/connect/connected-account-purposes',
-                    '@happier-dev/protocol/connect/connected-account-purpose-bindings',
-                    '@happier-dev/protocol/connect/connected-account-request-auth',
-                    '@happier-dev/protocol/connect/connected-service-bindings',
-                    '@happier-dev/protocol/connect/connected-service-limit-category',
-                    '@happier-dev/protocol/connect/connected-service-schemas',
-                    '@happier-dev/protocol/connect/qualified-connected-account-projections',
-                    '@happier-dev/protocol/connect/qualified-connected-account-persistence',
-                    '@happier-dev/protocol/sessions/work-state',
-                ]));
-            } else {
-                expect(protocolSpecifiers, name).toEqual([]);
+            )))].sort();
+            if (
+                externalSpecifiers.includes('zod')
+                || /\b(?:z\.Zod|Zod[A-Za-z])/u.test(declaration)
+            ) {
+                zodBearingModules.push(name);
             }
-            expect(externalSpecifiers, name).not.toContain('zod');
-            expect(declaration, name).not.toMatch(/\b(?:z\.Zod|Zod[A-Za-z])/u);
         }
+
+        expect(protocolSpecifiersByModule).toEqual({
+            manifest: [],
+            connectedAccounts: [
+                '@happier-dev/protocol/account/settings/connected-services',
+                '@happier-dev/protocol/connect/connected-account-purpose-bindings',
+                '@happier-dev/protocol/connect/connected-account-purposes',
+                '@happier-dev/protocol/connect/connected-account-request-auth',
+                '@happier-dev/protocol/connect/connected-service-bindings',
+                '@happier-dev/protocol/connect/connected-service-limit-category',
+                '@happier-dev/protocol/connect/connected-service-schemas',
+                '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2',
+                '@happier-dev/protocol/connect/qualified-connected-account-persistence',
+                '@happier-dev/protocol/connect/qualified-connected-account-projections',
+                '@happier-dev/protocol/sessions/work-state',
+            ],
+            definePlugin: [],
+            sessions: [],
+        });
+        expect(zodBearingModules).toEqual([]);
 
         for (const [name, declaration] of Object.entries({
             actionsExecutionOrigin: emittedDeclaration('./actions/executionOrigin.ts'),
@@ -1130,6 +1145,15 @@ describe('normal SDK declaration closure identities', () => {
             'AgentSessionRuntimeTurnEventBase',
             'AgentSessionRuntimeInputIds',
             'AgentSessionRuntimeCompactionEventBase',
+            'RuntimeCompactionEvent',
+            'RuntimeEventBase',
+            'RuntimeEventContextUsage',
+            'RuntimeEventDelivery',
+            'RuntimeEventDiagnostic',
+            'RuntimeEventInputIds',
+            'RuntimeEventUsageCost',
+            'RuntimeEventUsageTokens',
+            'RuntimeTurnEvent',
             'AgentSessionProviderBindingModelOption',
             'AgentSessionProviderBindingModel',
             'AgentSessionProviderBindingLaunchMaterialization',
@@ -1650,14 +1674,27 @@ describe('normal SDK declaration closure identities', () => {
         expect(voiceDeclaration).toContain(
             "import type { ActionSpec } from '../actions/service.js';",
         );
+        // `ActionSpec` and the realtime DTOs are curated differently on
+        // purpose. `ActionSpec` is an SDK-owned identity, so naming Protocol's
+        // is a leak. The realtime DTOs are Protocol-OWNED identities under
+        // `SDK-VOICE-PROJECTION`, reached at the client realm's own Protocol
+        // subpath exactly as `voice/projections.ts` and `voice/speech.ts`
+        // already reach theirs. `voice/projections.ts` used to re-export them,
+        // so `client.ts` reached the identity through a second module; the
+        // first assertion is what fails if that second path returns.
+        //
+        // The second assertion catches the shape the first cannot see: an
+        // aliased Protocol import re-declared under the public name. That keeps
+        // the specifier and loses the identity — the author's `.d.ts` reprints
+        // an SDK-local alias instead of the schema the host parses with.
         expect(voiceDeclaration).toMatch(
-            /import type \{[^}]*VoiceRealtimeJsonValue[^}]*\} from '\.\/projections\.js';/u,
+            /import type \{[^}]*\bVoiceRealtimeJsonValue\b[^}]*\} from '@happier-dev\/protocol\/voice\/realtime';/u,
+        );
+        expect(voiceDeclaration).not.toMatch(
+            /^(?:export )?(?:declare )?type VoiceRealtimeJsonValue\b/mu,
         );
         expect(voiceDeclaration).not.toMatch(
             /import type \{[^}]*\bActionSpec\b[^}]*\} from '@happier-dev\/protocol/u,
-        );
-        expect(voiceDeclaration).not.toMatch(
-            /import type \{[^}]*\bVoiceRealtimeJsonValue\b[^}]*\} from '@happier-dev\/protocol/u,
         );
         expect(voiceDeclaration).toMatch(
             /export declare const describeActionInputFieldForVoice:\s*\(\s*spec: Pick<ActionSpec, 'id'>,\s*field: NonNullable<ActionSpec\['inputHints'\]>\['fields'\]\[number\],\s*availability\?: VoiceGuidanceAvailability\s*\) => string;/u,

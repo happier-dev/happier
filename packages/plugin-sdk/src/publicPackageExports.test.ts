@@ -731,7 +731,7 @@ describe('CORE-A curated package exports', () => {
         ]);
     });
 
-    inventoryIt('keeps manifest signature dependencies in the generated author inventory', async () => {
+    inventoryIt('keeps manifest and review signature dependencies in the generated author inventory', async () => {
         await expectCanonicalInventoryBarrelClosure('./manifest', [
             'AgentUiBehaviorDeclarationV1',
             'AgentUiConditionV1',

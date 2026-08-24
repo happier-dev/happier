@@ -128,6 +128,12 @@ const HOST_TARGETED_CONTRIBUTIONS_SYMBOL = Object.freeze({
   realm: 'daemon',
 });
 
+const HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL = Object.freeze({
+  ...HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
+  exportName: 'projectDefinedTargetedContributionPointSemanticRefs',
+  sourceExport: 'projectDefinedTargetedContributionPointSemanticRefs',
+});
+
 const HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL = Object.freeze({
   ...HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
   exportName: 'readTargetedContributionPointSemanticRefs',
@@ -153,6 +159,7 @@ const HOST_SYMBOLS = Object.freeze([
   HOST_FILE_LOCK_RECLAIM_SYMBOL,
   HOST_FILE_LOCK_SYMBOL,
   HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
+  HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
   HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
   ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
 ]);
@@ -451,21 +458,27 @@ test('projects the approved daemon-only targeted-contribution semantic decoder h
       "export type { TargetedContributionPointSemanticProjection } from '../../targetedContributionAuthoring.js';",
       "export type { TargetedContributionPointSemanticSurface } from '../../targetedContributionAuthoring.js';",
       "export { decodeTargetedContributionPointSemantics } from '../../targetedContributionAuthoring.js';",
+      "export { projectDefinedTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';",
       "export { readTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';",
       '',
     ].join('\n'),
   );
 });
 
-test('admits the daemon-only targeted-contribution semantic-ref carrier', () => {
+test('admits the daemon-only targeted-contribution semantic-ref carriers', () => {
   const inventory = validateApiSurfaceInventory(validInventory());
 
-  assert.ok(inventory.symbols.some((symbol) => (
-    symbol.specifier === HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL.specifier
-    && symbol.exportName === HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL.exportName
-    && symbol.kind === HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL.kind
-    && symbol.realm === HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL.realm
-  )));
+  for (const expected of [
+    HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
+    HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
+  ]) {
+    assert.ok(inventory.symbols.some((symbol) => (
+      symbol.specifier === expected.specifier
+      && symbol.exportName === expected.exportName
+      && symbol.kind === expected.kind
+      && symbol.realm === expected.realm
+    )));
+  }
 });
 
 test('projects symbols without posture metadata while preserving structured deprecations', () => {
@@ -524,6 +537,7 @@ test('projects symbols without posture metadata while preserving structured depr
         specifier: './host/targeted-contributions',
         symbols: [
           HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
+          HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
           HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
           ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
         ],
@@ -612,6 +626,11 @@ test('projects symbols without posture metadata while preserving structured depr
       removalCondition: undefined,
     },
     {
+      exportName: 'projectDefinedTargetedContributionPointSemanticRefs',
+      replacement: undefined,
+      removalCondition: undefined,
+    },
+    {
       exportName: 'readTargetedContributionPointSemanticRefs',
       replacement: undefined,
       removalCondition: undefined,
@@ -694,6 +713,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
         HOST_FILE_LOCK_RECLAIM_SYMBOL,
         HOST_FILE_LOCK_SYMBOL,
         HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
+        HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
         HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
         ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
       ],
@@ -773,6 +793,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
         HOST_FILE_LOCK_RECLAIM_SYMBOL,
         HOST_FILE_LOCK_SYMBOL,
         HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
+        HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
         HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
         ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
       ],
@@ -975,6 +996,7 @@ test('generation uses locale-independent code-point ordering for emitted symbols
       HOST_FILE_LOCK_RECLAIM_SYMBOL,
       HOST_FILE_LOCK_SYMBOL,
       HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
+      HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
       HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
       ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
     ],

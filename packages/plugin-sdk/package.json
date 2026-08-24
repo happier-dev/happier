@@ -385,7 +385,7 @@
     "check:public-toolchain:prepared": "node ./scripts/generatePublicToolchainCompatibility.mjs --check",
     "check:public-toolchain:generated": "node ./scripts/generatePublicToolchainCompatibility.mjs --check-generated",
     "prepack": "node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=prepack:prepared",
-    "prepack:prepared": "yarn -s prepare:declarations:prepared && yarn -s check:public-toolchain:prepared && node ./scripts/bundleWorkspaceDeps.mjs --artifact && node ./scripts/apiSurfaceCli.mjs --materialize-source --write && yarn -s build:compiled && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --write && yarn -s check:api-governance:prepared && yarn -s check:public-toolchain:generated",
+    "prepack:prepared": "yarn -s prepare:declarations:prepared && node ./scripts/bundleWorkspaceDeps.mjs --artifact && node ./scripts/apiSurfaceCli.mjs --materialize-source --write && yarn -s build:compiled && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --write && yarn -s check:api-governance:prepared && yarn -s check:public-toolchain:generated",
     "generated:finite": "yarn -s check:action-type-map",
     "prepare:finite": "node ./scripts/bundleWorkspaceDeps.mjs --declarations",
     "build:finite": "node ./scripts/bundleWorkspaceDeps.mjs --declarations --run-script=build:finite:prepared",

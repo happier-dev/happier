@@ -18,12 +18,21 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
         packageName: '@happier-dev/protocol',
         packageSourceRoot: resolve(packageRoot, '../protocol/src'),
     },
+    {
+        packageName: '@happier-dev/cli-common',
+        packageSourceRoot: resolve(packageRoot, '../cli-common/src'),
+    },
 ] as const;
 
 /**
  * Source-level Protocol/SDK tests must exercise the current normalizer rather
  * than a vendored package copy. Package-boundary tests retain their explicit
  * built-copy lanes.
+ *
+ * `@happier-dev/cli-common` is listed for the same reason and needs it more: this package
+ * deliberately resolves the private physical copies under its own `node_modules` (see
+ * `scripts/bundleWorkspaceDeps.mjs`), so without this a source test would silently exercise
+ * whatever cli-common snapshot the last bundle produced rather than the owner it imports.
  */
 export default defineConfig({
     plugins: [createWorkspacePackageSourcesPlugin(

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
     PluginHostedWebCollectionUiQueryBridgeOperationV1,
     PluginUiHostApiWireEnvelopeV1,
+    PluginUiHostApiWireIdentityV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
@@ -258,9 +259,9 @@ describe('hosted-web UI client bootstrap', () => {
         // The bridge nonce, origin, Session and request correlation all still
         // match, so whole-identity equality is the only thing keeping this
         // answer out of the frame.
-        const supersededIdentity = { ...identity, generation: '8' };
+        const supersededIdentity = { ...identity, generation: '8' } as const satisfies PluginUiHostApiWireIdentityV1;
         const negotiated = (
-            wireIdentity: typeof identity,
+            wireIdentity: PluginUiHostApiWireIdentityV1,
             requestSequence: number,
         ) => ({
             version: 1,

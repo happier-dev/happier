@@ -31,6 +31,29 @@ import type {
     PluginUiToneV1 as CanonicalPluginUiToneV1,
 } from '@happier-dev/protocol/plugins/contributions/ui/tokens';
 import type { PluginUiChannelV1 as CanonicalPluginUiChannelV1 } from '@happier-dev/protocol/plugins/ui';
+import type {
+    PluginUiViewDestinationBindingInputV2 as CanonicalPluginUiViewDestinationBindingInputV2,
+} from '@happier-dev/protocol/plugins/contributions/ui';
+import type { PluginUiViewDestinationBindingInputV2 as SdkPluginUiViewDestinationBindingInputV2 } from './ui/publicContract.js';
+
+/**
+ * The Registry row — not a literal restated in this file — owns which container
+ * admits page header actions and which instance policies it can key. Comparing
+ * the SDK arms to a literal still passes after the Registry moves, so the whole
+ * capability map is derived from BOTH sides and compared. `ViewArmFor`
+ * distributes because the SDK collapses the four pane containers onto one arm
+ * while the canonical grammar keeps one arm per Registry row.
+ */
+type ViewArmLike = { container: string; instancePolicy?: unknown; headerActions?: unknown };
+type ViewArmFor<TBinding extends ViewArmLike, TContainer extends string> =
+    TBinding extends ViewArmLike ? (TContainer extends TBinding['container'] ? TBinding : never) : never;
+type AdmitsPageHeaderActions<T> = NonNullable<T> extends readonly [] ? false : true;
+type ViewArmCapabilities<TBinding extends ViewArmLike> = {
+    [TContainer in TBinding['container']]: Readonly<{
+        instancePolicy: NonNullable<ViewArmFor<TBinding, TContainer>['instancePolicy']>;
+        admitsPageHeaderActions: AdmitsPageHeaderActions<ViewArmFor<TBinding, TContainer>['headerActions']>;
+    }>;
+};
 
 type CanonicalPluginUiDeclarativeToneV2 = NonNullable<
     Extract<CanonicalPluginDeclarativeNodeV2, Readonly<{ kind: 'text' }>>['tone']
@@ -331,20 +354,16 @@ describe('UI/testing public type contract', () => {
         // author's editor and the published JSON Schema accept `headerActions`
         // on a pane and `instancePolicy: 'multiple'` on a right-sidebar tab —
         // both of which `PluginUiViewV2Schema` rejects at install time.
+        // Every container the Registry declares, both dimensions, compared to
+        // the canonical arm. Restating the expectation as a literal here left
+        // `browserPanel` and `servicesPanel` unanchored entirely, and could not
+        // fail at all when the Registry itself moved.
+        expectTypeOf<ViewArmCapabilities<SdkPluginUiViewDestinationBindingInputV2>>()
+            .toEqualTypeOf<ViewArmCapabilities<CanonicalPluginUiViewDestinationBindingInputV2>>();
+        // The admitted arm carries the SDK's own projected action row, not the
+        // Protocol declaration site an external author cannot resolve.
         expectTypeOf<Extract<PluginUiViewV2Input, { container: 'appPage' }>['headerActions']>()
             .toEqualTypeOf<PluginUiPageHeaderActionV1[] | undefined>();
-        expectTypeOf<
-            Extract<PluginUiViewV2Input, { container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane' }>['headerActions']
-        >().toEqualTypeOf<[] | undefined>();
-        expectTypeOf<Extract<PluginUiViewV2Input, { container: 'rightSidebarTab' }>['headerActions']>()
-            .toEqualTypeOf<[] | undefined>();
-        expectTypeOf<Extract<PluginUiViewV2Input, { container: 'appPage' }>['instancePolicy']>()
-            .toEqualTypeOf<'singleton' | undefined>();
-        expectTypeOf<Extract<PluginUiViewV2Input, { container: 'rightSidebarTab' }>['instancePolicy']>()
-            .toEqualTypeOf<'singleton' | undefined>();
-        expectTypeOf<
-            Extract<PluginUiViewV2Input, { container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane' }>['instancePolicy']
-        >().toEqualTypeOf<'singleton' | 'multiple' | undefined>();
         // A header action names the same semantic command grammar the canonical
         // parser admits, not `unknown`.
         expectTypeOf<PluginUiPageHeaderActionV1['action']>()

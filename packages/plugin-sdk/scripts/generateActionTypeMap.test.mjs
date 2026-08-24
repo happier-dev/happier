@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -8,11 +7,14 @@ import test from 'node:test';
 
 import ts from 'typescript';
 
-import { renderActionTypeProjection, writeFileIfChanged } from './generateActionTypeMap.mjs';
+import {
+  createActionTypeMapTimingReporter,
+  renderActionTypeProjection,
+  writeFileIfChanged,
+} from './generateActionTypeMap.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), '..');
-const GENERATOR_PATH = resolve(PACKAGE_ROOT, 'scripts/generateActionTypeMap.mjs');
 const GENERATED_PATH = resolve(PACKAGE_ROOT, 'src/actions/actionTypeMap.generated.ts');
 const TSCONFIG_PATH = resolve(PACKAGE_ROOT, 'tsconfig.json');
 
@@ -52,6 +54,25 @@ test('Action input projections accept the public readonly JSON value without cha
   assert.equal(result, '{ payload: PluginJsonValueV2; }');
 });
 
+test('Action type map timing identifies the expensive compiler phases', () => {
+  const samples = [100, 125, 190, 260];
+  const output = [];
+  const phase = createActionTypeMapTimingReporter({
+    now: () => samples.shift(),
+    write: (line) => output.push(line),
+  });
+
+  phase('protocol-program');
+  phase('structural-projection');
+  phase('generated-module-validation');
+
+  assert.deepEqual(output, [
+    'action-type-map: phase=protocol-program deltaMs=25 totalMs=25\n',
+    'action-type-map: phase=structural-projection deltaMs=65 totalMs=90\n',
+    'action-type-map: phase=generated-module-validation deltaMs=70 totalMs=160\n',
+  ]);
+});
+
 test('Action type map publication leaves identical output untouched and writes changed output', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-type-map-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -75,11 +96,6 @@ test('Action type map publication leaves identical output untouched and writes c
 });
 
 test('generated Action projection is declaration-neutral and retains its public aliases', () => {
-  execFileSync(process.execPath, [GENERATOR_PATH, '--check'], {
-    cwd: PACKAGE_ROOT,
-    stdio: 'pipe',
-  });
-
   const source = readFileSync(GENERATED_PATH, 'utf8');
   const importPaths = [...source.matchAll(/^import(?: type)? [^;]+ from '([^']+)';$/gmu)]
     .map((match) => match[1]);

@@ -43,6 +43,7 @@ const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
   ])],
   ['./host/targeted-contributions', new Map([
     ['decodeTargetedContributionPointSemantics', 'value'],
+    ['projectDefinedTargetedContributionPointSemanticRefs', 'value'],
     ['readTargetedContributionPointSemanticRefs', 'value'],
     ['TargetedContributionPointSemanticInput', 'type'],
     ['TargetedContributionPointSemanticOperation', 'type'],

@@ -20,6 +20,21 @@ const OPAQUE_VALIDATOR_BRANDED_STRING = /string & \$brand<'[^']+'>/gu;
 const MUTABLE_PROTOCOL_JSON_VALUE = /\bPluginJsonValueV2\b/gu;
 const FORBIDDEN_PUBLIC_VALIDATOR_REFERENCE = /(?:['"]zod(?:\/[^'"]*)?['"]|\bz\.[A-Za-z_$]|\bZod[A-Za-z0-9_]*\b|\$(?:brand|Zod[A-Za-z0-9_]*))/u;
 
+export function createActionTypeMapTimingReporter({
+  now = () => performance.now(),
+  write = (line) => process.stderr.write(line),
+} = {}) {
+  const startedAt = now();
+  let previousAt = startedAt;
+  return (phase) => {
+    const currentAt = now();
+    write(
+      `action-type-map: phase=${phase} deltaMs=${Math.round(currentAt - previousAt)} totalMs=${Math.round(currentAt - startedAt)}\n`,
+    );
+    previousAt = currentAt;
+  };
+}
+
 /**
  * Recursive aliases which TypeScript intentionally keeps named while printing
  * the canonical Action maps. The Action-owned aliases are public structural
@@ -264,8 +279,9 @@ function validateGeneratedModule(output, expectedInputKeys, expectedResultKeys) 
   assertConcreteMapValues(checker, result, sourceFile, 'Generated PluginActionResultById');
 }
 
-function renderModule() {
+function renderModule(onPhase = () => {}) {
   const { checker, program } = requireProtocolProgram();
+  onPhase('protocol-program');
   const projections = TYPE_PROJECTIONS.map((projection) => {
     const sourceFile = sourceFileFor(program, projection.relativePath);
     const type = projectedType(checker, sourceFile, projection);
@@ -309,13 +325,16 @@ function renderModule() {
     'export type PluginInvocableActionId = keyof PluginActionInputById;',
     '',
   ].join('\n');
+  onPhase('structural-projection');
   validateGeneratedModule(output, inputKeys, resultKeys);
+  onPhase('generated-module-validation');
   return output;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
   const mode = requireArgument();
-  const output = renderModule();
+  const timing = createActionTypeMapTimingReporter();
+  const output = renderModule(timing);
 
   if (mode === '--write') {
     await writeFileIfChanged(OUTPUT_PATH, output);
@@ -325,4 +344,5 @@ if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
       throw new Error(`Generated Action type map is stale: ${OUTPUT_PATH}. Run yarn generate:action-type-map.`);
     }
   }
+  timing(mode === '--write' ? 'publication-write' : 'publication-check');
 }

@@ -689,6 +689,21 @@ test('discovers a new authoring consumer and rejects its omitted public SDK depe
 });
 
 test('validates the generated packet for an isolated SDK prepack without sibling source checkouts', async () => {
+  const sdkPackage = JSON.parse(await readFile(
+    new URL('../package.json', import.meta.url),
+    'utf8',
+  ));
+  assert.match(
+    sdkPackage.scripts?.['prepack:prepared'] ?? '',
+    /yarn -s check:public-toolchain:generated/u,
+    'the isolated SDK prepack must validate its emitted packet',
+  );
+  assert.doesNotMatch(
+    sdkPackage.scripts?.['prepack:prepared'] ?? '',
+    /yarn -s check:public-toolchain:prepared/u,
+    'the isolated SDK prepack must not re-read unavailable source-only sibling inputs',
+  );
+
   const root = await createFixtureRoot();
   const packet = await derivePublicToolchainCompatibilityV1({ repoRoot: root });
   const outputPath = join(root, 'packages', 'plugin-sdk', 'src', 'ui', 'build', 'publicToolchainCompatibility.generated.ts');

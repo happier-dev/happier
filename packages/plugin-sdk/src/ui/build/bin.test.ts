@@ -215,6 +215,9 @@ describe('runPluginBuildUiCli', () => {
         const workRoot = join(projectRoot, 'dist/ui');
         const emitted = [
             ['react-native-web/voice-runtime-web/entry.mjs.bundle', 'voice web'],
+            ['react-native-web/review-client-actions/entry.mjs.bundle', 'review client actions web'],
+            ['react-native/review-client-actions/ios/ios.bundle', 'review client actions ios'],
+            ['react-native/review-client-actions/android/android.bundle', 'review client actions android'],
             ['hosted-web/review-web/index.html', '<!doctype html>'],
             ['hosted-web/review-openable-web/index.html', '<!doctype html>'],
             ['react-native-web/review-native/entry.mjs.bundle', 'review web'],
@@ -246,9 +249,10 @@ describe('runPluginBuildUiCli', () => {
 
         expect(exitCode).toBe(0);
         const viteCalls = calls.filter((call) => call.installableId === 'plugin-ui.bundler.vite');
-        expect(viteCalls).toHaveLength(5);
+        expect(viteCalls).toHaveLength(6);
         for (const contributionId of [
             'voice-runtime-web',
+            'review-client-actions',
             'review-web',
             'review-openable-web',
             'review-native',
@@ -259,8 +263,10 @@ describe('runPluginBuildUiCli', () => {
             expect(call?.args?.[2]).toContain('.happier-plugin-ui-build-');
         }
         const repackCalls = calls.filter((call) => call.installableId === 'plugin-ui.bundler.repack');
-        expect(repackCalls).toHaveLength(4);
+        expect(repackCalls).toHaveLength(6);
         for (const [contributionId, platform] of [
+            ['review-client-actions', 'ios'],
+            ['review-client-actions', 'android'],
             ['review-native', 'ios'],
             ['review-native', 'android'],
             ['review-openable-native', 'ios'],
@@ -284,6 +290,9 @@ describe('runPluginBuildUiCli', () => {
         expect(manifest.entries.map((entry) => `${entry.tier}:${entry.contributionId}:${entry.platform}`).sort()).toEqual([
             'hostedWeb:review-openable-web:web',
             'hostedWeb:review-web:web',
+            'reactNative:review-client-actions:android',
+            'reactNative:review-client-actions:ios',
+            'reactNative:review-client-actions:web',
             'reactNative:review-native:android',
             'reactNative:review-native:ios',
             'reactNative:review-native:web',
