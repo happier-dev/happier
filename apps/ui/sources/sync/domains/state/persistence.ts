@@ -1190,6 +1190,11 @@ function absorbLegacySessionLocalStateScope(scope: ServerAccountScope, legacySco
         saveSessionDrafts(sessionDrafts, scope);
     }
 
+    if (!loadNewSessionDraft(scope)) {
+        const legacyNewSessionDraft = loadNewSessionDraft(legacyScope);
+        if (legacyNewSessionDraft) saveNewSessionDraft(legacyNewSessionDraft, scope);
+    }
+
     const sessionReviewDrafts = mergeRecordsPreferCanonical(
         loadSessionReviewCommentsDrafts(scope),
         loadSessionReviewCommentsDrafts(legacyScope),
@@ -1228,13 +1233,17 @@ export function prepareSessionLocalStateScopeForActivation(
         }
     };
 
-    // Active-session drafts are recoverable user text, so legacy values migrate once.
-    // Launch drafts include machine/profile/secret intent and are dropped below instead.
+    // Drafts are recoverable user intent, so legacy values move into the active scope once.
+    // The canonical draft repository projects safe synchronized fields before retiring them.
     if (typeof mmkv.getString(sessionDraftsKey(scope)) !== 'string') {
         const legacyDrafts = loadSessionDrafts();
         if (Object.keys(legacyDrafts).length > 0) {
             saveSessionDrafts(legacyDrafts, scope);
         }
+    }
+    if (typeof mmkv.getString(newSessionDraftKey(scope)) !== 'string') {
+        const legacyNewSessionDraft = loadNewSessionDraft();
+        if (legacyNewSessionDraft) saveNewSessionDraft(legacyNewSessionDraft, scope);
     }
 
     if (typeof mmkv.getString(sessionReviewCommentsDraftsKey(scope)) !== 'string') {

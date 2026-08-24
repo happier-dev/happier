@@ -16,6 +16,8 @@ const buildLiveNewSessionAuthoringDraftFromResolvedInputsMock = vi.hoisted(() =>
 })));
 const saveNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
+const writeNewSessionDraftMock = vi.hoisted(() => vi.fn());
+const flushSessionDraftMock = vi.hoisted(() => vi.fn(async () => ({ status: 'clean' as const })));
 
 vi.mock('@/components/sessions/authoring/context/buildNewSessionAuthoringContext', () => ({
     buildNewSessionAuthoringContext: (...args: unknown[]) => buildNewSessionAuthoringContextMock(...args),
@@ -32,6 +34,11 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     clearNewSessionDraft: (...args: unknown[]) => clearNewSessionDraftMock(...args),
 }));
 
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    writeNewSessionDraft: (params: unknown) => writeNewSessionDraftMock(params),
+    flushSessionDraft: (_params: unknown) => flushSessionDraftMock(),
+}));
+
 vi.mock('@/sync/domains/settings/terminalSettings', () => ({
     resolveTerminalSpawnOptions: vi.fn(() => null),
 }));
@@ -46,6 +53,9 @@ describe('useNewSessionAuthoringState', () => {
         buildLiveNewSessionAuthoringDraftFromResolvedInputsMock.mockClear();
         saveNewSessionDraftMock.mockReset();
         clearNewSessionDraftMock.mockReset();
+        writeNewSessionDraftMock.mockReset();
+        flushSessionDraftMock.mockReset();
+        flushSessionDraftMock.mockResolvedValue({ status: 'clean' });
 
         buildNewSessionAuthoringContextMock.mockReturnValue({
             draft: {
@@ -61,7 +71,7 @@ describe('useNewSessionAuthoringState', () => {
         vi.restoreAllMocks();
     });
 
-    it('preserves legacy unscoped draft persistence when no draft scope is active', async () => {
+    it('persists through the exact-address repository owner', async () => {
         const hook = await renderHook(() => useNewSessionAuthoringState({
             automationDraft: DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
             automationFeatureEnabled: false,
@@ -92,13 +102,22 @@ describe('useNewSessionAuthoringState', () => {
             selectedSecretIdByProfileIdByEnvVarName: {},
             getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => ({}),
             agentNewSessionOptionStateByAgentId: {},
-            draftScope: null,
+            draftScope: { serverId: 'server-a', accountId: 'account-a' },
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         }));
 
-        hook.getCurrent().persistDraftIfEnabled({ selectedPath: '/repo' } as never);
+        hook.getCurrent().stageDraftIfEnabled({ selectedPath: '/repo' } as never);
 
-        expect(saveNewSessionDraftMock).toHaveBeenCalledWith({ selectedPath: '/repo' });
-        expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
+        expect(writeNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
+            scope: { serverId: 'server-a', accountId: 'account-a' },
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            materializationIntent: 'userEdit',
+        }));
+        expect(saveNewSessionDraftMock).not.toHaveBeenCalled();
+        expect(flushSessionDraftMock).not.toHaveBeenCalled();
+
+        hook.getCurrent().persistDraftIfEnabled({ selectedPath: '/repo' } as never);
+        expect(flushSessionDraftMock).toHaveBeenCalledTimes(1);
 
         await hook.unmount();
     });
@@ -142,6 +161,7 @@ describe('useNewSessionAuthoringState', () => {
             getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => ({}),
             agentNewSessionOptionStateByAgentId: {},
             draftScope: null,
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         }));
 
         const buildDraftParams = buildLiveNewSessionAuthoringDraftFromResolvedInputsMock.mock.calls[0]?.[0] as Record<string, unknown>;

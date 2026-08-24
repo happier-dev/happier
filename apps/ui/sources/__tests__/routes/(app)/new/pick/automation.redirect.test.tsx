@@ -8,10 +8,11 @@ const useLocalSearchParamsMock = vi.fn();
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const expoRouterMock = createExpoRouterMock({
-        params: useLocalSearchParamsMock(),
-    });
-    return expoRouterMock.module;
+    const expoRouterMock = createExpoRouterMock();
+    return {
+        ...expoRouterMock.module,
+        useLocalSearchParams: () => useLocalSearchParamsMock(),
+    };
 });
 
 describe('legacy automation picker route', () => {
@@ -28,6 +29,7 @@ describe('legacy automation picker route', () => {
             automationEveryMinutes: '90',
             automationCronExpr: '0 * * * *',
             automationTimezone: 'Europe/Zurich',
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         });
 
         const module = await import('@/app/(app)/new/pick/automation');
@@ -46,6 +48,23 @@ describe('legacy automation picker route', () => {
                 automationEveryMinutes: '90',
                 automationCronExpr: '0 * * * *',
                 automationTimezone: 'Europe/Zurich',
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            },
+        });
+    });
+
+    it('allocates an explicit identity when a legacy picker route has none', async () => {
+        useLocalSearchParamsMock.mockReturnValue({ automationName: 'Legacy' });
+
+        const module = await import('@/app/(app)/new/pick/automation');
+        const screen = await renderScreen(React.createElement(module.default));
+
+        expect(screen.findByType('Redirect' as any).props.href).toEqual({
+            pathname: '/new',
+            params: {
+                automation: '1',
+                automationName: 'Legacy',
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
             },
         });
     });

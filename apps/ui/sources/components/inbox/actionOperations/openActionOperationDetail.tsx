@@ -16,6 +16,8 @@ import {
 } from '@/sync/domains/actionOperations/actionOperationStore';
 import { getActionOperation } from '@/sync/ops/actionOperations';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
+import { acknowledgeActionOperationPresented } from '@/sync/domains/actionOperations/acknowledgeActionOperationPresented';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
 import { ActionOperationDetail } from './ActionOperationDetail';
 import { requestActionOperationStop } from './requestActionOperationStop';
@@ -96,7 +98,7 @@ export function ActionOperationDetailModal(props: ActionOperationDetailModalProp
             || operation?.state === 'failed'
             || operation?.state === 'cancelled'
         ) {
-            actionOperationStore.markSeen(operation.operationId);
+            acknowledgeActionOperationPresented(operation);
         }
     }, [operation?.operationId, operation?.state]);
 
@@ -114,7 +116,10 @@ export function openActionOperationDetail(operationId: string): string | null {
             router.push({
                 pathname: '/new',
                 params: {
-                    spawnServerId: target.draftScope.serverId,
+                    ...buildNewSessionLaunchRouteParams({
+                        draftId: target.draftId,
+                        targetServerId: target.draftScope.serverId,
+                    }),
                     actionOperationId: target.operationId,
                 },
             } as never);
@@ -127,7 +132,7 @@ export function openActionOperationDetail(operationId: string): string | null {
                 serverId: target.serverId,
                 refreshAuth: getCurrentAuth()?.refreshFromActiveServer ?? null,
             });
-            actionOperationStore.markSeen(operationId);
+            acknowledgeActionOperationPresented(operation);
             return null;
         }
     }

@@ -33,8 +33,8 @@ public Markdown and exact bounded channel text. Put this JSON comment at the
 start of the matching `## Release <project-release-id> - <date>` section. The
 project release ID is a unique lowercase identifier such as `2026-08-09.1`,
 independent of every component version. Use the date plus an ordinal, increase
-the ordinal for another candidate on that date, and keep the same ID from
-preview through stable. The heading is the only authored source; a workflow
+the ordinal for another release on that date, and keep the same ID from preview
+through stable. The heading is the only authored source; a workflow
 input only selects and verifies it:
 
 ```markdown
@@ -60,7 +60,7 @@ the selected release surfaces consume them; when present they are validated.
 Limits are: Expo 1,024; App Store 4,000; Play 500; StoryDeck 280. The section
 must contain meaningful public Markdown after the comment.
 
-Project an exact candidate with its source identity and independently versioned
+Project the release with its source identity and independently versioned
 components:
 
 ```bash
@@ -76,8 +76,8 @@ node scripts/pipeline/release/release-notes/project-release-notes.mjs \
 
 The v2 bundle records `{ id, sourceSha, components }`; it does not treat the UI
 version as a project-wide release identity. Workflow callers must pass the
-human-authored project ID, the candidate SHA they already verified, and every
-applicable component version, then validate the v2 bundle before use.
+human-authored project ID, the release source SHA they already verified, and
+every applicable component version, then validate the v2 bundle before use.
 
 ## StoryDeck source and assets
 

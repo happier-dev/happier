@@ -2,7 +2,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useDraft } from './useDraft';
+import { useDraft, type SessionDraftTextSnapshot } from './useDraft';
 import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from '@/components/ui/forms/largeTextInputPolicy';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
@@ -10,10 +10,52 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let isFocused = true;
+let onHarnessLayoutEffect: (() => void) | null = null;
 let sessionsById: Record<string, { draft: string | null; metadata?: any }>;
 const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' | 'android' }));
+const draftRepositoryHarness = vi.hoisted(() => {
+  const listeners = new Map<string, Set<() => void>>();
+  let mutationCounter = 0;
+  const mutationIds = new Map<string, string>();
+  const snapshots = new Map<string, { stored: string; mutationId: string; value: unknown }>();
+  return {
+    scope: Object.freeze({ serverId: 'server-a', accountId: 'account-a' }),
+    flush: vi.fn(async () => ({ status: 'clean' as const })),
+    getMutationId(sessionId: string) {
+      return mutationIds.get(sessionId) ?? 'missing';
+    },
+    nextMutationId(sessionId: string) {
+      const id = `mutation-${++mutationCounter}`;
+      mutationIds.set(sessionId, id);
+      return id;
+    },
+    cacheSnapshot(sessionId: string, stored: string, mutationId: string, create: () => unknown) {
+      const prior = snapshots.get(sessionId);
+      if (prior?.stored === stored && prior.mutationId === mutationId) return prior.value;
+      const value = create();
+      snapshots.set(sessionId, { stored, mutationId, value });
+      return value;
+    },
+    notify(sessionId: string) {
+      for (const listener of listeners.get(sessionId) ?? []) listener();
+    },
+    reset() {
+      listeners.clear();
+      mutationIds.clear();
+      snapshots.clear();
+      mutationCounter = 0;
+      this.flush.mockClear();
+    },
+    subscribe(sessionId: string, listener: () => void) {
+      const scoped = listeners.get(sessionId) ?? new Set<() => void>();
+      scoped.add(listener);
+      listeners.set(sessionId, scoped);
+      return () => scoped.delete(listener);
+    },
+  };
+});
 
 vi.mock('@react-navigation/native', () => ({
   useIsFocused: () => isFocused,
@@ -39,7 +81,7 @@ vi.mock('react-native', async () => {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
+  storage: {
     getState: () => ({
       sessions: sessionsById,
       updateSessionDraft: (sessionId: string, draft: string | null) => {
@@ -54,8 +96,76 @@ vi.mock('@/sync/domains/state/storage', async () => {
       },
     }),
   },
+  useActiveServerAccountScope: () => draftRepositoryHarness.scope,
 });
 });
+
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+  subscribeSessionDraft: (_scope: unknown, address: { sessionId: string }, listener: () => void) =>
+    draftRepositoryHarness.subscribe(address.sessionId, listener),
+  getSessionDraftSnapshot: (_scope: unknown, address: { sessionId: string }) => {
+    const stored = sessionsById[address.sessionId]?.draft;
+    if (stored == null) return null;
+    const mutationId = draftRepositoryHarness.getMutationId(address.sessionId);
+    return draftRepositoryHarness.cacheSnapshot(address.sessionId, stored, mutationId, () => ({
+      address: { kind: 'session', sessionId: address.sessionId },
+      document: {
+        v: 1,
+        address: { kind: 'session', sessionId: address.sessionId },
+        composer: {
+          text: { mutationId, value: stored },
+          mentions: { mutationId: 'mentions', value: [] },
+          attachments: { mutationId: 'attachments', value: [] },
+        },
+        target: {
+          kind: 'session',
+          routing: {
+            recipient: { mutationId: 'recipient', value: null },
+            agentContinuation: { mutationId: 'continuation', value: null },
+            executionRunDelivery: { mutationId: 'delivery', value: null },
+          },
+        },
+        extensions: {},
+      },
+      status: 'clean',
+      conflict: null,
+      createdAt: 1,
+      updatedAt: 1,
+      materialized: stored.trim().length > 0,
+      localSupplement: {},
+    }));
+  },
+  writeExistingSessionDraft: ({ sessionId, patch }: { sessionId: string; patch: { text?: string } }) => {
+    if (patch.text === undefined) return;
+    const stored = patch.text.length > 0 ? patch.text : null;
+    draftRepositoryHarness.nextMutationId(sessionId);
+    updateSessionDraftSpy(sessionId, stored);
+    sessionsById = {
+      ...sessionsById,
+      [sessionId]: { ...(sessionsById[sessionId] ?? { draft: null }), draft: stored },
+    };
+    draftRepositoryHarness.notify(sessionId);
+  },
+  flushSessionDraft: draftRepositoryHarness.flush,
+  captureSessionDraftCurrentness: ({ address }: { address: { sessionId: string } }) => ({
+    address,
+    mutationIds: { 'composer.text': draftRepositoryHarness.getMutationId(address.sessionId) },
+  }),
+  clearSessionDraftCurrentness: async ({ address, currentness }: {
+    address: { sessionId: string };
+    currentness: { mutationIds: Record<string, string> };
+  }) => {
+    if (currentness.mutationIds['composer.text'] !== draftRepositoryHarness.getMutationId(address.sessionId)) return false;
+    draftRepositoryHarness.nextMutationId(address.sessionId);
+    updateSessionDraftSpy(address.sessionId, null);
+    sessionsById = {
+      ...sessionsById,
+      [address.sessionId]: { ...(sessionsById[address.sessionId] ?? { draft: null }), draft: null },
+    };
+    draftRepositoryHarness.notify(address.sessionId);
+    return true;
+  },
+}));
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -162,6 +272,8 @@ type HarnessState = Readonly<{
   ) => boolean;
   restoreDraft?: (draft: string) => void;
   restoreComposerSnapshot?: (snapshot: Readonly<{ sessionId: string; text: string }>) => void;
+  captureDraftForOutboundHandoff?: () => SessionDraftTextSnapshot | null;
+  clearDraftCurrentness?: (snapshot: SessionDraftTextSnapshot) => boolean;
   rerender: () => void;
 }>;
 
@@ -176,6 +288,9 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
     const [value, setValue] = React.useState('');
     const [, setTick] = React.useState(0);
     const draftApi = useDraft(sessionId, value, setValue, { autoSaveInterval: 60_000 });
+    React.useLayoutEffect(() => {
+      onHarnessLayoutEffect?.();
+    });
     current = {
       sessionId,
       setSessionId,
@@ -200,6 +315,8 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
       restoreComposerSnapshot: 'restoreComposerSnapshot' in draftApi
         ? draftApi.restoreComposerSnapshot
         : undefined,
+      captureDraftForOutboundHandoff: draftApi.captureDraftForOutboundHandoff,
+      clearDraftCurrentness: draftApi.clearDraftCurrentness,
       rerender: () => setTick((tick) => tick + 1),
     };
     return null;
@@ -223,6 +340,7 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
 describe('useDraft', () => {
   beforeEach(() => {
     isFocused = true;
+    onHarnessLayoutEffect = null;
     platformState.os = 'web';
     sessionsById = {
       s1: { draft: 'draft-1', metadata: {} },
@@ -231,13 +349,15 @@ describe('useDraft', () => {
     };
     updateSessionDraftSpy.mockReset();
     patchSessionMetadataWithRetrySpy.mockReset();
+    draftRepositoryHarness.reset();
   });
 
-  it('debounces large web draft saves instead of persisting synchronously on the first non-empty transition', async () => {
+  it('publishes a large web edit to the local canonical replica immediately while debouncing remote flush', async () => {
     vi.useFakeTimers();
     try {
       const harness = await renderHarness({ initialSessionId: 's2' });
       updateSessionDraftSpy.mockClear();
+      draftRepositoryHarness.flush.mockClear();
       const largeDraft = `x${'y'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT)}`;
 
       await act(async () => {
@@ -245,7 +365,8 @@ describe('useDraft', () => {
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(updateSessionDraftSpy).not.toHaveBeenCalledWith('s2', largeDraft);
+      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(draftRepositoryHarness.flush).not.toHaveBeenCalled();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);
@@ -258,12 +379,13 @@ describe('useDraft', () => {
     }
   });
 
-  it('debounces large native draft saves instead of persisting synchronously on the first non-empty transition', async () => {
+  it('publishes a large native edit to the local canonical replica immediately while debouncing remote flush', async () => {
     platformState.os = 'ios';
     vi.useFakeTimers();
     try {
       const harness = await renderHarness({ initialSessionId: 's2' });
       updateSessionDraftSpy.mockClear();
+      draftRepositoryHarness.flush.mockClear();
       const largeDraft = `x${'y'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT)}`;
 
       await act(async () => {
@@ -271,7 +393,8 @@ describe('useDraft', () => {
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(updateSessionDraftSpy).not.toHaveBeenCalledWith('s2', largeDraft);
+      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(draftRepositoryHarness.flush).not.toHaveBeenCalled();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);
@@ -283,6 +406,19 @@ describe('useDraft', () => {
       vi.useRealTimers();
       platformState.os = 'web';
     }
+  });
+
+  it('publishes composer edits to the local canonical replica in the input event', async () => {
+    const harness = await renderHarness({ initialSessionId: 's2' });
+    updateSessionDraftSpy.mockClear();
+
+    act(() => {
+      harness.getCurrent().setDraftValue?.('hello world hello world');
+      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s2', 'hello world hello world');
+    });
+
+    expect(harness.getCurrent().value).toBe('hello world hello world');
+    harness.unmount();
   });
 
   it('clears the composer value when switching to a session with no stored draft', async () => {
@@ -498,7 +634,7 @@ describe('useDraft', () => {
     harness.unmount();
   });
 
-  it('defers sessionInitialPromptV1 adoption while the destination composer has unsaved local edits', async () => {
+  it('appends sessionInitialPromptV1 to the immediate canonical local edit without losing it', async () => {
     sessionsById = {
       s_target: { draft: 'existing destination draft', metadata: {} },
     };
@@ -513,7 +649,7 @@ describe('useDraft', () => {
 
     sessionsById = {
       s_target: {
-        draft: 'existing destination draft',
+        draft: 'unsaved local edit',
         metadata: {
           sessionInitialPromptV1: {
             v: 1,
@@ -530,8 +666,8 @@ describe('useDraft', () => {
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
 
-    expect(harness.getCurrent().value).toBe('unsaved local edit');
-    expect(patchSessionMetadataWithRetrySpy).not.toHaveBeenCalledWith('s_target', expect.any(Function));
+    expect(harness.getCurrent().value).toBe('unsaved local edit\n\nselected transcript messages');
+    expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith('s_target', expect.any(Function));
     harness.unmount();
   });
 
@@ -592,6 +728,36 @@ describe('useDraft', () => {
     harness.unmount();
   });
 
+  it('does not adopt a repository snapshot superseded before its passive hydration effect runs', async () => {
+    sessionsById = {
+      s2: { draft: 'hello world', metadata: {} },
+    };
+    draftRepositoryHarness.nextMutationId('s2');
+    const harness = await renderHarness({ initialSessionId: 's2' });
+    expect(harness.getCurrent().value).toBe('hello world');
+
+    sessionsById = {
+      s2: { draft: 'hello wo', metadata: {} },
+    };
+    draftRepositoryHarness.nextMutationId('s2');
+    onHarnessLayoutEffect = () => {
+      onHarnessLayoutEffect = null;
+      sessionsById = {
+        s2: { draft: 'hello world', metadata: {} },
+      };
+      draftRepositoryHarness.nextMutationId('s2');
+    };
+
+    await act(async () => {
+      harness.getCurrent().rerender();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(harness.getCurrent().value).toBe('hello world');
+    expect(sessionsById.s2?.draft).toBe('hello world');
+    harness.unmount();
+  });
+
   it('does not restore the previous draft after clearDraft clears the composer', async () => {
     sessionsById = {
       s1: { draft: 'draft-1', metadata: {} },
@@ -632,7 +798,7 @@ describe('useDraft', () => {
     await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('');
-    expect(sessionsById.s1?.draft).toBe('');
+    expect(sessionsById.s1?.draft).toBeNull();
     harness.unmount();
   });
 
@@ -692,13 +858,15 @@ describe('useDraft', () => {
     try {
       expect(harness.getCurrent().value).toBe('draft-1');
       updateSessionDraftSpy.mockClear();
+      draftRepositoryHarness.flush.mockClear();
 
       await act(async () => {
         harness.getCurrent().setValue('draft-1 edited before background');
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(sessionsById.s1?.draft).toBe('draft-1');
+      expect(sessionsById.s1?.draft).toBe('draft-1 edited before background');
+      expect(draftRepositoryHarness.flush).not.toHaveBeenCalled();
 
       fakeVisibilityDocument.setVisibilityState('hidden');
       await act(async () => {
@@ -723,14 +891,16 @@ describe('useDraft', () => {
     try {
       const largeDraft = `x${'y'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT)}`;
       updateSessionDraftSpy.mockClear();
+      draftRepositoryHarness.flush.mockClear();
 
       await act(async () => {
         harness.getCurrent().setValue(largeDraft);
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(updateSessionDraftSpy).not.toHaveBeenCalledWith('s2', largeDraft);
-      expect(sessionsById.s2?.draft).toBeNull();
+      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(sessionsById.s2?.draft).toBe(largeDraft);
+      expect(draftRepositoryHarness.flush).not.toHaveBeenCalled();
 
       fakeVisibilityDocument.setVisibilityState('visible');
       await act(async () => {
@@ -932,6 +1102,39 @@ describe('useDraft', () => {
     expect(harness.getCurrent().value).toBe('visible s2 draft');
     expect(sessionsById.s1?.draft).toBe('/h.review Review this');
     expect(sessionsById.s2?.draft).toBe('visible s2 draft');
+    harness.unmount();
+  });
+
+  it('preserves the canonical draft when outbound handoff fails before currentness is cleared', async () => {
+    sessionsById = { s1: { draft: 'submitted prompt', metadata: {} } };
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    const snapshot = harness.getCurrent().captureDraftForOutboundHandoff?.();
+
+    // A failed handoff never invokes the success-only currentness clear.
+    expect(snapshot?.text).toBe('submitted prompt');
+    expect(sessionsById.s1?.draft).toBe('submitted prompt');
+    expect(harness.getCurrent().value).toBe('submitted prompt');
+    harness.unmount();
+  });
+
+  it('does not clear an A to B to A edit whose mutation token is newer than the submitted snapshot', async () => {
+    sessionsById = { s1: { draft: 'A', metadata: {} } };
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    const snapshot = harness.getCurrent().captureDraftForOutboundHandoff?.();
+    expect(snapshot).toBeTruthy();
+
+    await act(async () => harness.getCurrent().setValue('B'));
+    await flushHookEffects({ cycles: 1, turns: 1 });
+    await act(async () => harness.getCurrent().setValue('A'));
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    await act(async () => {
+      if (snapshot) harness.getCurrent().clearDraftCurrentness?.(snapshot);
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(harness.getCurrent().value).toBe('A');
+    expect(sessionsById.s1?.draft).toBe('A');
     harness.unmount();
   });
 });

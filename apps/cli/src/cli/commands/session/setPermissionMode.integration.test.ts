@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import {
+  bindApiSessionSocketPairMock,
+  createApiSessionSocketStub,
+  resolveApiSessionSocketDefaultAck,
+} from '@/testkit/backends/apiSessionSocketHarness';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
@@ -18,18 +22,40 @@ describe('happier session set-permission-mode (integration)', () => {
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
+  const observedRequests: string[] = [];
+  let publishedMetadata: Record<string, unknown> | null = null;
 
-  const sessionId = 'sess_integration_set_perm_123';
+  const sessionId = 'c123456789012345678901234';
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-set-perm-');
+    observedRequests.length = 0;
+    publishedMetadata = null;
 
     const secret = new Uint8Array(32).fill(7);
-    const { encodeBase64, encryptLegacy } = await import('@/api/encryption');
+    const { decodeBase64, decryptLegacy, encodeBase64, encryptLegacy } = await import('@/api/encryption');
     const metadataCiphertext = encodeBase64(encryptLegacy({ path: '/tmp', host: 'host1', tag: 'MyTag' }, secret), 'base64');
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      observedRequests.push(`${req.method ?? 'UNKNOWN'} ${url.pathname}`);
+      if (req.method === 'PATCH' && url.pathname === `/v2/sessions/${sessionId}`) {
+        let body = '';
+        req.setEncoding('utf8');
+        req.on('data', (chunk) => {
+          body += chunk;
+        });
+        req.on('end', () => {
+          const parsed = JSON.parse(body) as { metadata?: { ciphertext?: unknown } };
+          const ciphertext = String(parsed.metadata?.ciphertext ?? '');
+          const decrypted = decryptLegacy(decodeBase64(ciphertext, 'base64'), secret);
+          publishedMetadata = decrypted;
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ success: true, metadata: { version: 1 } }));
+        });
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -42,6 +68,7 @@ describe('happier session set-permission-mode (integration)', () => {
               updatedAt: 2,
               active: false,
               activeAt: 0,
+              encryptionMode: 'e2ee',
               metadata: metadataCiphertext,
               metadataVersion: 0,
               agentState: null,
@@ -67,27 +94,25 @@ describe('happier session set-permission-mode (integration)', () => {
     process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
-
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
     const socket = createApiSessionSocketStub({
-      emit: async (event: string, args: unknown[]) => {
-        if (event !== 'update-metadata') return;
-        const [data, callback] = args as [any, ((value: unknown) => void) | undefined];
+      connected: true,
+      emitWithAck: async (event: string, data: any) => {
+        if (event !== 'update-metadata') return resolveApiSessionSocketDefaultAck(event, data);
         const { decodeBase64, decryptLegacy } = await import('@/api/encryption');
         const decrypted = decryptLegacy(decodeBase64(String(data?.metadata ?? ''), 'base64'), secret);
+        publishedMetadata = decrypted;
 
-        // Legacy provider token should be persisted as provider-agnostic intent.
-        expect(decrypted?.permissionMode).toBe('safe-yolo');
-        expect(typeof decrypted?.permissionModeUpdatedAt).toBe('number');
-
-        if (typeof callback === 'function') {
-          callback({ result: 'success', version: 1, metadata: data.metadata });
-        }
+        return { result: 'success', version: 1, metadata: data.metadata };
       },
     });
-    bindApiSessionSocketMock(mockIo, socket);
+    bindApiSessionSocketPairMock(mockIo, {
+      userSocket: createApiSessionSocketStub(),
+      sessionSocket: socket,
+      fallbackSocket: socket,
+    });
   });
 
   afterEach(async () => {
@@ -113,7 +138,7 @@ describe('happier session set-permission-mode (integration)', () => {
     const output = captureConsoleJsonOutput();
 
     try {
-      await handleSessionCommand(['set-permission-mode', sessionId, 'acceptEdits', '--json'], {
+      await handleSessionCommand(['set-permission-mode', sessionId, 'readonly', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
@@ -121,10 +146,12 @@ describe('happier session set-permission-mode (integration)', () => {
       });
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, `${JSON.stringify(parsed)} requests=${JSON.stringify(observedRequests)}`).toBe(true);
       expect(parsed.kind).toBe('session_set_permission_mode');
       expect(parsed.data?.sessionId).toBe(sessionId);
-      expect(parsed.data?.permissionMode).toBe('safe-yolo');
+      expect(parsed.data?.permissionMode).toBe('read-only');
+      expect(publishedMetadata?.permissionMode).toBe('read-only');
+      expect(typeof publishedMetadata?.permissionModeUpdatedAt).toBe('number');
     } finally {
       output.restore();
     }

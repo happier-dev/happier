@@ -63,7 +63,7 @@ installAgentInputCommonModuleMocks({
                 useSetting: createUseSettingMock({ values: storageSettings }),
                 useSettings: () => storageSettings,
                 useSessionMessages: () => ({ messages: [], isLoaded: true }),
-                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true, hasRetainedContent: false }),
                 useSessionMessagesById: () => ({}),
                 useSessionMessagesVersion: () => 0,
                 useSessionMessagesReducerState: () => createReducer(),

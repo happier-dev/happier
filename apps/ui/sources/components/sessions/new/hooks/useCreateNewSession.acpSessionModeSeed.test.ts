@@ -233,6 +233,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
@@ -297,6 +298,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
@@ -358,6 +360,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
@@ -419,6 +422,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
@@ -498,6 +502,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
@@ -588,6 +593,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',
@@ -687,6 +693,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     function Test() {
       const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         launchIntentSignature: 'test-launch-intent',
         router: { push: vi.fn(), replace: vi.fn() },
         selectedMachineId: 'm1',

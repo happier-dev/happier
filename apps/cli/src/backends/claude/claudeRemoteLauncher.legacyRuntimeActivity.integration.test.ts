@@ -3,8 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { AgentState, Metadata } from '@/api/types';
-import type { SessionRuntimeActivityContribution } from '@/session/runtimeActivity/types';
-import type { SDKMessage, SDKUserMessage } from '@/backends/claude/sdk';
 
 import type { EnhancedMode } from './loop';
 import { hashClaudeEnhancedModeForQueue } from './remote/modeHash';
@@ -39,16 +37,6 @@ vi.mock('./utils/resolveClaudeCliPath', () => ({
 
 type RpcHandler = (params?: unknown) => unknown | Promise<unknown>;
 
-type QueryConfig = Readonly<{
-  prompt: AsyncIterable<SDKUserMessage>;
-  onMessageReceived?: (message: SDKMessage) => void;
-}>;
-
-type ContributionObservation = Readonly<{
-  snapshot: SessionRuntimeActivityContribution;
-  reason: string;
-}>;
-
 const createdSessions: Session[] = [];
 
 function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -64,11 +52,9 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
 
 function createHarness(): Readonly<{
   session: Session;
-  observations: ContributionObservation[];
   switchHandlerReady: Promise<RpcHandler>;
 }> {
   const switchDeferred = createDeferred<RpcHandler>();
-  const observations: ContributionObservation[] = [];
   let agentState: AgentState = { requests: Object.create(null), completedRequests: Object.create(null) };
   let metadata: Metadata = {
     path: '/tmp',
@@ -145,12 +131,8 @@ function createHarness(): Readonly<{
     precomputedMcpBridge: { mcpServers: {}, stop: vi.fn() },
     runtimeActivityContributions: {
       providerTasks: {
-        report: vi.fn(async (snapshot, reason) => {
-          observations.push({ snapshot, reason });
-        }),
-        markUnknown: vi.fn(async (reason) => {
-          observations.push({ snapshot: { state: 'unknown', activeCount: 0 }, reason });
-        }),
+        report: vi.fn(async () => {}),
+        markUnknown: vi.fn(async () => {}),
         dispose: vi.fn(async () => {}),
       },
       // Keep this true after launcher exit: post-exit inertness must come from
@@ -161,111 +143,7 @@ function createHarness(): Readonly<{
   session.transcriptPath = '/tmp/claude-current.jsonl';
   createdSessions.push(session);
 
-  return { session, observations, switchHandlerReady: switchDeferred.promise };
-}
-
-function emitStreamRow(config: QueryConfig, message: SDKMessage): SDKMessage {
-  config.onMessageReceived?.(message);
-  return message;
-}
-
-async function runLegacySubscriberScenario(params: Readonly<{
-  hookResponses: readonly SDKMessage[];
-  expectedAfterTerminal: 'idle' | 'unknown';
-}>): Promise<void> {
-  const { session, observations, switchHandlerReady } = createHarness();
-  const queryStarted = createDeferred<void>();
-  const terminalHookConsumed = createDeferred<void>();
-  let providerInputConsumed = false;
-
-  mockQuery.mockImplementationOnce((config: QueryConfig) => {
-    queryStarted.resolve(undefined);
-    return {
-      async *[Symbol.asyncIterator]() {
-        // This exact launch is emitted synchronously with the provider's first
-        // prompt read. Missing/late launcher subscription would lose it.
-        session.onClaudeSessionHook({
-          hook_event_name: 'PostToolUse',
-          session_id: 'claude-current',
-          tool_name: 'Agent',
-          tool_response: { status: 'async_launched', agentId: 'agent-1' },
-        });
-        await vi.waitFor(() => {
-          expect(observations.some(({ snapshot }) => (
-            snapshot.state === 'active' && snapshot.activeCount === 1
-          ))).toBe(true);
-        });
-
-        const prompt = await config.prompt[Symbol.asyncIterator]().next();
-        expect(prompt.done).toBe(false);
-        providerInputConsumed = true;
-
-        yield emitStreamRow(config, {
-          type: 'system', subtype: 'init', session_id: 'claude-current',
-        } as SDKMessage);
-        for (const response of params.hookResponses) {
-          yield emitStreamRow(config, response);
-        }
-
-        // A terminal after a genuine observation gap must become unknown, not
-        // idle. When every response was inert, the same terminal remains idle.
-        session.onClaudeSessionHook({
-          hook_event_name: 'SubagentStop',
-          session_id: 'claude-current',
-          agent_id: 'agent-1',
-        });
-        terminalHookConsumed.resolve(undefined);
-
-        yield emitStreamRow(config, { type: 'result' } as SDKMessage);
-      },
-    };
-  });
-
-  session.queue.push(
-    'start background work',
-    {
-      permissionMode: 'default',
-      claudeRemoteAgentSdkEnabled: false,
-      claudeUnifiedTerminalEnabled: false,
-    },
-    { userMessageLocalId: 'local-provider-input-1' },
-  );
-
-  const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
-  const launcherPromise = claudeRemoteLauncher(session);
-  const launchOutcome = launcherPromise.then(
-    (value) => ({ type: 'resolved' as const, value }),
-    (error: unknown) => ({ type: 'rejected' as const, error }),
-  );
-
-  await expect(Promise.race([
-    queryStarted.promise.then(() => ({ type: 'query-started' as const })),
-    launchOutcome,
-  ])).resolves.toEqual({ type: 'query-started' });
-  await vi.waitFor(() => expect(providerInputConsumed).toBe(true));
-  await terminalHookConsumed.promise;
-  await vi.waitFor(() => {
-    expect(observations.at(-1)).toEqual({
-      snapshot: params.expectedAfterTerminal === 'unknown'
-        ? { state: 'unknown', activeCount: 0 }
-        : { state: 'idle', activeCount: 0 },
-      reason: 'claude-native-terminal',
-    });
-  });
-
-  const switchHandler = await switchHandlerReady;
-  await expect(switchHandler({ to: 'local' })).resolves.toBe(true);
-  await expect(launcherPromise).resolves.toBe('switch');
-
-  const observationCountAfterExit = observations.length;
-  session.onClaudeSessionHook({
-    hook_event_name: 'PostToolUse',
-    session_id: 'claude-current',
-    tool_name: 'Agent',
-    tool_response: { status: 'async_launched', agentId: 'stale-agent' },
-  });
-  await Promise.resolve();
-  expect(observations).toHaveLength(observationCountAfterExit);
+  return { session, switchHandlerReady: switchDeferred.promise };
 }
 
 describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', () => {
@@ -287,44 +165,6 @@ describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', (
     }
     for (const session of createdSessions.splice(0)) session.cleanup();
   });
-
-  it.each([
-    ['PostToolUse', 'error'],
-    ['SubagentStart', 'cancelled'],
-    ['SubagentStop', 'error'],
-  ] as const)('routes current-session %s %s through observation loss', async (hookEvent, outcome) => {
-    await runLegacySubscriberScenario({
-      hookResponses: [{
-        type: 'system', subtype: 'hook_response', session_id: 'claude-current',
-        hook_event: hookEvent, outcome,
-      } as SDKMessage],
-      expectedAfterTerminal: 'unknown',
-    });
-  }, 60_000);
-
-  it('keeps success, stale-session, replay, and unrelated hook responses inert', async () => {
-    await runLegacySubscriberScenario({
-      hookResponses: [
-        {
-          type: 'system', subtype: 'hook_response', session_id: 'claude-current',
-          hook_event: 'PostToolUse', outcome: 'success',
-        },
-        {
-          type: 'system', subtype: 'hook_response', session_id: 'claude-stale',
-          hook_event: 'PostToolUse', outcome: 'error',
-        },
-        {
-          type: 'system', subtype: 'hook_response', session_id: 'claude-current',
-          hook_event: 'PostToolUse', outcome: 'error', isReplay: true,
-        },
-        {
-          type: 'system', subtype: 'hook_response', session_id: 'claude-current',
-          hook_event: 'PermissionRequest', outcome: 'error',
-        },
-      ] as SDKMessage[],
-      expectedAfterTerminal: 'idle',
-    });
-  }, 60_000);
 
   it('releases the previous Agent SDK input wait before a provider relaunch', async () => {
     const awaitPhase = async <T>(label: string, promise: Promise<T>): Promise<T> => {

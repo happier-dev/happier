@@ -255,6 +255,18 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
         }
     });
 
+    it('does not vertically center a non-floating web composer behind a blank top spacer', async () => {
+        testState.platformOs = 'web';
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const props = { ...createFloatingPanelProps(), shouldBottomAnchor: false };
+        const screen = await renderScreen(<NewSessionSimplePanel {...props} />);
+        const scaffoldStyle = testState.scaffoldHarness?.getLastRender()?.props.style;
+        const flattened = Object.assign({}, ...(Array.isArray(scaffoldStyle) ? scaffoldStyle : [scaffoldStyle]));
+
+        expect(flattened.justifyContent).toBe('flex-start');
+        await screen.unmount();
+    });
+
     it('hands the scaffold a transparent surface and seats the composer with its own scrim on native', async () => {
         testState.platformOs = 'ios';
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');

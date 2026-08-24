@@ -14,6 +14,10 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { desktopSidebarChromeStyles } from './desktopSidebarChromeStyles';
 import { DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX } from './desktopChromeMetrics';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import {
+    shouldForceFreshNewSessionEntryFromPressEvent,
+    useResolveNewSessionOrdinaryEntryRoute,
+} from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 type SidebarHeaderActionsResult = Readonly<{
     headerActions: ItemAction[];
@@ -25,6 +29,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
     const styles = desktopSidebarChromeStyles;
     const { theme } = useUnistyles();
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const friendRequests = useFriendRequests();
     const inboxHasContent = useInboxHasContent();
     const friendsEnabled = useFriendsEnabled();
@@ -37,6 +42,18 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
             fireAndForget(result, { tag });
         }
     }, [router]);
+    const navigateToNewSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        const result = runGuardedNavigation(() => router.push({
+            pathname: '/new',
+            params: { draftId, draftOrigin },
+        }));
+        if (result !== true) {
+            fireAndForget(result, { tag: 'SidebarView.nav.newSession' });
+        }
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     const headerActions = React.useMemo((): ItemAction[] => {
         const out: ItemAction[] = [];
@@ -97,7 +114,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                     <Icon name="plus" size={ICON_SIZE.md} color={theme.colors.chrome.header.foreground} />
                 </View>
             ),
-            onPress: () => navigate('/new', 'SidebarView.nav.newSession'),
+            onPress: navigateToNewSession,
         });
 
         return out;
@@ -107,6 +124,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         inboxEnabled,
         inboxHasContent,
         navigate,
+        navigateToNewSession,
         styles.badge,
         styles.badgeText,
         styles.iconButton,

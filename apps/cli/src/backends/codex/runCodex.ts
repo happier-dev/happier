@@ -1953,8 +1953,10 @@ export async function runCodex(opts: {
             }
         });
         session.setSessionRuntimeControls?.(codexAppServerRuntime);
-        codexAppServerDaemonReportReadiness.resolve?.();
-        codexAppServerDaemonReportReadiness.resolve = null;
+        if (!storedSessionIdForResume?.trim() && !readAttachedCodexAppServerThreadId()) {
+            codexAppServerDaemonReportReadiness.resolve?.();
+            codexAppServerDaemonReportReadiness.resolve = null;
+        }
         try {
             publishInFlightSteerCapability({ session, runtime: codexAppServerRuntime });
         } catch (e) {
@@ -2245,6 +2247,9 @@ export async function runCodex(opts: {
                         });
                         storedSessionIdFromLocalControl = false;
 
+                        codexAppServerDaemonReportReadiness.resolve?.();
+                        codexAppServerDaemonReportReadiness.resolve = null;
+
                         if (useCodexAcp) {
                             try {
                                 await syncCodexAcpSessionModeFromPermissionMode({
@@ -2291,6 +2296,8 @@ export async function runCodex(opts: {
                         }
                         wasCreated = true;
                         first = false;
+                        codexAppServerDaemonReportReadiness.resolve?.();
+                        codexAppServerDaemonReportReadiness.resolve = null;
                         await sessionModeSync?.flushPendingAfterStart();
                         await configOptionSync?.flushPendingAfterStart();
                         await modelSync?.flushPendingAfterStart();

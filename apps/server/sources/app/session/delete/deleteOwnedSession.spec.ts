@@ -25,6 +25,8 @@ const markAccountChanged = vi.fn(async (_tx: any, params: any) => {
     return 999;
 });
 vi.mock('@/app/changes/markAccountChanged', () => ({ markAccountChanged }));
+const tombstoneSessionDraftForLifecycleInTx = vi.fn(async () => true);
+vi.mock('@/app/account/sessionDrafts/sessionDraftService', () => ({ tombstoneSessionDraftForLifecycleInTx }));
 
 vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }));
 
@@ -70,6 +72,8 @@ describe('deleteOwnedSession', () => {
         }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: 'owner', kind: 'session', entityId: 's1' }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: 'u2', kind: 'session', entityId: 's1' }));
+        expect(tombstoneSessionDraftForLifecycleInTx).toHaveBeenCalledWith(expect.anything(), { accountId: 'owner', sessionId: 's1' });
+        expect(tombstoneSessionDraftForLifecycleInTx).toHaveBeenCalledWith(expect.anything(), { accountId: 'u2', sessionId: 's1' });
         expect(deleteMessages).toHaveBeenCalledWith({ where: { sessionId: 's1' } });
         expect(deleteReports).toHaveBeenCalledWith({ where: { sessionId: 's1' } });
         expect(deleteAccessKeys).toHaveBeenCalledWith({ where: { sessionId: 's1' } });

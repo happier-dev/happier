@@ -145,7 +145,7 @@ Run each flow on Linux, macOS, and Windows unless explicitly impossible. Mark im
 
 ### QA-10 Native Mobile Validate Only
 
-- [ ] Install or launch the candidate validation build on Android and iOS without store submission.
+- [ ] Install or launch the current-source validation build on Android and iOS without store submission.
 - [ ] Log in to the same server/account family where applicable.
 - [ ] Create a session and send a message.
 - [ ] Verify session list/update behavior matches web expectations.

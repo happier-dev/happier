@@ -102,13 +102,24 @@ export function compareVersions(version1: string, version2: string): number {
  * @returns true if version >= minimumVersion
  */
 export function isVersionSupported(version: string | undefined, minimumVersion: string = MINIMUM_CLI_VERSION): boolean {
-    if (!version) return false;
-    
+    return getVersionSupportState(version, minimumVersion) === 'supported';
+}
+
+export type VersionSupportState = 'supported' | 'unsupported' | 'unknown';
+
+/**
+ * Classifies only versions that can actually be ordered. Callers deciding whether to use a
+ * released legacy path must not treat an opaque development identity as proof that it is old.
+ */
+export function getVersionSupportState(
+    version: string | undefined,
+    minimumVersion: string = MINIMUM_CLI_VERSION,
+): VersionSupportState {
+    if (!version) return 'unknown';
     try {
-        return compareVersions(version, minimumVersion) >= 0;
+        return compareVersions(version, minimumVersion) >= 0 ? 'supported' : 'unsupported';
     } catch {
-        // If version comparison fails, assume it's not supported
-        return false;
+        return 'unknown';
     }
 }
 

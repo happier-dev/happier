@@ -3522,6 +3522,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
     expect(session.client.blockPendingMessageDelivery).toHaveBeenCalledWith({
       localIds: ['pending-local-steer'],
       reason: 'steering_unavailable',
+      providerEffect: 'none',
     });
     expect(failureHandlingResult).toEqual({ action: 'claimed_pending_delivery' });
     expect(session.client.sessionTurnLifecycle?.failTurn).not.toHaveBeenCalled();
@@ -3585,6 +3586,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
         expect(blockPendingMessageDelivery).toHaveBeenCalledWith({
           localIds: ['pending-local-steer-bookkeeping-failure'],
           reason: 'steering_unavailable',
+          providerEffect: 'none',
         });
       }
       expect(failureHandlingResult).toBeUndefined();

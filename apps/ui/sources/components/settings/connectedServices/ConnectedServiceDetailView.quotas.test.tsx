@@ -38,6 +38,10 @@ vi.mock('expo-router', async () => {
     return routerMock.module;
 });
 
+vi.mock('@react-navigation/native', () => ({
+  useIsFocused: () => true,
+}));
+
 // `openai-codex` exposes the Pools segment, so the redesigned shell mounts the
 // segmented tab bar (needs theme tokens the global test theme lacks) and the
 // AccountBlock renders brand icons via `<SvgXml>` / member avatars. Pass these

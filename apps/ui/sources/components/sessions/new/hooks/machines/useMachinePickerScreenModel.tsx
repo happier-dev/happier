@@ -21,7 +21,7 @@ import {
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -74,9 +74,11 @@ export function useMachinePickerScreenModel() {
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         dataId?: string;
+        draftId?: string;
         selectedId?: string;
         spawnServerId?: string;
     }>();
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const machines = useAllMachines();
     const sessions = useSessions();
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
@@ -168,7 +170,7 @@ export function useMachinePickerScreenModel() {
 
     const screenOptions = useMachinePickerScreenOptions({
         title: t('newSession.selectMachineTitle'),
-        onBack: () => safeRouterBack({ router, navigation, fallbackHref: '/new' }),
+        onBack: () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
         onRefresh: () => { fireAndForget(handleRefresh(), { tag: 'MachinePickerScreen.refreshMachinesAndCapabilities' }); },
         isRefreshing,
         theme,
@@ -185,6 +187,7 @@ export function useMachinePickerScreenModel() {
         const machineServerId = typeof machine.serverId === 'string' ? machine.serverId.trim() : '';
         const resolvedServerId = machineServerId || selectedServerId || activeServerId;
         const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
+        const draftId = typeof params.draftId === 'string' ? params.draftId : undefined;
 
         const returnMode = setNewSessionPickerReturnParams({
             navigation,
@@ -195,14 +198,15 @@ export function useMachinePickerScreenModel() {
             },
             replaceParams: {
                 ...(dataId ? { dataId } : {}),
+                ...(draftId ? { draftId } : {}),
                 machineId,
                 ...(resolvedServerId ? { spawnServerId: resolvedServerId } : {}),
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [activeServerId, navigation, params.dataId, router, selectedServerId]);
+    }, [activeServerId, navigation, params.dataId, params.draftId, pickerFallbackHref, router, selectedServerId]);
 
     React.useEffect(() => {
         if (autoSelectedSingleMachineRef.current) return;

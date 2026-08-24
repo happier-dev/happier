@@ -16,6 +16,7 @@ describe('readSessionMetadataRuntimeDescriptor', () => {
       connectedServiceProfileId: 'work',
       connectedServiceGroupId: 'main',
       homePath: '/tmp/codex-home',
+      sqliteHomePath: '/tmp/codex-state',
     });
 
     expect(readSessionMetadataRuntimeDescriptor({
@@ -29,6 +30,7 @@ describe('readSessionMetadataRuntimeDescriptor', () => {
       connectedServiceProfileId: 'work',
       connectedServiceGroupId: 'main',
       homePath: '/tmp/codex-home',
+      sqliteHomePath: '/tmp/codex-state',
     });
   });
 
@@ -72,6 +74,7 @@ describe('readSessionMetadataRuntimeDescriptor', () => {
       connectedServiceProfileId: null,
       connectedServiceGroupId: null,
       homePath: null,
+      sqliteHomePath: null,
     });
   });
 
@@ -107,6 +110,7 @@ describe('readSessionMetadataRuntimeDescriptor', () => {
       connectedServiceProfileId: 'work',
       connectedServiceGroupId: null,
       homePath: '/tmp/codex-home',
+      sqliteHomePath: null,
     });
   });
 
@@ -129,6 +133,7 @@ describe('readSessionMetadataRuntimeDescriptor', () => {
       connectedServiceProfileId: null,
       connectedServiceGroupId: null,
       homePath: null,
+      sqliteHomePath: null,
     });
   });
 
@@ -155,6 +160,7 @@ describe('readSessionMetadataRuntimeDescriptor', () => {
       connectedServiceProfileId: null,
       connectedServiceGroupId: null,
       homePath: '/tmp/codex-home',
+      sqliteHomePath: null,
     });
   });
 

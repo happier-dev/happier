@@ -64,6 +64,9 @@ const SIMPLE_NEW_SESSION_EXIT_TRAVEL_PX = 12;
 const SIMPLE_NEW_SESSION_DISMISS_SAFETY_MS = 1000;
 
 export type NewSessionSimplePanelProps = Readonly<{
+    composerTopContent?: React.ReactNode;
+    statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
+    statusTrailingActions?: React.ReactNode;
     popoverBoundaryRef: React.RefObject<View | null>;
     headerHeight: number;
     safeAreaTop: number;
@@ -122,6 +125,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     profilePopover?: React.ComponentProps<typeof AgentInput>['profilePopover'];
     targetServerId?: string | null;
     attachmentFlowId?: string | null;
+    resumePersistedLaunchKey?: string | null;
 }>;
 
 /**
@@ -305,6 +309,7 @@ export const NewSessionSimplePanel = React.memo(function NewSessionSimplePanel(p
         selectedMachineHomeDir: props.selectedMachineHomeDir,
         selectedPath: props.selectedPath,
         baseActionChips: props.agentInputExtraActionChips,
+        resumePersistedLaunchKey: props.resumePersistedLaunchKey,
     });
 
     return (
@@ -349,7 +354,7 @@ export const NewSessionSimplePanel = React.memo(function NewSessionSimplePanel(p
                     ]
                     : [
                         {
-                            justifyContent: 'center' as const,
+                            justifyContent: 'flex-start' as const,
                         },
                     ]),
             ]}
@@ -408,7 +413,7 @@ export const NewSessionSimplePanel = React.memo(function NewSessionSimplePanel(p
                 style={{
                     flex: 1,
                     width: '100%',
-                    justifyContent: shouldBottomAnchor ? 'flex-end' : 'center',
+                    justifyContent: shouldBottomAnchor ? 'flex-end' : 'flex-start',
                 }}
             >
                 {shouldBottomAnchor ? (
@@ -470,6 +475,7 @@ function NewSessionSimplePanelComposer({
                 <View
                     style={{ width: '100%', alignSelf: 'center' }}
                 >
+                    {props.composerTopContent}
                     <AgentInput
                         value={sessionPrompt}
                         onChangeText={props.setSessionPrompt}
@@ -514,6 +520,9 @@ function NewSessionSimplePanelComposer({
                         acpConfigOptionOverridesOverride={props.acpConfigOptionOverrides ?? null}
                         onSessionConfigOptionChange={props.setSessionConfigOptionOverride}
                         connectionStatus={props.connectionStatus}
+                        statusBadges={props.statusBadges}
+                        statusTrailingActions={props.statusTrailingActions}
+                        showStatusPermissionMode={false}
                         machineName={props.machineName}
                         machinePopover={props.machinePopover}
                         onMachineClick={undefined}

@@ -16,6 +16,7 @@ type SessionBannerAction = Readonly<{
     onPress: () => void | Promise<void>;
     testID: string;
     disabled?: boolean;
+    variant?: 'secondary' | 'quiet';
 }>;
 
 type SessionWarningActionBannerProps = Readonly<{
@@ -24,6 +25,9 @@ type SessionWarningActionBannerProps = Readonly<{
     iconName?: IconName | null;
     title?: string;
     body?: string;
+    content?: React.ReactNode;
+    /** On wide composers, align actions with the title instead of centering them beside all copy. */
+    actionsPlacement?: 'body' | 'title';
     /** Primary action. Omitted for notice-style banners that carry no action. */
     actionAccessibilityLabel?: string;
     actionLabel?: string;
@@ -96,10 +100,12 @@ export function SessionWarningActionBanner(props: SessionWarningActionBannerProp
         ? {
             background: theme.colors.state.neutral.background,
             icon: theme.colors.state.neutral.foreground,
+            border: theme.colors.state.neutral.border,
         }
         : {
             background: theme.colors.state.warning.background,
             icon: theme.colors.state.warning.foreground,
+            border: theme.colors.state.warning.border,
         };
     const iconName = props.iconName === null
         ? null
@@ -111,6 +117,72 @@ export function SessionWarningActionBanner(props: SessionWarningActionBannerProp
     const secondaryActions = props.secondaryActions ?? [];
     const hasActions = hasPrimaryAction || secondaryActions.length > 0;
     const inlineActions = availableWidth >= INLINE_ACTIONS_MIN_WIDTH;
+    const actionsInTitle = props.actionsPlacement === 'title' && inlineActions;
+
+    const actionsNode = hasActions ? (
+        <View
+            testID={`${props.testID}-actions-row`}
+            style={{
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                flexShrink: 1,
+                alignItems: 'center',
+                columnGap: 4,
+                rowGap: 6,
+                justifyContent: 'flex-end',
+                maxWidth: inlineActions ? INLINE_ACTIONS_MAX_WIDTH : '100%',
+                width: inlineActions ? undefined : '100%',
+            }}
+        >
+            {secondaryActions.map((action) => (
+                <Pressable
+                    key={action.key}
+                    testID={action.testID}
+                    accessibilityRole="button"
+                    accessibilityLabel={action.accessibilityLabel}
+                    disabled={action.disabled}
+                    hitSlop={ACTION_HIT_SLOP}
+                    onPress={action.disabled ? undefined : action.onPress}
+                    style={({ pressed }) => ({
+                        ...actionBaseStyle,
+                        paddingHorizontal: 10,
+                        backgroundColor: theme.colors.button.secondary.background,
+                        opacity: action.disabled ? 0.45 : pressed ? 0.6 : 1,
+                    })}
+                >
+                    <Text style={{
+                        fontSize: 12,
+                        color: action.variant === 'quiet'
+                            ? theme.colors.text.secondary
+                            : theme.colors.button.secondary.tint,
+                        fontWeight: '600',
+                    }}>
+                        {action.label}
+                    </Text>
+                </Pressable>
+            ))}
+            {hasPrimaryAction ? (
+                <Pressable
+                    testID={props.actionTestID}
+                    accessibilityRole="button"
+                    accessibilityLabel={props.actionAccessibilityLabel ?? props.actionLabel}
+                    accessibilityState={{ busy: props.actionBusy, disabled: props.disabled }}
+                    disabled={props.disabled}
+                    hitSlop={ACTION_HIT_SLOP}
+                    onPress={props.disabled ? undefined : props.onActionPress}
+                    style={({ pressed }) => ({
+                        ...actionBaseStyle,
+                        backgroundColor: theme.colors.button.primary.background,
+                        opacity: props.disabled ? 0.45 : pressed ? 0.8 : 1,
+                    })}
+                >
+                    <Text style={{ fontSize: 12, color: theme.colors.button.primary.tint, fontWeight: '600' }}>
+                        {props.actionLabel}
+                    </Text>
+                </Pressable>
+            ) : null}
+        </View>
+    ) : null;
 
     return (
         <View
@@ -120,8 +192,8 @@ export function SessionWarningActionBanner(props: SessionWarningActionBannerProp
             onLayout={handleLayout}
             style={[
                 {
-                    flexDirection: inlineActions ? 'row' : 'column',
-                    alignItems: inlineActions ? 'center' : 'stretch',
+                    flexDirection: inlineActions && !actionsInTitle ? 'row' : 'column',
+                    alignItems: inlineActions && !actionsInTitle ? 'center' : 'stretch',
                     paddingHorizontal: BANNER_PADDING_HORIZONTAL,
                     paddingVertical: BANNER_PADDING_VERTICAL,
                     backgroundColor: toneTokens.background,
@@ -130,8 +202,8 @@ export function SessionWarningActionBanner(props: SessionWarningActionBannerProp
                     // no cast shadow. The panel deliberately carries no drop shadow outside glass
                     // mode, so a shadow here would make the banner float off its own stack.
                     borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: theme.colors.border.surface,
-                    gap: hasActions ? (inlineActions ? 12 : 8) : 0,
+                    borderColor: toneTokens.border,
+                    gap: hasActions && !actionsInTitle ? (inlineActions ? 12 : 8) : 0,
                 },
                 props.style,
             ]}
@@ -144,9 +216,9 @@ export function SessionWarningActionBanner(props: SessionWarningActionBannerProp
                     // beside the title as the body wraps to two or three lines.
                     alignItems: 'flex-start',
                     gap: 9,
-                    flex: inlineActions ? 1 : undefined,
+                    flex: inlineActions && !actionsInTitle ? 1 : undefined,
                     minWidth: 0,
-                    width: inlineActions ? undefined : '100%',
+                    width: inlineActions && !actionsInTitle ? undefined : '100%',
                 }}
             >
                 {iconName ? (
@@ -157,20 +229,20 @@ export function SessionWarningActionBanner(props: SessionWarningActionBannerProp
                     title, elsewhere the subtitle line-height already provides it. */}
                 <View style={{ flex: 1, minWidth: 0, gap: Platform.select({ ios: 2, default: 0 }) }}>
                     {props.title ? (
-                        <Text
-                            selectable
-                            style={{
-                                ...ITEM_TITLE_TEXT_METRICS.compact,
-                                color: theme.colors.text.primary,
-                                // The one deliberate departure from a list row: an `Item` title is
-                                // regular because its row position carries the hierarchy, whereas a
-                                // banner headline has to hold attention against a tinted field and
-                                // separate itself from the explanation directly beneath it.
-                                fontWeight: '600',
-                            }}
-                        >
-                            {props.title}
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                            <Text
+                                selectable
+                                style={{
+                                    ...ITEM_TITLE_TEXT_METRICS.compact,
+                                    color: theme.colors.text.primary,
+                                    fontWeight: '600',
+                                    flexShrink: 1,
+                                }}
+                            >
+                                {props.title}
+                            </Text>
+                            {actionsInTitle ? actionsNode : null}
+                        </View>
                     ) : null}
                     {props.body ? (
                         <Text
@@ -186,69 +258,10 @@ export function SessionWarningActionBanner(props: SessionWarningActionBannerProp
                             {props.body}
                         </Text>
                     ) : null}
+                    {props.content}
                 </View>
             </View>
-            {hasActions ? (
-                <View
-                    testID={`${props.testID}-actions-row`}
-                    style={{
-                        flexDirection: 'row',
-                        flexWrap: 'wrap',
-                        // Shrinkable so the block wraps within its share instead of winning the
-                        // contested width and starving the copy into a narrow multi-line column.
-                        flexShrink: 1,
-                        alignItems: 'center',
-                        columnGap: 4,
-                        // Wrapped action lines need more separation than neighbours on one line.
-                        rowGap: 6,
-                        justifyContent: 'flex-end',
-                        maxWidth: inlineActions ? INLINE_ACTIONS_MAX_WIDTH : '100%',
-                        width: inlineActions ? undefined : '100%',
-                    }}
-                >
-                    {secondaryActions.map((action) => (
-                        <Pressable
-                            key={action.key}
-                            testID={action.testID}
-                            accessibilityRole="button"
-                            accessibilityLabel={action.accessibilityLabel}
-                            disabled={action.disabled}
-                            hitSlop={ACTION_HIT_SLOP}
-                            onPress={action.disabled ? undefined : action.onPress}
-                            style={({ pressed }) => ({
-                                ...actionBaseStyle,
-                                paddingHorizontal: 10,
-                                backgroundColor: theme.colors.button.secondary.background,
-                                opacity: action.disabled ? 0.45 : pressed ? 0.6 : 1,
-                            })}
-                        >
-                            <Text style={{ fontSize: 12, color: theme.colors.button.secondary.tint, fontWeight: '600' }}>
-                                {action.label}
-                            </Text>
-                        </Pressable>
-                    ))}
-                    {hasPrimaryAction ? (
-                        <Pressable
-                            testID={props.actionTestID}
-                            accessibilityRole="button"
-                            accessibilityLabel={props.actionAccessibilityLabel ?? props.actionLabel}
-                            accessibilityState={{ busy: props.actionBusy, disabled: props.disabled }}
-                            disabled={props.disabled}
-                            hitSlop={ACTION_HIT_SLOP}
-                            onPress={props.disabled ? undefined : props.onActionPress}
-                            style={({ pressed }) => ({
-                                ...actionBaseStyle,
-                                backgroundColor: theme.colors.button.primary.background,
-                                opacity: props.disabled ? 0.45 : pressed ? 0.8 : 1,
-                            })}
-                        >
-                            <Text style={{ fontSize: 12, color: theme.colors.button.primary.tint, fontWeight: '600' }}>
-                                {props.actionLabel}
-                            </Text>
-                        </Pressable>
-                    ) : null}
-                </View>
-            ) : null}
+            {hasActions && !actionsInTitle ? actionsNode : null}
         </View>
     );
 }

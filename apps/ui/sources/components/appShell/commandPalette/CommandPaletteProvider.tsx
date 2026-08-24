@@ -19,6 +19,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { buildCommandPaletteCommands, type PetCommandControls } from './buildCommandPaletteCommands';
 import { KeyboardShortcutProvider, buildKeyboardShortcutLabels, resolveKeyboardPlatform } from '@/keyboard';
+import { useResolveNewSessionOrdinaryEntryRoute } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 function readActiveSessionIdFromSegments(segments: readonly string[]): string | null {
     // expo-router segments look like: ['(app)', 'session', '<id>', ...]
@@ -48,6 +49,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 
 function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { logout } = useAuth();
     const {
         commandPaletteEnabled,
@@ -130,6 +132,10 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             },
         };
     }, [applyLocalSettings, applySettings, router]);
+    const openNewSession = useCallback(() => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute();
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     const buildCommands = useCallback((): Command[] => {
         const activeSessionId = readActiveSessionIdFromSegments(segments);
@@ -144,6 +150,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             petControls,
             nav: {
                 push: (path) => router.push(path as any),
+                openNewSession,
                 navigateToSession,
             },
             auth: { logout },
@@ -154,7 +161,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [segments, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, shortcutLabels, petControls, router, navigateToSession, logout, actionExecutor]);
+    }, [segments, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, shortcutLabels, petControls, router, openNewSession, navigateToSession, logout, actionExecutor]);
 
     const showCommandPalette = useCallback(() => {
         if (Platform.OS !== 'web' || !commandPaletteEnabled) return;
@@ -169,13 +176,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
 
     const keyboardHandlers = useMemo(() => ({
         ...(commandPaletteEnabled ? { 'commandPalette.open': showCommandPalette } : {}),
-        'session.new': () => {
-            router.push('/new' as any);
-        },
+        'session.new': openNewSession,
         'settings.open': () => {
             router.push('/settings' as any);
         },
-    }), [commandPaletteEnabled, router, showCommandPalette]);
+    }), [commandPaletteEnabled, openNewSession, router, showCommandPalette]);
     const keyboardEnabledWhenDisabledCommandIds = useMemo(
         () => commandPaletteEnabled ? ['commandPalette.open'] as const : [],
         [commandPaletteEnabled],

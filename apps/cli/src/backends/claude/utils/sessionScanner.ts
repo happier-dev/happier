@@ -300,6 +300,10 @@ export async function createSessionScanner(opts: {
                 sessionId,
             });
             if (disposition === 'ignore') continue;
+            if (disposition === 'diagnostic') {
+                discoveredSessions.add(sessionId);
+                continue;
+            }
             if (disposition === 'main') {
                 bindMainSession(sessionId);
                 // The classifier is caller-provided and may synchronously observe a

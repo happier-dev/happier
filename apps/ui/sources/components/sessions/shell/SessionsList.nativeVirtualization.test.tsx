@@ -2958,6 +2958,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 machineId: 'machine-target',
                 directory: '/repo',
                 spawnServerId: 'server_a',
@@ -3017,6 +3018,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 machineId: 'machine-target',
                 directory: '/Users/test/repo',
                 spawnServerId: 'server_a',
@@ -3092,6 +3094,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(pushArg).toEqual({
             pathname: '/new',
             params: {
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
                 dataId: expect.any(String),
                 machineId: 'machine-target',
                 directory: '/repo',

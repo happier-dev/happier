@@ -1,4 +1,5 @@
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
+import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { PermissionMode } from '@/api/types';
 import type { PiBridgeSessionConfig } from '@/backends/pi/bridgeExtension';
 import {
@@ -24,6 +25,7 @@ export interface PiBackendOptions extends AgentFactoryOptions {
    * argv would be process-list-visible and unbounded.
    */
   appendSystemPromptText?: string;
+  permissionHandler?: AcpPermissionHandler;
   /**
    * Tools-bridge extension binding for this session. When present (together with
    * `happierSessionId`), the launcher passes `--extension <path>` plus the
@@ -174,6 +176,7 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
     // The append text is delivered as a protected temp file by the backend itself; the
     // args above must never carry the literal prompt content.
     appendSystemPromptText: options.appendSystemPromptText ?? null,
+    permissionHandler: options.permissionHandler,
     env: {
       ...env,
       NODE_ENV: 'production',

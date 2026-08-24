@@ -42,6 +42,7 @@ type SharedRuntimeDescriptorByProviderId = {
     connectedServiceProfileId: string | null;
     connectedServiceGroupId: string | null;
     homePath: string | null;
+    sqliteHomePath: string | null;
   }>;
   opencode: Readonly<{
     providerId: 'opencode';
@@ -80,6 +81,7 @@ export function buildCodexAgentRuntimeDescriptor(params: Readonly<{
   connectedServiceProfileId?: string | null;
   connectedServiceGroupId?: string | null;
   homePath?: string | null;
+  sqliteHomePath?: string | null;
 }>): Readonly<{
   v: 1;
   providerId: 'codex';
@@ -103,6 +105,7 @@ export function buildCodexAgentRuntimeDescriptor(params: Readonly<{
         connectedServiceProfileId?: string;
         connectedServiceGroupId?: string;
         homePath?: string;
+        sqliteHomePath?: string;
       };
     };
   };
@@ -117,6 +120,7 @@ export function buildCodexAgentRuntimeDescriptor(params: Readonly<{
     ? normalizeTrimmedString(params.connectedServiceGroupId)
     : null;
   const homePath = normalizeTrimmedString(params.homePath);
+  const sqliteHomePath = normalizeTrimmedString(params.sqliteHomePath);
 
   return {
     v: 1,
@@ -140,6 +144,7 @@ export function buildCodexAgentRuntimeDescriptor(params: Readonly<{
           connectedServiceProfileId,
           connectedServiceGroupId,
           homePath,
+          sqliteHomePath,
         }),
       },
     },
@@ -274,6 +279,7 @@ export function readSessionMetadataRuntimeDescriptor(
         connectedServiceProfileId: codexConnectedServiceFields.connectedServiceProfileId,
         connectedServiceGroupId: codexConnectedServiceFields.connectedServiceGroupId,
         homePath: codexConnectedServiceFields.homePath,
+        sqliteHomePath: providerExtra?.sqliteHomePath ?? normalizeTrimmedString(rawProvider?.sqliteHomePath),
       };
     }
     case 'opencode': {

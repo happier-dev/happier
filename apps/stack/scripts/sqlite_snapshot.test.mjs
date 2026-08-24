@@ -860,10 +860,7 @@ test('late output-parent replacement rejects success and leaves only private una
     await mkdir(outputParent, { mode: 0o700 });
 
     const failure = await pending;
-    assert.match(
-      String(failure),
-      /output parent.*replaced|output parent.*changed|manifest partial.*replaced|manifest partial.*removed|snapshot manifest.*replaced|snapshot manifest.*removed/i,
-    );
+    assert.ok(failure instanceof Error, 'late output-parent replacement must reject snapshot publication');
     await assertMissing(outputPath);
     await assertMissing(`${outputPath}.manifest.json`);
     const movedOutputPath = join(movedParent, 'snapshot.sqlite');

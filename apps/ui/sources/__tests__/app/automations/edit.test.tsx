@@ -308,7 +308,15 @@ describe('AutomationEditScreen route', () => {
             }),
         }));
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/new?automation=1&automationEditId=a1&dataId=temp-edit-seed');
+        expect(routerReplaceSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                automation: '1',
+                automationEditId: 'a1',
+                dataId: 'temp-edit-seed',
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+            },
+        });
     });
 
     it('renders the shared unavailable notice for blocked existing-session automations', async () => {

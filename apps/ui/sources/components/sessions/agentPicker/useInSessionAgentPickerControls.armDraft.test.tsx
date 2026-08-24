@@ -5,11 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-    readSessionDraftValue,
-    resetSessionDraftValuesCachesForTests,
-    writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
 import type { SessionArmedAgentContinuation } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 
 import {
@@ -53,7 +49,8 @@ vi.mock('@/utils/platform/webMobileHeuristics', () => ({
     isHoverCapablePrimaryPointer: () => true,
 }));
 
-const SCOPE: ServerAccountScope = { serverId: 'server-1', accountId: 'account-1' };
+let scopeSequence = 0;
+let SCOPE: ServerAccountScope = { serverId: 'server-1', accountId: 'account-0' };
 
 function entry(
     agentId: string,
@@ -154,7 +151,7 @@ async function armTarget(
 }
 
 function readPersistedArm(): SessionArmedAgentContinuation | undefined {
-    return readSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation');
+    return existingSessionDraftSemanticValues.read(SCOPE, 'session-1', 'routing.agentContinuation');
 }
 
 function armedIntentFor(targetAgentId: string) {
@@ -182,14 +179,10 @@ function createDeferred<T>() {
 
 describe('useInSessionAgentPickerControls arm draft', () => {
     beforeEach(() => {
-        resetSessionDraftValuesCachesForTests();
+        SCOPE = { serverId: 'server-1', accountId: `account-${++scopeSequence}` };
         announceAccessibilityMessage.mockClear();
         machineRpcWithServerScope.mockReset();
         machineRpcWithServerScope.mockResolvedValue(AVAILABLE);
-    });
-
-    afterEach(() => {
-        resetSessionDraftValuesCachesForTests();
     });
 
     it('keeps the armed Agent across a remount, exactly as the draft text already survives one', async () => {
@@ -279,7 +272,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         // The reader armed this Session in an earlier mount. Waiting for them to
         // reach for the Agent chip again would leave the composer promising a
         // continuation whose rail has not been decided.
-        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+        existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'builtInAgent:codex',
             intent: armedIntentFor('codex'),
             modelLabel: null,
@@ -316,7 +309,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
     });
 
     it('clears a persisted arm whose target Agent is no longer eligible instead of restoring it', async () => {
-        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+        existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'builtInAgent:codex',
             intent: armedIntentFor('codex'),
             modelLabel: null,
@@ -334,7 +327,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
     it('clears a persisted arm formed against an Agent the Session no longer runs', async () => {
         // The Session was switched to Codex elsewhere; an arm that names Claude as
         // its source is a promise about a departure that already happened.
-        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+        existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'builtInAgent:gemini',
             intent: armedIntentFor('gemini'),
             modelLabel: null,
@@ -352,7 +345,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
 
     it('keeps the submitted snapshot when a successful switch makes its old arm ineligible', async () => {
         const submittedLocalId = 'submitted-for-codex';
-        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+        existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'builtInAgent:codex',
             intent: armedIntentFor('codex'),
             modelLabel: null,
@@ -392,7 +385,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
     it('leaves a persisted arm alone while the feature decision is unresolved', async () => {
         // An unresolved decision fails closed for rendering, but is not proof the
         // existing persisted choice became invalid.
-        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+        existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'builtInAgent:codex',
             intent: armedIntentFor('codex'),
             modelLabel: null,
@@ -405,7 +398,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
     });
 
     it('clears a persisted arm when the feature is definitely disabled', async () => {
-        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+        existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'builtInAgent:codex',
             intent: armedIntentFor('codex'),
             modelLabel: null,
@@ -418,7 +411,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
     });
 
     it('restores the model the armed row was chosen with, so the engine chip still names it', async () => {
-        writeSessionDraftValue(SCOPE, 'session-1', 'routing.agentContinuation', {
+        existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
             backendTargetKey: 'builtInAgent:codex',
             intent: { ...armedIntentFor('codex'), selection: { v: 1, agentId: 'codex', modelId: 'gpt-5' } },
             modelLabel: 'GPT-5',

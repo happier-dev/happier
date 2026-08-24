@@ -39,6 +39,7 @@ let capturedPathSelectorProps: {
     initialValue?: string;
 } | null = null;
 let localSearchParams: Record<string, string> = {
+    draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
     machineId: 'machine-1',
     selectedPath: '/repo/current',
 };
@@ -146,6 +147,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
+    FontWeights: { regular: '400' },
     Typography: {
         default: () => ({}),
         mono: () => ({}),
@@ -174,6 +176,8 @@ describe('PathPickerScreen', () => {
     beforeEach(() => {
         capturedPathSelectorProps = null;
         localSearchParams = {
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+            draftOrigin: 'ordinary',
             machineId: 'machine-1',
             selectedPath: '/repo/current',
         };
@@ -206,6 +210,7 @@ describe('PathPickerScreen', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
                 machineId: 'machine-1',
                 directory: '/repo/selected',
             },
@@ -242,6 +247,7 @@ describe('PathPickerScreen', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
                 machineId: 'machine-1',
                 directory: '/repo/selected',
             },
@@ -294,7 +300,16 @@ describe('PathPickerScreen', () => {
             }),
         }));
         expect(routerMock.replace).not.toHaveBeenCalled();
-        expect(safeRouterBack).toHaveBeenCalled();
+        expect(safeRouterBack).toHaveBeenCalledWith(expect.objectContaining({
+            fallbackHref: {
+                pathname: '/new',
+                params: {
+                    draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+                    draftOrigin: 'ordinary',
+                    machineId: 'machine-1',
+                },
+            },
+        }));
     });
 
     it('uses the direct-entry path query as a fallback selected path', async () => {

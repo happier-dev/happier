@@ -13,6 +13,7 @@ import {
 } from '@happier-dev/protocol';
 import type { connectedServiceQuotaRecoveryCreditConsume } from '@/sync/ops/connectedServiceQuotaRecoveryCredits';
 import type { RestartStaleSessionRunnerResult } from '@/sync/ops/sessionRunnerRestart';
+import type { SessionUsageLimitRecoveryOperationResult } from '@/sync/ops/sessionUsageLimitRecovery';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { createDeferred, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -23,9 +24,21 @@ import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/con
 import { __resetConnectedServiceQuotaSnapshotStore } from '@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore';
 import { sessionRunnerRuntimeStatusRetention } from '@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatusRetention';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
+import {
+  captureSessionDraftCurrentness,
+  clearSessionDraftCurrentness,
+  deleteSessionDraft,
+  getSessionDraftSnapshot,
+  subscribeSessionDraft,
+  writeExistingSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
+
+const TEST_SERVER_ACCOUNT_SCOPE = { serverId: 'server-1', accountId: 'account-1' } as const;
+const TEST_SESSION_DRAFT_ADDRESS = { kind: 'session' as const, sessionId: 's1' };
 
 const machineDirectSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
@@ -56,14 +69,7 @@ const sessionUsageLimitCheckNowSpy = vi.hoisted(() =>
     (
       _sessionId: string,
       _opts?: unknown,
-    ) => Promise<{
-      ok: true;
-      status?: 'ready' | 'waiting' | 'resumed' | 'exhausted' | 'inactive';
-    } | {
-      ok: false;
-      error: string;
-      errorCode?: string;
-    }>
+    ) => Promise<SessionUsageLimitRecoveryOperationResult>
   >(async (_sessionId: string, _opts?: unknown) => ({ ok: true })),
 );
 const sessionUsageLimitSwitchAccountNowSpy = vi.hoisted(() =>
@@ -118,6 +124,7 @@ const setWorkspaceReviewCommentDraftIncludedSpy = vi.hoisted(() => vi.fn());
 const publishSessionAcpSessionModeOverrideToMetadataSpy = vi.hoisted(() => vi.fn(async () => {}));
 const publishSessionAcpConfigOptionOverrideToMetadataSpy = vi.hoisted(() => vi.fn(async () => {}));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
+const routerPushSpy = vi.hoisted(() => vi.fn());
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
 const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
 const voiceSurfacePropsSpy = vi.hoisted(() => vi.fn());
@@ -294,7 +301,7 @@ installSessionShellCommonModuleMocks({
   },
   router: async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
+    return createExpoRouterMock({ router: { push: routerPushSpy } }).module;
   },
   text: async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -337,7 +344,7 @@ installSessionShellCommonModuleMocks({
         useIsDataReady: () => true,
         useRealtimeStatus: () => 'connected',
         useSessionMessages: () => ({ messages: sessionMessagesState.current, isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
+        useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true, hasRetainedContent: false }),
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
         useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
@@ -466,6 +473,12 @@ vi.mock('@/utils/platform/responsive', () => ({
 vi.mock('@/hooks/session/useDraft', () => ({
   useDraft: (_sessionId: string, value: string, onChange: (next: string) => void) => {
     draftHookState.valuesBySessionId.set(_sessionId, value);
+    const address = { kind: 'session' as const, sessionId: _sessionId };
+    const draftSnapshot = React.useSyncExternalStore(
+      (listener) => subscribeSessionDraft(TEST_SERVER_ACCOUNT_SCOPE, address, listener),
+      () => getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address),
+      () => getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address),
+    );
     return {
     clearDraft: () => {
       draftHookState.valuesBySessionId.set(_sessionId, '');
@@ -518,6 +531,38 @@ vi.mock('@/hooks/session/useDraft', () => ({
         onChange(snapshot.text);
       }
     },
+    captureDraftForOutboundHandoff: () => ({
+      sessionId: _sessionId,
+      text: draftHookState.valuesBySessionId.get(_sessionId) ?? '',
+      scope: TEST_SERVER_ACCOUNT_SCOPE,
+      currentness: captureSessionDraftCurrentness({
+        scope: TEST_SERVER_ACCOUNT_SCOPE,
+        address,
+      }),
+    }),
+    clearDraftCurrentness: (snapshot: Readonly<{ text: string; currentness?: any }>) => {
+      if (!snapshot.currentness) return false;
+      const currentText = draftHookState.valuesBySessionId.get(_sessionId) ?? '';
+      if (currentText !== snapshot.text) {
+        writeExistingSessionDraft({
+          scope: TEST_SERVER_ACCOUNT_SCOPE,
+          sessionId: _sessionId,
+          patch: { text: currentText },
+        });
+      }
+      void clearSessionDraftCurrentness({
+        scope: TEST_SERVER_ACCOUNT_SCOPE,
+        address,
+        currentness: snapshot.currentness,
+      });
+      const remainingText = getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address)
+        ?.document.composer.text.value ?? '';
+      draftHookState.valuesBySessionId.set(_sessionId, remainingText);
+      onChange(remainingText);
+      return true;
+    },
+    draftSnapshot,
+    draftScope: TEST_SERVER_ACCOUNT_SCOPE,
   };
   },
 }));
@@ -962,6 +1007,7 @@ describe('SessionView (direct sessions)', () => {
     settingsState.current = {};
     settingByKeyState.current = {};
     modalAlertSpy.mockReset();
+    routerPushSpy.mockReset();
     syncRefreshSessionMessagesSpy.mockReset();
     syncSubmitMessageSpy.mockReset();
     syncSubmitMessageSpy.mockImplementation(async (...args: unknown[]) => {
@@ -1945,6 +1991,58 @@ describe('SessionView (direct sessions)', () => {
     const [, message] = modalAlertSpy.mock.calls[0] ?? [];
     expect(String(message ?? '')).not.toContain('session_usage_limit_recovery_control_remote_unavailable');
     expect(String(message ?? '')).not.toContain('_');
+  });
+
+  it('starts fresh from a usage-limit recovery failure with a fresh explicit draft identity', async () => {
+    featureEnabledState['sessions.usageLimitRecovery'] = true;
+    settingByKeyState.current.usageLimitRecoverySettingsV1 = { v: 1, mode: 'ask' };
+    sessionUsageLimitCheckNowSpy.mockResolvedValueOnce({
+      ok: false,
+      error: 'switch failed',
+      uxDiagnostic: {
+        code: 'post_switch_verification_failed',
+        failurePhase: 'post_switch_verification',
+        source: 'usage_limit_recovery',
+        retryable: false,
+        suggestedActions: ['start_fresh_under_selected_account'],
+      },
+    });
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      active: true,
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1,
+        provider: 'codex',
+        usageLimit: {
+          v: 1,
+          resetAtMs: null,
+          retryAfterMs: null,
+          quotaScope: 'account',
+          recoverability: 'wait',
+        },
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-checkNow'));
+
+    const buttons = modalAlertSpy.mock.calls[0]?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
+    const startFresh = buttons?.find((button) =>
+      button.text === 'newSession.connectedServiceSwitchUnavailable.startFreshAction');
+    expect(startFresh).toBeTruthy();
+    startFresh?.onPress?.();
+
+    expect(routerPushSpy).toHaveBeenCalledWith({
+      pathname: '/new',
+      params: {
+        draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      },
+    });
   });
 
   it('updates AgentInput runtime status from fresh heartbeat fields without replacing the shell session', async () => {
@@ -3180,7 +3278,6 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('does not restore an old semantic snapshot over newer semantic choices after direct-session handoff failure', async () => {
-    const draftValues = await import('@/sync/domains/input/draftValues/sessionDraftValueStore');
     const oldRecipient = { kind: 'execution_run' as const, runId: 'run-old' };
     const newRecipient = { kind: 'execution_run' as const, runId: 'run-new' };
     const oldMention = {
@@ -3195,11 +3292,10 @@ describe('SessionView (direct sessions)', () => {
     };
     let rejectSubmit!: (error: Error) => void;
 
-    draftValues.resetSessionDraftValuesCachesForTests();
-    draftValues.clearSessionDraftValues(null, 's1', { lifecycle: 'sessionDeleted' });
-    draftValues.writeSessionDraftValue(null, 's1', 'routing.recipient', oldRecipient);
-    draftValues.writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
-    draftValues.writeSessionDraftValue(null, 's1', 'structuredInput.mentions', [oldMention]);
+    void deleteSessionDraft({ scope: TEST_SERVER_ACCOUNT_SCOPE, address: TEST_SESSION_DRAFT_ADDRESS });
+    existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient', oldRecipient);
+    existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunDelivery', 'interrupt');
+    existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions', [oldMention]);
 
     try {
       syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
@@ -3225,13 +3321,13 @@ describe('SessionView (direct sessions)', () => {
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(draftValues.readSessionDraftValue(null, 's1', 'routing.recipient')).toBeUndefined();
-      expect(draftValues.readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBeUndefined();
-      expect(draftValues.readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toBeUndefined();
+      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient')).toBeUndefined();
+      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunDelivery')).toBeUndefined();
+      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions')).toBeUndefined();
 
-      draftValues.writeSessionDraftValue(null, 's1', 'routing.recipient', newRecipient);
-      draftValues.writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'prompt');
-      draftValues.writeSessionDraftValue(null, 's1', 'structuredInput.mentions', [newMention]);
+      existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient', newRecipient);
+      existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunDelivery', 'prompt');
+      existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions', [newMention]);
 
       await act(async () => {
         rejectSubmit(new Error('direct send rejected'));
@@ -3241,13 +3337,12 @@ describe('SessionView (direct sessions)', () => {
 
       agentInput = findAgentInput(screen);
       expect(agentInput.props.value).toBe('');
-      expect(draftValues.readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual(newRecipient);
-      expect(draftValues.readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('prompt');
-      expect(draftValues.readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([newMention]);
+      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient')).toEqual(newRecipient);
+      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunDelivery')).toBe('prompt');
+      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions')).toEqual([newMention]);
       expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
     } finally {
-      draftValues.clearSessionDraftValues(null, 's1', { lifecycle: 'sessionDeleted' });
-      draftValues.resetSessionDraftValuesCachesForTests();
+      void deleteSessionDraft({ scope: TEST_SERVER_ACCOUNT_SCOPE, address: TEST_SESSION_DRAFT_ADDRESS });
     }
   });
 

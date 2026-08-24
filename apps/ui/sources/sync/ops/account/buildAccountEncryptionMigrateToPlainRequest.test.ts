@@ -35,6 +35,44 @@ function assertString(value: unknown, name: string): asserts value is string {
 }
 
 describe('buildAccountEncryptionMigrateToPlainRequest', () => {
+  it('reseals exact server-backed new-session drafts as target Account plaintext', async () => {
+    const credentials = createLegacyCredentials();
+    const address = { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000111' } as const;
+    const document = {
+      v: 1 as const,
+      composer: {
+        text: { mutationId: '00000000-0000-4000-8000-000000000112', value: 'draft' },
+        mentions: { mutationId: '00000000-0000-4000-8000-000000000113', value: [] },
+        attachments: { mutationId: '00000000-0000-4000-8000-000000000114', value: [] },
+      },
+      target: { kind: 'newSession' as const, authoring: {} },
+      extensions: {},
+    };
+
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials,
+      expectedSettingsVersion: 7,
+      settings: { schemaVersion: 2, backendEnabledById: {} } as any,
+      connectedServiceProfiles: [],
+      automations: [],
+      sessionDrafts: [{ address, baseRevision: 8, document }],
+      fetchConnectedServiceCredentialSealed: async () => {
+        throw new Error('unexpected fetchConnectedServiceCredentialSealed');
+      },
+      decryptAutomationTemplateRaw: async () => {
+        throw new Error('unexpected decryptAutomationTemplateRaw');
+      },
+    });
+
+    expect(request.sessionDrafts).toEqual({
+      items: [{
+        address,
+        expectedRevision: 8,
+        content: { t: 'plain', v: { v: 1, address, document } },
+      }],
+    });
+  });
+
   it('builds assert_empty directives when no connected services or automations exist', async () => {
     const credentials = createLegacyCredentials();
 
@@ -57,6 +95,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     expect(request.settingsContent?.t).toBe('plain');
     expect(request.connectedServices).toEqual({ action: 'assert_empty' });
     expect(request.automations).toEqual({ action: 'assert_empty' });
+    expect(request.sessionDrafts).toBeUndefined();
   });
 
   it('migrates connected service credentials and plaintext-safe automation templates to plain envelopes', async () => {

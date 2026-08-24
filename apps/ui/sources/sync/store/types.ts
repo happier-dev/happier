@@ -109,7 +109,6 @@ export interface SessionsDomainSlice {
     getSessionRepositoryTreeExpandedPaths: (sessionId: string) => string[];
     setSessionRepositoryTreeExpandedPaths: (sessionId: string, paths: string[]) => void;
     clearSessionRepositoryTreeExpandedPaths: (sessionId: string) => void;
-    updateSessionDraft: (sessionId: string, draft: string | null) => void;
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
     setSessionReviewCommentDraftIncluded: (sessionId: string, commentId: string, included: boolean) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;

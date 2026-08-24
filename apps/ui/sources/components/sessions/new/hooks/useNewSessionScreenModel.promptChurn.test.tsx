@@ -7,8 +7,8 @@ import {
     persistDraftNowRef,
     renderNewSessionScreenModel,
     resetDraftPersistenceState,
-    saveNewSessionDraftMock,
 } from './__tests__/draftPersistenceTestEnvironment';
+import { listNewSessionDraftProjections } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 // Typing is the hottest interaction on this screen. The composer must stay fully controlled and
 // fully live, but the live text must not be a render dependency of the ~2,000-line screen model:
@@ -37,6 +37,10 @@ describe('useNewSessionScreenModel (composer text churn)', () => {
         });
 
         const promptStore = model?.simpleProps?.promptStore;
+        expect(promptStore?.getPrompt()).toBe('');
+        await act(async () => {
+            model?.simpleProps?.setSessionPrompt('hello');
+        });
         expect(promptStore?.getPrompt()).toBe('hello');
 
         const rendersBeforeTyping = renderCount;
@@ -60,13 +64,19 @@ describe('useNewSessionScreenModel (composer text churn)', () => {
         expect(renderCount).toBe(rendersBeforeTyping);
 
         // ...and the draft that gets written still carries the text the model never rendered.
-        saveNewSessionDraftMock.mockClear();
         await act(async () => {
             persistDraftNowRef.current?.();
         });
 
-        expect(saveNewSessionDraftMock).toHaveBeenLastCalledWith(expect.objectContaining({
-            input: 'hello wor',
-        }));
+        expect(listNewSessionDraftProjections({ serverId: 'server-a', accountId: 'account-a' }))
+            .toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    document: expect.objectContaining({
+                        composer: expect.objectContaining({
+                            text: expect.objectContaining({ value: 'hello wor' }),
+                        }),
+                    }),
+                }),
+            ]));
     });
 });

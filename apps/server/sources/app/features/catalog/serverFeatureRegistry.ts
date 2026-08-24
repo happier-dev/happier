@@ -14,6 +14,7 @@ import { resolveAttachmentsUploadsFeature } from '../attachmentsUploadsFeature';
 import { resolvePetsFeature } from '../petsFeature';
 import { resolveMachineTransferFeature } from '../machineTransferFeature';
 import { resolveSessionFoldersFeature } from '../sessionFoldersFeature';
+import { resolveSessionDraftsFeature } from '../sessionDraftsFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
 import { resolveSessionUsageLimitRecoveryFeature } from '../sessionUsageLimitRecoveryFeature';
 import { resolveSessionAgentSwitchingFeature } from '../sessionAgentSwitchingFeature';
@@ -41,6 +42,7 @@ const serverFeatureResolvers = [
     (env) => resolvePetsFeature(env),
     (env) => resolveMachineTransferFeature(env),
     (env) => resolveSessionFoldersFeature(env),
+    (env) => resolveSessionDraftsFeature(env),
     (env) => resolveSessionHandoffFeature(env),
     (env) => resolveSessionUsageLimitRecoveryFeature(env),
     (env) => resolveSessionAgentSwitchingFeature(env),

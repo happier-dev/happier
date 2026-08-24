@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     clearAllNewSessionAttachmentDrafts,
+    subscribeNewSessionAttachmentDrafts,
     readNewSessionAttachmentDrafts,
     writeNewSessionAttachmentDrafts,
 } from './newSessionAttachmentDraftStore';
@@ -38,6 +39,22 @@ describe('newSessionAttachmentDraftStore', () => {
             ]);
         } finally {
             nowSpy.mockRestore();
+        }
+    });
+
+    it('notifies derived consumers when a draft attachment problem changes', () => {
+        const listener = vi.fn();
+        const unsubscribe = subscribeNewSessionAttachmentDrafts(listener);
+        try {
+            writeNewSessionAttachmentDrafts('flow-1', [{
+                id: 'draft-1',
+                source: { kind: 'native', uri: 'file:///tmp/note.txt', name: 'note.txt' },
+                status: 'error',
+                error: 'upload failed',
+            }]);
+            expect(listener).toHaveBeenCalledOnce();
+        } finally {
+            unsubscribe();
         }
     });
 

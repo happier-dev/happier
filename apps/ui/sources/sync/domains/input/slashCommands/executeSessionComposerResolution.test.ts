@@ -454,7 +454,7 @@ describe('executeSessionComposerResolution', () => {
     expect(setMessage).toHaveBeenCalledWith('');
     expect(clearDraft).toHaveBeenCalled();
     const draftArgs = createSessionActionDraft.mock.calls[0]?.[1] as any;
-    expect(draftArgs?.input?.permissionMode).toBe('read-only');
+    expect(draftArgs?.input?.permissionMode).toBe('read_only');
   });
 
   it('does not inject coderabbit-specific config into review.start drafts (generic input only)', async () => {
@@ -484,7 +484,7 @@ describe('executeSessionComposerResolution', () => {
         actionId: 'review.start',
         input: expect.objectContaining({
           sessionId: 's1',
-          permissionMode: 'read-only',
+          permissionMode: 'read_only',
         }),
       }),
     );
@@ -524,7 +524,7 @@ describe('executeSessionComposerResolution', () => {
         sessionId: 's1',
         engineIds: ['claude'],
         instructions: 'Review this.',
-        permissionMode: 'read-only',
+        permissionMode: 'read_only',
         changeType: 'uncommitted',
         base: { kind: 'none' },
       }),
@@ -694,7 +694,7 @@ describe('executeSessionComposerResolution', () => {
     expect(trackMessageSent).not.toHaveBeenCalled();
   });
 
-  it('defaults subagents.delegate.start permissionMode to safe-yolo when executing', async () => {
+  it('defaults subagents.delegate.start permissionMode to workspace_write when executing', async () => {
     const executeSessionComposerResolution = await loadSubject();
     const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { runId: 'r1' } })) };
     const clearDraft = vi.fn();
@@ -723,14 +723,14 @@ describe('executeSessionComposerResolution', () => {
         sessionId: 's1',
         backendTargetKeys: ['agent:claude'],
         instructions: 'Do the thing.',
-        permissionMode: 'safe-yolo',
+        permissionMode: 'workspace_write',
       }),
       { defaultSessionId: 's1', surface: 'ui_slash_command', placement: 'slash_command' },
     );
     expect(trackMessageSent).toHaveBeenCalledTimes(1);
   });
 
-  it('defaults subagents.delegate.start draft permissionMode to safe-yolo when instructions are missing', async () => {
+  it('defaults subagents.delegate.start draft permissionMode to workspace_write when instructions are missing', async () => {
     const executeSessionComposerResolution = await loadSubject();
     const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { ok: true } })) };
 
@@ -757,7 +757,7 @@ describe('executeSessionComposerResolution', () => {
       }),
     );
     const draftArgs = createSessionActionDraft.mock.calls[0]?.[1] as any;
-    expect(draftArgs?.input?.permissionMode).toBe('safe-yolo');
+    expect(draftArgs?.input?.permissionMode).toBe('workspace_write');
   });
 
   it('preserves configured ACP backend targets for subagent drafts and execution', async () => {
@@ -781,7 +781,7 @@ describe('executeSessionComposerResolution', () => {
     expect(handledDraft).toBe(true);
     const draftArgs = createSessionActionDraft.mock.calls[0]?.[1] as any;
     expect(draftArgs?.input?.backendTargetKeys).toEqual(['acpBackend:review-bot']);
-    expect(draftArgs?.input?.permissionMode).toBe('read-only');
+    expect(draftArgs?.input?.permissionMode).toBe('read_only');
 
     createSessionActionDraft.mockReset();
     actionExecutor.execute.mockClear();
@@ -808,7 +808,7 @@ describe('executeSessionComposerResolution', () => {
         sessionId: 's1',
         backendTargetKeys: ['acpBackend:review-bot'],
         instructions: 'Plan this.',
-        permissionMode: 'read-only',
+        permissionMode: 'read_only',
       }),
       { defaultSessionId: 's1', surface: 'ui_slash_command', placement: 'slash_command' },
     );

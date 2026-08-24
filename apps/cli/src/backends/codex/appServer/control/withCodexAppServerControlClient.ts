@@ -1,7 +1,8 @@
-import { readSessionMetadataRuntimeDescriptor, resolveCodexSessionBackendMode } from '@happier-dev/agents';
+import { resolveCodexSessionBackendMode } from '@happier-dev/agents';
 
 import { withCodexAppServerClient } from '../client/withCodexAppServerClient';
 import type { CodexAppServerClient } from '../client/createCodexAppServerClient';
+import { resolveCodexAppServerProcessEnvFromMetadata } from '../resolveCodexAppServerProcessEnv';
 
 export type CodexAppServerControlClientResult<T> =
     | Readonly<{ ok: true; value: T }>
@@ -22,16 +23,17 @@ function resolveControlRpcTimeoutMs(timeoutMs: number | null | undefined): numbe
     );
 }
 
-function buildControlProcessEnv(params: Readonly<{
+async function buildControlProcessEnv(params: Readonly<{
     processEnv?: NodeJS.ProcessEnv;
     metadata?: unknown;
     timeoutMs?: number | null;
-}>): NodeJS.ProcessEnv {
-    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(params.metadata, 'codex');
+}>): Promise<NodeJS.ProcessEnv> {
     const timeoutMs = resolveControlRpcTimeoutMs(params.timeoutMs);
     return {
-        ...(params.processEnv ?? process.env),
-        ...(runtimeDescriptor?.homePath ? { CODEX_HOME: runtimeDescriptor.homePath } : {}),
+        ...await resolveCodexAppServerProcessEnvFromMetadata({
+            processEnv: params.processEnv,
+            metadata: params.metadata,
+        }),
         ...(timeoutMs !== null ? { HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: String(timeoutMs) } : {}),
     };
 }
@@ -60,7 +62,7 @@ export async function withCodexAppServerControlClient<T>(params: Readonly<{
     try {
         const value = await withCodexAppServerClient({
             cwd: params.cwd,
-            processEnv: buildControlProcessEnv({
+            processEnv: await buildControlProcessEnv({
                 processEnv: params.processEnv,
                 metadata: params.metadata,
                 timeoutMs: params.timeoutMs,

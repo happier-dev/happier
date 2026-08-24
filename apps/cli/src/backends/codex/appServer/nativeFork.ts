@@ -127,10 +127,13 @@ export async function forkCodexAppServerConversationNative(
       client = await createClient({
         cwd: params.directory,
         processEnv: params.processEnv,
-        initializeRequestOptions: {
-          timeoutMs: null,
-          ...(params.signal ? { signal: params.signal } : {}),
-        },
+        ...(params.signal
+          ? {
+              // A tracked action operation owns cancellation. Do not turn a slow-but-live
+              // provider initialization into a false fork failure at the generic startup limit.
+              initializeRequestOptions: { signal: params.signal, timeoutMs: null },
+            }
+          : {}),
       });
     } catch (error) {
       if (params.signal?.aborted && error instanceof Error && error.name === 'AbortError') {
@@ -157,6 +160,7 @@ export async function forkCodexAppServerConversationNative(
         response = await client.request(method, {
           threadId: parentCodexSessionId,
           persistExtendedHistory: true,
+          ...(method === 'thread/fork' ? { excludeTurns: true } : {}),
         }, {
           timeoutMs: null,
           ...(params.signal ? { signal: params.signal } : {}),

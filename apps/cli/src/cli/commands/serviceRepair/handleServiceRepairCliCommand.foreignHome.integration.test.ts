@@ -44,6 +44,7 @@ function buildForeignPinnedServiceFile(params: Readonly<{
         channel: 'stable',
         targetMode: 'pinned',
         instanceId: 'cloud',
+        activeServerId: 'cloud',
         userHomeDir: params.userHomeDir,
         happierHomeDir: params.foreignHappierHomeDir,
         serverUrl: 'https://api.happier.dev',

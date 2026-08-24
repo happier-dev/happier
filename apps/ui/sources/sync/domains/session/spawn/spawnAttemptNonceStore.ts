@@ -216,6 +216,23 @@ export function readSpawnAttemptCustodyState(scope: ServerAccountScope): SpawnAt
     }
 }
 
+export function findSpawnAttemptCustody(params: Readonly<{
+    scope: ServerAccountScope;
+    machineId: string;
+    userAttemptId: string;
+}>): PersistedSpawnAttempt | null {
+    const machineId = normalizeRequired(params.machineId);
+    const userAttemptId = normalizeRequired(params.userAttemptId);
+    if (!machineId || !userAttemptId) return null;
+    const state = readSpawnAttemptCustodyState(params.scope);
+    if (state.status !== 'valid') return null;
+    const matches = Object.values(state.attempts).filter((candidate) => (
+        candidate.machineId === machineId
+        && candidate.userAttemptId === userAttemptId
+    ));
+    return matches.length === 1 ? matches[0]! : null;
+}
+
 function writeAttempts(
     scope: ServerAccountScope,
     attempts: PersistedSpawnAttempts,
@@ -348,6 +365,53 @@ export async function clearSpawnAttemptCustody(params: Readonly<{
         return true;
     });
     return locked.status === 'completed' ? locked.value : false;
+}
+
+export async function reconcileSpawnAttemptCustodyFromOperation(params: Readonly<{
+    scope: ServerAccountScope;
+    machineId: string;
+    userAttemptId: string;
+    requestId: string;
+    outcome:
+        | Readonly<{ kind: 'succeeded'; createdSessionId: string }>
+        | Readonly<{ kind: 'failed' | 'cancelled' }>;
+}>): Promise<
+    | Readonly<{ status: 'reconciled'; record: PersistedSpawnAttempt }>
+    | Readonly<{ status: 'removed' }>
+    | Readonly<{ status: 'not_found' }>
+> {
+    const requestId = normalizeSpawnSessionNonce(params.requestId);
+    const existing = findSpawnAttemptCustody(params);
+    if (!requestId || !existing || existing.nonce !== requestId) return { status: 'not_found' };
+
+    if (params.outcome.kind !== 'succeeded') {
+        const removed = await clearSpawnAttemptCustody({
+            scope: params.scope,
+            machineId: existing.machineId,
+            targetFingerprint: existing.targetFingerprint,
+            userAttemptId: existing.userAttemptId,
+        });
+        return removed ? { status: 'removed' } : { status: 'not_found' };
+    }
+
+    const createdSessionId = normalizeRequired(params.outcome.createdSessionId);
+    if (!createdSessionId) return { status: 'not_found' };
+    const reconciled = await markSpawnAttemptSessionCreated({
+        scope: params.scope,
+        machineId: existing.machineId,
+        targetFingerprint: existing.targetFingerprint,
+        userAttemptId: existing.userAttemptId,
+        createdSessionId,
+    });
+    if (!reconciled) return { status: 'not_found' };
+    return {
+        status: 'reconciled',
+        record: {
+            ...existing,
+            phase: 'post_spawn',
+            createdSessionId,
+        },
+    };
 }
 
 export async function resetUnreadableSpawnAttemptCustody(scope: ServerAccountScope): Promise<boolean> {

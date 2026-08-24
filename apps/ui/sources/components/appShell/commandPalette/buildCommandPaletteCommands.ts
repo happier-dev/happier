@@ -64,6 +64,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
   petControls?: PetCommandControls;
   nav: Readonly<{
     push: (path: string) => void;
+    openNewSession: () => void;
     navigateToSession: (sessionId: string) => void;
   }>;
   auth: Readonly<{ logout: () => Promise<void> }>;
@@ -91,7 +92,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
       icon: 'plus-circle',
       category: t('commandPalette.commands.sessionsCategory'),
       shortcut: params.shortcutLabels?.['session.new'],
-      action: () => nav.push('/new'),
+      action: nav.openNewSession,
     },
     {
       id: 'sessions',

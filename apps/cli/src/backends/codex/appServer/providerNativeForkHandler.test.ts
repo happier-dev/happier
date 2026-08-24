@@ -31,6 +31,7 @@ describe('codexAppServerProviderNativeForkHandler', () => {
         connectedServiceId: 'openai-codex',
         connectedServiceGroupId: 'main',
         homePath: '/tmp/connected-codex-home',
+        sqliteHomePath: '/tmp/shared-codex-state',
       }),
     };
 
@@ -48,7 +49,10 @@ describe('codexAppServerProviderNativeForkHandler', () => {
     expect(forkCodexAppServerConversationNative).toHaveBeenCalledWith({
       directory: '/repo',
       parentCodexSessionId: 'parent-thread',
-      processEnv: expect.objectContaining({ CODEX_HOME: '/tmp/connected-codex-home' }),
+      processEnv: expect.objectContaining({
+        CODEX_HOME: '/tmp/connected-codex-home',
+        CODEX_SQLITE_HOME: '/tmp/shared-codex-state',
+      }),
     });
     expect(logger.debug).toHaveBeenCalledWith(
       '[CodexAppServerFork] attempting native latest fork',
@@ -89,6 +93,11 @@ describe('codexAppServerProviderNativeForkHandler', () => {
       },
     });
     expect(JSON.stringify(result?.metadata.agentRuntimeDescriptorV1)).not.toContain('/tmp/connected-codex-home');
+    expect(JSON.stringify(result?.metadata.agentRuntimeDescriptorV1)).not.toContain('/tmp/shared-codex-state');
+    expect(result?.spawn.environmentVariables).toEqual({
+      CODEX_HOME: '/tmp/connected-codex-home',
+      CODEX_SQLITE_HOME: '/tmp/shared-codex-state',
+    });
   });
 
   it('logs an explicit skip reason for non-latest fork points', async () => {

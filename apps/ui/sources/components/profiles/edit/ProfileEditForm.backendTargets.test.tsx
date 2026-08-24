@@ -149,7 +149,7 @@ describe('ProfileEditForm backend targets', () => {
 
         const result = saveRef.current?.();
         expect(result).toBe(true);
-        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        expect(onSave.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             compatibilityByTargetKey: expect.objectContaining({
                 [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: true,
             }),
@@ -178,7 +178,7 @@ describe('ProfileEditForm backend targets', () => {
 
         const result = saveRef.current?.();
         expect(result).toBe(true);
-        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        expect(onSave.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             authMode: 'machineLogin',
             requiresMachineLoginTargetKey: buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' }),
             requiresMachineLogin: undefined,

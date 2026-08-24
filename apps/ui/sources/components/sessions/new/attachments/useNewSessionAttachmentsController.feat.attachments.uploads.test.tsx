@@ -568,6 +568,89 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         expect(remounted.getCurrent().drafts).toHaveLength(0);
     });
 
+    it('reconstructs the persisted attachment completion when a tracked launch succeeds after reload', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const promptStore = createNewSessionPromptStore('Investigate this bug');
+
+        const authoringHook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-reload-success',
+            isCreating: false,
+            promptStore,
+            handleCreateSession,
+            selectedProfileId: 'profile-work',
+            targetServerId: 'server-b',
+            baseActionChips: [],
+        }));
+
+        await act(async () => {
+            authoringHook.getCurrent().addPickedAttachments([{
+                kind: 'native',
+                uri: 'file:///tmp/note.txt',
+                name: 'note.txt',
+                sizeBytes: 12,
+                mimeType: 'text/plain',
+            }]);
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+        await authoringHook.unmount();
+        handleCreateSession.mockClear();
+        let resumePersistedLaunchKey: string | null = null;
+
+        const reenteredHook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-reload-success',
+            isCreating: false,
+            promptStore,
+            handleCreateSession,
+            selectedProfileId: 'profile-work',
+            targetServerId: 'server-b',
+            baseActionChips: [],
+            resumePersistedLaunchKey,
+        }));
+
+        expect(handleCreateSession).not.toHaveBeenCalled();
+
+        resumePersistedLaunchKey = 'operation-1:revision-2';
+        await reenteredHook.rerender();
+        expect(handleCreateSession).toHaveBeenCalledTimes(1);
+        expect(handleCreateSession).toHaveBeenCalledWith(expect.objectContaining({
+            initialMessage: 'skip',
+            afterCreated: expect.any(Function),
+        }));
+
+        await reenteredHook.rerender();
+        expect(handleCreateSession).toHaveBeenCalledTimes(1);
+
+        resumePersistedLaunchKey = null;
+        await reenteredHook.rerender();
+        resumePersistedLaunchKey = 'operation-1:revision-2';
+        await reenteredHook.rerender();
+        expect(handleCreateSession).toHaveBeenCalledTimes(1);
+
+        resumePersistedLaunchKey = 'operation-1:revision-3';
+        await reenteredHook.rerender();
+        expect(handleCreateSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('automatically completes a tracked reload without attachment or review drafts', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+
+        await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-reload-empty',
+            isCreating: false,
+            promptStore: createNewSessionPromptStore('Continue'),
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-b',
+            baseActionChips: [],
+            resumePersistedLaunchKey: 'operation-2:revision-3',
+        }));
+
+        expect(handleCreateSession).toHaveBeenCalledTimes(1);
+        expect(handleCreateSession).toHaveBeenCalledWith(undefined);
+    });
+
     it('keeps the upload message local id stable when the follow-up is retried', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();

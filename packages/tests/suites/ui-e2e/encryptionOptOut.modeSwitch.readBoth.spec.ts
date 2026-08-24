@@ -38,7 +38,22 @@ function collectBrowserDiagnostics(params: Readonly<{ page: Page }>): () => stri
     `## Response errors\n\n${responseErrors.length ? responseErrors.join('\n') : '(none)'}\n`;
 }
 
-async function toggleAccountEncryptionMode(params: Readonly<{ page: Page; uiBaseUrl: string; expectedMode: 'plain' | 'e2ee' }>): Promise<void> {
+type DraftMigrationItem = Readonly<{
+  address?: Readonly<{ kind?: unknown; draftId?: unknown }>;
+  expectedRevision?: unknown;
+  content?: Readonly<{ t?: unknown }>;
+}>;
+
+type AccountMigrationRequest = Readonly<{
+  toMode?: unknown;
+  sessionDrafts?: Readonly<{ items?: readonly DraftMigrationItem[] }>;
+}>;
+
+async function toggleAccountEncryptionMode(params: Readonly<{
+  page: Page;
+  uiBaseUrl: string;
+  expectedMode: 'plain' | 'e2ee';
+}>): Promise<AccountMigrationRequest> {
   await params.page.goto(`${params.uiBaseUrl}/settings/account`, { waitUntil: 'domcontentloaded' });
   await expect(params.page.getByTestId('settings-account-encryption-mode-switch')).toHaveCount(1, { timeout: 120_000 });
   const migrateOk = params.page.waitForResponse(
@@ -48,9 +63,84 @@ async function toggleAccountEncryptionMode(params: Readonly<{ page: Page; uiBase
   );
   await params.page.getByTestId('settings-account-encryption-mode-switch').click();
   const migrateResp = await migrateOk;
+  const migrationRequest = migrateResp.request().postDataJSON() as AccountMigrationRequest;
   const migrateJson = (await migrateResp.json()) as { success?: unknown; mode?: unknown };
   expect(migrateJson?.success).toBe(true);
   expect(migrateJson?.mode).toBe(params.expectedMode);
+  expect(migrationRequest.toMode).toBe(params.expectedMode);
+  return migrationRequest;
+}
+
+async function createNewSessionDraft(params: Readonly<{
+  page: Page;
+  uiBaseUrl: string;
+  text: string;
+}>): Promise<string> {
+  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new?happier_hmr=0`, 120_000);
+  const composer = params.page.getByTestId('new-session-composer-input');
+  await expect(composer).toBeVisible({ timeout: 120_000 });
+  await expect.poll(() => new URL(params.page.url()).searchParams.get('draftId'), { timeout: 60_000 })
+    .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  const draftId = new URL(params.page.url()).searchParams.get('draftId');
+  if (!draftId) throw new Error('new-session draft route did not establish a draftId');
+  const mutation = params.page.waitForResponse(
+    (response) => response.url().endsWith('/v1/account/session-drafts/mutate')
+      && response.request().method() === 'POST'
+      && response.status() === 200,
+    { timeout: 60_000 },
+  );
+  await composer.fill(params.text);
+  await composer.blur();
+  await mutation;
+  return draftId;
+}
+
+async function expectNewSessionDraftReadable(params: Readonly<{
+  page: Page;
+  uiBaseUrl: string;
+  draftId: string;
+  text: string;
+}>): Promise<void> {
+  await gotoDomContentLoadedWithRetries(
+    params.page,
+    `${params.uiBaseUrl}/new?draftId=${encodeURIComponent(params.draftId)}&happier_hmr=0`,
+    120_000,
+  );
+  await expect(params.page.getByTestId('new-session-composer-input')).toHaveValue(params.text, { timeout: 60_000 });
+}
+
+async function createExistingSessionDraft(params: Readonly<{
+  page: Page;
+  text: string;
+}>): Promise<Readonly<{ envelope: unknown }>> {
+  const composer = params.page.getByTestId('session-composer-input');
+  await expect(composer).toBeVisible({ timeout: 60_000 });
+  const mutation = params.page.waitForResponse(
+    (response) => response.url().endsWith('/v1/account/session-drafts/mutate')
+      && response.request().method() === 'POST'
+      && response.status() === 200,
+    { timeout: 60_000 },
+  );
+  await composer.fill(params.text);
+  await composer.blur();
+  const response = await mutation;
+  const body = response.request().postDataJSON() as { content?: Readonly<{ t?: unknown }> };
+  return { envelope: body.content?.t };
+}
+
+function expectCompleteDraftMigration(params: Readonly<{
+  request: AccountMigrationRequest;
+  draftIds: readonly string[];
+  envelope: 'plain' | 'encrypted';
+}>): void {
+  const items = params.request.sessionDrafts?.items;
+  expect(items).toHaveLength(params.draftIds.length);
+  expect(new Set(items?.map((item) => item.address?.draftId))).toEqual(new Set(params.draftIds));
+  for (const item of items ?? []) {
+    expect(item.address?.kind).toBe('newSession');
+    expect(item.expectedRevision).toEqual(expect.any(Number));
+    expect(item.content?.t).toBe(params.envelope);
+  }
 }
 
 test.describe('ui e2e: encryption opt-out mode switching', () => {
@@ -86,6 +176,7 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
         HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
         HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1',
+        HAPPIER_FEATURE_SESSIONS_DRAFTS__ENABLED: '1',
         HAPPIER_PRESENCE_SESSION_TIMEOUT_MS: '60000',
         HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: '60000',
         HAPPIER_PRESENCE_TIMEOUT_TICK_MS: '1000',
@@ -134,6 +225,12 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
         },
       });
 
+      const draftAText = `account-mode draft A ${run.runId}`;
+      const draftBText = `account-mode draft B ${run.runId}`;
+      const draftAId = await createNewSessionDraft({ page, uiBaseUrl, text: draftAText });
+      const draftBId = await createNewSessionDraft({ page, uiBaseUrl, text: draftBText });
+      expect(draftBId).not.toBe(draftAId);
+
       const tagA = `ui-e2e-e2ee-a-${run.runId}`;
       const msgA = `hello e2ee A ${run.runId}`;
 
@@ -176,8 +273,20 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       const transcript = page.getByTestId('transcript-chat-list');
       await expect(transcript).toHaveCount(1, { timeout: 120_000 });
       await expect(transcript.getByText(msgA, { exact: true }).first()).toBeVisible({ timeout: 120_000 });
+      const sessionADraftText = `session-encrypted draft ${run.runId}`;
+      const sessionADraft = await createExistingSessionDraft({ page, text: sessionADraftText });
+      expect(sessionADraft.envelope).toBe('encrypted');
 
-      await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'plain' });
+      const migrateDraftsToPlain = await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'plain' });
+      expectCompleteDraftMigration({
+        request: migrateDraftsToPlain,
+        draftIds: [draftAId, draftBId],
+        envelope: 'plain',
+      });
+      await expectNewSessionDraftReadable({ page, uiBaseUrl, draftId: draftAId, text: draftAText });
+      await expectNewSessionDraftReadable({ page, uiBaseUrl, draftId: draftBId, text: draftBText });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionAId}`, 120_000);
+      await expect(page.getByTestId('session-composer-input')).toHaveValue(sessionADraftText, { timeout: 60_000 });
 
       const tagB = `ui-e2e-plain-b-${run.runId}`;
       const msgB = `hello plain B ${run.runId}`;
@@ -220,7 +329,16 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionBId}`, 120_000);
       await expect(page.getByText(msgB, { exact: true }).first()).toBeVisible({ timeout: 120_000 });
 
-      await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'e2ee' });
+      const migrateDraftsToE2ee = await toggleAccountEncryptionMode({ page, uiBaseUrl, expectedMode: 'e2ee' });
+      expectCompleteDraftMigration({
+        request: migrateDraftsToE2ee,
+        draftIds: [draftAId, draftBId],
+        envelope: 'encrypted',
+      });
+      await expectNewSessionDraftReadable({ page, uiBaseUrl, draftId: draftAId, text: draftAText });
+      await expectNewSessionDraftReadable({ page, uiBaseUrl, draftId: draftBId, text: draftBText });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionAId}`, 120_000);
+      await expect(page.getByTestId('session-composer-input')).toHaveValue(sessionADraftText, { timeout: 60_000 });
 
       const tagC = `ui-e2e-e2ee-c-${run.runId}`;
       const msgC = `hello e2ee C ${run.runId}`;

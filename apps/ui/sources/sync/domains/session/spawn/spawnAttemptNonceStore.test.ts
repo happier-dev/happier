@@ -99,6 +99,90 @@ describe('spawnAttemptNonceStore persistence', () => {
         });
     });
 
+    it('resolves and settles the exact persisted launch identity from a pushed operation result', async () => {
+        const store = await import('./spawnAttemptNonceStore');
+        await store.acquireSpawnAttemptCustody({
+            ...attempt,
+            seedNonce: 'tracked-request-1',
+            firstTurnLocalId: 'tracked-first-turn',
+            attachmentMessageLocalId: 'tracked-attachments',
+        });
+
+        expect(store.findSpawnAttemptCustody({
+            scope,
+            machineId: attempt.machineId,
+            userAttemptId: attempt.userAttemptId,
+        })).toMatchObject({
+            nonce: 'tracked-request-1',
+            phase: 'spawning',
+            firstTurnLocalId: 'tracked-first-turn',
+            attachmentMessageLocalId: 'tracked-attachments',
+        });
+
+        await expect(store.reconcileSpawnAttemptCustodyFromOperation({
+            scope,
+            machineId: attempt.machineId,
+            userAttemptId: attempt.userAttemptId,
+            requestId: 'tracked-request-1',
+            outcome: { kind: 'succeeded', createdSessionId: 'tracked-session-1' },
+        })).resolves.toMatchObject({
+            status: 'reconciled',
+            record: {
+                nonce: 'tracked-request-1',
+                phase: 'post_spawn',
+                createdSessionId: 'tracked-session-1',
+                firstTurnLocalId: 'tracked-first-turn',
+                attachmentMessageLocalId: 'tracked-attachments',
+            },
+        });
+    });
+
+    it('removes only the exact failed tracked launch so retry can create a new attempt', async () => {
+        const store = await import('./spawnAttemptNonceStore');
+        await store.acquireSpawnAttemptCustody({ ...attempt, seedNonce: 'failed-request' });
+        await store.acquireSpawnAttemptCustody({
+            ...attempt,
+            userAttemptId: 'attempt-b',
+            seedNonce: 'other-request',
+        });
+
+        await expect(store.reconcileSpawnAttemptCustodyFromOperation({
+            scope,
+            machineId: attempt.machineId,
+            userAttemptId: attempt.userAttemptId,
+            requestId: 'failed-request',
+            outcome: { kind: 'failed' },
+        })).resolves.toEqual({ status: 'removed' });
+        expect(store.findSpawnAttemptCustody({
+            scope,
+            machineId: attempt.machineId,
+            userAttemptId: attempt.userAttemptId,
+        })).toBeNull();
+        expect(store.findSpawnAttemptCustody({
+            scope,
+            machineId: attempt.machineId,
+            userAttemptId: 'attempt-b',
+        })).toMatchObject({ nonce: 'other-request' });
+    });
+
+    it('does not settle custody when the operation request identity does not match', async () => {
+        const store = await import('./spawnAttemptNonceStore');
+        await store.acquireSpawnAttemptCustody({ ...attempt, seedNonce: 'expected-request' });
+
+        await expect(store.reconcileSpawnAttemptCustodyFromOperation({
+            scope,
+            machineId: attempt.machineId,
+            userAttemptId: attempt.userAttemptId,
+            requestId: 'different-request',
+            outcome: { kind: 'succeeded', createdSessionId: 'wrong-session' },
+        })).resolves.toEqual({ status: 'not_found' });
+        expect(store.findSpawnAttemptCustody({
+            scope,
+            machineId: attempt.machineId,
+            userAttemptId: attempt.userAttemptId,
+        })).toMatchObject({ phase: 'spawning', createdSessionId: null });
+    });
+
     it.each([
         ['invalid JSON', '{not-json'],
         ['invalid top-level value', '[]'],

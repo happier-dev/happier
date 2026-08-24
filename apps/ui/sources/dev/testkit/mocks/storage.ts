@@ -159,7 +159,7 @@ export function createStorageModuleStub<TOverrides extends object>(overrides: TO
         useMessagesByRefs: () => messagesByRefs,
         useSessionMessagesReducerState: sessionMessagesHooks.useSessionMessagesReducerState,
         useSessionConnectedServiceAccountSwitchEvents: () => connectedServiceAccountSwitchEvents,
-        useSessionTranscriptIds: () => ({ ids: sessionTranscriptIds, isLoaded: true } as const),
+        useSessionTranscriptIds: () => ({ ids: sessionTranscriptIds, isLoaded: true, hasRetainedContent: false } as const),
         useSessionReadyActivity: () => ({
             latestReadyEventSeq: null,
             latestReadyEventAt: null,

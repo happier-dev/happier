@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { InteractionManager, Platform } from 'react-native';
+import { AppState, InteractionManager, Platform } from 'react-native';
 
 import {
     TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
@@ -76,11 +76,15 @@ export type NewSessionDraftTextSource = Readonly<{
 }>;
 
 export function useNewSessionDraftAutoPersist(params: Readonly<{
+    /** Stage the live semantic draft into the local repository before any delayed flush. */
+    stageDraftNow?: () => void;
     persistDraftNow: () => void;
     persistenceEnabled?: boolean;
     draftText?: NewSessionDraftTextSource;
     /** Stable semantic identity for the current draft, independent of text length. */
     draftChangeKey?: string;
+    /** Untouched new-session routes must not create a materialized draft merely by mounting. */
+    persistOnMount?: boolean;
     /**
      * Whether the owning screen is currently focused. Only the focused screen instance may
      * auto-persist: an unfocused instance's draft state is stale relative to whichever
@@ -95,6 +99,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
     const draftSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const cancelIdlePersistRef = React.useRef<(() => void) | null>(null);
     const persistDraftNowRef = React.useRef(params.persistDraftNow);
+    const stageDraftNowRef = React.useRef(params.stageDraftNow);
     const persistenceEnabledRef = React.useRef(params.persistenceEnabled ?? true);
     const draftTextRef = React.useRef(params.draftText);
     const focused = params.focused ?? true;
@@ -102,6 +107,9 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
     React.useEffect(() => {
         persistDraftNowRef.current = params.persistDraftNow;
     }, [params.persistDraftNow]);
+    React.useEffect(() => {
+        stageDraftNowRef.current = params.stageDraftNow;
+    }, [params.stageDraftNow]);
     React.useEffect(() => {
         persistenceEnabledRef.current = params.persistenceEnabled ?? true;
     }, [params.persistenceEnabled]);
@@ -147,6 +155,25 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         }
     }, [cancelPendingIdlePersist]);
 
+    const flushPendingPersistImmediately = React.useCallback(() => {
+        const hasPendingTimer = draftSaveTimerRef.current !== null;
+        const hasPendingIdlePersist = cancelIdlePersistRef.current !== null;
+        if (!hasPendingTimer && !hasPendingIdlePersist) {
+            return;
+        }
+        if (draftSaveTimerRef.current !== null) {
+            clearTimeout(draftSaveTimerRef.current);
+            draftSaveTimerRef.current = null;
+        }
+        cancelPendingIdlePersist();
+        if (!persistenceEnabledRef.current) {
+            return;
+        }
+        // App/web lifecycle boundaries cannot wait for interactions or browser idle time:
+        // the runtime may be suspended before either callback receives another turn.
+        persistDraftNowRef.current();
+    }, [cancelPendingIdlePersist]);
+
     // Losing focus flushes any pending persist once: navigation away must not drop the
     // last few seconds of typing, and an unfocused instance must never persist later.
     // Declared before the scheduling effect so it observes the pending timer before the
@@ -187,11 +214,25 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         }, delayMs);
     }, [cancelPendingIdlePersist, persistAfterCurrentPolicy]);
 
+    const hasAppliedInitialSchedulingPolicyRef = React.useRef(false);
+    const previousDraftChangeKeyRef = React.useRef(params.draftChangeKey);
     React.useEffect(() => {
         if (!focused) {
             // The blur-flush effect above already flushed any pending debounce; leave an
             // in-flight idle persist alone so the flush completes with the live value.
             return;
+        }
+        if (!hasAppliedInitialSchedulingPolicyRef.current) {
+            hasAppliedInitialSchedulingPolicyRef.current = true;
+            previousDraftChangeKeyRef.current = params.draftChangeKey;
+            if (params.persistOnMount === false) {
+                return;
+            }
+        } else if (previousDraftChangeKeyRef.current !== params.draftChangeKey) {
+            previousDraftChangeKeyRef.current = params.draftChangeKey;
+            if (persistenceEnabledRef.current) {
+                stageDraftNowRef.current?.();
+            }
         }
         armDebouncedPersist();
         return () => {
@@ -203,6 +244,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         armDebouncedPersist,
         focused,
         params.draftChangeKey,
+        params.persistOnMount,
         params.persistenceEnabled,
     ]);
 
@@ -214,9 +256,41 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
             return;
         }
         return draftText.subscribe(() => {
+            if (focusedRef.current && persistenceEnabledRef.current) {
+                stageDraftNowRef.current?.();
+            }
             armDebouncedPersist();
         });
     }, [armDebouncedPersist, params.draftText]);
+
+    React.useEffect(() => {
+        const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+            if (nextState !== 'active') {
+                flushPendingPersistImmediately();
+            }
+        });
+
+        const flushWhenWebPageHides = () => {
+            flushPendingPersistImmediately();
+        };
+        const flushWhenWebDocumentHides = () => {
+            if (document.visibilityState === 'hidden') {
+                flushPendingPersistImmediately();
+            }
+        };
+        if (Platform.OS === 'web' && typeof document !== 'undefined' && typeof window !== 'undefined') {
+            document.addEventListener('visibilitychange', flushWhenWebDocumentHides);
+            window.addEventListener('pagehide', flushWhenWebPageHides);
+        }
+
+        return () => {
+            appStateSubscription.remove();
+            if (Platform.OS === 'web' && typeof document !== 'undefined' && typeof window !== 'undefined') {
+                document.removeEventListener('visibilitychange', flushWhenWebDocumentHides);
+                window.removeEventListener('pagehide', flushWhenWebPageHides);
+            }
+        };
+    }, [flushPendingPersistImmediately]);
 
     // Flush pending work on unmount so fast navigation / modal close doesn't drop draft state.
     React.useEffect(() => {

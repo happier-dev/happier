@@ -13,7 +13,7 @@ describe('sendTranscriptSelectionToSession', () => {
     it('formats messages, applies the template, writes sessionInitialPromptV1, and navigates to the destination session', async () => {
         const chooseDestinationSessionId = vi.fn(async (): Promise<SendTranscriptSelectionDestination> => ({ kind: 'existingSession', sessionId: 'dest', serverId: 'server-b' }));
         const writeInitialPrompt = vi.fn(async () => undefined);
-        const appendNewSessionDraft = vi.fn();
+        const appendNewSessionDraft = vi.fn(() => null);
         const navigateToSession = vi.fn();
         const navigateToNewSession = vi.fn();
 
@@ -72,7 +72,7 @@ describe('sendTranscriptSelectionToSession', () => {
             nowMs: () => 123,
             chooseDestinationSessionId: vi.fn(async () => null),
             writeInitialPrompt,
-            appendNewSessionDraft: vi.fn(),
+            appendNewSessionDraft: vi.fn(() => null),
             navigateToSession,
             navigateToNewSession: vi.fn(),
         });
@@ -85,7 +85,7 @@ describe('sendTranscriptSelectionToSession', () => {
     it('appends to the new-session draft and opens /new when the picker chooses a new session', async () => {
         const chooseDestinationSessionId = vi.fn(async (): Promise<SendTranscriptSelectionDestination> => ({ kind: 'newSession' }));
         const writeInitialPrompt = vi.fn(async () => undefined);
-        const appendNewSessionDraft = vi.fn();
+        const appendNewSessionDraft = vi.fn(() => '8e0a5dd1-b1df-43dd-b51e-b7787b30362e');
         const navigateToSession = vi.fn();
         const navigateToNewSession = vi.fn();
 
@@ -113,7 +113,9 @@ describe('sendTranscriptSelectionToSession', () => {
             sourceSessionId: 'source',
             sourceServerId: 'server-a',
         });
-        expect(navigateToNewSession).toHaveBeenCalledTimes(1);
+        expect(navigateToNewSession).toHaveBeenCalledWith({
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+        });
         expect(writeInitialPrompt).not.toHaveBeenCalled();
         expect(navigateToSession).not.toHaveBeenCalled();
     });

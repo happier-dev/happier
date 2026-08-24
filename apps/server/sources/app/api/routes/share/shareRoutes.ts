@@ -10,6 +10,7 @@ import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { invalidateSessionRelayAuthorizationForSession } from "@/app/api/socket/sessionRelayAuthCache";
+import { tombstoneSessionDraftForLifecycleInTx } from "@/app/account/sessionDrafts/sessionDraftService";
 
 type SessionShareRow = Awaited<ReturnType<typeof db.sessionShare.findFirst>>;
 
@@ -351,6 +352,11 @@ export function shareRoutes(app: Fastify) {
 
             await tx.sessionShare.delete({
                 where: { id: shareId }
+            });
+
+            await tombstoneSessionDraftForLifecycleInTx(tx, {
+                accountId: share.sharedWithUserId,
+                sessionId,
             });
 
             await markAccountChanged(tx, { accountId: userId, kind: 'share', entityId: sessionId });

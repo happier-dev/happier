@@ -11,6 +11,11 @@ const routeState = vi.hoisted(() => ({
     params: {} as Record<string, string | undefined>,
     screenModel: { variant: 'simple', simpleProps: {} } as any,
     lastWizardProps: null as any,
+    shouldBlockGuidance: true,
+    screenModelMounts: 0,
+    screenModelUnmounts: 0,
+    draftSnapshot: null as any,
+    draftListeners: new Set<() => void>(),
 }));
 
 vi.mock('react-native-reanimated', () => ({}));
@@ -49,7 +54,21 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 vi.mock('@/sync/store/hooks', () => ({
-    useActiveServerAccountScope: () => null,
+    useActiveServerAccountScope: () => ({ serverId: 'server-a', accountId: 'account-a' }),
+}));
+
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    deleteSessionDraft: vi.fn(),
+    getSessionDraftSnapshot: () => routeState.draftSnapshot,
+    setOrdinaryEntryDraftId: vi.fn(),
+    subscribeSessionDraft: (_scope: unknown, _address: unknown, listener: () => void) => {
+        routeState.draftListeners.add(listener);
+        return () => routeState.draftListeners.delete(listener);
+    },
+}));
+
+vi.mock('@/sync/domains/actionOperations/useActionOperations', () => ({
+    useAllActionOperations: () => [],
 }));
 
 vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
@@ -65,7 +84,7 @@ vi.mock('@/utils/sessions/tempDataStore', () => ({
 }));
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
-    useShouldBlockNewSessionWithGettingStartedGuidance: () => true,
+    useShouldBlockNewSessionWithGettingStartedGuidance: () => routeState.shouldBlockGuidance,
     useSessionGettingStartedGuidanceBaseModel: () => ({ kind: 'connect_machine' }),
     SessionGettingStartedGuidance: (props: { variant: string }) => (
         <View testID={`guidance:${props.variant}`} />
@@ -84,7 +103,15 @@ vi.mock('@/components/sessions/new/components/NewSessionWizard', () => ({
 }));
 
 vi.mock('@/components/sessions/new/hooks/useNewSessionScreenModel', () => ({
-    useNewSessionScreenModel: () => routeState.screenModel,
+    useNewSessionScreenModel: () => {
+        React.useEffect(() => {
+            routeState.screenModelMounts += 1;
+            return () => {
+                routeState.screenModelUnmounts += 1;
+            };
+        }, []);
+        return routeState.screenModel;
+    },
 }));
 
 vi.mock('@/components/sessions/new/navigation/newSessionContainedModalScreen', () => ({
@@ -96,6 +123,8 @@ vi.mock('@/components/sessions/new/navigation/newSessionContainedModalScreen', (
 describe('/new connect-machine guidance bypass', () => {
     it('renders the new-session screen when a machine+directory intent is present', async () => {
         vi.resetModules();
+        routeState.shouldBlockGuidance = true;
+        routeState.draftSnapshot = null;
         routeState.screenModel = { variant: 'simple', simpleProps: {} };
         routeState.lastWizardProps = null;
         const { default: Screen } = await import('@/app/(app)/new');
@@ -121,8 +150,45 @@ describe('/new connect-machine guidance bypass', () => {
         expect(screen.findAllByTestId('new-session-inner')).toHaveLength(1);
     });
 
+    it('keeps the live composer owner mounted when the draft becomes seeded', async () => {
+        vi.resetModules();
+        routeState.shouldBlockGuidance = false;
+        routeState.screenModel = { variant: 'simple', simpleProps: {} };
+        routeState.screenModelMounts = 0;
+        routeState.screenModelUnmounts = 0;
+        routeState.draftSnapshot = null;
+        routeState.params = {};
+        const { default: Screen } = await import('@/app/(app)/new');
+
+        const screen = await renderScreen(<Screen />);
+        await act(async () => {});
+        expect(routeState.screenModelMounts).toBe(1);
+
+        // First local persistence changes this same presentation decision from
+        // unseeded to seeded. That transition must not recreate the prompt store.
+        act(() => {
+            routeState.draftSnapshot = {
+                address: { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000001' },
+                document: {
+                    target: { kind: 'newSession', authoring: {} },
+                    composer: { text: { mutationId: 'text-1', value: '' } },
+                },
+                materialized: true,
+                conflict: null,
+                localSupplement: {},
+            };
+            for (const listener of routeState.draftListeners) listener();
+        });
+        await act(async () => {});
+
+        expect(routeState.screenModelMounts).toBe(1);
+        expect(routeState.screenModelUnmounts).toBe(0);
+    });
+
     it('forwards wizard section presentation settings to the wizard', async () => {
         vi.resetModules();
+        routeState.shouldBlockGuidance = true;
+        routeState.draftSnapshot = null;
         const sectionPresentation = {
             machines: 'dropdown',
             paths: 'dropdown',

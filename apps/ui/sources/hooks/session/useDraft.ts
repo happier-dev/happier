@@ -1,6 +1,6 @@
-import { useEffect, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import { storage } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useIsFocused } from '@react-navigation/native';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -12,6 +12,16 @@ import {
 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
 import { containsLikelyNonWhitespace, isLargeTextInputValueLength } from '@/components/ui/forms/largeTextInputPolicy';
 import { useWebLifecycleFlush } from './useWebLifecycleFlush';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import {
+    captureSessionDraftCurrentness,
+    clearSessionDraftCurrentness,
+    flushSessionDraft,
+    getSessionDraftSnapshot,
+    subscribeSessionDraft,
+    writeExistingSessionDraft,
+    type SessionDraftCurrentness,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 interface UseDraftOptions {
     autoSaveInterval?: number; // in milliseconds, default 2000
@@ -20,6 +30,8 @@ interface UseDraftOptions {
 export type SessionDraftTextSnapshot = Readonly<{
     sessionId: string;
     text: string;
+    scope?: ServerAccountScope;
+    currentness?: SessionDraftCurrentness;
 }>;
 
 export function useDraft(
@@ -29,14 +41,26 @@ export function useDraft(
     options: UseDraftOptions = {}
 ) {
     const { autoSaveInterval = 2000 } = options;
+    const scope = useActiveServerAccountScope();
+    const address = useMemo(() => sessionId ? { kind: 'session' as const, sessionId } : null, [sessionId]);
+    const subscribeToDraft = useCallback((listener: () => void) => {
+        if (!scope || !address) return () => undefined;
+        return subscribeSessionDraft(scope, address, listener);
+    }, [address, scope]);
+    const readDraftSnapshot = useCallback(() => {
+        if (!scope || !address) return null;
+        return getSessionDraftSnapshot(scope, address);
+    }, [address, scope]);
+    const draftSnapshot = useSyncExternalStore(subscribeToDraft, readDraftSnapshot, readDraftSnapshot);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastSavedValue = useRef<string>('');
     const lastSessionId = useRef<string | null>(null);
+    const lastSessionScope = useRef<ServerAccountScope | null>(null);
     const latestValue = useRef<string>(value);
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
     const isFocused = useIsFocused();
     const session = sessionId ? storage.getState().sessions[sessionId] : null;
-    const storedDraft = typeof session?.draft === 'string' ? session.draft : null;
+    const storedDraft = draftSnapshot?.document.composer.text.value ?? null;
     const forkInitialPrompt = readForkInitialPromptV1(session?.metadata);
     const forkInitialPromptText = forkInitialPrompt?.text ?? null;
     const sessionInitialPrompt = readSessionInitialPromptV1(session?.metadata);
@@ -58,39 +82,86 @@ export function useDraft(
 
     latestValue.current = value;
 
-    const saveDraftForSession = useCallback((targetSessionId: string, draft: string) => {
-        storage.getState().updateSessionDraft(targetSessionId, draft);
+    const saveDraftForSession = useCallback((targetScope: ServerAccountScope | null, targetSessionId: string, draft: string) => {
+        if (!targetScope) return;
+        writeExistingSessionDraft({
+            scope: targetScope,
+            sessionId: targetSessionId,
+            patch: { text: draft },
+        });
         if (lastSessionId.current === targetSessionId) {
             lastSavedValue.current = draft;
         }
     }, []);
 
+    const flushDraftForSession = useCallback((targetScope: ServerAccountScope | null, targetSessionId: string) => {
+        if (!targetScope) return;
+        fireAndForget(
+            flushSessionDraft({
+                scope: targetScope,
+                address: { kind: 'session', sessionId: targetSessionId },
+            }),
+            { tag: 'useDraft.flushSessionDraft' },
+        );
+    }, []);
+
     // Save draft to storage
     const saveDraft = useCallback((draft: string) => {
-        if (!sessionId) return;
-        saveDraftForSession(sessionId, draft);
-    }, [saveDraftForSession, sessionId]);
+        if (!scope || !sessionId) return;
+        saveDraftForSession(scope, sessionId, draft);
+    }, [saveDraftForSession, scope, sessionId]);
 
     const flushLatestDraftIfChanged = useCallback(() => {
         if (!sessionId) return;
         const currentValue = latestValue.current;
-        if (currentValue === lastSavedValue.current) return;
+        const hasScheduledFlush = saveTimeoutRef.current !== null;
+        const hasUnpublishedValue = currentValue !== lastSavedValue.current;
+        if (!hasScheduledFlush && !hasUnpublishedValue) return;
 
         if (saveTimeoutRef.current) {
             clearTimeout(saveTimeoutRef.current);
             saveTimeoutRef.current = null;
         }
 
-        saveDraft(currentValue);
-    }, [saveDraft, sessionId]);
+        if (hasUnpublishedValue) saveDraft(currentValue);
+        flushDraftForSession(scope, sessionId);
+    }, [flushDraftForSession, saveDraft, scope, sessionId]);
+
+    const scheduleDraftFlush = useCallback((previousDraft: string, draft: string) => {
+        if (!scope || !sessionId) return;
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+
+        const wasEmpty = !containsLikelyNonWhitespace(previousDraft);
+        const isEmpty = !containsLikelyNonWhitespace(draft);
+        const shouldDebounceForLargeDraft = isLargeTextInputValueLength(draft.length);
+        if ((wasEmpty !== isEmpty && !shouldDebounceForLargeDraft) || isEmpty) {
+            flushDraftForSession(scope, sessionId);
+            return;
+        }
+        saveTimeoutRef.current = setTimeout(() => {
+            saveTimeoutRef.current = null;
+            flushDraftForSession(scope, sessionId);
+        }, autoSaveInterval);
+    }, [autoSaveInterval, flushDraftForSession, scope, sessionId]);
 
     const setDraftValue = useCallback((nextValueOrUpdater: string | ((currentValue: string) => string)) => {
         const nextValue = typeof nextValueOrUpdater === 'function'
             ? nextValueOrUpdater(latestValue.current)
             : nextValueOrUpdater;
+        const previousSavedValue = lastSavedValue.current;
         latestValue.current = nextValue;
         onChange(nextValue);
-    }, [onChange]);
+        if (nextValue === previousSavedValue) return;
+
+        // Publish into the local canonical replica in the input event. Waiting for a passive
+        // autosave effect leaves a window where an acknowledgement of an earlier prefix can
+        // render before React commits the latest keystrokes and replace the live textarea.
+        saveDraft(nextValue);
+        scheduleDraftFlush(previousSavedValue, nextValue);
+    }, [onChange, saveDraft, scheduleDraftFlush]);
 
     const clearForkInitialPrompt = useCallback((tag: string) => {
         if (!sessionId || !forkInitialPromptText) return;
@@ -120,8 +191,19 @@ export function useDraft(
         return `${trimmedBase}\n\n${prompt.text}`;
     }, []);
 
-    const adoptDraftText = useCallback((draft: string) => {
-        onChange(draft);
+    const adoptPersistedDraftText = useCallback((draft: string) => {
+        if (latestValue.current !== draft) {
+            latestValue.current = draft;
+            onChange(draft);
+        }
+        lastSavedValue.current = draft;
+    }, [onChange]);
+
+    const persistSeededDraftText = useCallback((draft: string) => {
+        if (latestValue.current !== draft) {
+            latestValue.current = draft;
+            onChange(draft);
+        }
         saveDraft(draft);
         lastSavedValue.current = draft;
     }, [onChange, saveDraft]);
@@ -131,25 +213,38 @@ export function useDraft(
     useEffect(() => {
         if (!sessionId) return;
 
+        // Passive effects can be delayed across several fast input commits. Always reconcile
+        // against the repository's current snapshot instead of the snapshot captured by the
+        // render that scheduled this effect; adopting that older snapshot rolls the composer
+        // back to a prefix the user has already advanced beyond.
+        const currentStoredDraft = readDraftSnapshot()?.document.composer.text.value ?? null;
+
         const previousSessionId = lastSessionId.current;
+        const previousScope = lastSessionScope.current;
         lastSessionId.current = sessionId;
+        lastSessionScope.current = scope;
         const didSessionChange = previousSessionId !== null && previousSessionId !== sessionId;
 
         const currentValue = latestValue.current;
 
         if (didSessionChange) {
             if (previousSessionId && currentValue !== lastSavedValue.current) {
-                saveDraftForSession(previousSessionId, currentValue);
+                saveDraftForSession(previousScope, previousSessionId, currentValue);
+                flushDraftForSession(previousScope, previousSessionId);
             }
             autosaveSkip.current = { sessionId, value: currentValue };
-            const baseStoredDraft = storedDraft && storedDraft.trim() ? storedDraft : null;
+            const baseStoredDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
             const baseText = baseStoredDraft ?? forkInitialPromptText ?? null;
             const nextDraft = baseText !== null && activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(baseText, activeSessionInitialPrompt)
                 : baseText ?? (activeSessionInitialPrompt ? composeSessionInitialPromptText('', activeSessionInitialPrompt) : null);
 
             if (nextDraft !== null) {
-                adoptDraftText(nextDraft);
+                if (activeSessionInitialPrompt || baseStoredDraft === null) {
+                    persistSeededDraftText(nextDraft);
+                } else {
+                    adoptPersistedDraftText(nextDraft);
+                }
                 if (baseStoredDraft !== null) {
                     clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.sessionChange.storedDraft');
                 } else if (forkInitialPromptText) {
@@ -167,7 +262,7 @@ export function useDraft(
 
         if (!isFocused) return;
 
-        const externalDraft = storedDraft && storedDraft.trim() ? storedDraft : null;
+        const externalDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
         if (externalDraft != null && externalDraft === currentValue && lastSavedValue.current !== externalDraft && !activeSessionInitialPrompt) {
             lastSavedValue.current = externalDraft;
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.syncedDraft');
@@ -182,34 +277,33 @@ export function useDraft(
             const nextDraft = activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(externalDraft, activeSessionInitialPrompt)
                 : externalDraft;
-            adoptDraftText(nextDraft);
+            if (activeSessionInitialPrompt) {
+                persistSeededDraftText(nextDraft);
+            } else {
+                adoptPersistedDraftText(nextDraft);
+            }
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.storedDraft');
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.storedDraft');
         } else if (forkInitialPromptText && !currentValue.trim()) {
             const nextDraft = activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(forkInitialPromptText, activeSessionInitialPrompt)
                 : forkInitialPromptText;
-            adoptDraftText(nextDraft);
+            persistSeededDraftText(nextDraft);
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus');
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.forkPrompt');
         } else if (activeSessionInitialPrompt && canAdoptWithoutExternalDraft) {
             const nextDraft = composeSessionInitialPromptText(currentValue, activeSessionInitialPrompt);
-            adoptDraftText(nextDraft);
+            persistSeededDraftText(nextDraft);
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus');
-        } else if (!storedDraft) {
+        } else if (!currentStoredDraft) {
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }
-    }, [activeSessionInitialPrompt, adoptDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, forkInitialPromptText, isFocused, onChange, saveDraftForSession, sessionId, storedDraft]);
+    }, [activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, flushDraftForSession, forkInitialPromptText, isFocused, onChange, persistSeededDraftText, readDraftSnapshot, saveDraftForSession, scope, sessionId, storedDraft]);
 
     // Auto-save with smart debouncing
     useEffect(() => {
-        if (!sessionId) return;
-
-        // Clear any existing timeout
-        if (saveTimeoutRef.current) {
-            clearTimeout(saveTimeoutRef.current);
-        }
+        if (!scope || !sessionId) return;
 
         // Only save if value has changed
         const skip = autosaveSkip.current;
@@ -219,30 +313,20 @@ export function useDraft(
         }
 
         if (value !== lastSavedValue.current) {
-            const wasEmpty = !containsLikelyNonWhitespace(lastSavedValue.current);
-            const isEmpty = !containsLikelyNonWhitespace(value);
-            const shouldDebounceForLargeDraft = isLargeTextInputValueLength(value.length);
-
-            if (wasEmpty !== isEmpty && !shouldDebounceForLargeDraft) {
-                // State transition: empty <-> non-empty
-                // Save immediately for instant feedback on normal-sized drafts.
-                saveDraft(value);
-            } else if (!isEmpty) {
-                // Text is being modified (or is too large for synchronous first-transition persistence).
-                // Debounce to avoid excessive synchronous storage writes while the composer is active.
-                saveTimeoutRef.current = setTimeout(() => {
-                    saveDraft(value);
-                }, autoSaveInterval);
-            }
-            // If both are empty, no need to save
+            const previousSavedValue = lastSavedValue.current;
+            saveDraft(value);
+            scheduleDraftFlush(previousSavedValue, value);
         }
+    }, [value, sessionId, scope, saveDraft, scheduleDraftFlush]);
 
-        return () => {
-            if (saveTimeoutRef.current) {
-                clearTimeout(saveTimeoutRef.current);
-            }
-        };
-    }, [value, sessionId, autoSaveInterval, saveDraft]);
+    // The debounce belongs to the mounted session, not to an individual render. Clearing it on
+    // every value-effect cleanup can cancel the timer scheduled synchronously by setDraftValue.
+    useEffect(() => () => {
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+    }, [scope, sessionId]);
 
     // Save on app state change (background/inactive)
     useEffect(() => {
@@ -267,12 +351,14 @@ export function useDraft(
     useEffect(() => {
         return () => {
             const currentSessionId = lastSessionId.current;
+            const currentScope = lastSessionScope.current;
             const currentValue = latestValue.current;
             if (currentSessionId && currentValue !== lastSavedValue.current) {
-                saveDraftForSession(currentSessionId, currentValue);
+                saveDraftForSession(currentScope, currentSessionId, currentValue);
             }
+            if (currentSessionId) flushDraftForSession(currentScope, currentSessionId);
         };
-    }, [saveDraftForSession]);
+    }, [flushDraftForSession, saveDraftForSession]);
 
     // Clear draft (used after message is sent)
     const clearDraft = useCallback(() => {
@@ -283,25 +369,28 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
-        storage.getState().updateSessionDraft(sessionId, null);
+        saveDraftForSession(scope, sessionId, '');
+        flushDraftForSession(scope, sessionId);
         latestValue.current = '';
         lastSavedValue.current = '';
-    }, [sessionId]);
+    }, [flushDraftForSession, saveDraftForSession, scope, sessionId]);
 
     const clearDraftForSessionIfCurrentValueMatches = useCallback((snapshot: SessionDraftTextSnapshot) => {
         const targetSessionId = snapshot.sessionId.trim();
         if (!targetSessionId) return false;
 
         if (lastSessionId.current !== targetSessionId) {
-            const targetDraft = storage.getState().sessions[targetSessionId]?.draft;
+            if (!scope) return false;
+            const targetDraft = getSessionDraftSnapshot(scope, { kind: 'session', sessionId: targetSessionId })?.document.composer.text.value ?? '';
             if (targetDraft !== snapshot.text) return false;
-            storage.getState().updateSessionDraft(targetSessionId, null);
+            saveDraftForSession(scope, targetSessionId, '');
+            flushDraftForSession(scope, targetSessionId);
             return true;
         }
 
         if (latestValue.current !== snapshot.text) {
             if (latestValue.current !== lastSavedValue.current) {
-                saveDraftForSession(targetSessionId, latestValue.current);
+                saveDraftForSession(scope, targetSessionId, latestValue.current);
             }
             return false;
         }
@@ -311,13 +400,14 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
-        storage.getState().updateSessionDraft(targetSessionId, null);
+        saveDraftForSession(scope, targetSessionId, '');
+        flushDraftForSession(scope, targetSessionId);
         onChange('');
         latestValue.current = '';
         lastSavedValue.current = '';
         autosaveSkip.current = { sessionId: targetSessionId, value: '' };
         return true;
-    }, [onChange, saveDraftForSession]);
+    }, [flushDraftForSession, onChange, saveDraftForSession, scope]);
 
     const clearDraftIfCurrentValueMatches = useCallback((expectedValue: string) => {
         if (!sessionId) return false;
@@ -336,18 +426,18 @@ export function useDraft(
         }
 
         onChange(draft);
-        saveDraftForSession(sessionId, draft);
+        saveDraftForSession(scope, sessionId, draft);
         latestValue.current = draft;
         lastSavedValue.current = draft;
         autosaveSkip.current = { sessionId, value: draft };
-    }, [onChange, saveDraftForSession, sessionId]);
+    }, [onChange, saveDraftForSession, scope, sessionId]);
 
     const restoreComposerSnapshot = useCallback((snapshot: SessionDraftTextSnapshot) => {
         const targetSessionId = snapshot.sessionId.trim();
         if (!targetSessionId) return;
 
         if (lastSessionId.current !== targetSessionId) {
-            saveDraftForSession(targetSessionId, snapshot.text);
+            saveDraftForSession(scope, targetSessionId, snapshot.text);
             return;
         }
 
@@ -357,11 +447,11 @@ export function useDraft(
         }
 
         onChange(snapshot.text);
-        saveDraftForSession(targetSessionId, snapshot.text);
+        saveDraftForSession(scope, targetSessionId, snapshot.text);
         latestValue.current = snapshot.text;
         lastSavedValue.current = snapshot.text;
         autosaveSkip.current = { sessionId: targetSessionId, value: snapshot.text };
-    }, [onChange, saveDraftForSession]);
+    }, [onChange, saveDraftForSession, scope]);
 
     const restoreDraftForSessionIfCurrentValueMatches = useCallback((
         snapshot: SessionDraftTextSnapshot,
@@ -371,16 +461,16 @@ export function useDraft(
         if (!targetSessionId) return false;
 
         if (lastSessionId.current !== targetSessionId) {
-            const targetDraft = storage.getState().sessions[targetSessionId]?.draft;
-            const currentValue = typeof targetDraft === 'string' ? targetDraft : '';
+            if (!scope) return false;
+            const currentValue = getSessionDraftSnapshot(scope, { kind: 'session', sessionId: targetSessionId })?.document.composer.text.value ?? '';
             if (currentValue !== expectedCurrentValue) return false;
-            saveDraftForSession(targetSessionId, snapshot.text);
+            saveDraftForSession(scope, targetSessionId, snapshot.text);
             return true;
         }
 
         if (latestValue.current !== expectedCurrentValue) {
             if (latestValue.current !== lastSavedValue.current) {
-                saveDraftForSession(targetSessionId, latestValue.current);
+                saveDraftForSession(scope, targetSessionId, latestValue.current);
             }
             return false;
         }
@@ -391,10 +481,46 @@ export function useDraft(
         }
 
         onChange(snapshot.text);
-        saveDraftForSession(targetSessionId, snapshot.text);
+        saveDraftForSession(scope, targetSessionId, snapshot.text);
         latestValue.current = snapshot.text;
         lastSavedValue.current = snapshot.text;
         autosaveSkip.current = { sessionId: targetSessionId, value: snapshot.text };
+        return true;
+    }, [onChange, saveDraftForSession, scope]);
+
+    const captureDraftForOutboundHandoff = useCallback((fieldIds?: readonly string[]): SessionDraftTextSnapshot | null => {
+        if (!scope || !address || !sessionId) return null;
+        return {
+            sessionId,
+            text: latestValue.current,
+            scope,
+            currentness: captureSessionDraftCurrentness({ scope, address, fieldIds }),
+        };
+    }, [address, scope, sessionId]);
+
+    const clearDraftCurrentness = useCallback((snapshot: SessionDraftTextSnapshot): boolean => {
+        if (!snapshot.scope || !snapshot.currentness) return false;
+        const targetSessionId = snapshot.sessionId.trim();
+        if (!targetSessionId) return false;
+        const targetAddress = { kind: 'session' as const, sessionId: targetSessionId };
+        if (lastSessionId.current === targetSessionId && latestValue.current !== snapshot.text) {
+            saveDraftForSession(snapshot.scope, targetSessionId, latestValue.current);
+        }
+        fireAndForget(
+            clearSessionDraftCurrentness({
+                scope: snapshot.scope,
+                address: targetAddress,
+                currentness: snapshot.currentness,
+            }),
+            { tag: 'useDraft.clearDraftCurrentness' },
+        );
+        if (lastSessionId.current === targetSessionId) {
+            const remainingText = getSessionDraftSnapshot(snapshot.scope, targetAddress)?.document.composer.text.value ?? '';
+            onChange(remainingText);
+            latestValue.current = remainingText;
+            lastSavedValue.current = remainingText;
+            autosaveSkip.current = { sessionId: targetSessionId, value: remainingText };
+        }
         return true;
     }, [onChange, saveDraftForSession]);
 
@@ -406,5 +532,9 @@ export function useDraft(
         restoreDraftForSessionIfCurrentValueMatches,
         restoreDraft,
         restoreComposerSnapshot,
+        captureDraftForOutboundHandoff,
+        clearDraftCurrentness,
+        draftSnapshot,
+        draftScope: scope,
     };
 }

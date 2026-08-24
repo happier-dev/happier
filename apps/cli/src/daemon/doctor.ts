@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { readFile, readlink } from 'node:fs/promises';
 import { listProcessSnapshot } from './processSnapshotCache';
 
-const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
+const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_SQLITE_HOME'] as const;
 const DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS = [
   'HAPPIER_HOME_DIR',
   'HAPPIER_ACTIVE_SERVER_ID',

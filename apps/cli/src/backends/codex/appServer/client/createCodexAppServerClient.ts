@@ -21,6 +21,7 @@ import {
     HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
+import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
 type JsonRpcMessage = Readonly<{
     id?: number | string | null;
@@ -287,7 +288,7 @@ function createDisposedError(): Error {
     return new Error('Codex app-server client has been disposed');
 }
 
-function resolveRequestTimeoutMs(defaultTimeoutMs: number, options?: CodexAppServerRequestOptions): number | null {
+function resolveRequestTimeoutMs(defaultTimeoutMs: number | null, options?: CodexAppServerRequestOptions): number | null {
     if (options?.timeoutMs === null) {
         return null;
     }
@@ -494,6 +495,15 @@ export async function createCodexAppServerClient(params: Readonly<{
         }
     };
 
+    let terminateChildPromise: Promise<void> | null = null;
+    const terminateChild = (): Promise<void> => {
+        if (terminateChildPromise) return terminateChildPromise;
+        // Snapshot and terminate descendants before closing stdio. Ending stdin first can let a
+        // JavaScript launcher exit and re-parent its native Codex child before the tree walk.
+        terminateChildPromise = killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+        return terminateChildPromise;
+    };
+
     const failWith = (error: unknown, options?: Readonly<{ terminateChild?: boolean }>): void => {
         const failure = error instanceof Error ? error : new Error(String(error));
         failWaiters(state, failure);
@@ -501,16 +511,7 @@ export async function createCodexAppServerClient(params: Readonly<{
         failPendingRequests(fatalFailure);
         reportExit(fatalFailure);
         if (options?.terminateChild === false || disposing) return;
-        try {
-            child.stdin?.end();
-        } catch {
-            // ignore
-        }
-        try {
-            child.kill();
-        } catch {
-            // ignore
-        }
+        void terminateChild();
     };
 
     const handleIncomingMessage = (message: JsonRpcMessage): void => {
@@ -749,16 +750,7 @@ export async function createCodexAppServerClient(params: Readonly<{
         failWaiters(state, disposedError);
         failPendingRequests(disposedError);
         disposePromise = (async () => {
-            try {
-                child.stdin?.end();
-            } catch {
-                // ignore
-            }
-            try {
-                child.kill();
-            } catch {
-                // ignore
-            }
+            await terminateChild();
             await closedPromise;
             await rpcLogger.flush().catch(() => undefined);
         })();

@@ -81,6 +81,7 @@ export function classifyProviderLimitEvidence(value: unknown): ProviderLimitCate
   if (status === 401 || /\b(unauthorized|unauthenticated|authentication|invalid api key|invalid token|login required|not logged in)\b/u.test(text)) return 'auth_invalid';
   if (status === 403 && /\b(scope|permission|auth|token|credential)\b/u.test(text)) return 'auth_invalid';
   if (status === 402 || /\b(upgrade|plan|billing|payment required|subscription|permission denied|not entitled|entitlement)\b/u.test(text)) return 'plan_invalid';
+  if (/\bcurrently\s+experiencing\s+high\s+demand\b/u.test(evidenceText)) return 'capacity';
   if (/\b(capacity|overloaded|server[_\s-]*(?:is[_\s-]*)?overloaded|model[_\s-]*(?:is[_\s-]*)?overloaded|capacity[_\s-]*(?:exceeded|unavailable)|unavailable)\b/u.test(evidenceText)) return 'capacity';
   if (status === 400 || /\b(validation|invalid request|bad request|malformed)\b/u.test(text)) return 'validation_failed';
   if (status === 429) return 'rate_limit';

@@ -37,6 +37,7 @@ import { resolveActionInputValidationError } from '@/sync/domains/actions/resolv
 import { resolveExecutionRunLauncherContainerStyle } from './resolveExecutionRunLauncherContainerStyle';
 import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
+import { toExecutionRunActionPermissionMode } from '@/sync/domains/actions/executionRunActionPermissionMode';
 import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
 import { resolveExecutionRunActionAllowedPermissionModes } from '@/sync/domains/actions/resolveExecutionRunActionAllowedPermissionModes';
 import { ActionInputFields, getValueAtPath, setValueAtTopLevelPatch, type ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
@@ -250,7 +251,10 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
             ?? enabledAgentIds[0]
             ?? null;
         const agentType = typeof rawAgentType === 'string' ? rawAgentType : DEFAULT_AGENT_ID;
-        return getPermissionModeOptionsForAgentType(agentType as any);
+        return getPermissionModeOptionsForAgentType(agentType as any).map((option) => ({
+            ...option,
+            value: toExecutionRunActionPermissionMode(option.value),
+        }));
     }, [enabledAgentIds, selectedBackendChoices, session]);
     const selectedPermissionMode = React.useMemo(() => {
         const value = getValueAtPath(actionInput, 'permissionMode');

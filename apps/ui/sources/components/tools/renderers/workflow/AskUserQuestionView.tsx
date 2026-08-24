@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, TouchableOpacity } from 'react-native';
+import { View, TouchableOpacity, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
@@ -104,6 +104,10 @@ function parseAskUserQuestionAnswersFromToolResult(result: unknown): Record<stri
         }
     }
     return answers;
+}
+
+function keepFreeformTouchInsideInput(event: GestureResponderEvent): void {
+    event.stopPropagation();
 }
 
 // Styles MUST be defined outside the component to prevent infinite re-renders
@@ -616,6 +620,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                             testID={`ask-user-question.freeform:${qIndex}`}
                                             style={styles.freeformInput}
                                             value={freeformAnswers.get(qIndex) ?? ''}
+                                            onTouchStart={keepFreeformTouchInsideInput}
                                             onChangeText={(text) => {
                                                 if (!canInteract) return;
                                                 setFreeformAnswers((prev) => {

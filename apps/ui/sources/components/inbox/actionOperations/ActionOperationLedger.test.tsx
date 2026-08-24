@@ -75,7 +75,9 @@ describe('ActionOperationLedger', () => {
         const registration = actionOperationReentry.registerNewSession({
             requestId: 'spawn-setup-attention',
             draftScope: { serverId: 'server-1', accountId: 'account-1' },
+            draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
         });
+        if (!registration) throw new Error('expected new-session workflow registration');
         registration.markSetupNeedsAttention('session-created');
         const succeeded: ActionOperationSnapshotV1 = {
             ...runningOperation(),

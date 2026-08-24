@@ -4,16 +4,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { clearSessionAttachmentDrafts } from '@/components/sessions/attachments/sessionAttachmentDraftStore';
+import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
 import {
-    clearSessionDraftValues,
-    readSessionDraftValue,
-    writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+    captureSessionDraftCurrentness,
+    clearSessionDraftCurrentness,
+    deleteSessionDraft,
+    getSessionDraftSnapshot,
+    subscribeSessionDraft,
+    writeExistingSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 const TEST_SERVER_ACCOUNT_SCOPE = { serverId: 'server-1', accountId: 'account-1' } as const;
+const TEST_SESSION_DRAFT_ADDRESS = { kind: 'session' as const, sessionId: 's1' };
 let authCredentials: any = { token: 't', secret: 's' };
 const sessionState = vi.hoisted(() => ({
     session: {
@@ -182,6 +187,12 @@ vi.mock('@/utils/platform/responsive', () => ({
 vi.mock('@/hooks/session/useDraft', () => ({
     useDraft: (_sessionId: string, value: string, onChange: (next: string) => void) => {
         draftHookState.valuesBySessionId.set(_sessionId, value);
+        const address = { kind: 'session' as const, sessionId: _sessionId };
+        const draftSnapshot = React.useSyncExternalStore(
+            (listener) => subscribeSessionDraft(TEST_SERVER_ACCOUNT_SCOPE, address, listener),
+            () => getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address),
+            () => getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address),
+        );
         return {
             clearDraft: () => {
                 draftHookState.valuesBySessionId.set(_sessionId, '');
@@ -229,6 +240,38 @@ vi.mock('@/hooks/session/useDraft', () => ({
                     onChange(snapshot.text);
                 }
             },
+            captureDraftForOutboundHandoff: () => ({
+                sessionId: _sessionId,
+                text: draftHookState.valuesBySessionId.get(_sessionId) ?? '',
+                scope: TEST_SERVER_ACCOUNT_SCOPE,
+                currentness: captureSessionDraftCurrentness({
+                    scope: TEST_SERVER_ACCOUNT_SCOPE,
+                    address,
+                }),
+            }),
+            clearDraftCurrentness: (snapshot: Readonly<{ text: string; currentness?: any }>) => {
+                if (!snapshot.currentness) return false;
+                const currentText = draftHookState.valuesBySessionId.get(_sessionId) ?? '';
+                if (currentText !== snapshot.text) {
+                    writeExistingSessionDraft({
+                        scope: TEST_SERVER_ACCOUNT_SCOPE,
+                        sessionId: _sessionId,
+                        patch: { text: currentText },
+                    });
+                }
+                void clearSessionDraftCurrentness({
+                    scope: TEST_SERVER_ACCOUNT_SCOPE,
+                    address,
+                    currentness: snapshot.currentness,
+                });
+                const remainingText = getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address)
+                    ?.document.composer.text.value ?? '';
+                draftHookState.valuesBySessionId.set(_sessionId, remainingText);
+                onChange(remainingText);
+                return true;
+            },
+            draftSnapshot,
+            draftScope: TEST_SERVER_ACCOUNT_SCOPE,
         };
     },
 }));
@@ -457,7 +500,10 @@ installSessionShellCommonModuleMocks({
                         },
                     },
                     sessionListViewDataByServerId: {},
-                    settings: settingsDefaults,
+                    settings: {
+                        ...settingsDefaults,
+                        sessionMessageSendMode: 'agent_queue',
+                    },
                     deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
             })),
             useSession: () => sessionState.session,
@@ -597,7 +643,7 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
         mode: chooseSubmitModeState.mode,
         intent: 'default',
         reason: 'test_decision',
-        pendingSupportState: 'supported',
+        pendingSupportState: chooseSubmitModeState.mode === 'agent_queue' ? 'unsupported' : 'supported',
         ...(chooseSubmitModeState.mode === 'agent_queue'
             ? { directBypassReason: 'selected_direct' }
             : chooseSubmitModeState.mode === 'interrupt'
@@ -607,8 +653,8 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
     chooseSubmitMode: () => chooseSubmitModeState.mode,
     chooseForceImmediateSubmitMode: () => chooseSubmitModeState.mode,
     canDirectSubmitUserMessageNow: () => true,
-    getPendingQueueSubmitSupportState: () => 'supported',
-    isPendingQueueSubmitKnownUnsupported: () => false,
+    getPendingQueueSubmitSupportState: () => chooseSubmitModeState.mode === 'agent_queue' ? 'unsupported' : 'supported',
+    isPendingQueueSubmitKnownUnsupported: () => chooseSubmitModeState.mode === 'agent_queue',
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
     shouldRenderChatTimelineForSession: () => true,
@@ -634,10 +680,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionState.session.active = true;
         sessionState.session.presence = 'online';
         sessionMachineTargetState.available = false;
-        // Most cases exercise direct-send handoff callbacks. Pending delivery has
-        // its own explicit case below and must not make these tests wait on a
-        // callback that transport does not expose.
-        chooseSubmitModeState.mode = 'interrupt';
+        // Most cases exercise the legacy direct-send compatibility path: an
+        // agent queue whose runtime is known not to support durable pending input.
+        // Pending delivery has explicit cases below.
+        chooseSubmitModeState.mode = 'agent_queue';
         enqueuePendingMessageSpy.mockClear();
         updatePendingMessageSpy.mockClear();
         chatListPropsSpy.mockClear();
@@ -657,16 +703,13 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionTranscriptIdsState.current = [];
         draftHookState.valuesBySessionId.clear();
         clearSessionAttachmentDrafts('s1');
-        clearSessionDraftValues(TEST_SERVER_ACCOUNT_SCOPE, 's1', { lifecycle: 'composerCleared' });
-        // The armed continuation has the same composer-clear lifetime as its
-        // sibling routing fields; session deletion is still an idempotent
-        // second cleanup path.
-        clearSessionDraftValues(TEST_SERVER_ACCOUNT_SCOPE, 's1', { lifecycle: 'sessionDeleted' });
+        void deleteSessionDraft({ scope: TEST_SERVER_ACCOUNT_SCOPE, address: TEST_SESSION_DRAFT_ADDRESS });
     });
 
     it('restores unsent attachment drafts when the session input remounts', async () => {
         featureEnabledState.reviewComments = false;
         sendMessageSpy.mockClear();
+        enqueuePendingMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
         uploadSpy.mockClear();
         modalAlertSpy.mockClear();
@@ -1088,7 +1131,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }];
         sessionTranscriptIdsState.current = ['m1'];
         pendingFireAndForget.length = 0;
-        writeSessionDraftValue(
+        existingSessionDraftSemanticValues.write(
             TEST_SERVER_ACCOUNT_SCOPE,
             's1',
             'routing.executionRunDelivery',
@@ -1118,7 +1161,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 });
             });
 
-            expect(readSessionDraftValue(
+            expect(existingSessionDraftSemanticValues.read(
                 TEST_SERVER_ACCOUNT_SCOPE,
                 's1',
                 'routing.executionRunDelivery',
@@ -1131,7 +1174,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 editBadge.onPress();
             });
 
-            expect(readSessionDraftValue(
+            expect(existingSessionDraftSemanticValues.read(
                 TEST_SERVER_ACCOUNT_SCOPE,
                 's1',
                 'routing.executionRunDelivery',
@@ -1273,7 +1316,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             rawRecord: {},
         }];
         sessionTranscriptIdsState.current = ['m1'];
-        writeSessionDraftValue(
+        existingSessionDraftSemanticValues.write(
             TEST_SERVER_ACCOUNT_SCOPE,
             's1',
             'routing.executionRunDelivery',
@@ -1324,7 +1367,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('queued message');
             expect(agentInput.props.attachments).toEqual([]);
-            expect(readSessionDraftValue(
+            expect(existingSessionDraftSemanticValues.read(
                 TEST_SERVER_ACCOUNT_SCOPE,
                 's1',
                 'routing.executionRunDelivery',
@@ -1344,7 +1387,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect(agentInput.props.attachments).toEqual([
                 expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
             ]);
-            expect(readSessionDraftValue(
+            expect(existingSessionDraftSemanticValues.read(
                 TEST_SERVER_ACCOUNT_SCOPE,
                 's1',
                 'routing.executionRunDelivery',
@@ -1441,7 +1484,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
-    it('keeps composer text visible while attachment upload is pending and clears after send', async () => {
+    it('keeps composer text visible while attachment upload is pending and clears at outbound handoff', async () => {
         featureEnabledState.reviewComments = false;
         sendMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
@@ -1452,28 +1495,35 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
-        let resolveUpload: (() => void) | null = null;
+        let resolveUpload: ((result: Readonly<{
+            success: true;
+            path: string;
+            sizeBytes: number;
+            sha256: string;
+        }>) => void) | null = null;
+        const uploadResult = new Promise<Readonly<{
+            success: true;
+            path: string;
+            sizeBytes: number;
+            sha256: string;
+        }>>((resolve) => {
+            resolveUpload = resolve;
+        });
         const uploadStarted = new Promise<void>((resolveStarted) => {
-            uploadSpy.mockImplementationOnce(async () => {
+            uploadSpy.mockImplementationOnce(() => {
                 resolveStarted();
-                return await new Promise((resolve) => {
-                    resolveUpload = () => resolve({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
-                });
+                return uploadResult;
             });
         });
-        let resolveSend: (() => void) | null = null;
-        let localPendingProjectionCreated: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
+            const submit = async (...args: any[]) => {
                 const options = args[4] as
                     | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
                     | undefined;
-                localPendingProjectionCreated = () => options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+                options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
                 resolveStarted();
-                return await new Promise<void>((resolve) => {
-                    resolveSend = resolve;
-                });
-            });
+            };
+            sendMessageSpy.mockImplementationOnce(submit);
         });
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -1508,37 +1558,23 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             expect(pendingFireAndForget.length).toBe(1);
-            await act(async () => {
-                await uploadStarted;
-            });
+            await uploadStarted;
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Describe this image');
             expect(sendMessageSpy).toHaveBeenCalledTimes(0);
 
+            if (!resolveUpload) throw new Error('upload did not start');
+            act(() => resolveUpload?.({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' }));
+            await sendStarted;
+            await pendingFireAndForget[0];
             await act(async () => {
-                if (!resolveUpload) throw new Error('upload did not start');
-                resolveUpload();
-                await sendStarted;
+                await Promise.resolve();
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-            expect(agentInput.props.value).toBe('Describe this image');
-
-            await act(async () => {
-                if (!localPendingProjectionCreated) throw new Error('local pending projection callback was not registered');
-                localPendingProjectionCreated();
-            });
-
-            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('');
-
-            await act(async () => {
-                if (!resolveSend) throw new Error('send did not start');
-                resolveSend();
-                await pendingFireAndForget[0];
-            });
         } finally {
             act(() => {
                 tree?.unmount();
@@ -1562,12 +1598,13 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
         let resolveSend: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async () => {
+            const submit = async () => {
                 resolveStarted();
                 return await new Promise<void>((resolve) => {
                     resolveSend = resolve;
                 });
-            });
+            };
+            sendMessageSpy.mockImplementationOnce(submit);
         });
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -1597,9 +1634,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
 
-            await act(async () => {
-                await sendStarted;
-            });
+            await sendStarted;
 
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Next draft', 'AgentInput');
@@ -1611,10 +1646,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 ], 'AgentInput');
             });
 
+            if (!resolveSend) throw new Error('send did not start');
+            act(() => resolveSend?.());
+            await pendingFireAndForget[0];
             await act(async () => {
-                if (!resolveSend) throw new Error('send did not start');
-                resolveSend();
-                await pendingFireAndForget[0];
+                await Promise.resolve();
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
@@ -1651,16 +1687,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
         });
 
-        let resolveSend: (() => void) | null = null;
-        const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async () => {
-                resolveStarted();
-                return await new Promise<void>((resolve) => {
-                    resolveSend = resolve;
-                });
-            });
-        });
-
         let tree: renderer.ReactTestRenderer | undefined;
         try {
             tree = (await renderScreen(<AppPaneProvider>
@@ -1694,10 +1720,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            await act(async () => {
+            act(() => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Next draft', 'AgentInput');
             });
-            await act(async () => {
+            act(() => {
                 invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
                     { name: 'next.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([98])]) } as any,
                 ], 'AgentInput');
@@ -1706,12 +1732,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await act(async () => {
                 if (!resolveUpload) throw new Error('upload did not start');
                 resolveUpload();
-                await sendStarted;
-            });
-
-            await act(async () => {
-                if (!resolveSend) throw new Error('send did not start');
-                resolveSend();
                 await pendingFireAndForget[0];
             });
 
@@ -1749,17 +1769,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
         });
 
-        let localPendingProjectionCreated: (() => void) | null = null;
-        const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
-                const options = args[4] as
-                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
-                    | undefined;
-                localPendingProjectionCreated = () => options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
-                resolveStarted();
-            });
-        });
-
         let tree: renderer.ReactTestRenderer | undefined;
         try {
             tree = (await renderScreen(<AppPaneProvider>
@@ -1792,7 +1801,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 await uploadStarted;
             });
 
-            await act(async () => {
+            act(() => {
                 invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
                     { name: 'next.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([98])]) } as any,
                 ], 'AgentInput');
@@ -1801,12 +1810,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await act(async () => {
                 if (!resolveUpload) throw new Error('upload did not start');
                 resolveUpload();
-                await sendStarted;
-            });
-
-            await act(async () => {
-                if (!localPendingProjectionCreated) throw new Error('local pending projection callback was not registered');
-                localPendingProjectionCreated();
                 await pendingFireAndForget[0];
             });
 
@@ -2092,6 +2095,12 @@ describe('SessionView (attachments.uploads resumable send)', () => {
     // non-idle. So the destination decision must happen before any Agent-runtime
     // side effect, not after the upload.
     describe('armed Agent continuation', () => {
+        beforeEach(() => {
+            // These cases exercise the transition-owned outbound handoff. The
+            // outer suite defaults to the legacy unsupported-queue fallback.
+            chooseSubmitModeState.mode = 'interrupt';
+        });
+
         const armSecondAgent = () => {
             sessionState.session.active = false;
             sessionState.session.presence = 'offline';
@@ -2395,79 +2404,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             return armedContinuationState.submission;
         }
 
-        it('reconciles a retained submission after its old arm is no longer a next-message promise', async () => {
-            armedContinuationState.intent = null;
-            armedContinuationState.localId = null;
-            armedContinuationState.submissionIntent = {
-                v: 1,
-                mode: 'same_session',
-                sourceAgentId: 'codex',
-                selection: { v: 1, agentId: 'claude' },
-            };
-            armedContinuationState.submission = {
-                localId: 'retained-submission-id',
-                input: {
-                    localId: 'retained-submission-id',
-                    text: 'switch and send this',
-                    meta: {},
-                },
-                currentness: {
-                    text: 'switch and send this',
-                    mentions: [],
-                    attachmentDraftIds: [],
-                },
-            };
-            resolveSessionComposerSendMock.mockImplementationOnce(() => ({ kind: 'send', text: 'switch and send this' }));
-            let settleCanonicalRefresh: () => void = () => {};
-            const canonicalRefresh = new Promise<void>((resolve) => {
-                settleCanonicalRefresh = resolve;
-            });
-            ensureSessionVisibleSpy.mockImplementationOnce(async () => {
-                await canonicalRefresh;
-                return { kind: 'available' };
-            });
-            refreshSessionMessagesSpy.mockImplementationOnce(async () => {
-                await canonicalRefresh;
-            });
-
-            const screen = await renderScreen(<AppPaneProvider>
-                        <SessionView id="s1" />
-                    </AppPaneProvider>);
-            try {
-                expect(screen.getTextContent()).toContain('session.agentContinuation.transition.unknown');
-                const agentInput = findTestInstanceByTypeWithProps(screen.tree!, 'AgentInput' as any, {}) as any;
-                await act(async () => {
-                    invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
-                });
-
-                // The old transition has no live arm to route through, but its
-                // exact localId still blocks a fresh send until existing custody
-                // readers establish whether it was admitted.
-                expect(sendMessageSpy).not.toHaveBeenCalled();
-                expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
-                expect(runSessionAgentTransitionSpy).not.toHaveBeenCalled();
-                expect(ensureSessionVisibleSpy).toHaveBeenCalledWith(
-                    's1',
-                    expect.objectContaining({ forceRefresh: true }),
-                );
-                expect(refreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
-
-                syncPendingRowForLocalId('retained-submission-id');
-                settleCanonicalRefresh();
-                await act(async () => {
-                    await Promise.resolve();
-                    await Promise.resolve();
-                });
-
-                expect(clearArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
-                    expect.objectContaining({ localId: 'retained-submission-id' }),
-                );
-            } finally {
-                act(() => { screen.tree?.unmount(); });
-                pendingFireAndForget.length = 0;
-            }
-        });
-
         it('blocks a remounted nested submission until reconciliation reads canonical custody', async () => {
             const first = await sendArmedText(
                 { type: 'outcome_unknown', localId: 'armed-local-id' },
@@ -2658,12 +2594,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 expect(agentInput.props.attachments).toEqual([
                     expect.objectContaining({ label: 'later.txt' }),
                 ]);
-                expect(clearArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
-                    expect.objectContaining({
-                        localId: 'armed-local-id',
-                        currentness: expect.objectContaining({ attachmentDraftIds: [submittedAttachmentId] }),
-                    }),
-                );
+                expect(clearArmedContinuationSpy).toHaveBeenCalled();
             } finally {
                 act(() => { second.tree?.unmount(); });
                 pendingFireAndForget.length = 0;

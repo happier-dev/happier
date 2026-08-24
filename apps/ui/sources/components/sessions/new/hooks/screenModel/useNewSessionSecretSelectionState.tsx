@@ -27,6 +27,7 @@ type SessionOnlySecretValueEncByProfileIdByEnvVarName =
     NewSessionDraft['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
 
 export function useNewSessionSecretSelectionState(params: Readonly<{
+    draftId: string;
     persistedDraft: PersistedDraftLike;
     selectedProfileId: string | null;
     selectedProfile: AIBackendProfile | null;
@@ -132,6 +133,7 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
     const shouldShowSecretSection = secretRequirements.length > 0;
 
     const { openSecretRequirementModal } = useSecretRequirementFlow({
+        draftId: params.draftId,
         router: params.router,
         navigation: params.navigation,
         useProfiles: params.useProfiles,

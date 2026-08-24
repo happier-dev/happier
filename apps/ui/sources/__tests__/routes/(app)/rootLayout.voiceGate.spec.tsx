@@ -123,8 +123,9 @@ vi.mock('@/sync/domains/state/storageStore', () => {
     return { storage, getStorage: () => storage };
 });
 
-vi.mock('@/sync/sync', () => ({
-    sync: { applySettings: (delta: Record<string, unknown>) => applySettings(delta) },
+vi.mock('@/sync/store/settingsWriters', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/store/settingsWriters')>(),
+    applySystemSettings: (delta: Record<string, unknown>) => applySettings(delta),
 }));
 
 vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({

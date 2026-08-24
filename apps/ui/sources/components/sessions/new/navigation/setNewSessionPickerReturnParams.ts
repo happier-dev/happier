@@ -1,3 +1,5 @@
+import { resolveNewSessionDraftRouteIdentity } from './newSessionDraftRouteIdentity';
+
 type RouteLike = Readonly<{
     key?: string;
     name?: string;
@@ -39,6 +41,8 @@ const NEW_SESSION_PARAM_KEYS = new Set([
     'automationTimezone',
     'dataId',
     'directory',
+    'draftId',
+    'draftOrigin',
     'machineId',
     'path',
     'profileId',
@@ -47,6 +51,7 @@ const NEW_SESSION_PARAM_KEYS = new Set([
     'secretRequirementResultId',
     'secretSessionOnlyId',
     'spawnServerId',
+    'worktree',
 ]);
 
 function isNonEmptyString(value: unknown): value is string {
@@ -109,6 +114,23 @@ export function pickNewSessionRouteParams(params: Readonly<UnknownRouteParams> |
     }
 
     return nextParams;
+}
+
+export function buildNewSessionPickerFallbackHref(params: Readonly<object> | null | undefined): Readonly<{
+    pathname: '/new';
+    params: RouteParams;
+}> {
+    const routeParams = pickNewSessionRouteParams(params as UnknownRouteParams | null | undefined);
+    const identity = resolveNewSessionDraftRouteIdentity({
+        routeDraftId: typeof routeParams.draftId === 'string' ? routeParams.draftId : undefined,
+    });
+    return {
+        pathname: '/new',
+        params: {
+            ...routeParams,
+            draftId: identity.draftId,
+        },
+    };
 }
 
 export function resolveNewSessionPickerReturnRouteKey(state: NavigationStateLike | null | undefined): string | null {

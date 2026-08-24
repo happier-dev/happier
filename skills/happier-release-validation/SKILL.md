@@ -11,7 +11,7 @@ or create a release operation.
 
 ## Start from the target contract
 
-From the explicit candidate checkout, inspect the target-owned profile and its
+From the explicit release checkout, inspect the target-owned profile and its
 executable suite inventory:
 
 ```bash
@@ -40,17 +40,17 @@ commands.
 
 ## Manual certification
 
-1. Record the exact candidate source SHA and every independently versioned
-   component that the candidate changes. Resolve supported stable/preview
-   baselines to immutable tags/artifacts; a rolling tag is discovery only.
+1. Record the release source SHA and every independently versioned component
+   changed by that source. Resolve supported stable/preview baselines to
+   immutable tags/artifacts; a rolling tag is discovery only.
 2. Read `docs/compatibility.md`, map only reachable old/new directions, and
    perform the target-owned suite commands for affected automatic-capable
    surfaces. Record unrun or unavailable proof as such.
 3. Perform risk-selected installer/Docker, cross-OS, provider, mobile, and
-   integrated-evidence review for the surfaces actually affected by the candidate.
+   integrated-evidence review for the surfaces actually affected by the release source.
    Keep editorial judgement, release-note wording, and subjective compatibility
    assessment human-reviewed; do not encode them as prose/style tests.
-4. For every manual scenario, preserve practical evidence: candidate/baseline
+4. For every manual scenario, preserve practical evidence: source/baseline
    identity, command or observed user flow, result, and recovery/failure state.
    Use an existing release record when one exists; do not create a parallel
    ledger, lifecycle state, or certification authority.
@@ -63,7 +63,13 @@ commands.
 - Use the canonical `scripts/pipeline/release-validation/validate-release.mjs`
   path through `scripts/pipeline/run.mjs`; do not copy its suite selection into
   this skill.
+- Manual deep certification validates the release source and the existing loaded
+  stack. It does not create or install local release archives; publication
+  automation owns the outputs it publishes.
 - Run only discriminating compatibility vectors or live flows for affected,
   reachable directions. Do not manufacture a component or platform matrix.
+- Do not read or invoke the legacy workspace/bootstrap material under this
+  skill directory; it encoded the retired local archive-certification workflow
+  and is not part of the current contract.
 - Do not write release notes, tags, GitHub releases, credentials, deploy
   branches, or store submissions from this skill.

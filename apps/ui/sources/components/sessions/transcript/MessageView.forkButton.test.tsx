@@ -550,8 +550,7 @@ describe('MessageView (fork button)', () => {
 
     const flowArgs = openSessionForkStrategyFlowSpy.mock.calls[0]?.[0] as any;
     await act(async () => { await flowArgs.navigateToSession('child-1'); });
-    expect(routerNavigateSpy).toHaveBeenCalledWith('/session/child-1?serverId=server-a', expect.any(Object));
-    expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/child-1?serverId=server-a');
   });
 
   it('carries the replay seed settings the account resolves', async () => {

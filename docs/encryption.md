@@ -244,6 +244,18 @@ sequenceDiagram
 - `UserKVStore.value` is encrypted bytes encoded as base64 on the wire.
 - `kvMutate` expects base64 strings; `kvGet/list/bulk` return base64 strings.
 
+Session drafts reserve a typed `UserKVStore` key prefix instead of exposing their rows through the
+generic KV API. The draft routes carry an explicit content envelope and enforce its owner:
+
+- a new-Session draft follows the Account encryption mode and uses Account-scoped key material;
+- an existing-Session draft follows that Session's fixed encryption mode and, in E2EE mode, uses
+  the Session data-encryption key;
+- raw attachment bytes, local file handles and URIs, credentials, secret values, and local
+  presentation state are not part of synchronized draft content.
+
+This keeps one draft document and synchronization contract without weakening the different key
+ownership of Account-scoped and Session-scoped data.
+
 ## On-wire formats (encrypted fields)
 
 ```mermaid
@@ -573,6 +585,12 @@ Feature gates:
 - `encryption.accountOptOut`
 
 Do not gate plaintext behavior on raw env vars or `capabilities` fields.
+
+When Account encryption mode changes, every active new-Session draft participates in the same
+atomic mode transition as the other Account-scoped encrypted records. Existing-Session drafts do
+not participate: their envelope remains bound to the owning Session. A missing or incomplete draft
+census, a revision mismatch, or a wrong envelope kind aborts the Account transition without
+partially changing the mode.
 
 ## Terminal pairing authentication rollout
 

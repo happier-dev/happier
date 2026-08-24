@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { withAskUserQuestionUiFreeformDefault } from './askUserQuestionFreeformDefault';
+import { normalizeClaudeAskUserQuestionInputForPublication } from '../utils/normalizeClaudeAskUserQuestionInput';
 
-describe('withAskUserQuestionUiFreeformDefault', () => {
+describe('normalizeClaudeAskUserQuestionInputForPublication', () => {
     it('injects freeform: {} on every question when absent', () => {
         const input = {
             questions: [
@@ -10,7 +10,7 @@ describe('withAskUserQuestionUiFreeformDefault', () => {
                 { header: 'B', question: 'pick b', multiSelect: true, options: [{ label: 'y' }] },
             ],
         };
-        const out = withAskUserQuestionUiFreeformDefault('AskUserQuestion', input) as any;
+        const out = normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', input) as any;
         expect(out.questions[0].freeform).toEqual({});
         expect(out.questions[1].freeform).toEqual({});
         // Original untouched
@@ -24,46 +24,39 @@ describe('withAskUserQuestionUiFreeformDefault', () => {
                 { header: 'A', question: 'pick', multiSelect: false, options: [], freeform: { placeholder: 'custom' } },
             ],
         };
-        const out = withAskUserQuestionUiFreeformDefault('AskUserQuestion', input) as any;
+        const out = normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', input) as any;
         expect(out.questions[0].freeform).toEqual({ placeholder: 'custom' });
     });
 
     it('handles snake_case tool name alias', () => {
         const input = { questions: [{ header: 'H', question: 'Q', multiSelect: false, options: [] }] };
-        const out = withAskUserQuestionUiFreeformDefault('ask_user_question', input) as any;
+        const out = normalizeClaudeAskUserQuestionInputForPublication('ask_user_question', input) as any;
         expect(out.questions[0].freeform).toEqual({});
     });
 
     it('is a no-op for non-AskUserQuestion tools', () => {
         const input = { command: 'ls' };
-        expect(withAskUserQuestionUiFreeformDefault('Bash', input)).toBe(input);
+        expect(normalizeClaudeAskUserQuestionInputForPublication('Bash', input)).toBe(input);
     });
 
-    it('is a no-op when input is not an object', () => {
-        expect(withAskUserQuestionUiFreeformDefault('AskUserQuestion', null)).toBe(null);
-        expect(withAskUserQuestionUiFreeformDefault('AskUserQuestion', 'str')).toBe('str');
+    it('rejects malformed AskUserQuestion input through the shared publication validator', () => {
+        expect(() => normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', null)).toThrow();
+        expect(() => normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', 'str')).toThrow();
+        expect(() => normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', {})).toThrow();
+        expect(() => normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', { questions: 'bad' })).toThrow();
     });
 
-    it('is a no-op when questions is missing or not an array', () => {
-        expect(withAskUserQuestionUiFreeformDefault('AskUserQuestion', {})).toEqual({});
-        const input = { questions: 'bad' };
-        expect(withAskUserQuestionUiFreeformDefault('AskUserQuestion', input)).toBe(input);
-    });
-
-    it('skips non-object questions while mutating valid ones', () => {
+    it('rejects malformed question descriptors through the shared publication validator', () => {
         const input = { questions: [null, { header: 'A', question: 'Q', multiSelect: false, options: [] }, 42] };
-        const out = withAskUserQuestionUiFreeformDefault('AskUserQuestion', input) as any;
-        expect(out.questions[0]).toBeNull();
-        expect(out.questions[1].freeform).toEqual({});
-        expect(out.questions[2]).toBe(42);
+        expect(() => normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', input)).toThrow();
     });
 
-    it('returns the original object reference when nothing changed (no mutation required)', () => {
+    it('preserves an existing freeform field in the bounded publication snapshot', () => {
         const input = {
             questions: [
                 { header: 'A', question: 'pick', multiSelect: false, options: [], freeform: {} },
             ],
         };
-        expect(withAskUserQuestionUiFreeformDefault('AskUserQuestion', input)).toBe(input);
+        expect(normalizeClaudeAskUserQuestionInputForPublication('AskUserQuestion', input)).toEqual(input);
     });
 });

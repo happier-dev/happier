@@ -29,6 +29,32 @@ function buildSettingsWithExecutionRunsEnabled() {
 }
 
 describe('buildCommandPaletteCommands', () => {
+  it('delegates the new-session command to the caller-owned ordinary-entry callback', async () => {
+    const push = vi.fn();
+    const openNewSession = vi.fn();
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+      nav: {
+        push,
+        openNewSession,
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    await commands.find((command) => command.id === 'new-session')?.action();
+
+    expect(openNewSession).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalledWith('/new');
+  });
+
   it('includes ActionSpec-derived commands when enabled (execution runs + voice)', async () => {
     const pushes: string[] = [];
     const executorCalls: Array<{ actionId: string }> = [];
@@ -41,6 +67,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: true, memorySearchEnabled: false },
       nav: {
         push: (path) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: {
@@ -88,6 +115,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: (path) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -119,6 +147,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -152,6 +181,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -211,6 +241,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -248,6 +279,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -269,6 +301,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: true },
       nav: {
         push: (path) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -296,6 +329,7 @@ describe('buildCommandPaletteCommands', () => {
       },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -318,6 +352,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -339,6 +374,7 @@ describe('buildCommandPaletteCommands', () => {
       features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: (path) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -379,6 +415,7 @@ describe('buildCommandPaletteCommands', () => {
       },
       nav: {
         push: (path: string) => pushes.push(path),
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -429,6 +466,7 @@ describe('buildCommandPaletteCommands', () => {
       },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },
@@ -466,6 +504,7 @@ describe('buildCommandPaletteCommands', () => {
       },
       nav: {
         push: () => {},
+        openNewSession: () => {},
         navigateToSession: () => {},
       },
       auth: { logout: async () => {} },

@@ -81,6 +81,8 @@ import { treeRowId } from './drop-resolution/treeRowId';
 import { SessionListViewMenuButton } from './sessionListViewMenu';
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     buildVisibleSessionNavigationEntries,
@@ -155,6 +157,7 @@ import { SessionListSelectionActionBarHost } from './selection/SessionListSelect
 import { Icon } from '@/components/ui/icons/Icon';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
+import { NewSessionDraftsSection } from './NewSessionDraftsSection';
 
 const BULK_MUTATION_SCOPE_REQUIREMENT_BY_REASON = {
     'server-id': 'a server id',
@@ -1190,6 +1193,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         const directory = seedMachineTarget?.machineId === workspaceScopeHint.machineId
             ? seedMachineTarget.basePath
             : workspaceScopeHint.rootPath;
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         if (rememberLastProjectSessionSelections && seedSession) {
             const dataId = storeTempData(buildNewSessionTempDataFromSessionConfiguration({
                 session: seedSession,
@@ -1199,21 +1203,25 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             router.push({
                 pathname: '/new',
                 params: {
+                    ...buildNewSessionLaunchRouteParams({
+                        draftId,
+                        machineId: workspaceScopeHint.machineId,
+                        directory,
+                        targetServerId: workspaceScopeHint.serverId,
+                    }),
                     dataId,
-                    machineId: workspaceScopeHint.machineId,
-                    directory,
-                    ...(workspaceScopeHint.serverId ? { spawnServerId: workspaceScopeHint.serverId } : {}),
                 },
             } as any);
             return;
         }
         router.push({
             pathname: '/new',
-            params: {
+            params: buildNewSessionLaunchRouteParams({
+                draftId,
                 machineId: workspaceScopeHint.machineId,
                 directory,
-                ...(workspaceScopeHint.serverId ? { spawnServerId: workspaceScopeHint.serverId } : {}),
-            },
+                targetServerId: workspaceScopeHint.serverId,
+            }),
         } as any);
     }, [rememberLastProjectSessionSelections, router]);
 
@@ -1223,13 +1231,15 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             return;
         }
         const scope = workspace as { serverId?: string | null; machineId: string; rootPath: string };
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         router.push({
             pathname: '/new',
-            params: {
+            params: buildNewSessionLaunchRouteParams({
+                draftId,
                 machineId: scope.machineId,
                 directory: scope.rootPath,
-                ...(scope.serverId ? { spawnServerId: scope.serverId } : {}),
-            },
+                targetServerId: scope.serverId,
+            }),
         } as any);
     }, [router]);
 
@@ -2290,6 +2300,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
 
     const renderVirtualizedHeader = React.useCallback(() => (
         <SessionsListHeader>
+            <NewSessionDraftsSection density={rowPresentationSettings.density} />
             <SessionFolderScopeBreadcrumb
                 breadcrumbs={folderBreadcrumbs}
                 onClear={handleClearSessionFolderFocus}
@@ -2297,7 +2308,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                 rootTitle={folderBreadcrumbRootTitle}
             />
         </SessionsListHeader>
-    ), [folderBreadcrumbRootTitle, folderBreadcrumbs, handleClearSessionFolderFocus, handleSelectSessionFolderBreadcrumb]);
+    ), [folderBreadcrumbRootTitle, folderBreadcrumbs, handleClearSessionFolderFocus, handleSelectSessionFolderBreadcrumb, rowPresentationSettings.density]);
 
     const renderVirtualizedFooter = React.useCallback(() => {
         return (

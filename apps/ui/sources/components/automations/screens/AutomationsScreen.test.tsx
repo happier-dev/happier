@@ -136,7 +136,13 @@ describe('AutomationsScreen', () => {
         expect(createButton.props.accessibilityLabel).toBe('automations.screen.createAutomationA11y');
         await pressTestInstanceAsync(createButton);
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/new?automation=1');
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                automation: '1',
+                draftId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+            },
+        });
     });
 
     it('runs an automation and toggles enabled state from row controls', async () => {

@@ -270,6 +270,7 @@ describe('ChatList Legend-primary host axis', () => {
 
             const screen = await renderLegendPrimaryChatList();
             const props = requireCapturedLegendListProps();
+            await publishLegendPaintMetrics(screen, props);
             const legendRef = flashListChatListHarnessState.legendListRefHandle as Readonly<{
                 scrollToIndex: ReturnType<typeof vi.fn>;
                 scrollToOffset: ReturnType<typeof vi.fn>;

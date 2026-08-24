@@ -227,9 +227,9 @@ export function RootLayoutNavigationEffects(): React.ReactElement | null {
         fireAndForget((async () => {
             try {
                 // Defer loading sync/storage modules until needed to keep module evaluation light.
-                const [{ storage }, { sync }] = await Promise.all([
+                const [{ storage }, { applySystemSettings }] = await Promise.all([
                     import('@/sync/domains/state/storage'),
-                    import('@/sync/sync'),
+                    import('@/sync/store/settingsWriters'),
                 ]);
 
                 if (cancelled) return;
@@ -238,7 +238,7 @@ export function RootLayoutNavigationEffects(): React.ReactElement | null {
                 const billingMode = voice?.adapters?.realtime_elevenlabs?.billingMode ?? 'happier';
                 if (providerId !== 'realtime_elevenlabs') return;
                 if (billingMode !== 'happier') return;
-                sync.applySettings({ voice: { ...voice, providerId: 'off' } }, { source: 'system' });
+                applySystemSettings({ voice: { ...voice, providerId: 'off' } });
             } catch {
                 // Non-fatal: feature gating should never crash the root layout.
             }

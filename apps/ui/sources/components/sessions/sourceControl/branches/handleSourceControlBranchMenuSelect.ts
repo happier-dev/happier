@@ -1,5 +1,8 @@
 import type { Router } from 'expo-router';
 
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+
 export type SourceControlBranchMenuMachineTarget = Readonly<{
     machineId: string;
     basePath: string;
@@ -37,18 +40,15 @@ export async function handleSourceControlBranchMenuSelect(input: Readonly<{
     }
     if (itemId === 'worktree:create-from-another-branch') {
         input.closeMenu();
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         input.router.push({
             pathname: '/new',
-            params: input.machineTarget?.machineId
-                ? {
-                    machineId: input.machineTarget.machineId,
-                    directory: input.directoryFallback,
-                    worktree: 'new',
-                }
-                : {
-                    directory: input.directoryFallback,
-                    worktree: 'new',
-                },
+            params: buildNewSessionLaunchRouteParams({
+                draftId,
+                machineId: input.machineTarget?.machineId,
+                directory: input.directoryFallback,
+                worktree: 'new',
+            }),
         });
         return;
     }

@@ -8,6 +8,7 @@ import type {
     SessionRuntimeActivityState,
     SessionMessageAttentionImpact,
     SessionRuntimeIssueV1,
+    SessionDraftSocketUpdateV1,
     SessionStoredMessageContent,
 } from "@happier-dev/protocol";
 
@@ -354,7 +355,9 @@ export type EphemeralEvent = {
     machineId: string;
     online: boolean;
     timestamp: number;
-};
+} | ({
+    type: 'session-draft-updated';
+} & SessionDraftSocketUpdateV1);
 
 // === EVENT PAYLOAD TYPES ===
 

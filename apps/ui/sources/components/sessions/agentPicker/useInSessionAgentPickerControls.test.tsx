@@ -5,12 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import {
-    readSessionDraftValue,
-    resetSessionDraftValuesCachesForTests,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { clearPersistedSessionDraftValues } from '@/sync/domains/state/sessionDraftValuesPersistence';
 import { t } from '@/text';
 
 import { APPLIED_RUNTIME_MARKER_ICON } from '@/components/sessions/agentInput/appliedRuntimeMarker';
@@ -166,8 +162,6 @@ describe('useInSessionAgentPickerControls', () => {
     beforeEach(() => {
         // The armed choice is a Session draft value now, so each case starts from
         // an empty draft rather than inheriting the previous one's arm.
-        resetSessionDraftValuesCachesForTests();
-        clearPersistedSessionDraftValues(null);
         announceAccessibilityMessage.mockClear();
         machineRpcWithServerScope.mockReset();
         machineRpcWithServerScope.mockResolvedValue(AVAILABLE);
@@ -561,7 +555,8 @@ describe('useInSessionAgentPickerControls', () => {
     });
 
     it('fails closed while an enabled feature decision becomes unresolved without spending its arm', async () => {
-        const hook = await renderControls();
+        const accountScope = { serverId: 'server-1', accountId: 'account-unresolved' } as const;
+        const hook = await renderControls({ accountScope });
         await openPicker(hook);
 
         await act(async () => {
@@ -576,7 +571,7 @@ describe('useInSessionAgentPickerControls', () => {
         // but it is not proof that an already-persisted choice became stale.
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
         expect(hook.getCurrent().armedContinuation).toBeNull();
-        expect(readSessionDraftValue(null, 'session-1', 'routing.agentContinuation')).toBeDefined();
+        expect(existingSessionDraftSemanticValues.read(accountScope, 'session-1', 'routing.agentContinuation')).toBeDefined();
 
         await hook.rerender({ featureDecision: { state: 'enabled' } });
 
@@ -587,8 +582,6 @@ describe('useInSessionAgentPickerControls', () => {
     it('clears the previous Account arm so returning to it cannot resurrect the switch', async () => {
         const accountA = { serverId: 'server-1', accountId: 'account-a' } as const;
         const accountB = { serverId: 'server-1', accountId: 'account-b' } as const;
-        clearPersistedSessionDraftValues(accountA);
-        clearPersistedSessionDraftValues(accountB);
         const hook = await renderControls({ accountScope: accountA });
         await openPicker(hook);
         await act(async () => {
@@ -600,8 +593,8 @@ describe('useInSessionAgentPickerControls', () => {
         await act(async () => { await Promise.resolve(); });
 
         expect(hook.getCurrent().armedContinuation).toBeNull();
-        expect(readSessionDraftValue(accountA, 'session-1', 'routing.agentContinuation')).toBeUndefined();
-        expect(readSessionDraftValue(accountB, 'session-1', 'routing.agentContinuation')).toBeUndefined();
+        expect(existingSessionDraftSemanticValues.read(accountA, 'session-1', 'routing.agentContinuation')).toBeUndefined();
+        expect(existingSessionDraftSemanticValues.read(accountB, 'session-1', 'routing.agentContinuation')).toBeUndefined();
 
         await hook.rerender({ accountScope: accountA });
         await act(async () => { await Promise.resolve(); });

@@ -153,6 +153,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     rejectReviewStartMethodUnavailable?: boolean;
     rejectStructuredTurnInput?: boolean;
     rejectStructuredSteerInput?: boolean;
+    steerUserMessageEchoDelayMs?: number;
     emitResumeContinuationUserInputRequest?: boolean;
     emitHistoricalResumeUserInputRequestBeforeResponse?: boolean;
     emitResumeTurnStartedBeforeResponse?: boolean;
@@ -237,7 +238,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32600, message: "Invalid request: invalid type: map, expected a string" } }) + "\\n");',
         '            continue;',
         '        }',
-        '        if (msg.params?.persistExtendedHistory !== true) {',
+        '        if (msg.params?.persistExtendedHistory !== true || typeof msg.params?.excludeTurns !== "boolean") {',
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32000, message: "missing thread/resume flags" } }) + "\\n");',
         '            continue;',
         '        }',
@@ -1523,6 +1524,11 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        setTimeout(() => {',
         '            process.stdout.write(JSON.stringify({ id: msg.id, result: { turnId: selected } }) + "\\n");',
         '        }, steerResponseDelayMs);',
+        '        if (typeof msg.params?.clientUserMessageId === "string" && msg.params.clientUserMessageId.length > 0) {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { threadId: msg.params?.threadId ?? null, turnId: selected, item: { id: "steer-user-" + msg.params.clientUserMessageId, type: "userMessage", clientId: msg.params.clientUserMessageId, content: msg.params?.input ?? [] } } }) + "\\n");',
+        `            }, ${JSON.stringify(params.steerUserMessageEchoDelayMs ?? 0)});`,
+        '        }',
         '        continue;',
         '    }',
         '    if (msg.method === "thread/rollback") {',
@@ -1585,6 +1591,7 @@ describe('createCodexAppServerRuntime', () => {
             rejectReviewStartMethodUnavailable?: boolean;
             rejectStructuredTurnInput?: boolean;
             rejectStructuredSteerInput?: boolean;
+            steerUserMessageEchoDelayMs?: number;
             emitResumeContinuationUserInputRequest?: boolean;
             emitHistoricalResumeUserInputRequestBeforeResponse?: boolean;
             emitResumeTurnStartedBeforeResponse?: boolean;
@@ -1642,6 +1649,7 @@ describe('createCodexAppServerRuntime', () => {
             rejectReviewStartMethodUnavailable: options.rejectReviewStartMethodUnavailable,
             rejectStructuredTurnInput: options.rejectStructuredTurnInput,
             rejectStructuredSteerInput: options.rejectStructuredSteerInput,
+            steerUserMessageEchoDelayMs: options.steerUserMessageEchoDelayMs,
             emitResumeContinuationUserInputRequest: options.emitResumeContinuationUserInputRequest,
             emitHistoricalResumeUserInputRequestBeforeResponse: options.emitHistoricalResumeUserInputRequestBeforeResponse,
             emitResumeTurnStartedBeforeResponse: options.emitResumeTurnStartedBeforeResponse,
@@ -1944,12 +1952,14 @@ describe('createCodexAppServerRuntime', () => {
                     params: expect.objectContaining({
                         threadId: 'resume-123',
                         persistExtendedHistory: true,
+                        excludeTurns: true,
                     }),
                 }),
                 expect.objectContaining({
                     params: expect.objectContaining({
                         threadId: 'existing-456',
                         persistExtendedHistory: true,
+                        excludeTurns: true,
                     }),
                 }),
             ]),
@@ -2113,6 +2123,7 @@ describe('createCodexAppServerRuntime', () => {
                             id: ':read-only',
                         },
                         persistExtendedHistory: true,
+                        excludeTurns: false,
                     }),
                 }),
             ]),
@@ -3727,6 +3738,62 @@ describe('createCodexAppServerRuntime', () => {
             userMessageSeq: 42,
             providerTurnId: 'turn-overlap-start',
         });
+    });
+
+    it('places a correlated steer at the provider user-message boundary before accepting Pending custody', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture(
+            'happier-codex-app-server-runtime-steer-user-boundary-',
+            { steerUserMessageEchoDelayMs: 80 },
+        );
+        const acceptedPrompts: Array<Readonly<{
+            localIds?: readonly string[] | null;
+            userMessageSeq: number | null;
+            providerTurnId: string;
+        }>> = [];
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+        runtime.setOnPromptAcceptedByProvider((prompt) => {
+            acceptedPrompts.push(prompt);
+        });
+
+        await runtime.startOrLoad({});
+        const activeTurn = runtime.sendPrompt('overlap-start');
+        await waitForCondition(() => runtime.canSteerPrompt(), {
+            timeoutMs: 1_000,
+            intervalMs: 10,
+            label: 'active Codex turn to become steerable',
+        });
+
+        await runtime.steerPrompt('correlated steer', {
+            localId: 'pending-steer-287',
+            userMessageSeq: 287,
+        });
+
+        const requestLog = await readRequestLog(requestLogPath);
+        expect(requestLog).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                method: 'turn/steer',
+                params: expect.objectContaining({
+                    clientUserMessageId: 'pending-steer-287',
+                }),
+            }),
+        ]));
+        expect(acceptedPrompts).not.toContainEqual(expect.objectContaining({
+            localIds: ['pending-steer-287'],
+        }));
+
+        await waitForCondition(
+            () => acceptedPrompts.some((prompt) => prompt.localIds?.includes('pending-steer-287') === true),
+            {
+                timeoutMs: 1_000,
+                intervalMs: 10,
+                label: 'provider user-message echo to settle Pending custody',
+            },
+        );
+        await activeTurn;
     });
 
     it('materializes a woken head steer during a genuinely active turn and leaves its FIFO neighbor queued', async () => {

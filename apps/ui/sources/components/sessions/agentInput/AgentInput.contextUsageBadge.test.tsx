@@ -93,7 +93,7 @@ installAgentInputCommonModuleMocks({
                 useSetting: createUseSettingMock({ values: storageSettings }),
                 useSettings: () => storageSettings,
                 useSessionMessages: () => ({ messages: [], isLoaded: true }),
-                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+                useSessionTranscriptIds: () => ({ ids: [], isLoaded: true, hasRetainedContent: false }),
                 useSessionMessagesById: () => ({}),
                 useSessionMessagesVersion: () => 0,
                 useSessionMessagesReducerState: () => createReducer(),
@@ -291,6 +291,45 @@ vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
 }));
 
 describe('AgentInput (context usage badge)', () => {
+    it('renders host-provided trailing status actions even without another status item', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                value=""
+                placeholder="Type"
+                onChangeText={() => {}}
+                onSend={() => {}}
+                autocompleteKinds={[]}
+                autocompleteSuggestions={async () => []}
+                statusTrailingActions={React.createElement('View', { testID: 'host-status-action' })}
+            />,
+        );
+
+        expect(screen.findByTestId('agent-input-status-trailing')).toBeTruthy();
+        expect(screen.findByTestId('host-status-action')).toBeTruthy();
+        act(() => screen.tree.unmount());
+    });
+
+    it('allows a host with an editable permission chip to omit the repeated status label', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                value=""
+                placeholder="Type"
+                onChangeText={() => {}}
+                onSend={() => {}}
+                autocompleteKinds={[]}
+                autocompleteSuggestions={async () => []}
+                statusTrailingActions={React.createElement('View', { testID: 'host-status-action' })}
+                showStatusPermissionMode={false}
+            />,
+        );
+
+        expect(screen.findByTestId('host-status-action')).toBeTruthy();
+        expect(screen.getTextContent()).not.toContain('Default');
+        act(() => screen.tree.unmount());
+    });
+
     beforeEach(() => {
         captured.last = null;
         windowDimensionsState.width = 800;

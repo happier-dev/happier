@@ -1,22 +1,49 @@
 function buildNewSessionContextRouteParams(params: Readonly<{
     dataId?: string | null;
+    draftId?: string | null;
     targetServerId?: string | null;
 }>): Readonly<{
     dataId?: string;
+    draftId?: string;
     spawnServerId?: string;
 }> {
     return {
         ...(params.dataId ? { dataId: params.dataId } : {}),
+        ...(params.draftId ? { draftId: params.draftId } : {}),
+        ...(params.targetServerId ? { spawnServerId: params.targetServerId } : {}),
+    };
+}
+
+export function buildNewSessionLaunchRouteParams(params: Readonly<{
+    draftId: string;
+    directory?: string | null;
+    machineId?: string | null;
+    targetServerId?: string | null;
+    worktree?: string | null;
+}>): Readonly<{
+    draftId: string;
+    directory?: string;
+    machineId?: string;
+    spawnServerId?: string;
+    worktree?: string;
+}> {
+    return {
+        draftId: params.draftId,
+        ...(params.machineId ? { machineId: params.machineId } : {}),
+        ...(params.directory ? { directory: params.directory } : {}),
+        ...(params.worktree ? { worktree: params.worktree } : {}),
         ...(params.targetServerId ? { spawnServerId: params.targetServerId } : {}),
     };
 }
 
 export function buildMachinePickerRouteParams(params: Readonly<{
     dataId?: string | null;
+    draftId?: string | null;
     selectedMachineId: string | null;
     targetServerId: string | null;
 }>): Readonly<{
     dataId?: string;
+    draftId?: string;
     selectedId?: string;
     spawnServerId?: string;
 }> {
@@ -28,9 +55,11 @@ export function buildMachinePickerRouteParams(params: Readonly<{
 
 export function buildServerPickerRouteParams(params: Readonly<{
     dataId?: string | null;
+    draftId?: string | null;
     targetServerId: string | null;
 }>): Readonly<{
     dataId?: string;
+    draftId?: string;
     selectedId?: string;
 }> {
     return {
@@ -41,11 +70,13 @@ export function buildServerPickerRouteParams(params: Readonly<{
 
 export function buildProfilePickerRouteParams(params: Readonly<{
     dataId?: string | null;
+    draftId?: string | null;
     selectedProfileId: string | null;
     selectedMachineId: string | null;
     targetServerId: string | null;
 }>): Readonly<{
     dataId?: string;
+    draftId?: string;
     selectedId?: string;
     machineId?: string;
     spawnServerId?: string;

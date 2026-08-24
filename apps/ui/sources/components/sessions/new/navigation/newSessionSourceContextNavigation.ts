@@ -2,6 +2,8 @@ import type { SessionForkPoint } from '@happier-dev/protocol';
 
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import type { ExistingSessionAuthoringSnapshotSession } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 
 export type NewSessionSourceContextNavigation = Readonly<{
@@ -51,14 +53,18 @@ export function buildNewSessionSourceContextNavigation(params: Readonly<{
         : (params.machineId ?? '').trim();
     const directory = typeof seed.directory === 'string' ? seed.directory.trim() : '';
     const serverId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
+    const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
 
     return {
         pathname: '/new',
         params: {
+            ...buildNewSessionLaunchRouteParams({
+                draftId,
+                machineId,
+                directory,
+                targetServerId: serverId,
+            }),
             dataId,
-            ...(machineId ? { machineId } : {}),
-            ...(directory ? { directory } : {}),
-            ...(serverId ? { spawnServerId: serverId } : {}),
         },
     };
 }
