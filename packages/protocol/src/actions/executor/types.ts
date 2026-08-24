@@ -1,5 +1,5 @@
 import type { ActionsSettingsV1 } from '../actionSettings.js';
-import type { ActionExecuteResult } from '../actionExecutionResult.js';
+import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { AgentsBackendsListOutput } from '../agentBackendInventory.js';
 import type { ActionId, PluginDevLoopActionIdV1, RuntimeActionIdV1 } from '../actionIds.js';
 import type {
@@ -1183,22 +1183,22 @@ export type ActionExecutorDeps = Readonly<{
     input: AccountApiTokensCreateActionInputV1;
     context: ActionExecutorContext;
     signal?: AbortSignal;
-  }>) => Promise<AccountApiTokensCreateActionOutputV1>;
+  }>) => Promise<AccountApiTokensCreateActionOutputV1 | ActionExecuteFailure>;
   accountApiTokensListAction?: (args: Readonly<{
     input: AccountApiTokensListActionInputV1;
     context: ActionExecutorContext;
     signal?: AbortSignal;
-  }>) => Promise<AccountApiTokensListActionOutputV1>;
+  }>) => Promise<AccountApiTokensListActionOutputV1 | ActionExecuteFailure>;
   accountApiTokensRevokeAction?: (args: Readonly<{
     input: AccountApiTokensRevokeActionInputV1;
     context: ActionExecutorContext;
     signal?: AbortSignal;
-  }>) => Promise<AccountApiTokensRevokeActionOutputV1>;
+  }>) => Promise<AccountApiTokensRevokeActionOutputV1 | ActionExecuteFailure>;
   accountApiTokensRevokeAllAction?: (args: Readonly<{
     input: AccountApiTokensRevokeAllActionInputV1;
     context: ActionExecutorContext;
     signal?: AbortSignal;
-  }>) => Promise<AccountApiTokensRevokeAllActionOutputV1>;
+  }>) => Promise<AccountApiTokensRevokeAllActionOutputV1 | ActionExecuteFailure>;
 
   pluginPermissionGrantAction?: (args: Readonly<
     & {
