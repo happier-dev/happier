@@ -742,6 +742,11 @@ describe('CORE-A curated package exports', () => {
             'PluginDeclarativeStateV2',
             'PluginJsonSchemaValidator',
         ]);
+        await expectCanonicalInventoryBarrelClosure('./reviews', [
+            'ScmPullRequestReviewScopeProductionV1',
+            'ScmPullRequestReviewScopeV1',
+            'produceScmPullRequestReviewScope',
+        ]);
     });
 
     it('gives each author contract one source-barrel owner before inventory generation', async () => {

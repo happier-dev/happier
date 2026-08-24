@@ -584,6 +584,31 @@ describe('normal SDK declaration closure identities', () => {
         }
     });
 
+    it('keeps selected pull-request review scope identities at the canonical Protocol owner', async () => {
+        const sourceText = await readFile(new URL('./reviews/scope.ts', import.meta.url), 'utf8');
+        const sourceFile = parseSource('reviews/scope.ts', sourceText);
+        const declaration = emittedIsolatedDeclaration('reviews/scope.ts', sourceText);
+        const emitted = parseSource('reviews/scope.d.ts', declaration);
+        const scope = exportedTypeAlias(emitted, 'ScmPullRequestReviewScopeV1');
+        const production = exportedTypeAlias(emitted, 'ScmPullRequestReviewScopeProductionV1');
+
+        expect(scope?.type.getText(emitted)).toBe('ProtocolScmPullRequestReviewScopeV1');
+        expect(production?.type.getText(emitted)).toBe('ProtocolScmPullRequestReviewScopeProductionV1');
+        expect(importedName(
+            emitted,
+            '@happier-dev/protocol',
+            'ProtocolScmPullRequestReviewScopeV1',
+        )).toBe('ScmPullRequestReviewScopeV1');
+        expect(reexportedName(
+            emitted,
+            '@happier-dev/protocol',
+            'ScmPullRequestReviewScopeV1Schema',
+        )).toBe('ScmPullRequestReviewScopeV1Schema');
+        expect(exportedCallableTypeText(sourceFile, 'produceScmPullRequestReviewScope'))
+            .toBe('typeof canonicalProduceScmPullRequestReviewScope');
+        expect(declaration).not.toMatch(/\b(?:z\.Zod|Zod[A-Za-z])/u);
+    });
+
     it('keeps public UI and testkit author declarations independent from private Protocol and Zod types', async () => {
         const sources = await Promise.all([
             './ui.ts',

@@ -152,12 +152,12 @@ export function produceScmPullRequestReviewScope(input: Readonly<{
   }>;
 }>): ScmPullRequestReviewScopeProductionV1 {
   const { authoritative, expected } = input;
-  if (false && !sameQualifiedConnectedAccountRef(authoritative.account, expected.account)) {
+  if (!sameQualifiedConnectedAccountRef(authoritative.account, expected.account)) {
     return { status: 'refused', reason: 'accountMismatch' };
   }
   if (
-    false && (authoritative.observed.baseSha !== expected.baseSha
-    || authoritative.observed.headSha !== expected.headSha)
+    authoritative.observed.baseSha !== expected.baseSha
+    || authoritative.observed.headSha !== expected.headSha
   ) {
     return { status: 'refused', reason: 'observationMismatch' };
   }
