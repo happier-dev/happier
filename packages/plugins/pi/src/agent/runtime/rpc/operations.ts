@@ -19,7 +19,6 @@ import type {
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import {
   normalizeSlashCommandName,
-  readLeadingSlashCommandName,
 } from '@happier-dev/plugin-sdk/sessions';
 import {
   createAgentSessionPreAdmissionBuffer,
@@ -56,6 +55,7 @@ import {
 } from './requestAuthCompatibility.js';
 import type { PiPermissionMode, PiRpcStateData } from './types.js';
 import { createPiSessionModelsSource } from '../modelsSource.js';
+import { projectPiSessionStatsUsage } from './usage.js';
 
 const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
 
@@ -71,6 +71,7 @@ type PiRuntimeOperationsParams = Readonly<{
   resumeSessionId?: string | null;
   sessionId: string;
   eagerStart?: boolean;
+  happierToolsExtension?: Readonly<{ extensionPath: string; configPath: string }>;
 }>;
 
 type PiAvailableCommand = Readonly<{
@@ -178,22 +179,50 @@ function normalizePiAvailableCommands(value: unknown): readonly PiAvailableComma
   return Object.freeze([...byName.values()].sort((left, right) => left.name.localeCompare(right.name)));
 }
 
+function readPiExtensionCommandNames(value: unknown): ReadonlySet<string> {
+  const commands = isRecord(value) && Array.isArray(value.commands) ? value.commands : [];
+  const names = new Set<string>();
+  for (const command of commands) {
+    if (!isRecord(command) || command.source !== 'extension') continue;
+    const advertisedName = readString(command.name);
+    if (!advertisedName) continue;
+    const invocationName = advertisedName.startsWith('/') ? advertisedName.slice(1) : advertisedName;
+    if (invocationName.length > 0) names.add(invocationName);
+  }
+  return names;
+}
+
+function readLeadingPiExtensionCommandName(prompt: string): string | null {
+  if (!prompt.startsWith('/')) return null;
+  const spaceIndex = prompt.indexOf(' ');
+  const name = spaceIndex === -1 ? prompt.slice(1) : prompt.slice(1, spaceIndex);
+  return name.length > 0 ? name : null;
+}
+
 function normalizeEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   );
 }
 
+/**
+ * Request-auth is in play exactly when the host projected a child capability
+ * for it.
+ *
+ * A connected-service SELECTION is not that signal. Pi takes an OpenAI or
+ * Anthropic API key and a Claude setup-token DIRECTLY — the materializer writes
+ * those into `auth.<provider>` and deliberately projects no capability — so
+ * deriving the mode from the selection refused every direct-token connected
+ * account before spawn. The materializer already fails closed when a purpose
+ * that DOES require request-auth has no capability, so this reads the one fact
+ * the runtime can see.
+ */
 function hasPiRequestAuthProvider(env: Readonly<Record<string, string | undefined>>): boolean {
-  return readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) !== null
-    || readPiConnectedServiceIdFromEnv(env) !== null;
+  return readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) !== null;
 }
 
 function assertPiRequestAuthRuntimeConfigured(env: Readonly<Record<string, string | undefined>>): void {
-  if (
-    readString(env.PI_CODING_AGENT_DIR) === null
-    || readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) === null
-  ) {
+  if (readString(env.PI_CODING_AGENT_DIR) === null) {
     throw new Error('Pi request-auth runtime requires the agent dir and child endpoint capability');
   }
 }
@@ -286,6 +315,7 @@ function createPiExecSpec(
         resumeSessionId: params.resumeSessionId,
         connectedServiceId: readPiConnectedServiceIdFromEnv(params.env),
         env: params.env,
+        happierToolsExtension: params.happierToolsExtension,
       }),
       cwd: { root: 'workspace' as const, relativePath: '' },
       env: {
@@ -312,6 +342,7 @@ function createRuntimeOperations(params: Readonly<{
   publishRuntimeEvent: RuntimeEventPublisher;
   isProviderNativeCommand: (prompt: string) => boolean;
   refreshModels?: () => void;
+  observeUsage?: (turnId: string | null) => void;
 }>): RuntimeOperationsWithRecordHandler {
   const runtimeEventProjector = createPiRuntimeEventProjector();
   let sessionId = params.initialSessionId;
@@ -523,6 +554,11 @@ function createRuntimeOperations(params: Readonly<{
     for (const event of projectedEvents) {
       params.publishRuntimeEvent(event);
     }
+    if (projectedEvents.some((event) => (
+      event.kind === 'context-compaction' && event.phase === 'completed'
+    ))) {
+      params.observeUsage?.(turn?.turnId ?? null);
+    }
     if (
       replayingPromptAckFailureRecords
       && !activeTurnStartObserved
@@ -553,6 +589,7 @@ function createRuntimeOperations(params: Readonly<{
       return;
     }
     if (agentEndBoundary === 'final') {
+      params.observeUsage?.(turn?.turnId ?? null);
       if (turn && pendingCancellation?.turnId === turn.turnId) {
         pendingCancellation.finalBoundaryObserved = true;
         pendingCancellation.finalBoundaryAgentTurnId = agentTurnId ?? turn.agentTurnId;
@@ -1108,6 +1145,8 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
     publishMalformedRuntimeEventDiagnostic(event, parsed.error.issues);
   };
   let operations: RuntimeOperationsWithRecordHandler | null = null;
+  let usageObservationSequence = 0;
+  let usageObservationChain = Promise.resolve();
   const rpc = createPiJsonStreamRpcClient({
     handle,
     onEvent(record) {
@@ -1119,9 +1158,11 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
     },
   });
   let availableCommands: readonly PiAvailableCommand[] = [];
+  let availableExtensionCommandNames: ReadonlySet<string> = new Set();
   try {
     const response = await rpc.send({ type: 'get_commands' }, 30_000);
     availableCommands = normalizePiAvailableCommands(response.data);
+    availableExtensionCommandNames = readPiExtensionCommandNames(response.data);
     publishRuntimeEvent({
       kind: 'available-commands',
       sessionId: params.sessionId,
@@ -1159,8 +1200,26 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
     },
     publishRuntimeEvent,
     isProviderNativeCommand(prompt) {
-      const name = readLeadingSlashCommandName(prompt);
-      return name !== null && availableCommandNames.has(name);
+      const name = readLeadingPiExtensionCommandName(prompt);
+      return name !== null && availableExtensionCommandNames.has(name);
+    },
+    observeUsage(turnId) {
+      usageObservationChain = usageObservationChain.then(async () => {
+        const response = await rpc.send({ type: 'get_session_stats' }, 30_000);
+        const observedAtMs = Date.now();
+        const event = projectPiSessionStatsUsage({
+          stats: response.data,
+          sessionId: params.sessionId,
+          turnId,
+          observationId: `pi-usage-${++usageObservationSequence}`,
+          observedAtMs,
+        });
+        if (event) publishRuntimeEvent(event);
+      }).catch((error) => {
+        params.logger.warn('[PiRuntime] Session usage refresh failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     },
     ...(modelsSource ? { refreshModels: () => { void modelsSource.refresh(); } } : {}),
   });

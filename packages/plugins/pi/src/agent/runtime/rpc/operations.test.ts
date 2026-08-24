@@ -26,8 +26,14 @@ import { createPiRuntimeOperations } from './operations.js';
 type Capture = {
   specs: Extract<PluginProtocolClientSpec, { kind: 'jsonStream' }>[];
   written: unknown[];
-  availableCommands?: readonly Readonly<{ name: string; description?: string }>[];
+  availableCommands?: readonly Readonly<{
+    name: string;
+    description?: string;
+    source?: 'extension' | 'prompt' | 'skill';
+  }>[];
   commandCatalogRequestCount?: number;
+  sessionStatsRequestCount?: number;
+  sessionStats?: unknown;
   versionProbeCount?: number;
   versionOutput?: string;
   systemToolResolveCount?: number;
@@ -55,6 +61,17 @@ function createRuntimeContext(capture: Capture) {
           command: 'get_commands',
           success: true,
           data: { commands: capture.availableCommands ?? [] },
+        });
+        return;
+      }
+      if (isRecord(record) && record.type === 'get_session_stats' && typeof record.id === 'string') {
+        capture.sessionStatsRequestCount = (capture.sessionStatsRequestCount ?? 0) + 1;
+        await capture.listener?.({
+          type: 'response',
+          id: record.id,
+          command: 'get_session_stats',
+          success: true,
+          data: capture.sessionStats ?? { contextUsage: null },
         });
         return;
       }
@@ -282,7 +299,7 @@ describe('createPiRuntimeOperations', () => {
     const capture: Capture = {
       specs: [],
       written: [],
-      availableCommands: [{ name: 'goal' }],
+      availableCommands: [{ name: 'goal', source: 'extension' }],
     };
     const runtime = await createRuntime(capture);
     const events: AgentSessionRuntimeEvent[] = [];
@@ -311,6 +328,35 @@ describe('createPiRuntimeOperations', () => {
     ]));
     expect(events.some((event) => event.kind === 'turn-failed')).toBe(false);
 
+    await runtime.dispose();
+  });
+
+  it.each([
+    ['a prompt command', '/goal fix authentication', { name: 'goal', source: 'prompt' as const }],
+    ['a differently-cased extension command', '/goal fix authentication', { name: 'Goal', source: 'extension' as const }],
+    ['a tab-delimited extension command', '/goal\tfix authentication', { name: 'goal', source: 'extension' as const }],
+  ])('does not apply no-turn settlement to %s', async (_label, text, command) => {
+    const capture: Capture = {
+      specs: [],
+      written: [],
+      availableCommands: [command],
+    };
+    const runtime = await createRuntime(capture);
+
+    const submission = sendPrompt(runtime, text);
+    await waitForWrittenCount(capture, 1);
+    await ackCommandAt(capture, 0);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (capture.written.length > 1) {
+      await ackCommandAt(capture, 1, {
+        sessionId: 'pi-provider-session-1',
+        isStreaming: false,
+        isCompacting: false,
+      });
+    }
+    await expect(submission).resolves.toEqual({ status: 'admitted' });
+
+    expect(capture.written).toHaveLength(1);
     await runtime.dispose();
   });
 
@@ -541,6 +587,37 @@ describe('createPiRuntimeOperations', () => {
         agentTurnId: 'provider-turn-1',
       }),
     ]));
+  });
+
+  it('publishes canonical context usage after a completed Pi turn', async () => {
+    const capture: Capture = {
+      specs: [],
+      written: [],
+      sessionStats: {
+        contextUsage: { tokens: 12_345, contextWindow: 200_000, percent: 6.1725 },
+      },
+    };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    const prompt = sendPrompt(runtime, 'hello');
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    await emit(capture, { type: 'agent_end', willRetry: false });
+    await vi.waitFor(() => expect(events.some((event) => event.kind === 'usage-observed')).toBe(true));
+
+    expect(parseEvents(events)).toContainEqual(expect.objectContaining({
+      kind: 'usage-observed',
+      sessionId: 'happier-session-1',
+      context: expect.objectContaining({
+        usedTokens: 12_345,
+        windowTokens: 200_000,
+      }),
+    }));
+
+    await runtime.dispose();
   });
 
   it('publishes typed provider acceptance from the exact Pi prompt RPC response before turn evidence', async () => {
