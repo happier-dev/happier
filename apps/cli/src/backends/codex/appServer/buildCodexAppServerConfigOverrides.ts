@@ -1,4 +1,5 @@
 import type { McpServerConfig } from '@/agent';
+import { normalizeCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 function quoteTomlString(value: string): string {
     return JSON.stringify(value);
@@ -62,8 +63,9 @@ export function buildCodexAppServerConfigOverrides(
     const injectedKeys = assignInjectedServerKeys(serverNames);
     const overrides: string[] = [];
 
-    if (options.happierSessionId) {
-        overrides.push(`shell_environment_policy.set.HAPPIER_SESSION_ID=${quoteTomlString(options.happierSessionId)}`);
+    const happierSessionId = normalizeCurrentHappierSessionId(options.happierSessionId);
+    if (happierSessionId) {
+        overrides.push(`shell_environment_policy.set.HAPPIER_SESSION_ID=${quoteTomlString(happierSessionId)}`);
     }
 
     for (const serverName of [...serverNames].sort((left, right) => left.localeCompare(right))) {

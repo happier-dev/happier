@@ -333,7 +333,7 @@ describe('happier session create (integration)', () => {
     }
   });
 
-  it('rejects a permission escalation above the initiating session mode', async () => {
+  it('treats ambient session permission as an inherited default, not direct-CLI authority', async () => {
     const { handleSessionCommand } = await import('./index');
     envScope.patch({ HAPPIER_SESSION_ID: 'sess_integration_caller_123' });
     callerPermissionMode = 'safe-yolo';
@@ -357,14 +357,12 @@ describe('happier session create (integration)', () => {
 
       expect(output.json()).toMatchObject({
         v: 1,
-        ok: false,
+        ok: true,
         kind: 'session_create',
-        error: {
-          code: 'permission_escalation_denied',
-        },
+        data: { created: true },
       });
       expect(callerSessionGetAttempts).toBeGreaterThan(0);
-      expect(observedSpawnBody).toBeNull();
+      expect(observedSpawnBody).toEqual(expect.objectContaining({ permissionMode: 'yolo' }));
     } finally {
       output.restore();
     }

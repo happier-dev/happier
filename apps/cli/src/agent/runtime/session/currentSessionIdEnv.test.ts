@@ -28,4 +28,13 @@ describe('currentSessionIdEnv', () => {
       expect(env).not.toHaveProperty(HAPPIER_SESSION_ID_ENV_KEY);
     },
   );
+
+  it.each([undefined, '', '   ', 'offline-123'])(
+    'does not expose unusable ambient session id %j',
+    (sessionId) => {
+      expect(readCurrentHappierSessionIdFromEnv({
+        [HAPPIER_SESSION_ID_ENV_KEY]: sessionId,
+      })).toBeNull();
+    },
+  );
 });

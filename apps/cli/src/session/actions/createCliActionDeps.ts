@@ -151,6 +151,15 @@ export type RetryTemporaryThrottleNow = (input: Readonly<{
   sessionId: string;
 }>) => Promise<unknown> | unknown;
 
+type CliSessionTransportLookupResult =
+  | Awaited<ReturnType<typeof resolveSessionTransportContext>>
+  | Readonly<{
+      ok: false;
+      code: 'not_authenticated';
+      candidates?: undefined;
+      sessionId?: undefined;
+    }>;
+
 type CurrentMachineControlIdentity = Readonly<{
   machineId: string | null;
   host: string | null;
@@ -439,6 +448,9 @@ export function createCliActionInventoryDeps(params: Readonly<{
   ctx: SessionEncryptionContext;
   mode?: SessionStoredContentEncryptionMode;
   rawSession?: Readonly<{ metadata?: unknown; path?: unknown }> | null;
+  resolveTransportForSession?: (
+    idOrPrefix: string,
+  ) => Promise<CliSessionTransportLookupResult>;
 }>): Pick<ActionExecutorDeps, 'reviewEnginesList' | 'agentsBackendsList' | 'agentsModelsList' | 'agentsConfigOptionsList' | 'agentsSessionModesList' | 'sessionModesList'> {
   const metadataCache = new Map<string, Record<string, unknown> | null>();
   const seededMetadata = readSessionMetadata({
@@ -446,7 +458,9 @@ export function createCliActionInventoryDeps(params: Readonly<{
     mode: params.mode,
     ctx: params.ctx,
   });
-  metadataCache.set(params.sessionId, seededMetadata);
+  if (seededMetadata) {
+    metadataCache.set(params.sessionId, seededMetadata);
+  }
   const rawPath = typeof params.rawSession?.path === 'string' ? params.rawSession.path.trim() : '';
   const metadataPath = typeof seededMetadata?.path === 'string' ? seededMetadata.path.trim() : '';
   const createOptionRegistry = async () => createCliActionOptionProviderRegistry({
@@ -464,6 +478,23 @@ export function createCliActionInventoryDeps(params: Readonly<{
     }
 
     try {
+      if (params.credentials) {
+        const transport = params.resolveTransportForSession
+          ? await params.resolveTransportForSession(normalizedSessionId)
+          : await resolveSessionTransportContext({
+              credentials: params.credentials,
+              idOrPrefix: normalizedSessionId,
+            });
+        if (!transport.ok) {
+          metadataCache.set(normalizedSessionId, null);
+          return null;
+        }
+        const metadata = readSessionMetadata(transport);
+        metadataCache.set(normalizedSessionId, metadata);
+        metadataCache.set(transport.sessionId, metadata);
+        return metadata;
+      }
+
       const rawSession = await fetchSessionById({ token: params.token, sessionId: normalizedSessionId });
       const mode =
         normalizedSessionId === params.sessionId && params.mode
@@ -579,6 +610,7 @@ export function createCliActionDeps(params: Readonly<{
     machineId?: unknown;
   }> | null;
   getCallerPermissionMode?: (() => string | null | undefined) | null;
+  currentSessionPermissionAuthority?: 'trusted_runtime' | 'ambient_context';
   getCurrentSessionBackendTarget?: (() => BackendTargetRefV1 | null | undefined) | null;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
@@ -588,7 +620,6 @@ export function createCliActionDeps(params: Readonly<{
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
   directSpawnTransport?: DirectSpawnedSessionTransport;
 }>): ActionExecutorDeps {
-  const inventoryDeps = createCliActionInventoryDeps(params);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials }) : null;
   let currentSessionMetadata = readSessionMetadata({
     rawSession: params.rawSession,
@@ -635,11 +666,22 @@ export function createCliActionDeps(params: Readonly<{
 
   const fetchCurrentSessionMetadata = async (): Promise<Record<string, unknown> | null> => {
     try {
-      const rawSession = await fetchSessionById({ token: params.token, sessionId: params.sessionId });
-      const mode = params.mode ?? resolveSessionStoredContentEncryptionMode(rawSession ?? undefined);
-      const ctx = params.credentials
-        ? resolveSessionEncryptionContextFromCredentials(params.credentials, rawSession ?? undefined)
-        : params.ctx;
+      const transport = params.credentials
+        ? await resolveSessionTransportContext({
+            credentials: params.credentials,
+            idOrPrefix: params.sessionId,
+          })
+        : null;
+      if (transport && !transport.ok) {
+        currentSessionMetadata = null;
+        return null;
+      }
+      const rawSession = transport?.rawSession
+        ?? await fetchSessionById({ token: params.token, sessionId: params.sessionId });
+      const mode = transport?.mode
+        ?? params.mode
+        ?? resolveSessionStoredContentEncryptionMode(rawSession ?? undefined);
+      const ctx = transport?.ctx ?? params.ctx;
       currentSessionMetadata = readSessionMetadata({
         rawSession,
         mode,
@@ -691,7 +733,11 @@ export function createCliActionDeps(params: Readonly<{
       return buildInvalidParametersResult();
     }
 
-    const callerMode = readLiveCallerPermissionMode()
+    const liveCallerMode = readLiveCallerPermissionMode();
+    if (!liveCallerMode && params.currentSessionPermissionAuthority === 'ambient_context') {
+      return null;
+    }
+    const callerMode = liveCallerMode
       ?? resolvePermissionPrivilegeFromSessionMetadata(await readFreshCurrentSessionMetadata()).mode;
     const permissionDecision = assertNonEscalatingPermissionMode({
       requestedMode: normalizedRequestedMode,
@@ -713,17 +759,9 @@ export function createCliActionDeps(params: Readonly<{
       : null;
   };
 
-  const resolveTransportForSession = async (idOrPrefix: string): Promise<Readonly<{
-    ok: true;
-    sessionId: string;
-    rawSession: RawSessionRecord;
-    ctx: SessionEncryptionContext;
-    mode: SessionStoredContentEncryptionMode;
-  }> | Readonly<{
-    ok: false;
-    code: string;
-    candidates?: string[];
-  }>> => {
+  const resolveTransportForSession = async (
+    idOrPrefix: string,
+  ): Promise<CliSessionTransportLookupResult> => {
     if (!params.credentials) {
       return { ok: false, code: 'not_authenticated' };
     }
@@ -737,11 +775,7 @@ export function createCliActionDeps(params: Readonly<{
 
     const resolved = await resolveSessionTransportContext({ credentials: params.credentials, idOrPrefix: normalized });
     if (!resolved.ok) {
-      return {
-        ok: false,
-        code: resolved.code,
-        ...(resolved.candidates ? { candidates: resolved.candidates } : {}),
-      };
+      return resolved;
     }
 
     const cached = {
@@ -755,6 +789,11 @@ export function createCliActionDeps(params: Readonly<{
     sessionTransportCache.set(normalized, cached);
     return { ok: true, ...cached };
   };
+
+  const inventoryDeps = createCliActionInventoryDeps({
+    ...params,
+    resolveTransportForSession,
+  });
 
   const callSessionRpcForTransport = async (
     transport: ResolvedSessionTransport,

@@ -474,4 +474,52 @@ describe('normalizeSessionAgentSpawnActionRequest', () => {
       },
     });
   });
+
+  it('allows an explicit direct-CLI permission mode above an ambient parent default', async () => {
+    const result = await normalizeSessionAgentSpawnActionRequest({
+      credentials,
+      surface: 'cli',
+      input: {
+        agentId: 'codex',
+        permissionMode: 'bypassPermissions',
+      },
+      parentMetadata: { permissionMode: 'safe-yolo', permissionModeUpdatedAt: 100 },
+      currentSession: {
+        path: '/repo/current',
+        host: 'leeroy-mbp',
+        machineId: 'machine-1',
+      },
+      resolveConnectedServicesDefaults: noConnectedServiceDefaults,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      createParams: { permissionMode: 'bypassPermissions' },
+      sources: { permissionMode: { kind: 'explicit', key: 'permissionMode' } },
+    });
+  });
+
+  it('inherits an ambient parent permission mode when direct CLI does not specify one', async () => {
+    const result = await normalizeSessionAgentSpawnActionRequest({
+      credentials,
+      surface: 'cli',
+      input: { agentId: 'codex' },
+      parentMetadata: { permissionMode: 'safe-yolo', permissionModeUpdatedAt: 100 },
+      currentSession: {
+        path: '/repo/current',
+        host: 'leeroy-mbp',
+        machineId: 'machine-1',
+      },
+      resolveConnectedServicesDefaults: noConnectedServiceDefaults,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      createParams: {
+        permissionMode: 'safe-yolo',
+        permissionModeUpdatedAt: 100,
+      },
+      sources: { permissionMode: { kind: 'metadata', key: 'permissionMode' } },
+    });
+  });
 });

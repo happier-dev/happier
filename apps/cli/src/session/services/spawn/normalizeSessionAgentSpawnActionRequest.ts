@@ -504,19 +504,25 @@ export async function normalizeSessionAgentSpawnActionRequest(params: Readonly<{
 
   const explicitPermissionMode = normalizeString(input.permissionMode);
   const currentPermissionMode = normalizeString(params.currentSession.permissionMode);
-  const callerPermissionMode = currentPermissionMode ?? inherited.spawn.permissionMode;
-  const permissionDecision = assertNonEscalatingPermissionMode({
-    requestedMode: explicitPermissionMode ?? callerPermissionMode,
-    callerMode: callerPermissionMode,
-  });
-  if (!permissionDecision.ok) {
-    return {
-      ok: false,
-      result: buildPermissionEscalationDeniedResult(permissionDecision),
-    };
+  const inheritedPermissionMode = inherited.spawn.permissionMode;
+  const resolvedDefaultPermissionMode = currentPermissionMode ?? inheritedPermissionMode;
+  const trustedCallerPermissionMode = params.surface === 'session_agent'
+    ? resolvedDefaultPermissionMode
+    : null;
+  if (trustedCallerPermissionMode) {
+    const permissionDecision = assertNonEscalatingPermissionMode({
+      requestedMode: explicitPermissionMode ?? resolvedDefaultPermissionMode,
+      callerMode: trustedCallerPermissionMode,
+    });
+    if (!permissionDecision.ok) {
+      return {
+        ok: false,
+        result: buildPermissionEscalationDeniedResult(permissionDecision),
+      };
+    }
   }
 
-  const resolvedPermissionMode = explicitPermissionMode ?? permissionDecision.requestedMode;
+  const resolvedPermissionMode = explicitPermissionMode ?? resolvedDefaultPermissionMode;
   const currentPermissionMatchesInherited = Boolean(
     currentPermissionMode
     && inherited.spawn.permissionMode

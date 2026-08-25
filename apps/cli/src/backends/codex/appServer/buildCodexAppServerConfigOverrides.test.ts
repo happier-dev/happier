@@ -47,4 +47,10 @@ describe('buildCodexAppServerConfigOverrides', () => {
             'shell_environment_policy.set.HAPPIER_SESSION_ID="session-123"',
         ]);
     });
+
+    it('does not inject unresolved offline session context', () => {
+        expect(buildCodexAppServerConfigOverrides({}, {
+            happierSessionId: 'offline-session-123',
+        })).toEqual([]);
+    });
 });

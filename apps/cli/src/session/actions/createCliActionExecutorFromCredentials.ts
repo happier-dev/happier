@@ -19,6 +19,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
     token: params.credentials.token,
     credentials: params.credentials,
     sessionId: callerSessionId ?? 'cli-global',
+    currentSessionPermissionAuthority: 'ambient_context',
     ctx,
     ...(params.directSpawnTransport ? { directSpawnTransport: params.directSpawnTransport } : {}),
   }, params.overrides);

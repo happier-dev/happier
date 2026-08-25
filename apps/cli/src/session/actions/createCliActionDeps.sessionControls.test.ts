@@ -229,6 +229,43 @@ describe('createCliActionDeps session controls', () => {
     });
   });
 
+  it('lazily resolves current-session transport when inventory metadata was not seeded', async () => {
+    mocks.resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true as const,
+      sessionId: 'sess_1',
+      rawSession: {
+        active: true,
+        metadata: {
+          sessionModesV1: {
+            v: 1,
+            provider: 'cursor',
+            updatedAt: 1,
+            availableModes: [{ id: 'agent', name: 'Agent' }],
+          },
+        },
+      },
+      ctx: { encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'legacy' as const },
+      mode: 'plain' as const,
+    });
+    const deps = createCliActionInventoryDeps({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+      mode: 'plain',
+      rawSession: null,
+    });
+
+    await expect(deps.sessionModesList?.({ sessionId: 'sess_1' })).resolves.toEqual({
+      sessionId: 'sess_1',
+      items: [{ id: 'agent', label: 'Agent' }],
+    });
+    expect(mocks.resolveSessionTransportContext).toHaveBeenCalledWith({
+      credentials: expect.any(Object),
+      idOrPrefix: 'sess_1',
+    });
+  });
+
   it('lists agent session modes and config options from the shared option registry', async () => {
     const deps = createCliActionInventoryDeps({
       token: 'token',
