@@ -1004,7 +1004,8 @@ test('terminal-native Android Termux-backed adapter uses Termux key, mouse, and 
     assert.match(backedSession, /emulator\.isMouseTrackingActive/);
     assert.match(backedSession, /emulator\.isAlternateBufferActive/);
     assert.match(backedSession, /getActiveTranscriptRows\(\)/);
-    assert.match(backedSession, /activeRenderer\.render\(emulator, canvas, topRow,/);
+    assert.match(backedSession, /activeRenderer\.render\(\s*emulator,\s*canvas,\s*topRow,\s*selectionStartRow,/);
+    assert.match(backedSession, /getSelectedText\(/);
     assert.doesNotMatch(backedSession, /android\.util\.Log|println\(|System\.out/);
 });
 

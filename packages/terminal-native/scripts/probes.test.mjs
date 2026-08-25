@@ -951,7 +951,7 @@ test('Android Termux view teardown cannot unregister native callbacks a newer vi
   assert.match(bridgeSource, /invalidators\.remove\(surfaceId, invalidator\)/);
   assert.match(bridgeSource, /fun unregisterSurfaceFocusRequester\(surfaceId: String, focusRequester: \(\) -> Unit\)/);
   assert.match(bridgeSource, /focusRequesters\.remove\(surfaceId, focusRequester\)/);
-  assert.match(viewSource, /private val surfaceInvalidator: \(\) -> Unit = \{\s*postInvalidateOnAnimation\(\)\s*}/);
+  assert.match(viewSource, /private val surfaceInvalidator: \(\) -> Unit = \{[\s\S]*?postInvalidateOnAnimation\(\)[\s\S]*?refreshAccessibility\(\)[\s\S]*?TYPE_WINDOW_CONTENT_CHANGED[\s\S]*?\n  }/);
   assert.match(viewSource, /private val surfaceFocusRequester: \(\) -> Unit = \{\s*requestNativeViewFocus\(\)\s*}/);
   assert.match(viewSource, /TermuxBridge\.unregisterSurfaceInvalidator\(currentSurfaceId, surfaceInvalidator\)/);
   assert.match(viewSource, /TermuxBridge\.unregisterSurfaceFocusRequester\(currentSurfaceId, surfaceFocusRequester\)/);

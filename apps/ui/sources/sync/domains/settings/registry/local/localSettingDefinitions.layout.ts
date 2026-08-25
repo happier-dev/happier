@@ -100,6 +100,15 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
+    terminalNativeRendererQuarantine: {
+        schema: z.object({
+            renderer: z.enum(['ios-ghosttykit', 'android-termux']),
+            expiresAtMs: z.number().finite().positive(),
+        }).strict().nullable().catch(null),
+        default: null,
+        description: 'Temporary native terminal renderer quarantine after an attributed fatal failure',
+        storageScope: 'local',
+    },
     sessionsListStorageFilter: {
         schema: z.enum(['all', 'persisted', 'direct']),
         default: 'all',
