@@ -105,8 +105,9 @@ function normalizeActionSearchQuery(query: string): NormalizedActionSearchQuery 
 function actionSearchScore(
   spec: SearchableActionDefinition,
   query: NormalizedActionSearchQuery,
+  searchText?: string,
 ): number {
-  const haystack = actionSearchText(spec);
+  const haystack = searchText ?? actionSearchText(spec);
   if (!query.text) return 1;
 
   let score = 0;
@@ -320,23 +321,41 @@ function actionDefinitionToSummary(definition: ActionDefinitionV1): ActionDefini
   };
 }
 
-export function searchActionDefinitionSummaries(
-  definitions: readonly ActionDefinitionSummaryV1[],
+type ActionDefinitionSearchCandidate = Readonly<{
+  definition: ActionDefinitionSummaryV1;
+  searchText?: string;
+}>;
+
+function searchActionDefinitionSummaryCandidates(
+  candidates: readonly ActionDefinitionSearchCandidate[],
   params?: Readonly<{ query?: string | null; limit?: number | null }>,
 ): readonly ActionDefinitionSummaryV1[] {
   const query = typeof params?.query === 'string' ? params.query.trim() : '';
   const normalizedQuery = normalizeActionSearchQuery(query);
   const limitRaw = typeof params?.limit === 'number' && Number.isFinite(params.limit) ? Math.floor(params.limit) : 20;
   const limit = Math.max(1, Math.min(100, limitRaw));
-  return definitions
-    .map((definition) => ({ definition, score: actionSearchScore(definition, normalizedQuery) }))
+  return candidates
+    .map((candidate) => ({
+      candidate,
+      score: actionSearchScore(candidate.definition, normalizedQuery, candidate.searchText),
+    }))
     .filter((entry) => (query ? entry.score > 0 : true))
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
-      return left.definition.title.localeCompare(right.definition.title);
+      return left.candidate.definition.title.localeCompare(right.candidate.definition.title);
     })
     .slice(0, limit)
-    .map((entry) => entry.definition);
+    .map((entry) => entry.candidate.definition);
+}
+
+export function searchActionDefinitionSummaries(
+  definitions: readonly ActionDefinitionSummaryV1[],
+  params?: Readonly<{ query?: string | null; limit?: number | null }>,
+): readonly ActionDefinitionSummaryV1[] {
+  return searchActionDefinitionSummaryCandidates(
+    definitions.map((definition) => ({ definition })),
+    params,
+  );
 }
 
 export function listActionSpecsForCatalogSurface(params: Readonly<{
@@ -347,20 +366,26 @@ export function listActionSpecsForCatalogSurface(params: Readonly<{
   return listActionSpecs().filter((spec) => (!params.surface || isActionSpecSurfacedOn(spec, params.surface)) && isActionEnabled(spec.id as ActionId));
 }
 
-const defaultHostActionSearchSummaries = new WeakMap<ActionSpec, SerializedActionSpec>();
-const apiHostActionSearchSummaries = new WeakMap<ActionSpec, SerializedActionSpec>();
+type HostActionSearchSummary = Readonly<{
+  definition: SerializedActionSpec;
+  searchText: string;
+}>;
 
-function serializeHostActionSpecForSearch(
+const defaultHostActionSearchSummaries = new WeakMap<ActionSpec, HostActionSearchSummary>();
+const apiHostActionSearchSummaries = new WeakMap<ActionSpec, HostActionSearchSummary>();
+
+function getHostActionSearchSummary(
   spec: ActionSpec,
   params: ActionCatalogSurfaceParams,
-): SerializedActionSpec {
+): HostActionSearchSummary {
   const summaries = params.surface === 'api'
     ? apiHostActionSearchSummaries
     : defaultHostActionSearchSummaries;
   const cached = summaries.get(spec);
   if (cached) return cached;
 
-  const summary = Object.freeze(serializeActionSpec(spec, params));
+  const definition = Object.freeze(serializeActionSpec(spec, params));
+  const summary = { definition, searchText: actionSearchText(definition) };
   summaries.set(spec, summary);
   return summary;
 }
@@ -373,15 +398,18 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
   additionalDefinitions?: readonly ActionDefinitionV1[];
 }>): readonly SerializedActionSpec[] {
   const hostDefinitions = listActionSpecsForCatalogSurface(params)
-    .map((spec) => serializeHostActionSpecForSearch(spec, params));
-  const hostIds = new Set(hostDefinitions.map((definition) => definition.id));
+    .map((spec) => getHostActionSearchSummary(spec, params));
+  const hostIds = new Set(hostDefinitions.map((summary) => summary.definition.id));
   const additionalDefinitions = (params.additionalDefinitions ?? [])
     .filter((definition) => (
       !hostIds.has(definition.id)
       && (!params.surface || definition.surfaces[params.surface] === true)
     ))
     .map(actionDefinitionToSummary);
-  return searchActionDefinitionSummaries([...hostDefinitions, ...additionalDefinitions], {
+  return searchActionDefinitionSummaryCandidates([
+    ...hostDefinitions,
+    ...additionalDefinitions.map((definition) => ({ definition })),
+  ], {
     query: params.query,
     limit: params.limit,
   });
