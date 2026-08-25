@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { mkdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { logger } from "@/ui/logger";
+import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 import { attachProcessSignalForwardingToChild } from '@/agent/runtime/signalForwarding';
 import { claudeCheckSession } from "./utils/claudeCheckSession";
 import { claudeFindLastSession } from "./utils/claudeFindLastSession";
@@ -92,8 +93,8 @@ export async function claudeLocal(opts: {
         activeFetchCount: number,
     }>) => void) | undefined,
     claudeArgs?: string[],
-    /** Base environment for the managed Claude subprocess. Defaults to the current process environment. */
-    processEnv?: NodeJS.ProcessEnv,
+    /** Happier session identity to bind into the managed Claude subprocess environment. */
+    happierSessionId?: string | null,
     /** Optional env overrides to apply to the spawned Claude Code subprocess. */
     envOverlay?: Record<string, string>,
     /** Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP). */
@@ -112,7 +113,7 @@ export async function claudeLocal(opts: {
     systemPromptText?: string | null,
 }) {
 
-    const processEnv = opts.processEnv ?? process.env;
+    const processEnv = withCurrentHappierSessionId(process.env, opts.happierSessionId ?? '');
     const claudeConfigDir = resolveClaudeConfigDirOverride(processEnv);
 
     // Ensure project directory exists

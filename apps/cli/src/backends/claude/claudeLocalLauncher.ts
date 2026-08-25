@@ -40,7 +40,6 @@ import { createClaudeWorkflowActivitySourceForSession } from './workflows/create
 import { createWorkflowAgentTranscriptRegistrar } from './remote/sidechains/createWorkflowAgentTranscriptRegistrar';
 import type { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
 import { loadClaudeJsonlReplayBaseline } from './utils/loadClaudeJsonlReplayBaseline';
-import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 function upsertClaudePermissionModeArgs(
     args: string[] | undefined,
@@ -454,8 +453,6 @@ export async function claudeLocalLauncher(
                 });
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
-                const claudeProcessEnv = withCurrentHappierSessionId(process.env, session.client.sessionId);
-
                 try {
                     await claudeLocal({
                         path: session.path,
@@ -465,7 +462,7 @@ export async function claudeLocalLauncher(
                         onLifecycleGapDetected: (event) => emitClaudeUnifiedLifecycleGapDetected(unifiedTelemetry, event),
                         abort: processAbortController.signal,
                         claudeArgs: session.claudeArgs,
-                        processEnv: claudeProcessEnv,
+                        happierSessionId: session.client.sessionId,
                         systemPromptText: session.defaultSystemPromptText,
                         envOverlay: {
                             ...resolveClaudeCodeExperimentalEnvOverlay({

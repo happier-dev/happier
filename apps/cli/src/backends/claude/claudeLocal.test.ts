@@ -1284,21 +1284,19 @@ describe('claudeLocal launcher selection', () => {
         expect(spawnOpts?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
     });
 
-    it('uses the supplied process environment without inheriting an outer Happier session id', async () => {
+    it.each(['', 'offline-local-session'])('does not inherit an outer Happier session id for unusable managed id %j', async (happierSessionId) => {
         const previousSessionId = process.env.HAPPIER_SESSION_ID;
         process.env.HAPPIER_SESSION_ID = 'outer-session';
 
         try {
-            const processEnv = { ...process.env };
-            delete processEnv.HAPPIER_SESSION_ID;
             await claudeLocal({
                 abort: new AbortController().signal,
                 sessionId: null,
                 path: '/tmp',
                 onSessionFound,
                 claudeArgs: [],
-                processEnv,
-            } as any);
+                happierSessionId,
+            });
 
             expect(mockSpawn).toHaveBeenCalled();
             const spawnOpts = mockSpawn.mock.calls[0][2];
@@ -1310,6 +1308,21 @@ describe('claudeLocal launcher selection', () => {
                 process.env.HAPPIER_SESSION_ID = previousSessionId;
             }
         }
+    });
+
+    it('binds a usable managed Happier session id at the Claude child-process boundary', async () => {
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+            happierSessionId: 'managed-session-1',
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnOpts = mockSpawn.mock.calls[0][2];
+        expect(spawnOpts?.env?.HAPPIER_SESSION_ID).toBe('managed-session-1');
     });
 
     it('publishes the resolved Claude config dir override to spawned Claude processes', async () => {
