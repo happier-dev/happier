@@ -102,20 +102,28 @@ export function createActionToolNameToIdMap(params?: Readonly<{
   );
 }
 
-function isDirectManualToolAvailable(params: Readonly<{
+export function isManualToolDirectAvailableOnToolSurface(params: Readonly<{
   toolName: string;
   actionId: ActionId;
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
   actionsSettings?: ActionsSettingsV1 | null;
 }>): boolean {
-  if (!DIRECT_MANUAL_TOOL_NAMES.has(params.toolName)) {
-    return false;
+  const surface = params.surface ?? 'session_agent';
+  if (DIRECT_MANUAL_TOOL_NAMES.has(params.toolName)) {
+    const explicitMode = params.actionsSettings?.actions?.[params.actionId]?.toolExposureModes?.[surface];
+    if (explicitMode === 'discoverable_only') return false;
+    return isActionAvailableOnToolSurface({
+      actionId: params.actionId,
+      surface,
+      isActionEnabled: params.isActionEnabled,
+      actionsSettings: params.actionsSettings ?? null,
+    });
   }
 
-  return isActionAvailableOnToolSurface({
+  return isActionDirectToolAvailableOnToolSurface({
     actionId: params.actionId,
-    surface: params.surface,
+    surface,
     isActionEnabled: params.isActionEnabled,
     actionsSettings: params.actionsSettings ?? null,
   });
@@ -154,7 +162,7 @@ export function filterBuiltInToolsForSurface(
   return tools.filter((tool) => {
     const actionId = getEquivalentActionIdForBuiltInTool(tool.name);
     if (!actionId) return true;
-    if (isDirectManualToolAvailable({
+    if (isManualToolDirectAvailableOnToolSurface({
       toolName: tool.name,
       actionId,
       surface: params?.surface,

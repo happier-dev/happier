@@ -10,6 +10,7 @@ import {
 import {
   getEquivalentActionIdForBuiltInTool,
   isActionDirectToolAvailableOnToolSurface,
+  isManualToolDirectAvailableOnToolSurface,
   resolveActionAvailabilityOnToolSurface,
 } from './actionToolCatalog';
 import type { HappierBuiltInToolDispatchResult } from './types';
@@ -183,6 +184,15 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     });
     if (!availability.available) {
       return err('action_disabled', 'Action is disabled', availability);
+    }
+    if (!isManualToolDirectAvailableOnToolSurface({
+      toolName: params.toolName,
+      actionId: gatedManualActionId,
+      surface,
+      isActionEnabled,
+      actionsSettings,
+    })) {
+      return err('unknown_tool', `Unknown built-in Happier tool: ${params.toolName}`);
     }
   }
 

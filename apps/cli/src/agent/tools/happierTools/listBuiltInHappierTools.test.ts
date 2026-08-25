@@ -98,6 +98,23 @@ describe('listBuiltInHappierTools', () => {
     expect(names).toContain('subagents_delegate_start');
   });
 
+  it('does not expose change_title when session title updates are discoverable-only', async () => {
+    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
+    const names = listBuiltInHappierTools({
+      surface: 'session_agent',
+      actionsSettings: ActionsSettingsV1Schema.parse({
+        v: 1,
+        actions: {
+          'session.title.set': {
+            toolExposureModes: { session_agent: 'discoverable_only' },
+          },
+        },
+      }),
+    }).map((tool) => tool.name);
+
+    expect(names).not.toContain('change_title');
+  });
+
   it('adds guidance-required direct tools without overriding an explicit discoverable-only preference', async () => {
     const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
     const required = listBuiltInHappierTools({
