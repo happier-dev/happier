@@ -283,6 +283,42 @@ describe("Event Automations persistence contract", () => {
         expect(sql).not.toMatch(/Automation(?:Receipt|DispatchLedger|RunQueue)/);
     });
 
+    it("keeps Conversation only as a retained Run origin across provider schemas and migrations", async () => {
+        const [postgresSchema, sqliteSchema, mysqlSchema, postgresSql, sqliteSql, mysqlSql] =
+            await Promise.all([
+                read("prisma/schema.prisma"),
+                read("prisma/sqlite/schema.prisma"),
+                read("prisma/mysql/schema.prisma"),
+                read(`prisma/migrations/${migrationId}/migration.sql`),
+                read(`prisma/sqlite/migrations/${migrationId}/migration.sql`),
+                read(`prisma/mysql/migrations/${migrationId}/migration.sql`),
+            ]);
+
+        for (const schema of [postgresSchema, sqliteSchema, mysqlSchema]) {
+            expect(schema).toMatch(
+                /enum AutomationTriggerKind \{\s+schedule\s+manual\s+pluginEvent\s+\}/m,
+            );
+            expect(schema).toMatch(
+                /enum AutomationRunOriginKind \{[\s\S]*?\sconversation\s*\}/m,
+            );
+        }
+
+        expect(postgresSql).toContain(
+            'CREATE TYPE "AutomationTriggerKind" AS ENUM (\'schedule\', \'manual\', \'pluginEvent\');',
+        );
+        expect(postgresSql).toContain(
+            'CREATE TYPE "AutomationRunOriginKind" AS ENUM (\'scheduled\', \'manual\', \'pluginEvent\', \'conversation\');',
+        );
+        expect(sqliteSql).not.toMatch(/"triggerKind" = 'conversation'/);
+        expect(sqliteSql).toContain('"originKind" = \'conversation\'');
+        expect(mysqlSql).toContain(
+            "ADD COLUMN `triggerKind` ENUM('schedule', 'manual', 'pluginEvent')",
+        );
+        expect(mysqlSql).toContain(
+            "ADD COLUMN `originKind` ENUM('scheduled', 'manual', 'pluginEvent', 'conversation')",
+        );
+    });
+
     it("keeps the MySQL catalog-status primary key portable within utf8mb4's 3072-byte limit", async () => {
         const mysqlSql = await read(`prisma/mysql/migrations/${migrationId}/migration.sql`);
         const catalogStatusDdl = mysqlSql.match(
@@ -806,6 +842,9 @@ describe("Event Automations persistence contract", () => {
             expect(
                 () => db.exec(`UPDATE "Automation" SET "triggerKind" = 'pluginEvent' WHERE "id" = 'automation';`),
             ).toThrow();
+            expect(
+                () => db.exec(`UPDATE "Automation" SET "triggerKind" = 'conversation' WHERE "id" = 'automation';`),
+            ).toThrow();
             db.exec(`
                 UPDATE "Automation"
                 SET
@@ -858,6 +897,21 @@ describe("Event Automations persistence contract", () => {
                     "occurrenceEvidenceEqualityTag" = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
                 WHERE "id" = 'run';
             `);
+            db.exec(`
+                UPDATE "AutomationRun"
+                SET
+                    "originKind" = 'conversation',
+                    "originSourceSelectorId" = NULL
+                WHERE "id" = 'run';
+            `);
+            expect(db.prepare(`
+                SELECT "originKind", "originSourceSelectorId"
+                FROM "AutomationRun"
+                WHERE "id" = 'run'
+            `).all()).toEqual([{
+                originKind: "conversation",
+                originSourceSelectorId: null,
+            }]);
             expect(db.prepare(`SELECT "runId" FROM "AutomationRunEvent" WHERE "id" = 'event'`).all()).toEqual([
                 { runId: "run" },
             ]);

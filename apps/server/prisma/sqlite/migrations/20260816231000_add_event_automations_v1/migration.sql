@@ -218,6 +218,7 @@ CREATE TABLE "new_Automation" (
                         AND "watcherMaterializationId" IS NULL
                     )
                 )
+            )
         ),
     CONSTRAINT "Automation_accountId_fkey"
         FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE

@@ -171,6 +171,7 @@ ALTER TABLE "Automation"
                     AND "watcherMaterializationId" IS NULL
                 )
             )
+        )
     );
 
 ALTER TABLE "AutomationRun"
