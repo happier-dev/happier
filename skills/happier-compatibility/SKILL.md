@@ -42,12 +42,13 @@ for the normative rules. It also defines the direct-cut ruling: current `dev` â†
 ### SDK package SemVer
 
 Package SemVer is an independent compatibility axis from a wire epoch, the
-host/runtime ABI, and manifest schema versions. For a published SDK package or
-a release candidate, compare the exact candidate's generated public census and
-reachable declaration report with the previous published tarball; never infer
-history from source, Git, or a generator's previous output. The report supplies
-mechanical facts (`added`, `removed`, `changed`, `deprecated`, `unchanged`), and
-the release reviewer classifies their SemVer impact.
+host/runtime ABI, and manifest schema versions. Compare the current generated
+public census and reachable declaration report with the provenance-pinned
+published baseline owned by release history; never infer the baseline from a
+generator's previous output. Feature implementation and QA use current source
+and do not build or install a local release archive for this comparison. The
+report supplies mechanical facts (`added`, `removed`, `changed`, `deprecated`,
+`unchanged`), and the release reviewer classifies their SemVer impact.
 
 A removed public declaration is breaking; any changed declaration block needs
 human review. A patch release must not intentionally break package API. An

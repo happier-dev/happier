@@ -42,15 +42,14 @@ Apply strict RED-GREEN-REFACTOR while following Happier-specific lane, fixture, 
 
 6. **Broaden validation**
 - After a targeted green run in a shared area, rerun one broader related lane.
-- Use this validation ladder; advance only as far as the current claim requires:
+- Validate the current moving source and the existing development stack:
   1. **Inner loop:** run the smallest direct source-level RED/GREEN slice without a package build.
   2. **Lane confidence:** run one risk-selected adjacent corridor lane and source-level typechecking when it can run without republishing shared outputs.
   3. **Integrated package boundary:** run the package typecheck/build-enforcing lane once after the coherent batch sharing that output has settled.
   4. **Loaded-runtime boundary:** load/reload and probe the relevant bundle, module, process, or daemon, then batch the materially distinct live scenarios that consume it.
-  5. **Artifact/release boundary:** pack, install, and smoke the emitted artifact only when the claim concerns packaged output, installation, publication, or release behavior.
-- After source and loaded-runtime QA converge, build one settled candidate and reuse that exact candidate across every applicable artifact, platform, install, compatibility, and release QA lane. Rebuild only when an accepted fix changes candidate-reachable bytes; do not carry evidence from the superseded candidate to its replacement.
+- Feature validation ends at the deciding source, integration, and loaded-runtime surfaces. Do not create, freeze, pack, install, identify, or certify a separate release representation; archive production and publication verification belong only to release automation during an explicitly dispatched release.
 - Intermediate handoffs may defer a later expensive tier only when the result records the exact unrun check, later owning boundary, and prerequisite. Deferred evidence cannot close the affected gate or support `VERIFIED_COMPLETE`; before final handoff, run every required tier or report it `BLOCKED`.
-- Do not invoke a package script whose setup republishes shared build/generated output merely to run a focused test when the canonical lane-specific source harness exists. Do not skip a build when the changed behavior itself consumes generated, built, packaged, or installed output.
+- Do not invoke a package script whose setup republishes shared build/generated output merely to run a focused test when the canonical lane-specific source harness exists. Do not skip a build when the changed behavior itself consumes generated or built output.
 
 ## Test Value Gate
 
@@ -128,7 +127,7 @@ Host-test green alone is not shippable for user-visible behavior; this skill own
 - Treat live gates (managed-stack browser QA, argent device QA) as ship gates for UI-visible changes; write or extend host tests from what the live loop taught, afterwards.
 - For daemon/session/provider/API behavior that depends on real process, transport, authentication, persistence, or provider semantics, run the named composed CLI/API/daemon recipe when the authorized environment is available. Corridor tests do not replace this gate.
 - Several source lanes may share one composed live session when that session reaches every material contract and records each scenario’s result; batching setup is not permission to omit a flow, state, failure, recovery, platform, or accessibility obligation.
-- If a defect family escapes host tests twice, stop adding host tests and switch to live-in-the-loop: fix → load and identify the updated build/bundle/module actually consumed → replay the exact failing recipe → verify live, closing each defect with a live PASS against that observed basis in the same session. Hot reload or a module probe is sufficient when it proves the changed source is loaded; do not require a packaged build unless the behavior consumes packaged output.
+- If a defect family escapes host tests twice, stop adding host tests and switch to live-in-the-loop: fix → load and identify the updated build/bundle/module actually consumed → replay the exact failing recipe → verify live, closing each defect with a live PASS against that observed basis in the same session. Hot reload or a module probe is sufficient when it proves the changed source is loaded.
 - When a full-suite result is used as a release/ship gate, or shared-state leakage/order dependence is a material risk, run it twice back-to-back before calling it deterministic.
 - If a documented memory-heavy UI host suite OOMs at the default heap, rerun with `NODE_OPTIONS=--max-old-space-size=8192` instead of silently narrowing the lane.
 - Device QA must pin bundle identity when stale Metro state could invalidate the result: full Metro reload, Fast Refresh off, and a module probe.

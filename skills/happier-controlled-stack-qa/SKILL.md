@@ -177,7 +177,7 @@ node ./apps/stack/scripts/repo_local.mjs stack info <qa-stack> --json
 
 While the older runtime remains loaded, expect `pendingManualRestart=true`. Continue the current QA flow or restart only when the test operator intends to load the new selection.
 
-Use the existing TUI `r` action, the stack service restart, or an explicit `start --restart`. Re-inspect status and require selected and loaded snapshot ids to match before attributing new QA evidence to the candidate.
+Use the existing TUI `r` action, the stack service restart, or an explicit `start --restart`. Re-inspect status and require selected and loaded snapshot ids to match before attributing new QA evidence to the current source change.
 
 For a component-only change, keep the ownership boundary intact:
 

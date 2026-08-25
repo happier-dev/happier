@@ -132,7 +132,7 @@ profile.
   belongs in `.claude/hooks/prevent-destructive-git.sh`, which matches the whole command string and
   therefore catches every clause of a compound command.
 - **Record material transitions, not every thought.** Update the lane report and orchestrator
-  ledger when scope, ownership, candidate identity, finding disposition, validation state, or a
+  ledger when scope, ownership, validation basis, finding disposition, validation state, or a
   blocker materially changes. A closed gate, landed fix, or completed validation is always a
   material transition: record it before starting the next unit, so a crashed lane loses at most
   one gate. Do not create per-microchange packets or ledger churn.
@@ -146,8 +146,8 @@ profile.
   churn; a failure you cannot attribute is reported as unattributed, not resolved by mutating the tree.
 - **Adversarial review at composed boundaries.** Authors run `skills/attack-conclusion` while
   building. Independent review and `skills/verify-claims` target load-bearing delegated claims and
-  the consumed vertical, corridor gate, or ship candidate—not every microchange. After
-  accepted fixes, review the finding delta unless the candidate, contract, scope, or risk changed
+  the consumed vertical, corridor gate, or ship gate—not every microchange. After
+  accepted fixes, review the finding delta unless the validated source, contract, scope, or risk changed
   materially. Author ≠ reviewer remains mandatory for corridor and ship gates.
 
 ## Validation doctrine
