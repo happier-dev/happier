@@ -1,14 +1,19 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import {
   shouldHoldGeneratorWorkspaceLockDuringGeneration,
   readExternalSessionSourceDeclaration,
+  renderRetainedCliBundledPluginImplementationEntriesTs,
   renderGeneratedExternalSessionSourcesTs,
 } from './generateBundledPluginEntries.ts';
+import { BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS } from '../../src/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
 
 const generatorSource = readFileSync(new URL('./generateBundledPluginEntries.ts', import.meta.url), 'utf8');
+const RETIRED_CODEX_IMMUTABLE_GENERATION_ID = 'bundled-13457e22-f993-4eb8-9d67-77caad02eefe';
 
 function sourceBetween(startMarker: string, endMarker: string): string {
   const start = generatorSource.indexOf(startMarker);
@@ -27,9 +32,24 @@ describe('generator workspace lock policy', () => {
 });
 
 describe('CLI bundled plugin registry projection', () => {
+  it('publishes a replacement Codex identity and keeps its retired predecessor out of reuse', () => {
+    const codex = BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS.find(
+      (artifact) => artifact.record.pluginId === 'happier.agent.codex',
+    );
+    if (!codex) throw new Error('Expected the generated Codex immutable artifact');
+
+    expect(codex.record.immutableGenerationId).not.toBe(RETIRED_CODEX_IMMUTABLE_GENERATION_ID);
+    expect(generatorSource).toContain(RETIRED_CODEX_IMMUTABLE_GENERATION_ID);
+    const assignment = sourceBetween(
+      'function assignBundledImmutableArtifactGenerationIds(',
+      'function createCanonicalWorkspacePackageRootsReader(',
+    );
+    expect(assignment).toContain('!isRetiredBundledImmutableGenerationIdentity(');
+  });
+
   it('emits the contribution-identity owner subpath instead of the Protocol root barrel', () => {
     const registryRenderer = sourceBetween(
-      'function renderCliBundledPluginEntriesTs(',
+      'function renderCliBundledPluginManifestEntriesTs(',
       'function renderCliBundledPluginArtifactsTs(',
     );
 
@@ -42,6 +62,64 @@ describe('CLI bundled plugin registry projection', () => {
     expect(registryRenderer).not.toContain(
       "from '@happier-dev/protocol';",
     );
+  });
+
+  it('keeps generated manifest locators data-only without target semantic sidecars', () => {
+    const registryRenderer = sourceBetween(
+      'function renderCliBundledPluginManifestEntriesTs(',
+      'function renderCliBundledPluginArtifactsTs(',
+    );
+
+    expect(registryRenderer).not.toContain('targeted-contributions');
+    expect(registryRenderer).not.toContain('semanticPointRefs');
+    expect(registryRenderer).not.toContain('@happier-dev/plugin-sdk');
+  });
+
+  it('publishes serialized manifest locators through the aggregate final-artifact owner', () => {
+    const aggregatePublisher = sourceBetween(
+      'async function publishBundledPluginUiArtifactProjection(',
+      'function renderBundledAgentDefinitionsTs(',
+    );
+
+    expect(aggregatePublisher).toContain('renderCliBundledPluginManifestEntriesTs({ pluginPackages })');
+    expect(aggregatePublisher).toContain('generatedBundledPluginManifests.ts');
+    expect(aggregatePublisher).toContain('cliManifestOutPath');
+  });
+
+  it('migrates the legacy combined CLI registry during a scoped publication', () => {
+    const scopedPublisher = sourceBetween(
+      'if (options.workspaceNames.length > 0) {',
+      '// Discover and validate every package before mutating host membership.',
+    );
+
+    expect(scopedPublisher).toContain('renderRetainedCliBundledPluginImplementationEntriesTs');
+    expect(scopedPublisher).toContain('{ outPath: cliOutPath, out: cliOut }');
+  });
+
+  it('keeps manifest-owned data out of executable implementation entries', () => {
+    const outputPath = join(mkdtempSync(join(tmpdir(), 'happier-cli-registry-')), 'generated.ts');
+    writeFileSync(outputPath, [
+      "import { createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';",
+      "import type { PluginSourceSpecV1 } from '@happier-dev/protocol/plugins/source-spec';",
+      'export type BundledFirstPartyImplementationBinding = Readonly<{ identity: PluginContributionIdentityV1; }>;',
+      'export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = Object.freeze(["old"]);',
+      'export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = Object.freeze([{ pluginId: "old" }]);',
+      'export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS = Object.freeze([createPluginContributionIdentity]);',
+      '',
+    ].join('\n'));
+
+    const executableRenderer = sourceBetween(
+      'function renderCliBundledPluginEntriesTs(',
+      'export function renderRetainedCliBundledPluginImplementationEntriesTs(',
+    );
+    const output = renderRetainedCliBundledPluginImplementationEntriesTs(outputPath);
+
+    expect(executableRenderer).not.toContain('./generatedBundledPluginManifests');
+    expect(output).not.toContain('./generatedBundledPluginManifests');
+    expect(output).toContain('BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS = Object.freeze');
+    expect(output).not.toContain('BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = Object.freeze');
+    expect(output).not.toContain('BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = Object.freeze');
+    expect(output).not.toContain('PluginSourceSpecV1');
   });
 });
 

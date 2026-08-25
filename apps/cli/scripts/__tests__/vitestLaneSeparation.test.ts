@@ -29,8 +29,11 @@ describe('Vitest lane separation', () => {
         expect(include).toContain('src/**/*.slow.test.ts');
     });
 
-    it('allows empty integration shards to exit cleanly', () => {
-        expect(integrationConfig.test?.passWithNoTests).toBe(true);
+    it('leaves empty-collection tolerance to the shard runner, not the integration lane config', () => {
+        // The shard runner passes `--passWithNoTests` per shard. If the config
+        // set it, a directly invoked selected pattern that collects nothing
+        // would exit green — CI runs exactly such a direct invocation.
+        expect(integrationConfig.test?.passWithNoTests).toBeUndefined();
     });
 
     it('caps parallel CLI test workers at six', () => {

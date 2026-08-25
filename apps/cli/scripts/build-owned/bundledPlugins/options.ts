@@ -14,6 +14,20 @@ export function shouldHoldGeneratorWorkspaceLockDuringGeneration(mode: Generator
   return mode === 'write';
 }
 
+export function shouldEvaluateBundledRuntimeSource(scope: GeneratorScope): boolean {
+  return scope === 'all';
+}
+
+export type PluginAuthorRuntimeLoadScope = 'none' | 'manifest' | 'full';
+
+export function resolvePluginAuthorRuntimeLoadScope({
+  aggregateOnly,
+  scope,
+}: Pick<GeneratorOptions, 'aggregateOnly' | 'scope'>): PluginAuthorRuntimeLoadScope {
+  if (aggregateOnly) return 'none';
+  return scope === 'projections' ? 'manifest' : 'full';
+}
+
 export function printGeneratorUsage(): void {
   console.log([
     'Usage: node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts [--root DIR] [--mode write|check] [--scope all|projections] [--workspace plugins-<id>] [--aggregate]',

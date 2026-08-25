@@ -5,19 +5,21 @@
  * generated bundled-plugin and bundled-Voice projection files listed below. They are emitted
  * artifacts, not source.
  *
- * Emitted artifacts (never hand-edit any of these):
+ * Emitted artifacts (never hand-edit any of these). The COMPLETE set is the one
+ * this module writes — read the `…OutPath` declarations in `main` for it, never
+ * a prose list, which has already drifted once. The set spans `apps/cli`,
+ * `apps/ui`, `packages/agents` and `packages/protocol`; these are the ones most
+ * often reached for:
  *   - apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts
+ *   - apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts
  *   - apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts
- *   - apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ts
- *   - apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.web.ts
- *   - apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ios.ts
- *   - apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.android.ts
- *   - apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts
+ *   - apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts{,.web,.ios,.android}.ts
+ *   - apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts (plus its
+ *     .agentSettings/.sessionAgentBehaviors/.uiBehaviorOverrides/.visibleMessageResolvers siblings)
  *   - apps/ui/sources/text/bundledPluginTranslations.generated.ts
  *   - apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts
- *   - apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ts
- *   - apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ios.ts
- *   - apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.android.ts
+ *   - apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries{,.ios,.android}.ts
+ *   - packages/agents/src/generated/** and packages/protocol/src/agents/generated/**
  *
  * RULE 1 — change the generator, never the emitted file. A hand edit to any
  * emitted artifact above is erased by the next run and is a review finding. If an
@@ -46,28 +48,17 @@
  * prints the RULE 2 write command as its remediation. See `GeneratorScope` below
  * for why the two questions are not the same question.
  *
- * RULE 4 — THIS RELOCATION MUST BE COMMITTED ATOMICALLY (observed 2026-08-19).
- * The producer is mid-move and the two halves are not both in Git:
+ * RULE 4 — the producer and everything it emits are ONE publication closure;
+ * land them in one commit. Splitting them breaks `test:migration:governance` in
+ * CI: either the tracked compatibility entrypoint re-exports a producer CI does
+ * not have, or the tracked artifacts record bytes no tracked producer can emit.
+ * Establish the closure's membership from `git ls-tree -r --name-only HEAD
+ * <path>` at the moment you commit — never from a filename, an artifact count,
+ * or an earlier note in a comment, each of which has already drifted here.
  *
- *   - at `HEAD`, the producer IS `scripts/migrations/extensions/generateBundledPluginEntries.ts`
- *     (5,546 lines, emitting only the two `apps/cli` artifacts);
- *   - in the working tree that tracked file has been rewritten into a 14-line
- *     re-export shim, and the real producer is this module — which, with
- *     `generateBundledPluginEntries.test.ts`, `bundledImmutableArtifactEligibility.ts`,
- *     `bundledProviderVerification.ts`, `readTypescriptModule.mjs` and
- *     `apps/cli/scripts/verifyBundledPluginArtifacts.mjs`, is untracked and not
- *     gitignored.
- *
- * Committing the shim rewrite WITHOUT this directory breaks `test:migration:governance`
- * in CI: the tracked entrypoint would re-export a file CI does not have. All six
- * emitted artifacts are already tracked and already reflect THIS generator (the
- * four UI artifacts have no producer at `HEAD` at all), so the tracked artifact
- * set and the tracked producer are already out of correspondence. Land both
- * halves in one commit.
- *
- * See `apps/cli/AGENTS.md` ("Generated bundled-plugin artifacts").
+ * `apps/cli/AGENTS.md` ("Generated bundled-plugin artifacts") owns this rule;
+ * this note points at it rather than restating a second copy.
  */
-import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -93,10 +84,19 @@ import {
   writeFileAtomic,
   type GeneratorMode,
 } from './bundledPlugins/outputs.ts';
+import { mapWithConcurrency } from './bundledPlugins/concurrency.ts';
+import { createBundledPluginTimingReporter } from './bundledPlugins/timing.ts';
+import {
+  inspectTypescriptModule as importTypescriptModule,
+  withTypescriptModuleInspectionSession,
+} from './bundledPlugins/typescriptModuleInspection.ts';
 import {
   parseGeneratorCliArgs,
+  resolvePluginAuthorRuntimeLoadScope,
   resolveSelectedBundledPluginPackageNames,
+  shouldEvaluateBundledRuntimeSource,
   shouldHoldGeneratorWorkspaceLockDuringGeneration,
+  type PluginAuthorRuntimeLoadScope,
   type GeneratorOptions,
   type GeneratorScope,
 } from './bundledPlugins/options.ts';
@@ -338,47 +338,71 @@ type PluginAuthorRuntimeModules = Readonly<{
   manifestSerializer: PluginManifestSerializerModule;
 }>;
 
-let pluginAuthorRuntimeModulesPromise: Promise<PluginAuthorRuntimeModules> | null = null;
+type PluginAuthorRuntimeSupportModules = Pick<PluginAuthorRuntimeModules, 'staging' | 'source'>;
+
+let pluginManifestSerializerPromise: Promise<PluginManifestSerializerModule> | null = null;
+let pluginAuthorRuntimeSupportModulesPromise: Promise<PluginAuthorRuntimeSupportModules> | null = null;
+
+async function importPluginAuthorRuntimeModules<T>(
+  operation: (tsImport: typeof import('tsx/esm/api')['tsImport']) => Promise<T>,
+): Promise<T> {
+  const previousTsconfigPath = process.env.TSX_TSCONFIG_PATH;
+  try {
+    process.env.TSX_TSCONFIG_PATH = fileURLToPath(new URL(
+      '../../tsconfig.json',
+      import.meta.url,
+    ));
+    const { tsImport } = await import('tsx/esm/api');
+    return await operation(tsImport);
+  } finally {
+    if (previousTsconfigPath === undefined) {
+      delete process.env.TSX_TSCONFIG_PATH;
+    } else {
+      process.env.TSX_TSCONFIG_PATH = previousTsconfigPath;
+    }
+  }
+}
+
+async function loadPluginManifestSerializerModule(): Promise<PluginManifestSerializerModule> {
+  pluginManifestSerializerPromise ??= importPluginAuthorRuntimeModules(async (tsImport) => (
+    await tsImport(new URL(
+      '../../src/plugins/manifest/serialize.ts',
+      import.meta.url,
+    ).href, import.meta.url) as PluginManifestSerializerModule
+  ));
+  return await pluginManifestSerializerPromise;
+}
+
+async function loadPluginAuthorRuntimeSupportModules(): Promise<PluginAuthorRuntimeSupportModules> {
+  pluginAuthorRuntimeSupportModulesPromise ??= importPluginAuthorRuntimeModules(async (tsImport) => {
+    const [staging, source] = await Promise.all([
+      tsImport(new URL(
+        '../../src/plugins/authoring/bundleDaemonRuntime.ts',
+        import.meta.url,
+      ).href, import.meta.url) as Promise<PluginDaemonRuntimeStagingModule>,
+      tsImport(new URL(
+        '../../src/plugins/authoring/runtimeStagingSource.ts',
+        import.meta.url,
+      ).href, import.meta.url) as Promise<PluginRuntimeStagingSourceModule>,
+    ]);
+    return Object.freeze({ staging, source });
+  });
+  return await pluginAuthorRuntimeSupportModulesPromise;
+}
 
 async function loadPluginAuthorRuntimeModules(): Promise<PluginAuthorRuntimeModules> {
-  if (pluginAuthorRuntimeModulesPromise) {
-    return await pluginAuthorRuntimeModulesPromise;
+  const manifestSerializer = await loadPluginManifestSerializerModule();
+  const { staging, source } = await loadPluginAuthorRuntimeSupportModules();
+  return Object.freeze({ staging, source, manifestSerializer });
+}
+
+async function loadPluginAuthorRuntimeForScope(scope: PluginAuthorRuntimeLoadScope): Promise<void> {
+  if (scope === 'none') return;
+  if (scope === 'manifest') {
+    await loadPluginManifestSerializerModule();
+    return;
   }
-  pluginAuthorRuntimeModulesPromise = (async () => {
-    const previousTsconfigPath = process.env.TSX_TSCONFIG_PATH;
-    try {
-      process.env.TSX_TSCONFIG_PATH = fileURLToPath(new URL(
-        '../../tsconfig.json',
-        import.meta.url,
-      ));
-      const { tsImport } = await import('tsx/esm/api');
-      const [staging, source, manifestSerializer] = await Promise.all([
-        // These stay URLs end to end. Converting to a filesystem path and handing
-        // that back to an ESM importer is what makes a Windows path parse as a
-        // `c:` scheme, and a `#` anywhere in the repository path a fragment.
-        tsImport(new URL(
-          '../../src/plugins/authoring/bundleDaemonRuntime.ts',
-          import.meta.url,
-        ).href, import.meta.url) as Promise<PluginDaemonRuntimeStagingModule>,
-        tsImport(new URL(
-          '../../src/plugins/authoring/runtimeStagingSource.ts',
-          import.meta.url,
-        ).href, import.meta.url) as Promise<PluginRuntimeStagingSourceModule>,
-        tsImport(new URL(
-          '../../src/plugins/manifest/serialize.ts',
-          import.meta.url,
-        ).href, import.meta.url) as Promise<PluginManifestSerializerModule>,
-      ]);
-      return Object.freeze({ staging, source, manifestSerializer });
-    } finally {
-      if (previousTsconfigPath === undefined) {
-        delete process.env.TSX_TSCONFIG_PATH;
-      } else {
-        process.env.TSX_TSCONFIG_PATH = previousTsconfigPath;
-      }
-    }
-  })();
-  return await pluginAuthorRuntimeModulesPromise;
+  await loadPluginAuthorRuntimeModules();
 }
 
 type JsonPrimitive = string | number | boolean | null;
@@ -1050,45 +1074,6 @@ function renderCompactJsonLiteral(value: JsonValue): string {
   return JSON.stringify(deepSortJson(value)) ?? 'null';
 }
 
-async function importTypescriptModule(path: string): Promise<unknown> {
-  const loaderPath = fileURLToPath(new URL('./readTypescriptModule.mjs', import.meta.url));
-  const outputMarker = '__HAPPIER_GENERATOR_MODULE_JSON__';
-  const result = spawnSync(process.execPath, ['--max-old-space-size=2048', loaderPath, path], {
-    encoding: 'utf8',
-    killSignal: 'SIGKILL',
-    maxBuffer: 4 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 180_000,
-  });
-  if (result.error) {
-    throw new Error(`Failed to inspect TypeScript module ${path}: ${result.error.message}`);
-  }
-  if (result.signal || result.status !== 0) {
-    const detail = result.stderr.trim();
-    throw new Error(
-      detail
-        ? `Failed to inspect TypeScript module ${path}: ${detail}`
-        : `Failed to inspect TypeScript module ${path}`,
-    );
-  }
-  const markerIndex = result.stdout.lastIndexOf(outputMarker);
-  if (markerIndex < 0) {
-    throw new Error(`Failed to inspect TypeScript module ${path}: missing isolated module result`);
-  }
-  const payload = JSON.parse(result.stdout.slice(markerIndex + outputMarker.length)) as unknown;
-  if (!isRecord(payload) || !Array.isArray(payload.exportNames) || !isRecord(payload.values)) {
-    throw new Error(`Failed to inspect TypeScript module ${path}: invalid isolated module result`);
-  }
-  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-  for (const exportName of payload.exportNames) {
-    if (typeof exportName !== 'string') {
-      throw new Error(`Failed to inspect TypeScript module ${path}: invalid export name`);
-    }
-    out[exportName] = payload.values[exportName];
-  }
-  return out;
-}
-
 function readManifestContributionArray(manifest: PluginManifestJson, family: string): readonly JsonValue[] {
   const contributes = manifest.contributes;
   if (!isRecord(contributes)) return [];
@@ -1323,31 +1308,6 @@ function readOptionalJsonObjectDescriptor(
     throw new Error(`Invalid agent UI descriptor at ${path}.${String(key)}: expected object`);
   }
   return normalized;
-}
-
-/**
- * `behavior.mcpServers` is derived, never authored.
- *
- * Whether an Agent offers the MCP settings screen's detected-config scan is
- * already decided by its manifest `contributes.mcp.discoverySources` entry —
- * the same declaration the daemon's detection reads to run the scan. A second
- * hand-maintained copy in the UI descriptor could only drift, and did in both
- * directions before this became derived: Claude contributed the discovery
- * source but never declared the flag, so it was missing from the screen, and
- * ohMyPi declared the flag with no MCP contribution at all, so it offered a
- * scan that could never discover anything.
- */
-function assertDescriptorDoesNotRestateDerivedMcpBehavior(
-  behavior: JsonObject | undefined,
-  descriptorPath: string,
-): void {
-  if (behavior === undefined || behavior.mcpServers === undefined) return;
-  throw new Error(
-    `Invalid agent UI descriptor at ${descriptorPath}.behavior.mcpServers: `
-    + 'detected MCP config scan support is derived from manifest '
-    + 'contributes.mcp.discoverySources (matched by its metadata.agentId); '
-    + 'declare the discovery source instead of restating it here',
-  );
 }
 
 function readOptionalAgentRuntimeProjectionImportDescriptor(
@@ -1711,7 +1671,6 @@ function normalizeAgentUiDescriptor(value: unknown, descriptorPath: string): Age
   const icon = readOptionalJsonObjectDescriptor(display, 'icon', `${descriptorPath}.display`);
   const settings = readOptionalJsonObjectDescriptor(root, 'settings', descriptorPath);
   const behavior = readOptionalJsonObjectDescriptor(root, 'behavior', descriptorPath);
-  assertDescriptorDoesNotRestateDerivedMcpBehavior(behavior, descriptorPath);
   const session = readOptionalJsonObjectDescriptor(root, 'session', descriptorPath);
   const message = readOptionalJsonObjectDescriptor(root, 'message', descriptorPath);
   const components = readOptionalJsonObjectDescriptor(root, 'components', descriptorPath);
@@ -2574,7 +2533,7 @@ async function synchronizeSerializedPluginManifest(params: Readonly<{
   manifest: PluginManifestJson;
   mode: Mode;
 }>): Promise<void> {
-  const { manifestSerializer } = await loadPluginAuthorRuntimeModules();
+  const manifestSerializer = await loadPluginManifestSerializerModule();
   const serializedManifest = manifestSerializer.serializeCanonicalPluginManifest(params.manifest);
   const manifestPath = resolve(params.packageRoot, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH);
   if (params.mode === 'check') {
@@ -2858,7 +2817,8 @@ async function readBundledSessionRunnerFactories(params: Readonly<{
   PluginRuntimeStagingSourceModule['evaluatePluginAuthorRuntimeStagingSource']
 >>['sessionRunnerFactories']> {
   const sourceEntryPath = resolve(params.packageRoot, 'src', 'index.ts');
-  const { source, manifestSerializer } = await loadPluginAuthorRuntimeModules();
+  const manifestSerializer = await loadPluginManifestSerializerModule();
+  const { source } = await loadPluginAuthorRuntimeSupportModules();
   const runtimeSource = await source.evaluatePluginAuthorRuntimeStagingSource({
     locator: sourceEntryPath,
     rootPath: params.packageRoot,
@@ -2903,8 +2863,7 @@ async function stageBundledPluginDaemonRuntime(params: Readonly<{
     );
   }
 
-  const sessionRunnerFactories = await readBundledSessionRunnerFactories(params);
-  if (params.scope === 'projections') {
+  if (!shouldEvaluateBundledRuntimeSource(params.scope)) {
     // Returning no override makes the caller measure this package's artifact
     // integrity from the installed bytes. Re-staging here would inline the
     // current shared workspace output into every bundle and turn a plugin
@@ -2912,9 +2871,10 @@ async function stageBundledPluginDaemonRuntime(params: Readonly<{
     // owns that one.
     return new Map();
   }
+  const sessionRunnerFactories = await readBundledSessionRunnerFactories(params);
   const stagingRoot = mkdtempSync(resolve(tmpdir(), 'happier-first-party-runtime-stage-'));
   try {
-    const { staging } = await loadPluginAuthorRuntimeModules();
+    const { staging } = await loadPluginAuthorRuntimeSupportModules();
     const { stagePluginDaemonRuntime } = staging;
     const canonicalWorkspacePackageRoots = params.getCanonicalWorkspacePackageRoots();
     const staged = await stagePluginDaemonRuntime({
@@ -3035,7 +2995,7 @@ async function createBundledImmutableArtifactSource(params: Readonly<{
       `${JSON.stringify(packageJsonForArtifact, null, 2)}\n`,
     );
   }
-  const { manifestSerializer } = await loadPluginAuthorRuntimeModules();
+  const manifestSerializer = await loadPluginManifestSerializerModule();
   const installedManifestBytes = Buffer.from(
     manifestSerializer.serializeCanonicalPluginManifest(params.manifest),
     'utf8',
@@ -3153,6 +3113,26 @@ async function createBundledImmutableArtifactSource(params: Readonly<{
 
 function bundledGenerationIdentityKey(packageName: string, pluginId: string): string {
   return JSON.stringify([packageName, pluginId]);
+}
+
+// Server custody retirement is permanent for a published immutable identity.
+// Keep this publisher-local denylist so an unchanged source artifact cannot
+// accidentally republish a generation that the custody owner has fenced.
+const RETIRED_BUNDLED_IMMUTABLE_GENERATION_IDS_BY_IDENTITY = Object.freeze({
+  [bundledGenerationIdentityKey(
+    '@happier-dev/plugins-codex',
+    'happier.agent.codex',
+  )]: Object.freeze([
+    'bundled-13457e22-f993-4eb8-9d67-77caad02eefe',
+  ]),
+} satisfies Readonly<Record<string, readonly string[]>>);
+
+function isRetiredBundledImmutableGenerationIdentity(
+  identityKey: string,
+  immutableGenerationId: string,
+): boolean {
+  return RETIRED_BUNDLED_IMMUTABLE_GENERATION_IDS_BY_IDENTITY[identityKey]
+    ?.includes(immutableGenerationId) ?? false;
 }
 
 function readGeneratedJsonExportLiteral(
@@ -3352,6 +3332,10 @@ function assignBundledImmutableArtifactGenerationIds(input: Readonly<{
       && sameBundledSourceArtifactIntegrity(
         priorIdentity.sourceArtifactIntegrity,
         immutableArtifact.sourceArtifactIntegrity,
+      )
+      && !isRetiredBundledImmutableGenerationIdentity(
+        identityKey,
+        priorIdentity.immutableGenerationId,
       );
     // Integrity remains a pack-time fact. It only tells this publisher whether
     // the current artifact revision is still G; runtime currentness continues
@@ -3536,14 +3520,18 @@ async function collectBundledPluginPackages(
     dependencies,
   );
 
-  const out: BundledPluginPackage[] = [];
-  const failures: BundledPluginPackageFailure[] = [];
-  for (const packageName of bundledPluginPackageNames) {
+  const collected = await mapWithConcurrency(
+    bundledPluginPackageNames,
+    2,
+    async (packageName): Promise<Readonly<{
+      pluginPackage?: BundledPluginPackage;
+      failure?: BundledPluginPackageFailure;
+    }>> => await withTypescriptModuleInspectionSession(async () => {
     try {
       const pluginPackageId = pluginPackageNameToPackageId(packageName);
       const packageRoot = resolve(pluginsRoot, pluginPackageId);
       const pkgJsonPath = resolve(packageRoot, 'package.json');
-      if (!existsSync(pkgJsonPath)) continue;
+      if (!existsSync(pkgJsonPath)) return Object.freeze({});
       const pkgJson = readJson(pkgJsonPath) as Record<string, unknown>;
       if (pkgJson.name !== packageName) {
         throw new Error(`Invalid plugin package name for ${pluginPackageId}: expected ${packageName}, got ${String(pkgJson.name)}`);
@@ -3586,7 +3574,7 @@ async function collectBundledPluginPackages(
         dependencies,
       });
 
-      out.push({
+      return Object.freeze({ pluginPackage: Object.freeze({
         pluginPackageId,
         pluginId: manifest.id,
         packageName,
@@ -3615,14 +3603,18 @@ async function collectBundledPluginPackages(
           ? { builtInLegacyConnectedAccountCompatibility: sourceProjectionFacts.builtInLegacyConnectedAccountCompatibility }
           : {}),
         ...(immutableArtifact ? { immutableArtifact } : {}),
-      });
+      }) });
     } catch (error) {
-      failures.push(Object.freeze({
+      return Object.freeze({ failure: Object.freeze({
         packageName,
         message: error instanceof Error ? error.message : String(error),
-      }));
+      }) });
     }
-  }
+    }),
+  );
+
+  const out = collected.flatMap((entry) => entry.pluginPackage ? [entry.pluginPackage] : []);
+  const failures = collected.flatMap((entry) => entry.failure ? [entry.failure] : []);
 
   out.sort((a, b) => a.packageName.localeCompare(b.packageName));
   return Object.freeze({
@@ -3675,15 +3667,22 @@ function readSerializedBundledPluginPackages(
       );
     }
     pluginOwnerById.set(manifest.id, packageName);
-    for (const agentContribution of readManifestContributionArray(manifest, 'agents')) {
-      const agentId = readRequiredContributionId(agentContribution, 'agents', pluginPackageId);
-      const previousAgentOwner = agentOwnerById.get(agentId);
+    const agentContributions = readManifestContributionArray(manifest, 'agents');
+    let agentId: string | undefined;
+    for (const agentContribution of agentContributions) {
+      const contributionAgentId = readRequiredContributionId(
+        agentContribution,
+        'agents',
+        pluginPackageId,
+      );
+      const previousAgentOwner = agentOwnerById.get(contributionAgentId);
       if (previousAgentOwner) {
         throw new Error(
-          `Duplicate bundled agent provider id '${agentId}' from '${previousAgentOwner}' and '${packageName}'`,
+          `Duplicate bundled agent provider id '${contributionAgentId}' from '${previousAgentOwner}' and '${packageName}'`,
         );
       }
-      agentOwnerById.set(agentId, packageName);
+      agentOwnerById.set(contributionAgentId, packageName);
+      agentId ??= contributionAgentId;
     }
 
     out.push(Object.freeze({
@@ -3692,6 +3691,7 @@ function readSerializedBundledPluginPackages(
       packageName,
       packageVersion: packageJson.version,
       manifest,
+      ...(agentId ? { agentId } : {}),
     }));
   }
   return Object.freeze(out.sort((left, right) => left.packageName.localeCompare(right.packageName)));
@@ -4722,6 +4722,11 @@ async function publishBundledPluginUiArtifactProjection(
     bundledPluginPackageNames,
     dependencies,
   );
+  const cliManifestOutPath = resolve(
+    options.rootDir,
+    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
+  );
+  const cliManifestOut = renderCliBundledPluginManifestEntriesTs({ pluginPackages });
   const protocolProjectionFactsOutPath = resolveBundledPluginProtocolProjectionFactsOutPath(
     options.rootDir,
   );
@@ -4792,6 +4797,7 @@ async function publishBundledPluginUiArtifactProjection(
     for (const platform of ['generic', ...BUNDLED_PLUGIN_UI_APP_ARTIFACT_PLATFORMS] as const) {
       assertGeneratedOutputMatches(outPaths[platform], outputs[platform]);
     }
+    assertGeneratedOutputMatches(cliManifestOutPath, cliManifestOut);
     if (protocolOutputs) {
       assertGeneratedOutputMatches(protocolProjectionFactsOutPath, protocolOutputs.facts);
       assertGeneratedOutputMatches(protocolBuiltInBackendProfilesOutPath, protocolOutputs.profiles);
@@ -4812,6 +4818,7 @@ async function publishBundledPluginUiArtifactProjection(
     sources,
   });
   publishCoherentProjectionOutputs(options.rootDir, [
+    { outPath: cliManifestOutPath, out: cliManifestOut },
     ...(['generic', ...BUNDLED_PLUGIN_UI_APP_ARTIFACT_PLATFORMS] as const).map((platform) => ({
       outPath: outPaths[platform],
       out: outputs[platform],
@@ -5976,13 +5983,9 @@ function renderProtocolRuntimeDescriptorContributionsV1Ts(
   return lines.join('\n');
 }
 
-function renderCliBundledPluginEntriesTs(params: Readonly<{
+function renderCliBundledPluginManifestEntriesTs(params: Readonly<{
   pluginPackages: readonly BundledPluginPackage[];
 }>): string {
-  const implementationSources = collectProviderCatalogEntryHookSources(params.pluginPackages);
-  const pluginByAgentId = new Map(
-    params.pluginPackages.flatMap((entry) => entry.agentId ? [[entry.agentId, entry] as const] : []),
-  );
   const metadata = params.pluginPackages.map((entry) => ({
     ...(entry.agentId ? { agentId: entry.agentId } : {}),
     manifestPath: `bundled:${entry.pluginId}`,
@@ -5997,26 +6000,12 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push('/**');
   lines.push(' * GENERATED FILE CONTRACT (WS1.T3)');
   lines.push(' *');
-  lines.push(' * Locator/provenance records and trusted implementation bindings only.');
+  lines.push(' * Data-only locator and provenance records.');
   lines.push(' * Contribution declarations are ingested from generator-normalized manifest');
   lines.push(' * data by the same canonical path used for installed plugins.');
   lines.push(' */');
   lines.push('');
-  lines.push("import { createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';");
   lines.push("import type { PluginSourceSpecV1 } from '@happier-dev/protocol/plugins/source-spec';");
-  if (implementationSources.length > 0) {
-    lines.push("import { createAgentRuntimeCatalogEntryHooks } from '../agentCatalogEntryHooks';");
-  }
-  for (const source of implementationSources) {
-    lines.push(`import { ${source.importName} } from ${renderTsStringLiteral(source.importPath)};`);
-  }
-  const externalSessionHostAdapterImportSources = implementationSources.flatMap((source) => [
-    source.externalSessionHostAdapters?.candidateHostAdapter,
-    source.externalSessionHostAdapters?.transcriptStoreAdapter,
-  ].filter((entry): entry is ExternalSessionHostAdapterImportSource => Boolean(entry)));
-  for (const source of externalSessionHostAdapterImportSources) {
-    lines.push(`import { ${source.exportName} as ${source.importAlias} } from ${renderTsStringLiteral(source.importPath)};`);
-  }
   lines.push('');
   lines.push('export type BundledFirstPartyPluginMetadata = Readonly<{');
   lines.push('  agentId?: string;');
@@ -6034,13 +6023,6 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push('  daemonEntryPath: string | null;');
   lines.push('  devDaemonEntryPath?: string | null;');
   lines.push('  sourceSpec: PluginSourceSpecV1;');
-  lines.push('}>;');
-  lines.push('');
-  lines.push('export type BundledFirstPartyImplementationBinding = Readonly<{');
-  lines.push('  identity: PluginContributionIdentityV1;');
-  lines.push('  implementationOwnerId: string;');
-  lines.push('  registrationFamily: string;');
-  lines.push('  implementation: unknown;');
   lines.push('}>;');
   lines.push('');
   lines.push('export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Object.freeze([');
@@ -6067,6 +6049,40 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
     lines.push('  }),');
   }
   lines.push(']);');
+  lines.push('');
+  return lines.join('\n');
+}
+
+function renderCliBundledPluginEntriesTs(params: Readonly<{
+  pluginPackages: readonly BundledPluginPackage[];
+}>): string {
+  const implementationSources = collectProviderCatalogEntryHookSources(params.pluginPackages);
+  const pluginByAgentId = new Map(
+    params.pluginPackages.flatMap((entry) => entry.agentId ? [[entry.agentId, entry] as const] : []),
+  );
+  const lines: string[] = [];
+  lines.push('/** GENERATED executable bindings for bundled first-party plugins. */');
+  lines.push("import { createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';");
+  if (implementationSources.length > 0) {
+    lines.push("import { createAgentRuntimeCatalogEntryHooks } from '../agentCatalogEntryHooks';");
+  }
+  for (const source of implementationSources) {
+    lines.push(`import { ${source.importName} } from ${renderTsStringLiteral(source.importPath)};`);
+  }
+  const externalSessionHostAdapterImportSources = implementationSources.flatMap((source) => [
+    source.externalSessionHostAdapters?.candidateHostAdapter,
+    source.externalSessionHostAdapters?.transcriptStoreAdapter,
+  ].filter((entry): entry is ExternalSessionHostAdapterImportSource => Boolean(entry)));
+  for (const source of externalSessionHostAdapterImportSources) {
+    lines.push(`import { ${source.exportName} as ${source.importAlias} } from ${renderTsStringLiteral(source.importPath)};`);
+  }
+  lines.push('');
+  lines.push('export type BundledFirstPartyImplementationBinding = Readonly<{');
+  lines.push('  identity: PluginContributionIdentityV1;');
+  lines.push('  implementationOwnerId: string;');
+  lines.push('  registrationFamily: string;');
+  lines.push('  implementation: unknown;');
+  lines.push('}>;');
   lines.push('');
   lines.push('export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: readonly BundledFirstPartyImplementationBinding[] = Object.freeze([');
   for (const source of implementationSources) {
@@ -6108,6 +6124,40 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push(']);');
   lines.push('');
   return lines.join('\n');
+}
+
+export function renderRetainedCliBundledPluginImplementationEntriesTs(entriesOutPath: string): string {
+  const source = readFileSync(entriesOutPath, 'utf8');
+  const implementationStart = source.indexOf(
+    'export type BundledFirstPartyImplementationBinding = Readonly<{',
+  );
+  const implementationTypeEnd = source.indexOf('>;', implementationStart);
+  const implementationBindingsStart = source.indexOf(
+    'export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS',
+    implementationTypeEnd,
+  );
+  if (
+    implementationStart < 0
+    || implementationTypeEnd < 0
+    || implementationBindingsStart < 0
+  ) {
+    throw new Error(
+      `Invalid generated bundled plugin registry at ${entriesOutPath}: missing implementation bindings`,
+    );
+  }
+  const retainedImports = source
+    .split('\n')
+    .filter((line) => line.startsWith('import '))
+    .filter((line) => !line.includes('PluginSourceSpecV1'))
+    .filter((line) => !line.includes('PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS'));
+  return [
+    '/** GENERATED executable bindings for bundled first-party plugins. */',
+    ...retainedImports,
+    '',
+    source.slice(implementationStart, implementationTypeEnd + 2).trim(),
+    '',
+    source.slice(implementationBindingsStart).trimStart(),
+  ].join('\n');
 }
 
 function renderCliBundledPluginArtifactRecordsTs(
@@ -6525,32 +6575,16 @@ function createDescriptorAgentUiProjectionSource(
  * runs on is what keeps the screen from offering a scan the daemon has no
  * source for, or hiding one it does.
  */
-function agentOwnsMcpConfigDiscoverySource(
-  pluginPackage: BundledPluginPackage,
-  agentId: string,
-): boolean {
-  return readManifestNestedContributionArray(pluginPackage.manifest, 'mcp', 'discoverySources')
-    .some((source) => (
-      isJsonObject(source)
-      && isJsonObject(source.metadata)
-      && source.metadata.agentId === agentId
-    ));
-}
-
 function collectAgentUiBehaviorOverrideSources(pluginPackages: readonly BundledPluginPackage[]): readonly AgentUiBehaviorOverrideSource[] {
   return pluginPackages.flatMap((pluginPackage): AgentUiBehaviorOverrideSource[] => {
     const behavior = pluginPackage.agentUiDescriptor?.behavior;
     const components = pluginPackage.agentUiDescriptor?.components;
     const message = pluginPackage.agentUiDescriptor?.message;
     const agentId = pluginPackage.agentUiDescriptor?.agentId;
-    const derivedMcpServers: JsonObject = agentId && agentOwnsMcpConfigDiscoverySource(pluginPackage, agentId)
-      ? { mcpServers: { supportsDetectedConfigScan: true } }
-      : {};
     const projection: JsonObject = {
       ...(hasDescriptorFields(behavior) ? behavior : {}),
       ...(hasDescriptorFields(message) ? { message } : {}),
       ...(hasDescriptorFields(components) ? { components } : {}),
-      ...derivedMcpServers,
     };
     if (
       !hasDescriptorFields(projection)
@@ -7340,6 +7374,10 @@ async function generateBundledPluginEntries(
       options.rootDir,
       'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
     );
+    const cliOutPath = resolve(
+      options.rootDir,
+      'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
+    );
     const selectedResult = await collectBundledPluginPackages(
       options.rootDir,
       selectedPackageNames,
@@ -7356,8 +7394,10 @@ async function generateBundledPluginEntries(
         artifactsOutPath: cliArtifactsOutPath,
         selectedPluginPackages,
       });
+      const cliOut = renderRetainedCliBundledPluginImplementationEntriesTs(cliOutPath);
       if (options.mode === 'check') {
         assertGeneratedOutputMatches(cliArtifactsOutPath, cliArtifactsOut);
+        assertGeneratedOutputMatches(cliOutPath, cliOut);
       } else {
         const successfulWorkspaceNames = selectedPluginPackages.map((pluginPackage) => (
           pluginPackage.packageName.slice('@happier-dev/'.length)
@@ -7365,7 +7405,10 @@ async function generateBundledPluginEntries(
         await publishBundledPluginUiArtifactProjection(
           { ...options, workspaceNames: Object.freeze(successfulWorkspaceNames) },
           dependencies,
-          [{ outPath: cliArtifactsOutPath, out: cliArtifactsOut }],
+          [
+            { outPath: cliArtifactsOutPath, out: cliArtifactsOut },
+            { outPath: cliOutPath, out: cliOut },
+          ],
         );
       }
     }
@@ -7446,6 +7489,10 @@ async function generateBundledPluginEntries(
   );
 
   const cliOutPath = resolve(options.rootDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts');
+  const cliManifestOutPath = resolve(
+    options.rootDir,
+    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
+  );
   const uiOutPath = resolve(options.rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
   const uiTranslationsOutPath = resolve(
     options.rootDir,
@@ -7578,6 +7625,7 @@ async function generateBundledPluginEntries(
   );
 
   const cliOut = renderCliBundledPluginEntriesTs({ pluginPackages });
+  const cliManifestOut = renderCliBundledPluginManifestEntriesTs({ pluginPackages });
   const cliArtifactsOut = renderCliBundledPluginArtifactsTs(pluginPackages);
 
   const agentsOut = renderBundledAgentDefinitionsTs({ agentIds: bundledAgentDefinitionIds, agentDefinitionsById });
@@ -7659,6 +7707,7 @@ async function generateBundledPluginEntries(
 
   if (options.mode === 'check') {
     assertGeneratedOutputMatches(cliOutPath, cliOut);
+    assertGeneratedOutputMatches(cliManifestOutPath, cliManifestOut);
     assertGeneratedOutputMatches(cliArtifactsOutPath, cliArtifactsOut);
     assertGeneratedOutputMatches(agentsOutPath, agentsOut);
     assertGeneratedOutputMatches(agentIdsOutPath, agentIdsOut);
@@ -7708,6 +7757,7 @@ async function generateBundledPluginEntries(
 
   publishCoherentProjectionOutputs(options.rootDir, [
     { outPath: cliOutPath, out: cliOut },
+    { outPath: cliManifestOutPath, out: cliManifestOut },
     { outPath: cliArtifactsOutPath, out: cliArtifactsOut },
     { outPath: agentsOutPath, out: agentsOut },
     { outPath: agentIdsOutPath, out: agentIdsOut },
@@ -7768,7 +7818,9 @@ async function withGeneratorWorkspaceLock<T>(
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  const timing = createBundledPluginTimingReporter();
   const options = parseGeneratorCliArgs(argv);
+  const authorRuntimeLoadScope = resolvePluginAuthorRuntimeLoadScope(options);
   const inheritedLockValue = process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD;
   if (options.workspaceNames.length === 0 && !options.aggregateOnly) {
     // Package compilation and app-local runtime materialization are reusable
@@ -7777,27 +7829,45 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     // exclude another publisher. A caller that already owns the canonical
     // lock keeps passing its lease through for safe reentrancy.
     await synchronizeGeneratorAuthoringRuntimeClosure(options.mode, inheritedLockValue);
+    timing.phase('authoring-runtime-synchronization');
+  }
+  let authorRuntimeLoaded = false;
+  if (
+    authorRuntimeLoadScope !== 'none'
+    && shouldHoldGeneratorWorkspaceLockDuringGeneration(options.mode)
+  ) {
+    // Module initialization is expensive but does not publish or consume a
+    // mutable snapshot. Warm it before entering the shared publication lock so
+    // unrelated workspace producers are not blocked by TypeScript graph setup.
+    await loadPluginAuthorRuntimeForScope(authorRuntimeLoadScope);
+    authorRuntimeLoaded = true;
+    timing.phase('authoring-runtime-load');
   }
   if (shouldHoldGeneratorWorkspaceLockDuringGeneration(options.mode)) {
     await withGeneratorWorkspaceLock(
       async (dependencies) => await generateBundledPluginEntries(options, dependencies),
       inheritedLockValue,
     );
+    timing.phase('generation-and-publication');
     return;
   }
 
-  // A drift check is read-only. Stabilize and load the materialized runtime
-  // dependencies under the publication lock, then release it before scanning,
-  // staging, and comparing every bundled plugin. Holding the CLI publication
-  // lock for that long read-only pass unnecessarily blocks unrelated builds.
+  // A drift check is read-only. Capture the canonical dependency modules under
+  // the publication lock, then release it before initializing the independent
+  // authoring runtime graph and scanning plugins. Package publication itself is
+  // atomic, so warming a consumer graph is not part of the shared critical
+  // section and must not convoy unrelated workspace builds.
   const dependencies = await withGeneratorWorkspaceLock(
-    async (loadedDependencies) => {
-      await loadPluginAuthorRuntimeModules();
-      return loadedDependencies;
-    },
+    async (loadedDependencies) => loadedDependencies,
     inheritedLockValue,
   );
+  timing.phase('dependency-snapshot');
+  if (authorRuntimeLoadScope !== 'none' && !authorRuntimeLoaded) {
+    await loadPluginAuthorRuntimeForScope(authorRuntimeLoadScope);
+    timing.phase('authoring-runtime-load');
+  }
   await generateBundledPluginEntries(options, dependencies);
+  timing.phase('projection-and-check');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

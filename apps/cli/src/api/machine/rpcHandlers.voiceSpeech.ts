@@ -193,6 +193,30 @@ function resolveSpeechCredentialAuthority(input: Readonly<{
   }
 }
 
+function isSpeechCredentialAuthorityCurrent(input: Readonly<{
+  contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
+  target: VoiceSpeechTargetRef;
+  readAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
+  machineId: string | null;
+  authority: SpeechCredentialAuthority;
+}>): boolean {
+  const current = input.readAccountSettingsSnapshot();
+  if (!current) return false;
+  try {
+    return isDeepStrictEqual(
+      resolveSpeechCredentialAuthority({
+        contribution: input.contribution,
+        target: input.target,
+        accountSettings: current.settings as unknown as Readonly<Record<string, unknown>>,
+        machineId: input.machineId,
+      }),
+      input.authority,
+    );
+  } catch {
+    return false;
+  }
+}
+
 function resolveSpeechCredentialAdmission(input: Readonly<{
   contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
   target: VoiceSpeechTargetRef;
@@ -218,28 +242,24 @@ function resolveSpeechCredentialAdmission(input: Readonly<{
     if (requirementActive) throw credentialUnavailable();
     return Object.freeze({
       hasSelectedSource: false,
-      isAuthorityCurrent: () => true,
+      isAuthorityCurrent: () => isSpeechCredentialAuthorityCurrent({
+        contribution: input.contribution,
+        target: input.target,
+        readAccountSettingsSnapshot: input.readAccountSettingsSnapshot,
+        machineId: input.machineId,
+        authority,
+      }),
     });
   }
   return Object.freeze({
     hasSelectedSource: true,
-    isAuthorityCurrent: () => {
-      const current = input.readAccountSettingsSnapshot();
-      if (!current) return false;
-      try {
-        return isDeepStrictEqual(
-          resolveSpeechCredentialAuthority({
-            contribution: input.contribution,
-            target: input.target,
-            accountSettings: current.settings as unknown as Readonly<Record<string, unknown>>,
-            machineId: input.machineId,
-          }),
-          authority,
-        );
-      } catch {
-        return false;
-      }
-    },
+    isAuthorityCurrent: () => isSpeechCredentialAuthorityCurrent({
+      contribution: input.contribution,
+      target: input.target,
+      readAccountSettingsSnapshot: input.readAccountSettingsSnapshot,
+      machineId: input.machineId,
+      authority,
+    }),
   });
 }
 

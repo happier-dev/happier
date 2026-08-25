@@ -43,9 +43,10 @@ Details: `../../docs/agents-catalog.md` and `../../docs/providers.md`.
 
 ## Generated bundled-plugin artifacts
 
-`scripts/build-owned/generateBundledPluginEntries.ts` is the single producer and single owner of the generated bundled-plugin and bundled-Voice projection files. Two live here and the remaining outputs live in `apps/ui`:
+`scripts/build-owned/generateBundledPluginEntries.ts` is the single producer and single owner of the generated bundled-plugin and bundled-Voice projection files. Its `…OutPath` declarations are the authority for the complete emitted set, which also reaches `packages/agents` and `packages/protocol`; the frequently touched outputs are:
 
 - `src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts`
+- `src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts`
 - `src/plugins/projection/registry/sources/generatedBundledPlugins.ts`
 - `../ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ts`
 - `../ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.web.ts`
@@ -59,7 +60,7 @@ Details: `../../docs/agents-catalog.md` and `../../docs/providers.md`.
 - `../ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.android.ts`
 
 - Change the generator, never an emitted file. A hand edit to any emitted artifact is erased by the next run and is a review finding; the real defect is in the generator, in a bundled plugin's manifest, or in the bundled-plugin membership list.
-- Regeneration is the **last** step of a batch and runs **once**. Adding, renaming or re-manifesting a bundled plugin invalidates all six artifacts, and several programs do this concurrently. Land every manifest/membership source change first, then run one regeneration:
+- Regeneration is the **last** step of a batch and runs **once**. Adding, renaming or re-manifesting a bundled plugin invalidates every emitted artifact, and several programs do this concurrently. Land every manifest/membership source change first, then run one regeneration:
 
   ```bash
   node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts --mode write
@@ -70,7 +71,7 @@ Details: `../../docs/agents-catalog.md` and `../../docs/providers.md`.
   - `yarn test:migration:bundled-plugin-projections` (`--scope projections`) compares the generated projections against the bundled plugin sources and the bundle bytes **as installed**. Every input is owned by `packages/plugins/*`, so a failure names a plugin-source or projection defect.
   - `yarn test:migration:bundled-plugin-runtime-determinism` (`--scope all`) additionally re-stages every bundled daemon runtime with esbuild and requires the installed bytes to equal that fresh build. The stage runs `bundle: true, packages: 'bundle'`, so the current `plugin-sdk`/`protocol` output is inlined into every bundle: rebuilding one shared workspace dependency changes all bundled runtimes at once, and the recorded artifact digests with them. That is whole-repo build determinism, not a plugin fact, and it is why the two questions no longer share one name.
   - `--scope projections` is check-only; `--mode write` always publishes the full scope.
-- **The producer and everything it emits are one publication closure; land them in one commit.** The closure is the build-owned generator plus its helpers and test in `scripts/build-owned/`, the compatibility entrypoint `scripts/migrations/extensions/generateBundledPluginEntries.ts`, `scripts/verifyBundledPluginArtifacts.mjs`, the twelve emitted artifacts listed above, and the installed `packages/plugins/*/.happier-plugin/**` bytes the drift gate compares against. Splitting them across commits breaks `test:migration:governance` in CI: either the tracked entrypoint re-exports a producer CI does not have, or the tracked artifacts record bytes no tracked producer can emit. Establish membership from `git ls-tree -r --name-only HEAD <path>` at the moment you commit — never from a filename or from an earlier note in this file.
+- **The producer and everything it emits are one publication closure; land them in one commit.** The closure is the build-owned generator plus its helpers and test in `scripts/build-owned/`, the compatibility entrypoint `scripts/migrations/extensions/generateBundledPluginEntries.ts`, `scripts/verifyBundledPluginArtifacts.mjs`, **every** artifact the generator emits (not only the ones listed above), and the installed `packages/plugins/*/.happier-plugin/**` bytes the drift gate compares against. Splitting them across commits breaks `test:migration:governance` in CI: either the tracked entrypoint re-exports a producer CI does not have, or the tracked artifacts record bytes no tracked producer can emit. Establish membership from `git ls-tree -r --name-only HEAD <path>` at the moment you commit — never from a filename or from an earlier note in this file.
 
 ## Terminal and integrations
 

@@ -39,7 +39,6 @@ export default defineConfig({
         environment: 'node',
         testTimeout: 60_000,
         hookTimeout: 60_000,
-        passWithNoTests: true,
         // These integration tests mutate `process.env` (PATH overrides, server URLs, etc).
         // Running in a single fork avoids cross-file environment races.
         pool: 'forks',

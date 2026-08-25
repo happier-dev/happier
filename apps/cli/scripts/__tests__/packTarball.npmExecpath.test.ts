@@ -149,6 +149,55 @@ describe('packTarball (npmExecpath)', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it('packs the ordinary CLI artifact without release-only managed runtime archives', async () => {
+    const repoRoot = createTempDirSync('happier-cli-ordinary-pack-repo-');
+    const packageRoot = join(repoRoot, 'apps', 'cli');
+    const destDir = createTempDirSync('happier-cli-ordinary-pack-dest-');
+    const tarballName = 'ordinary-cli.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    writeFileSync(join(packageRoot, 'dist', 'index.mjs'), 'export const built = true;\n', 'utf8');
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package.json'],
+      bundledDependencies: ['@happier-dev/plugins-cliproxyapi'],
+    }), 'utf8');
+    const spawn = vi.fn((_command: unknown, _args: unknown, options: { cwd: string }) => {
+      expect(options.cwd).not.toBe(packageRoot);
+      writeFileSync(join(destDir, tarballName), '', 'utf8');
+      return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+    });
+
+    await expect(packTarballImpl({
+      packageRoot,
+      repoRoot,
+      destDir,
+      assertInputCurrentnessImpl: async () => undefined,
+      assertPublicationClosureIdentityImpl: () => undefined,
+      bundleWorkspaceDeps: async ({ packageRoot: snapshotRoot }) => {
+        const pluginRoot = join(
+          snapshotRoot,
+          'node_modules',
+          '@happier-dev',
+          'plugins-cliproxyapi',
+        );
+        mkdirSync(pluginRoot, { recursive: true });
+        writeFileSync(join(pluginRoot, 'package.json'), JSON.stringify({
+          name: '@happier-dev/plugins-cliproxyapi',
+          version: '0.0.0',
+        }), 'utf8');
+      },
+      spawnSync: spawn,
+      npmInvocation: { command: process.execPath, args: [] },
+      resolveCommandInvocation: preserveCommandInvocation,
+      env: {},
+    })).resolves.toMatchObject({
+      tarballName,
+      tarballPath: join(destDir, tarballName),
+    });
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
   it('uses bounded npm filename output and still requires a zero process status for the exact artifact', async () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
     const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');

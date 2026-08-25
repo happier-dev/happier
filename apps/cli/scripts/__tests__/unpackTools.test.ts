@@ -24,14 +24,36 @@ type ToolArchiveManifestEntry = Readonly<{
   extraBinaries?: readonly string[];
 }>;
 
+type CliRuntimeAssetArchiveManifestEntry = Readonly<{
+  asset: string;
+  platformDir: string;
+  archiveName: string;
+  archiveType: 'tar.gz' | 'zip';
+  binaryName: string;
+  version: string;
+  licenseNames: readonly string[];
+  runtimeAssetRelativePath: string;
+}>;
+
+type CliDistBuildManifestModule = Readonly<{
+  writeCliDistBuildManifest: (entrypoint: string) => unknown;
+  readCliRuntimeAssetIntegrity: (params: Readonly<{
+    runtimeRoot: string;
+    relativePath: string;
+    entrypoint?: string;
+  }>) => Readonly<{ ok: boolean; reason?: string; assetPath?: string | null }>;
+}>;
+
 type UnpackToolsModule = Readonly<{
   getPlatformDir: () => string;
   getToolsDir: () => string;
   getToolArchiveManifest: () => readonly ToolArchiveManifestEntry[];
+  getCliRuntimeAssetArchiveManifest: () => readonly CliRuntimeAssetArchiveManifestEntry[];
   areToolsUnpacked: (toolsDir: string, platformDir?: string) => boolean;
   unpackArchive: (archivePath: string, destDir: string) => Promise<void>;
   unpackTools: (options?: { platformDir?: string; toolsDir?: string }) => Promise<{ success: boolean; alreadyUnpacked: boolean }>;
   readChecksumManifest: (manifestPath: string) => Map<string, string>;
+  readArchiveChecksums: (archivesDir: string) => Map<string, string>;
   verifyArchiveChecksum: (archivePath: string, manifestPath?: string) => void;
 }>;
 
@@ -64,6 +86,13 @@ async function createZip(sourceDir: string, archivePath: string, entries: readon
 
 async function writeManifestChecksums(archivesDir: string, checksums: Record<string, string>): Promise<void> {
   await writeFile(join(archivesDir, 'checksums.sha256'), Object.entries(checksums).map(([name, sum]) => `${sum}  ${name}`).join('\n'));
+}
+
+async function writeRuntimeAssetChecksums(archivesDir: string, checksums: Record<string, string>): Promise<void> {
+  await writeFile(
+    join(archivesDir, 'checksums.runtime-assets.sha256'),
+    `${Object.entries(checksums).map(([name, sum]) => `${sum}  ${name}`).join('\n')}\n`,
+  );
 }
 
 describe('unpack-tools script', () => {
@@ -272,5 +301,158 @@ describe('unpack-tools script', () => {
       success: true,
       alreadyUnpacked: false,
     });
+  });
+});
+
+describe('unpack-tools managed runtime asset', () => {
+  const NPM_PLATFORM_DIRS = ['arm64-darwin', 'x64-darwin', 'arm64-linux', 'x64-linux', 'x64-win32'] as const;
+
+  it('declares one CLIProxyAPI managed wrapper archive for every npm-supported platform', () => {
+    const unpackTools = require('../unpack-tools.cjs') as UnpackToolsModule;
+    const manifest = unpackTools.getCliRuntimeAssetArchiveManifest();
+    expect(manifest.map((entry) => entry.platformDir).sort())
+      .toEqual([...NPM_PLATFORM_DIRS].sort());
+    for (const entry of manifest) {
+      expect(entry.asset).toBe('cliproxyapi-managed');
+      expect(entry.binaryName).toBe(
+        entry.platformDir === 'x64-win32'
+          ? 'happier-cliproxyapi-managed.exe'
+          : 'happier-cliproxyapi-managed',
+      );
+      // The declared launch path is the plugin's own contract; the postinstall
+      // owner must materialize exactly `tools/unpacked/<binary>`.
+      expect(entry.runtimeAssetRelativePath).toBe(`tools/unpacked/${entry.binaryName}`);
+    }
+  });
+
+  it('materializes the staged wrapper and records it in the canonical runtime-asset manifest', async () => {
+    const cliDistBuildManifest = require('@happier-dev/cli-common/cliDistBuildManifest') as CliDistBuildManifestModule;
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'happier-runtime-asset-'));
+    const toolsRoot = join(runtimeRoot, 'tools');
+    const archives = join(toolsRoot, 'archives');
+    const staging = join(runtimeRoot, 'staging');
+    const packageDist = join(runtimeRoot, 'package-dist');
+    await mkdir(archives, { recursive: true });
+    await mkdir(staging, { recursive: true });
+    await mkdir(packageDist, { recursive: true });
+    await writeFile(join(packageDist, 'index.mjs'), 'export default 1;\n');
+    cliDistBuildManifest.writeCliDistBuildManifest(join(packageDist, 'index.mjs'));
+
+    await writeFile(join(staging, 'difft'), 'difft');
+    await writeFile(join(staging, 'rg'), 'rg');
+    await writeFile(join(staging, 'ripgrep.node'), 'node');
+    await writeFile(join(staging, 'zellij'), 'zellij');
+    await writeFile(join(staging, 'happier-cliproxyapi-managed'), 'wrapper-bytes');
+    await writeFile(join(staging, 'CLIProxyAPI-LICENSE'), 'cpx license');
+    await writeFile(join(staging, 'CLIProxyAPI-THIRD-PARTY-NOTICES'), 'cpx notices');
+    await writeFile(join(archives, 'difftastic-LICENSE'), 'difft license');
+    await writeFile(join(archives, 'ripgrep-LICENSE'), 'rg license');
+    await writeFile(join(archives, 'zellij-LICENSE'), 'zellij license');
+
+    const difftArchive = join(archives, 'difftastic-arm64-linux.tar.gz');
+    const rgArchive = join(archives, 'ripgrep-arm64-linux.tar.gz');
+    const zellijArchive = join(archives, 'zellij-no-web-aarch64-unknown-linux-musl.tar.gz');
+    const wrapperArchive = join(archives, 'happier-cliproxyapi-managed-arm64-linux.tar.gz');
+    await createTarGz(staging, difftArchive, ['difft']);
+    await createTarGz(staging, rgArchive, ['rg', 'ripgrep.node']);
+    await createTarGz(staging, zellijArchive, ['zellij']);
+    await createTarGz(staging, wrapperArchive, [
+      'happier-cliproxyapi-managed',
+      'CLIProxyAPI-LICENSE',
+      'CLIProxyAPI-THIRD-PARTY-NOTICES',
+    ]);
+    await writeManifestChecksums(archives, {
+      'difftastic-arm64-linux.tar.gz': await sha256(difftArchive),
+      'ripgrep-arm64-linux.tar.gz': await sha256(rgArchive),
+      'zellij-no-web-aarch64-unknown-linux-musl.tar.gz': await sha256(zellijArchive),
+    });
+    // The publication pipeline records built runtime assets in their own
+    // generated inventory; the postinstall owner reads both as one.
+    await writeRuntimeAssetChecksums(archives, {
+      'happier-cliproxyapi-managed-arm64-linux.tar.gz': await sha256(wrapperArchive),
+    });
+
+    const unpackTools = require('../unpack-tools.cjs') as UnpackToolsModule;
+    await expect(unpackTools.unpackTools({ platformDir: 'arm64-linux', toolsDir: toolsRoot }))
+      .resolves.toEqual({ success: true, alreadyUnpacked: false });
+
+    const wrapperPath = join(toolsRoot, 'unpacked', 'happier-cliproxyapi-managed');
+    await expect(readFile(wrapperPath, 'utf8')).resolves.toBe('wrapper-bytes');
+
+    const integrity = cliDistBuildManifest.readCliRuntimeAssetIntegrity({
+      runtimeRoot,
+      relativePath: 'tools/unpacked/happier-cliproxyapi-managed',
+    });
+    expect(integrity).toMatchObject({ ok: true, assetPath: wrapperPath });
+  });
+
+  it('fails closed when a staged wrapper archive has no checksum entry', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'happier-runtime-asset-'));
+    const toolsRoot = join(runtimeRoot, 'tools');
+    const archives = join(toolsRoot, 'archives');
+    const staging = join(runtimeRoot, 'staging');
+    await mkdir(archives, { recursive: true });
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, 'difft'), 'difft');
+    await writeFile(join(staging, 'rg'), 'rg');
+    await writeFile(join(staging, 'ripgrep.node'), 'node');
+    await writeFile(join(staging, 'zellij'), 'zellij');
+    await writeFile(join(staging, 'happier-cliproxyapi-managed'), 'wrapper-bytes');
+    await writeFile(join(archives, 'difftastic-LICENSE'), 'difft license');
+    await writeFile(join(archives, 'ripgrep-LICENSE'), 'rg license');
+    await writeFile(join(archives, 'zellij-LICENSE'), 'zellij license');
+    const difftArchive = join(archives, 'difftastic-arm64-linux.tar.gz');
+    const rgArchive = join(archives, 'ripgrep-arm64-linux.tar.gz');
+    const zellijArchive = join(archives, 'zellij-no-web-aarch64-unknown-linux-musl.tar.gz');
+    const wrapperArchive = join(archives, 'happier-cliproxyapi-managed-arm64-linux.tar.gz');
+    await createTarGz(staging, difftArchive, ['difft']);
+    await createTarGz(staging, rgArchive, ['rg', 'ripgrep.node']);
+    await createTarGz(staging, zellijArchive, ['zellij']);
+    await createTarGz(staging, wrapperArchive, ['happier-cliproxyapi-managed']);
+    await writeManifestChecksums(archives, {
+      'difftastic-arm64-linux.tar.gz': await sha256(difftArchive),
+      'ripgrep-arm64-linux.tar.gz': await sha256(rgArchive),
+      'zellij-no-web-aarch64-unknown-linux-musl.tar.gz': await sha256(zellijArchive),
+    });
+
+    const unpackTools = require('../unpack-tools.cjs') as UnpackToolsModule;
+    await expect(unpackTools.unpackTools({ platformDir: 'arm64-linux', toolsDir: toolsRoot }))
+      .rejects.toThrow(/missing checksum/i);
+  });
+
+  it('does not report tools unpacked while a staged wrapper is still missing', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'happier-runtime-asset-'));
+    const toolsRoot = join(runtimeRoot, 'tools');
+    const archives = join(toolsRoot, 'archives');
+    const unpacked = join(toolsRoot, 'unpacked');
+    await mkdir(archives, { recursive: true });
+    await mkdir(unpacked, { recursive: true });
+    for (const name of [
+      'difft', 'rg', 'ripgrep.node', 'zellij',
+      'difftastic-LICENSE', 'ripgrep-LICENSE', 'zellij-LICENSE',
+      'CLIProxyAPI-LICENSE', 'CLIProxyAPI-THIRD-PARTY-NOTICES',
+    ]) {
+      await writeFile(join(unpacked, name), name);
+    }
+    await writeFile(join(unpacked, '.happier-tools-manifest.json'), `${JSON.stringify({
+      platformDir: 'arm64-linux',
+      tools: { difftastic: { version: '0' }, ripgrep: { version: '0' }, zellij: { version: '0.44.3' } },
+    })}\n`);
+    await writeFile(join(archives, 'happier-cliproxyapi-managed-arm64-linux.tar.gz'), 'archive');
+    await writeManifestChecksums(archives, { 'happier-cliproxyapi-managed-arm64-linux.tar.gz': '0'.repeat(64) });
+
+    const unpackTools = require('../unpack-tools.cjs') as UnpackToolsModule;
+    expect(unpackTools.areToolsUnpacked(toolsRoot, 'arm64-linux')).toBe(false);
+  });
+
+  it('fails closed when the two archive inventories disagree about one archive', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-runtime-asset-'));
+    const archives = join(root, 'archives');
+    await mkdir(archives, { recursive: true });
+    await writeManifestChecksums(archives, { 'happier-cliproxyapi-managed-arm64-linux.tar.gz': '0'.repeat(64) });
+    await writeRuntimeAssetChecksums(archives, { 'happier-cliproxyapi-managed-arm64-linux.tar.gz': '1'.repeat(64) });
+
+    const unpackTools = require('../unpack-tools.cjs') as UnpackToolsModule;
+    expect(() => unpackTools.readArchiveChecksums(archives)).toThrow(/duplicate checksum entry/i);
   });
 });

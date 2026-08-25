@@ -6,7 +6,9 @@ import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+    compareBundledPluginPackageTreeToInventory,
     formatBundledPluginArtifactVerification,
+    isBundledPluginPublishedRuntimeRelativePath,
     readBundledPluginArtifactInventory,
     verifyBundledPluginArtifactsAgainstInventory,
 } from '../verifyBundledPluginArtifacts.mjs';
@@ -122,6 +124,42 @@ describe('verifyBundledPluginArtifactsAgainstInventory', () => {
             unexpected: [],
         });
         expect(formatBundledPluginArtifactVerification(results)).toBeNull();
+    });
+
+    it('compares only the published runtime tree when source-dev repair asks for that scope', () => {
+        const packageDir = resolve(createRoot(), 'plugins-claude');
+        seedPackageTree(packageDir);
+        writeFileAt(packageDir, 'package.json', '{\n  "name": "@happier-dev/plugins-claude",\n  "scripts": { "build": "local" }\n}\n');
+        const artifact = {
+            packageName: PACKAGE_NAME,
+            files: publishedFiles.map((file) => ({
+                byteLength: Buffer.byteLength(file.contents, 'utf8'),
+                digest: digestOf(file.contents),
+                relativePath: file.relativePath,
+            })),
+        };
+
+        expect(compareBundledPluginPackageTreeToInventory({ artifact, packageDir })).toMatchObject({
+            inventoryFileCount: 4,
+            matchedFileCount: 3,
+            missing: [],
+            mismatched: [{ relativePath: 'package.json' }],
+            unexpected: [],
+        });
+
+        const result = compareBundledPluginPackageTreeToInventory({
+            artifact,
+            packageDir,
+            includeRelativePath: isBundledPluginPublishedRuntimeRelativePath,
+        });
+
+        expect(result).toMatchObject({
+            inventoryFileCount: 3,
+            matchedFileCount: 3,
+            missing: [],
+            mismatched: [],
+            unexpected: [],
+        });
     });
 
     it('rejects a package tree that ships a truncated entry and drops its runtime chunk', () => {

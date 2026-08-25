@@ -18,8 +18,12 @@ function toPortableRelativePath(packageDir, path) {
   return relative(packageDir, path).split(sep).join('/');
 }
 
-function sha256Digest(bytes) {
+export function sha256Digest(bytes) {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+}
+
+export function isBundledPluginPublishedRuntimeRelativePath(relativePath) {
+  return relativePath.startsWith('dist/') || relativePath.startsWith('.happier-plugin/');
 }
 
 /**
@@ -48,7 +52,7 @@ export function readBundledPluginArtifactInventory({ repoRoot, inventoryPath } =
   return artifacts;
 }
 
-function collectPackageTreeRelativePaths(packageDir) {
+function collectPackageTreeRelativePaths(packageDir, includeRelativePath) {
   const found = [];
   const visit = (path) => {
     const stat = lstatSync(path);
@@ -64,7 +68,7 @@ function collectPackageTreeRelativePaths(packageDir) {
     // The generator excludes the TypeScript incremental cache from the inventory,
     // so a stale one on disk is not an artifact disagreement.
     if (relativePath.endsWith('.tsbuildinfo')) return;
-    found.push(relativePath);
+    if (includeRelativePath(relativePath)) found.push(relativePath);
   };
   visit(packageDir);
   return found;
@@ -76,9 +80,11 @@ function collectPackageTreeRelativePaths(packageDir) {
  * inventoried file must be present with the exact byte length and digest, and the
  * tree must not carry a plugin file the inventory does not publish.
  */
-export function compareBundledPluginPackageTreeToInventory({ artifact, packageDir }) {
+export function compareBundledPluginPackageTreeToInventory({ artifact, packageDir, includeRelativePath = () => true }) {
   const packageName = String(artifact?.packageName ?? '');
-  const inventoryFiles = Array.isArray(artifact?.files) ? artifact.files : [];
+  const inventoryFiles = (Array.isArray(artifact?.files) ? artifact.files : []).filter((file) => (
+    includeRelativePath(String(file?.relativePath ?? ''))
+  ));
   if (!existsSync(packageDir)) {
     return {
       packageName,
@@ -117,7 +123,7 @@ export function compareBundledPluginPackageTreeToInventory({ artifact, packageDi
   }
 
   const inventoryPaths = new Set(inventoryFiles.map((file) => file.relativePath));
-  const unexpected = collectPackageTreeRelativePaths(packageDir)
+  const unexpected = collectPackageTreeRelativePaths(packageDir, includeRelativePath)
     .filter((relativePath) => !inventoryPaths.has(relativePath))
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 
