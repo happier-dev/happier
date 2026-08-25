@@ -68,11 +68,15 @@ export function readNewSessionDraftFromSnapshot(snapshot: SessionDraftSnapshot |
         updatedAt: snapshot.updatedAt,
     });
     const launchUserAttemptId = snapshot.localSupplement.launchUserAttemptId;
-    return {
+    const draft = {
         ...persisted,
         entryIntent: snapshot.localSupplement.newSessionLocalState?.entryIntent ?? null,
         ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
     };
+    if (authoring.permissionMode != null) return draft;
+
+    const { permissionMode: _omittedPermissionMode, ...draftWithoutPermissionMode } = draft;
+    return draftWithoutPermissionMode;
 }
 
 export { buildNewSessionDraftLocalState };

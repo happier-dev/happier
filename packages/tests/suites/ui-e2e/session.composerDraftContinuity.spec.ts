@@ -5,7 +5,6 @@ import { mkdir } from 'node:fs/promises';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { createTestAuthMtls } from '../../src/testkit/auth';
 import { fetchJson } from '../../src/testkit/http';
-import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
@@ -326,15 +325,6 @@ test.describe('ui e2e: session composer draft continuity', () => {
             fingerprint: IDENTITY_HEADERS.fingerprint,
         });
         token = auth.token;
-        const machineRegistration = await registerMachineIdentity({
-            baseUrl: server.baseUrl,
-            token,
-            metadata: 'session-composer-draft-continuity-machine',
-        });
-        if (machineRegistration.status !== 200) {
-            throw new Error(`Failed to register composer continuity machine (status=${machineRegistration.status})`);
-        }
-
         sessionA = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Composer draft continuity A' });
         sessionB = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Composer draft continuity B' });
 

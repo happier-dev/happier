@@ -197,7 +197,8 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
       `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`,
     );
     await expect(machineOption).not.toHaveCount(0, { timeout: 120_000 });
-    await machineOption.first().click({ force: true });
+    await expect(machineOption.first()).toBeVisible({ timeout: 120_000 });
+    await machineOption.first().click();
     await page.waitForURL((url: URL) => url.pathname.endsWith('/new'), { timeout: 60_000 });
 
     // Select the Codex engine so the resume browse can find seeded Codex sessions.

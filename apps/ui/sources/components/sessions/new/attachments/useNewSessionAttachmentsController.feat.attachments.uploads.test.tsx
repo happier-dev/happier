@@ -256,6 +256,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         });
 
         expect(handleCreateSession).toHaveBeenCalledWith({
+            inputTextOverride: 'see @session:peer-abc123',
             structuredInputMetaOverrides: { happierStructuredInputV1: STRUCTURED_INPUT_ENVELOPE },
         });
         await hook.unmount();

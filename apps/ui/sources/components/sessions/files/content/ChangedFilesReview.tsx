@@ -32,6 +32,7 @@ import { useScmDiffExpandedKeys } from '@/components/sessions/files/content/revi
 import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
 import { resolveWebScrollableElement } from '@/components/ui/scroll/resolveWebScrollableElement';
 import { Icon } from '@/components/ui/icons/Icon';
+import { preserveWebScrollAnchorAfterToggle } from './review/preserveWebScrollAnchorAfterToggle';
 
 const ViewWithClick = View as unknown as React.ComponentType<
     React.ComponentPropsWithRef<typeof View> & { onClick?: any; onKeyDown?: any; tabIndex?: number }
@@ -528,20 +529,15 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             typeof globalThis.requestAnimationFrame === 'function'
                 ? globalThis.requestAnimationFrame.bind(globalThis)
                 : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
-        let remainingFrames = 12;
-        const restoreAnchor = () => {
-            const currentRow = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;
-            const currentY = currentRow?.getBoundingClientRect?.().y;
-            if (typeof currentY === 'number') {
-                const delta = currentY - anchorY;
-                if (Math.abs(delta) > 1) {
-                    scrollRoot.scrollTop += delta;
-                }
-            }
-            remainingFrames -= 1;
-            if (remainingFrames > 0) raf(restoreAnchor);
-        };
-        raf(restoreAnchor);
+        preserveWebScrollAnchorAfterToggle({
+            anchorY,
+            scrollRoot,
+            readAnchorY: () => {
+                const currentRow = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;
+                return currentRow?.getBoundingClientRect?.().y;
+            },
+            requestFrame: raf,
+        });
     }, [resolveWebScrollRoot, toggleCollapsed]);
 
     React.useEffect(() => {

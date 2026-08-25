@@ -91,7 +91,13 @@ export function folderOrderKey(folderId: string): string {
 
 export async function ensureSessionFolderTreeView(page: Page): Promise<void> {
   const settings = await readUiE2eScopedAccountSettings({ page });
-  if (settings.sessionFolderViewModeV1 === 'tree') return;
+  const renderedTreeStructure = page.locator(
+    '[data-testid^="session-folder-header-"], [data-testid^="session-list-project-header:"]',
+  ).first();
+  if (settings.sessionFolderViewModeV1 === 'tree') {
+    await expect(renderedTreeStructure).toHaveCount(1, { timeout: 120_000 });
+    return;
+  }
 
   await page.getByTestId('session-list-ordering-menu-trigger').first().click();
   const toggle = page.getByTestId('session-folder-view-toggle');
@@ -101,6 +107,7 @@ export async function ensureSessionFolderTreeView(page: Page): Promise<void> {
     const nextSettings = await readUiE2eScopedAccountSettings({ page });
     return nextSettings.sessionFolderViewModeV1;
   }, { timeout: 60_000 }).toBe('tree');
+  await expect(renderedTreeStructure).toHaveCount(1, { timeout: 120_000 });
 }
 
 function readOrderIndex(

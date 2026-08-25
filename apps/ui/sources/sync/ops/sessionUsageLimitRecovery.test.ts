@@ -198,6 +198,52 @@ describe('sessionUsageLimitRecovery', () => {
         });
     });
 
+    it('refreshes an unverified metadata-direct machine target before daemon recovery', async () => {
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        storageState.current = {
+            sessions: {
+                'session-1': {
+                    active: false,
+                    metadata: {
+                        machineId: 'machine-1',
+                        path: '/repo',
+                    },
+                },
+            },
+            machines: {},
+        };
+        const refreshMachineTargets = vi.fn(async () => {
+            storageState.current = {
+                ...storageState.current,
+                machines: {
+                    'machine-1': { id: 'machine-1', active: true },
+                },
+            };
+        });
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, status: 'waiting' });
+
+        const { sessionUsageLimitSwitchAccountNow } = await import('./sessionUsageLimitRecovery');
+        await expect(sessionUsageLimitSwitchAccountNow('session-1', {
+            provider: 'claude',
+            refreshMachineTargets,
+        })).resolves.toEqual({
+            ok: true,
+            status: 'waiting',
+        });
+
+        expect(refreshMachineTargets).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            serverId: 'server-owned',
+            method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+            payload: {
+                sessionId: 'session-1',
+                provider: 'claude',
+                operation: 'switch_account_now',
+            },
+        });
+    });
+
     it('refreshes stale inactive machine targets for daemon-only usage-limit controls', async () => {
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
         const installStaleInactiveSession = () => {

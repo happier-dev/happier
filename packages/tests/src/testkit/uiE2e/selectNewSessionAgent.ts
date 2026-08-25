@@ -130,7 +130,9 @@ export async function selectNewSessionAgent(params: Readonly<{
       params.page.getByRole('option', { name: new RegExp(escapedAgentId, 'i') }),
       250,
     ) ?? await findActionableLocator(
-      params.page.getByRole('button', { name: new RegExp(escapedAgentId, 'i') }),
+      params.page
+        .getByTestId(AGENT_PICKER_POPOVER_TEST_ID)
+        .getByRole('button', { name: new RegExp(escapedAgentId, 'i') }),
       250,
     );
     if (semanticOption) {

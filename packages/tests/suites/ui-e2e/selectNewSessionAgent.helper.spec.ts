@@ -90,4 +90,30 @@ test.describe('selectNewSessionAgent', () => {
     expect(await page.locator('body').getAttribute('data-active-trigger-opened')).toBe('true');
     expect(await page.locator('body').getAttribute('data-selected-agent')).toBe('codex');
   });
+
+  test('does not mistake a retained matching trigger for a semantic picker option', async ({ page }) => {
+    await page.setContent(`
+      <button data-testid="agent-input-agent-chip">Claude</button>
+      <div data-testid="agent-input-chip-picker-popover" id="picker" hidden>
+        <button id="codex-option">Codex</button>
+      </div>
+      <button id="retained-codex-trigger">Select AI Backend Codex</button>
+      <script>
+        document.querySelector('[data-testid="agent-input-agent-chip"]').addEventListener('click', () => {
+          document.querySelector('#picker').hidden = false;
+        });
+        document.querySelector('#codex-option').addEventListener('click', () => {
+          document.body.dataset.selectedAgent = 'codex';
+        });
+        document.querySelector('#retained-codex-trigger').addEventListener('click', () => {
+          document.body.dataset.clickedRetainedTrigger = 'true';
+        });
+      </script>
+    `);
+
+    await selectNewSessionAgent({ page, agentId: 'codex', timeoutMs: 5_000 });
+
+    expect(await page.locator('body').getAttribute('data-selected-agent')).toBe('codex');
+    expect(await page.locator('body').getAttribute('data-clicked-retained-trigger')).toBeNull();
+  });
 });
