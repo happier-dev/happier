@@ -112,6 +112,7 @@ describe('TermuxTerminalSurface', () => {
                 terminalId: 'terminal-1',
                 seq: 7,
                 byteOffset: 0,
+                writeGeneration: 1,
                 bytes: new Uint8Array([65, 66, 67]),
             });
             await Promise.resolve();
@@ -125,6 +126,7 @@ describe('TermuxTerminalSurface', () => {
             byteOffset: 0,
             byteLength: 3,
             ackedByteOffset: 3,
+            writeGeneration: 1,
         });
     });
 
@@ -191,6 +193,7 @@ describe('TermuxTerminalSurface', () => {
                 terminalId: 'terminal-1',
                 seq: 8,
                 byteOffset: 0,
+                writeGeneration: 1,
                 bytes: new Uint8Array([65, 66, 67, 68]),
             });
             listeners.get('input')?.({ surfaceId: 'surface-1', data: '\u001b[A' });
@@ -244,6 +247,7 @@ describe('TermuxTerminalSurface', () => {
                 terminalId: 'terminal-1',
                 seq: 8,
                 byteOffset: 0,
+                writeGeneration: 1,
                 bytes: new Uint8Array([65, 66, 67]),
             });
         });
@@ -268,6 +272,7 @@ describe('TermuxTerminalSurface', () => {
                 terminalId: 'terminal-1',
                 seq: 9,
                 byteOffset: 0,
+                writeGeneration: 2,
                 bytes: new Uint8Array([68, 69, 70]),
             });
         });
@@ -291,6 +296,7 @@ describe('TermuxTerminalSurface', () => {
             byteOffset: 0,
             byteLength: 3,
             ackedByteOffset: 3,
+            writeGeneration: 2,
         });
     });
 
@@ -322,6 +328,7 @@ describe('TermuxTerminalSurface', () => {
                 terminalId: 'terminal-1',
                 seq: 9,
                 byteOffset: 0,
+                writeGeneration: 1,
                 bytes: new Uint8Array([65, 66, 67]),
             });
             await Promise.resolve();
@@ -334,6 +341,7 @@ describe('TermuxTerminalSurface', () => {
             byteOffset: 0,
             byteLength: 3,
             ackedByteOffset: 0,
+            writeGeneration: 1,
         });
     });
 

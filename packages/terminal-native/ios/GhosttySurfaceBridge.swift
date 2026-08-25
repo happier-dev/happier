@@ -538,6 +538,7 @@ final class GhosttySurfaceBridge {
     emitEvent("rendererCrash", [
       "surfaceId": surfaceId(),
       "reason": reason,
+      "fatal": true,
     ])
   }
 

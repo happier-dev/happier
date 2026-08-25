@@ -5,6 +5,7 @@ import {
     getTerminalNativeAvailability,
     normalizeTerminalNativeAvailability,
     type TerminalNativeCopyEvent,
+    type TerminalNativeRendererCrashEvent,
     type TerminalNativeRuntimePlatform,
 } from '@happier-dev/terminal-native';
 
@@ -102,9 +103,9 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     const onNativeUnavailable = React.useCallback(() => {
         setNativeRendererFailed(true);
     }, []);
-    const onRendererCrash = React.useCallback((event: Readonly<{ fatal?: boolean }>) => {
+    const onRendererCrash = React.useCallback((event: TerminalNativeRendererCrashEvent) => {
         setNativeRendererFailed(true);
-        if (!event.fatal || (selectedRenderer !== 'ios-ghosttykit' && selectedRenderer !== 'android-termux')) return;
+        if (selectedRenderer !== 'ios-ghosttykit' && selectedRenderer !== 'android-termux') return;
         setNativeRendererQuarantine({
             renderer: selectedRenderer,
             expiresAtMs: Date.now() + 24 * 60 * 60 * 1000,
@@ -171,7 +172,6 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             lineHeightPx={fontMetrics.lineHeight}
                             accessibilityAccepted={nativeAccessibilityAccepted}
                             onInput={props.controller.onInput}
-                            onPaste={props.controller.onPaste}
                             onLink={(event) => props.controller.onLink?.(event.url)}
                             onTitle={(event) => props.controller.onTitle?.(event.title)}
                             onBell={(event) => props.controller.onBell?.(event.label ?? '')}

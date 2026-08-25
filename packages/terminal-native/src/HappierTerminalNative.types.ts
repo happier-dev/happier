@@ -55,6 +55,7 @@ export type TerminalNativeEventName =
 export type TerminalNativeRendererCrashEvent = Readonly<{
   surfaceId: string;
   reason: string;
+  fatal: true;
 }>;
 
 export type TerminalNativeSurfaceReadyEvent = Readonly<{

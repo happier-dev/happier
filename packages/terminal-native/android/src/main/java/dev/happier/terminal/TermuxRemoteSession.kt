@@ -91,7 +91,7 @@ class TermuxRemoteSessionCallbacks(
   }
 
   fun emitRendererCrash(message: String) {
-    emit("rendererCrash", mapOf("surfaceId" to surfaceId, "reason" to message))
+    emit("rendererCrash", mapOf("surfaceId" to surfaceId, "reason" to message, "fatal" to true))
   }
 
   fun emitSurfaceReady(cols: Int, rows: Int) {

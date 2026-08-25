@@ -89,7 +89,7 @@ function normalizeRendererCrashEvent(payload: unknown): TerminalNativeRendererCr
   if (!isRecord(payload)) return null;
   const surfaceId = readNonEmptyString(payload.surfaceId);
   const reason = readNonEmptyString(payload.reason);
-  return surfaceId && reason ? { surfaceId, reason } : null;
+  return surfaceId && reason && payload.fatal === true ? { surfaceId, reason, fatal: true } : null;
 }
 
 function normalizeSurfaceReadyEvent(payload: unknown): TerminalNativeSurfaceReadyEvent | null {
