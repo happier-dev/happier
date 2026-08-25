@@ -66,8 +66,8 @@ export type { CredentialRequirementOptions } from '../connectedAccounts.js';
 export {
     CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     buildConnectedAccountRequestAuthClientSource,
-} from '@happier-dev/agents/request-auth';
-export type { ConnectedAccountRequestAuthClientSourceParams } from '@happier-dev/agents/request-auth';
+} from './requestAuth.js';
+export type { ConnectedAccountRequestAuthClientSourceParams } from './requestAuth.js';
 export { HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV } from '../connectedAccounts.js';
 export { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV } from '../connectedAccounts.js';
 export { OPENAI_CODEX_OAUTH_PROFILE } from '../connectedAccounts.js';

@@ -12,6 +12,22 @@ function hasExportedType(sourceFile: ts.SourceFile, name: string): boolean {
 }
 
 describe('author signature closure source contract', () => {
+    it('projects Connected Account request-auth helpers through a package-local module', async () => {
+        const [connectedAccountsSource, connectedAccountsPublicSource, requestAuthSource] = await Promise.all([
+            readFile(new URL('./connected-accounts/index.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./connected-accounts/index.public.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./connected-accounts/requestAuth.ts', import.meta.url), 'utf8'),
+        ]);
+
+        for (const source of [connectedAccountsSource, connectedAccountsPublicSource]) {
+            expect(source).toContain("from './requestAuth.js';");
+            expect(source).not.toContain("from '@happier-dev/agents/request-auth';");
+        }
+        expect(requestAuthSource).toContain("from '@happier-dev/agents/request-auth';");
+        expect(requestAuthSource).toContain('buildConnectedAccountRequestAuthClientSource');
+        expect(requestAuthSource).toContain('ConnectedAccountRequestAuthClientSourceParams');
+    });
+
     it('publishes the Protocol-owned quota scope used by Connected Accounts classifications', async () => {
         const [connectedAccountsSource, connectedAccountsPublicSource] = await Promise.all([
             readFile(new URL('./connectedAccounts.ts', import.meta.url), 'utf8'),
