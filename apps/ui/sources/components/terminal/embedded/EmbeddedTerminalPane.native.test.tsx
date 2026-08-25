@@ -416,10 +416,11 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
             accessibility: 'fallback-required',
         };
         const terminalRef = { current: null } as React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
+        const controller = makeController();
         const screen = await renderScreen(
             <EmbeddedTerminalPane
                 title="Terminal"
-                controller={makeController()}
+                controller={controller}
                 terminalRef={terminalRef}
                 testIdPrefix="terminal"
             />,
@@ -440,7 +441,11 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
             });
         });
 
-        expect(clipboardState.setClipboardStringSafe).toHaveBeenCalledWith('only Ghostty selection text');
+        expect(controller.copySelection).toHaveBeenCalledWith({
+            source: 'user-selection',
+            text: 'only Ghostty selection text',
+        });
+        expect(clipboardState.setClipboardStringSafe).not.toHaveBeenCalled();
     });
 
     it('routes Android Termux copy events through the host clipboard owner', async () => {

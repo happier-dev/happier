@@ -639,7 +639,9 @@ test('Android probe reports structured fail-closed license and fallback diagnost
   assert.ok(payload.interaction.implementedInAdapter.includes('ime-commit-text'));
   assert.ok(payload.interaction.implementedInAdapter.includes('hardware-key-escape-mapping'));
   assert.ok(payload.interaction.implementedInAdapter.includes('mouse-tracking-and-scrollback'));
-  assert.ok(payload.interaction.remainingGaps.includes('selection-handles'));
+  assert.ok(payload.interaction.implementedInAdapter.includes('long-press-drag-range-selection'));
+  assert.ok(payload.interaction.implementedInAdapter.includes('selected-range-rendering-and-copy'));
+  assert.equal(payload.interaction.remainingGaps.includes('selection-handles'), false);
   assert.ok(payload.interaction.remainingGaps.includes('custom-accessibility'));
   assert.ok(payload.interaction.requiresDeviceQa.includes('ime-keyboard-and-mouse-smoke'));
   assert.equal(payload.gradle.status, 'source-missing');
