@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+
 import { requireConnectedServiceTokenCredentialRecord } from '@/daemon/connectedServices/shared/connectedServiceCredentialRecord';
 import type { ConnectedServicesProviderMaterializer } from '@/daemon/connectedServices/materialize/providerMaterializerTypes';
 import { materializeCodexConnectedServiceAuth } from './materializeCodexConnectedServiceAuth';
@@ -10,6 +12,9 @@ export function createCodexConnectedServicesMaterializer(): ConnectedServicesPro
     if (codex) {
       const materialized = await materializeCodexConnectedServiceAuth({
         rootDir: params.rootDir,
+        previousCodexHome: params.previousMaterializedRoot
+          ? join(params.previousMaterializedRoot, 'codex-home')
+          : null,
         record: codex,
         accountSettings: params.accountSettings ?? null,
         processEnv: params.processEnv ?? process.env,

@@ -1,9 +1,13 @@
 import { lstat, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createCodexHomePair, exists, loadSyncCodexConnectedServiceHome, mockAllSymlinksFail, mockSymlinkFailureForTempLink, settings, waitFor } from './syncCodexConnectedServiceHome.testUtils';
+
+function isSessionsTemporaryLink(path: unknown): boolean {
+  return basename(String(path)).startsWith('sessions.happier-link-');
+}
 
 describe('syncCodexConnectedServiceHome', () => {
   afterEach(async () => {
@@ -63,6 +67,36 @@ describe('syncCodexConnectedServiceHome', () => {
       });
 
       expect(result.targetSqliteHome).toBe(sourceSqliteHome);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('bootstraps a missing native sessions store before materializing shared Codex state', async () => {
+    const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
+    try {
+      const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
+
+      await syncCodexConnectedServiceHome({
+        destinationCodexHome,
+        accountSettings: settings('isolated', 'shared'),
+        processEnv: { CODEX_HOME: sourceCodexHome },
+      });
+
+      const nativeSessions = join(sourceCodexHome, 'sessions');
+      const materializedSessions = join(destinationCodexHome, 'sessions');
+      expect((await lstat(nativeSessions)).isDirectory()).toBe(true);
+      expect((await lstat(materializedSessions)).isSymbolicLink()).toBe(true);
+
+      await mkdir(join(materializedSessions, '2026', '08', '24'), { recursive: true });
+      await writeFile(
+        join(materializedSessions, '2026', '08', '24', 'rollout-new-session.jsonl'),
+        '{"type":"session"}\n',
+      );
+      await expect(readFile(
+        join(nativeSessions, '2026', '08', '24', 'rollout-new-session.jsonl'),
+        'utf8',
+      )).resolves.toBe('{"type":"session"}\n');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -131,16 +165,19 @@ describe('syncCodexConnectedServiceHome', () => {
   it('degrades shared state to isolated when required symlinks are unavailable', async () => {
     const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
     try {
-      await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
-      await writeFile(join(sourceCodexHome, 'sessions', 'source-rollout.jsonl'), '{"id":"source"}\n');
+      const previousCodexHome = join(root, 'previous-codex-home');
       await mkdir(join(destinationCodexHome, 'sessions'), { recursive: true });
       await writeFile(join(destinationCodexHome, 'sessions', 'local-rollout.jsonl'), '{"id":"local"}\n');
+      await mkdir(join(previousCodexHome, 'memories'), { recursive: true });
+      await writeFile(join(previousCodexHome, 'history.jsonl'), '{"text":"previous prompt"}\n');
+      await writeFile(join(previousCodexHome, 'memories', 'raw_memories.md'), '# Previous memory\n');
 
       mockAllSymlinksFail();
       const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
 
       const result = await syncCodexConnectedServiceHome({
         destinationCodexHome,
+        previousCodexHome,
         accountSettings: settings('linked', 'shared'),
         processEnv: { CODEX_HOME: sourceCodexHome },
       });
@@ -162,6 +199,9 @@ describe('syncCodexConnectedServiceHome', () => {
         targetSqliteHome: destinationCodexHome,
       });
       await expect(readFile(join(destinationCodexHome, 'sessions', 'local-rollout.jsonl'), 'utf8')).resolves.toBe('{"id":"local"}\n');
+      await expect(exists(join(sourceCodexHome, 'history.jsonl'))).resolves.toBe(false);
+      await expect(exists(join(sourceCodexHome, 'memories', 'raw_memories.md'))).resolves.toBe(false);
+      await expect(readdir(sourceCodexHome)).resolves.not.toContainEqual(expect.stringContaining('.happier-state-preflight-'));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -271,7 +311,7 @@ describe('syncCodexConnectedServiceHome', () => {
           ...actual,
           rename: vi.fn(async (...args: Parameters<typeof actual.rename>) => {
             const [sourcePath] = args;
-            if (String(sourcePath).includes('sessions.happier-link')) {
+            if (isSessionsTemporaryLink(sourcePath)) {
               const error = new Error('replace failed') as NodeJS.ErrnoException;
               error.code = 'EACCES';
               throw error;
@@ -439,11 +479,11 @@ describe('syncCodexConnectedServiceHome', () => {
 
   it('serializes concurrent syncs for the same destination Codex home', async () => {
     const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
+    let releaseFirstSymlink = () => {};
     try {
       await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
       await writeFile(join(sourceCodexHome, 'sessions', 'source-rollout.jsonl'), '{"id":"source"}\n');
       const symlinkCalls: string[] = [];
-      let releaseFirstSymlink!: () => void;
       const firstSymlinkCanFinish = new Promise<void>((resolve) => {
         releaseFirstSymlink = resolve;
       });
@@ -455,7 +495,7 @@ describe('syncCodexConnectedServiceHome', () => {
           ...actual,
           symlink: vi.fn(async (...args: Parameters<typeof actual.symlink>) => {
             const [, destinationPath] = args;
-            if (String(destinationPath).includes('sessions.happier-link')) {
+            if (isSessionsTemporaryLink(destinationPath)) {
               symlinkCalls.push(String(destinationPath));
               if (symlinkCalls.length === 1) {
                 await firstSymlinkCanFinish;
@@ -472,7 +512,7 @@ describe('syncCodexConnectedServiceHome', () => {
         accountSettings: settings('linked', 'shared'),
         processEnv: { CODEX_HOME: sourceCodexHome },
       });
-      await waitFor(() => symlinkCalls.length === 1);
+      await waitFor(() => symlinkCalls.length === 1, 10_000);
       const secondSync = syncCodexConnectedServiceHome({
         destinationCodexHome,
         accountSettings: settings('linked', 'shared'),
@@ -490,6 +530,66 @@ describe('syncCodexConnectedServiceHome', () => {
       releaseFirstSymlink();
       await Promise.all([firstSync, secondSync]);
       expect(symlinkCalls).toHaveLength(4);
+    } finally {
+      releaseFirstSymlink();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reconciles fixed-name Codex state when different homes share one native source', async () => {
+    const { root, sourceCodexHome, destinationCodexHome } = await createCodexHomePair();
+    const secondDestinationCodexHome = join(root, 'materialized-codex-home-2');
+    const firstPreviousCodexHome = join(root, 'previous-codex-home-1');
+    const secondPreviousCodexHome = join(root, 'previous-codex-home-2');
+    try {
+      await mkdir(firstPreviousCodexHome, { recursive: true });
+      await mkdir(secondPreviousCodexHome, { recursive: true });
+      await writeFile(
+        join(firstPreviousCodexHome, 'history.jsonl'),
+        '{"session_id":"first","ts":1,"text":"first prompt"}\n',
+      );
+      await writeFile(
+        join(secondPreviousCodexHome, 'history.jsonl'),
+        '{"session_id":"second","ts":2,"text":"second prompt"}\n',
+      );
+      await writeFile(
+        join(firstPreviousCodexHome, 'session_index.jsonl'),
+        '{"id":"first","thread_name":"First","updated_at":"2026-08-24T10:00:00.000Z"}\n',
+      );
+      await writeFile(
+        join(secondPreviousCodexHome, 'session_index.jsonl'),
+        '{"id":"second","thread_name":"Second","updated_at":"2026-08-24T11:00:00.000Z"}\n',
+      );
+      const syncCodexConnectedServiceHome = await loadSyncCodexConnectedServiceHome();
+
+      await Promise.all([
+        syncCodexConnectedServiceHome({
+          destinationCodexHome,
+          previousCodexHome: firstPreviousCodexHome,
+          accountSettings: settings('linked', 'shared'),
+          processEnv: { CODEX_HOME: sourceCodexHome },
+        }),
+        syncCodexConnectedServiceHome({
+          destinationCodexHome: secondDestinationCodexHome,
+          previousCodexHome: secondPreviousCodexHome,
+          accountSettings: settings('linked', 'shared'),
+          processEnv: { CODEX_HOME: sourceCodexHome },
+        }),
+      ]);
+
+      const historyLines = (await readFile(join(sourceCodexHome, 'history.jsonl'), 'utf8')).trimEnd().split('\n');
+      expect(historyLines).toHaveLength(2);
+      expect(historyLines).toEqual(expect.arrayContaining([
+        '{"session_id":"first","ts":1,"text":"first prompt"}',
+        '{"session_id":"second","ts":2,"text":"second prompt"}',
+      ]));
+      const indexLines = (await readFile(join(sourceCodexHome, 'session_index.jsonl'), 'utf8')).trimEnd().split('\n');
+      expect(indexLines).toHaveLength(2);
+      expect(indexLines).toEqual(expect.arrayContaining([
+        '{"id":"first","thread_name":"First","updated_at":"2026-08-24T10:00:00.000Z"}',
+        '{"id":"second","thread_name":"Second","updated_at":"2026-08-24T11:00:00.000Z"}',
+      ]));
+      await expect(readdir(sourceCodexHome)).resolves.not.toContainEqual(expect.stringContaining('.happier-import-'));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

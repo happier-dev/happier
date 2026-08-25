@@ -12,6 +12,11 @@ export type ConnectedServiceSessionFileImportDetail = Readonly<{
 export type ConnectedServiceSessionFileImportRoot = Readonly<{
   sourceRoot: string;
   destinationRoot: string;
+  /**
+   * Receives normalized relative directory paths; false prunes that directory and every descendant.
+   * Root-level files remain eligible for includeFile.
+   */
+  includeDirectory?: (relativePath: string) => boolean;
   includeFile?: (relativePath: string) => boolean;
 }>;
 
@@ -40,7 +45,7 @@ export async function importConnectedServiceSessionFiles(params: Readonly<{
       resolvePhysicalRoot(destinationRoot),
     ]);
     if (physicalSourceRoot === physicalDestinationRoot) continue;
-    for (const sourcePath of await listImportableFiles(sourceRoot)) {
+    for (const sourcePath of await listImportableFiles(sourceRoot, root.includeDirectory)) {
       const relativePath = normalizeRelativePath(relative(sourceRoot, sourcePath));
       if (!isSafeRelativePath(relativePath)) continue;
       if (root.includeFile && !root.includeFile(relativePath)) continue;
@@ -62,7 +67,10 @@ export async function importConnectedServiceSessionFiles(params: Readonly<{
   };
 }
 
-async function listImportableFiles(root: string): Promise<readonly string[]> {
+async function listImportableFiles(
+  root: string,
+  includeDirectory?: (relativePath: string) => boolean,
+): Promise<readonly string[]> {
   let rootStat;
   try {
     rootStat = await lstat(root);
@@ -81,6 +89,8 @@ async function listImportableFiles(root: string): Promise<readonly string[]> {
     for (const entry of entries) {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) {
+        const relativePath = normalizeRelativePath(relative(root, path));
+        if (includeDirectory && !includeDirectory(relativePath)) continue;
         queue.push(path);
       } else if (entry.isFile()) {
         files.push(path);
