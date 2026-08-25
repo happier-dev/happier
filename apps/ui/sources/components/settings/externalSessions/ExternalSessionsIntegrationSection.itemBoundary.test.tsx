@@ -411,7 +411,10 @@ describe('ExternalSessionsIntegrationSection Item boundary', () => {
         expect(loading?.props.accessibilityLiveRegion).toBe('polite');
         expect(loading?.props.role).toBe('status');
         expect(loading?.props['aria-live']).toBe('polite');
-        expect(screen.tree.root.findAllByProps({ accessibilityLiveRegion: 'polite' })).toHaveLength(1);
+        expect(screen.tree.root.findAll((node) => (
+            typeof node.type === 'string'
+            && node.props.accessibilityLiveRegion === 'polite'
+        ))).toHaveLength(1);
 
         accessibilityPlatform.os = 'ios';
         await act(async () => {
@@ -435,7 +438,10 @@ describe('ExternalSessionsIntegrationSection Item boundary', () => {
         expect(error?.props.accessibilityLiveRegion).toBe('assertive');
         expect(error?.props.role).toBe('alert');
         expect(error?.props['aria-live']).toBe('assertive');
-        expect(screen.tree.root.findAllByProps({ accessibilityLiveRegion: 'assertive' })).toHaveLength(1);
+        expect(screen.tree.root.findAll((node) => (
+            typeof node.type === 'string'
+            && node.props.accessibilityLiveRegion === 'assertive'
+        ))).toHaveLength(1);
         expect(announceForAccessibilityMock).toHaveBeenCalledOnce();
         expect(announceForAccessibilityMock).toHaveBeenLastCalledWith(
             'externalSessions.settingsIntegrationInventoryErrorTitle. externalSessions.settingsIntegrationInventoryErrorSubtitle',
