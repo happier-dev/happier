@@ -63,6 +63,14 @@ async function defaultCaptureGitBasis({ sourceDir }) {
   ])).out);
   const status = String((await git(['status', '--porcelain=v1', '-z', '--untracked-files=all'])).out ?? '');
   const worktrees = String((await git(['worktree', 'list', '--porcelain'])).out ?? '');
+  const worktreeHeads = [
+    ...new Set(
+      worktrees
+        .split(/\r?\n/)
+        .filter((line) => /^HEAD [0-9a-f]{40,64}$/.test(line))
+        .map((line) => line.slice('HEAD '.length)),
+    ),
+  ];
   return {
     capturedAt: new Date().toISOString(),
     repositoryRoot,
@@ -72,21 +80,26 @@ async function defaultCaptureGitBasis({ sourceDir }) {
     refsDigest: refsDigest(refs),
     dirtyEntryCount: status.split('\0').filter(Boolean).length,
     worktreeCount: worktrees.split(/\r?\n/).filter((line) => line.startsWith('worktree ')).length,
+    detachedWorktreeCount: worktrees.split(/\r?\n/).filter((line) => line === 'detached').length,
+    worktreeHeads,
   };
 }
 
-async function defaultExportGitBundle({ sourceDir, bundlePath }) {
+async function defaultExportGitBundle({ sourceDir, bundlePath, basis }) {
   requireSuccess(
     await runCaptureResult(
       'git',
-      ['-c', 'core.fsmonitor=false', 'bundle', 'create', bundlePath, '--all'],
+      [
+        '-c', 'core.fsmonitor=false', 'bundle', 'create', bundlePath, '--all',
+        ...new Set(basis.worktreeHeads ?? []),
+      ],
       { cwd: sourceDir },
     ),
     'Git bundle export',
   );
 }
 
-function bootstrapScript() {
+export function renderCandidateGitBootstrapScript() {
   return [
     'set -eu',
     'repo=$1',
@@ -94,20 +107,27 @@ function bootstrapScript() {
     'manifest=$3',
     'head_ref=$4',
     'expected_head=$5',
+    'staging=$6',
+    'shift 6',
     'if [ -e "$repo" ] || [ -L "$repo" ]; then',
     '  printf "%s\\n" "candidate repository already exists: $repo" >&2',
     '  exit 73',
     'fi',
-    'branch=${head_ref#refs/heads/}',
     'mkdir -p "$(dirname "$repo")"',
-    'git clone --no-local --branch "$branch" "$bundle" "$repo" >/dev/null',
-    'git -C "$repo" fetch --quiet --update-head-ok "$bundle" "+refs/*:refs/*"',
-    'actual_head=$(git -C "$repo" rev-parse HEAD)',
+    'rm -rf -- "$staging"',
+    'git init -q "$staging"',
+    'git -C "$staging" fetch --quiet --update-head-ok "$bundle" "+refs/*:refs/*"',
+    'git -C "$staging" symbolic-ref HEAD "$head_ref"',
+    'git -C "$staging" read-tree "$expected_head"',
+    'git -C "$staging" checkout-index -a',
+    'actual_head=$(git -C "$staging" rev-parse HEAD)',
     '[ "$actual_head" = "$expected_head" ]',
     'actual_manifest=${manifest}.actual',
-    'git -C "$repo" for-each-ref --sort=refname --format="%(objectname)%09%(refname)" >"$actual_manifest"',
+    'git -C "$staging" for-each-ref --sort=refname --format="%(objectname)%09%(refname)" >"$actual_manifest"',
     'cmp "$manifest" "$actual_manifest"',
+    'for worktree_head in "$@"; do git -C "$staging" cat-file -e "${worktree_head}^{commit}"; done',
     'rm -f -- "$actual_manifest"',
+    'mv "$staging" "$repo"',
     'printf "%s\\n" "$actual_head"',
   ].join('\n');
 }
@@ -124,6 +144,7 @@ async function defaultBootstrapGuestRepository({
   const token = randomUUID();
   const guestBundle = join(guestTransferDir, `${token}.bundle`);
   const guestManifest = join(guestTransferDir, `${token}.refs`);
+  const guestStaging = `${guestRepositoryDir}.bootstrap-${token}`;
   requireSuccess(await executor.capture('limactl', [
     'shell', profile.instance, '--', 'mkdir', '-p', guestTransferDir,
   ]), 'guest bootstrap directory creation');
@@ -135,13 +156,15 @@ async function defaultBootstrapGuestRepository({
       'copy', '--backend=scp', manifestPath, `${profile.instance}:${guestManifest}`,
     ]), 'candidate ref manifest copy');
     const result = requireSuccess(await executor.capture('limactl', [
-      'shell', profile.instance, '--', 'sh', '-ceu', bootstrapScript(),
+      'shell', profile.instance, '--', 'sh', '-ceu', renderCandidateGitBootstrapScript(),
       'hstack-candidate-bootstrap',
       guestRepositoryDir,
       guestBundle,
       guestManifest,
       basis.headRef,
       basis.head,
+      guestStaging,
+      ...(basis.worktreeHeads ?? []),
     ]), 'candidate Git repository bootstrap');
     return {
       created: true,
@@ -151,6 +174,9 @@ async function defaultBootstrapGuestRepository({
   } finally {
     await executor.capture('limactl', [
       'shell', profile.instance, '--', 'rm', '-f', '--', guestBundle, guestManifest,
+    ]).catch(() => {});
+    await executor.capture('limactl', [
+      'shell', profile.instance, '--', 'rm', '-rf', '--', guestStaging,
     ]).catch(() => {});
   }
 }
@@ -227,6 +253,7 @@ export async function prepareExecutionHostCandidateRepository(
     const normalizedBasis = {
       ...basis,
       refsDigest: basis.refsDigest ?? refsDigest(basis.refs),
+      worktreeHeads: basis.worktreeHeads ?? [],
     };
     await writeFile(
       manifestPath,

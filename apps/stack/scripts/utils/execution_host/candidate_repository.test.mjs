@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 
 import {
   prepareExecutionHostCandidateRepository,
+  renderCandidateGitBootstrapScript,
   resolveExecutionHostCandidatePaths,
 } from './candidate_repository.mjs';
 
@@ -106,4 +108,52 @@ test('candidate preparation cannot run after authority activation', async () => 
     }),
     /requires activation=candidate/,
   );
+});
+
+test('candidate Git bootstrap reproduces exact refs and detached worktree commits without clone-added refs', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-candidate-git-bootstrap-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  const destination = join(root, 'candidate');
+  const staging = join(root, 'candidate.staging');
+  const bundle = join(root, 'repository.bundle');
+  const manifest = join(root, 'refs.tsv');
+  const git = (args, options = {}) => execFileSync('git', args, {
+    cwd: source,
+    encoding: 'utf8',
+    ...options,
+  }).trim();
+  execFileSync('git', ['init', '-q', source]);
+  git(['config', 'user.email', 'candidate@example.com']);
+  git(['config', 'user.name', 'Candidate Test']);
+  await writeFile(join(source, 'tracked.txt'), 'tracked\n');
+  git(['add', 'tracked.txt']);
+  git(['commit', '-qm', 'tracked']);
+  const head = git(['rev-parse', 'HEAD']);
+  git(['tag', 'candidate-tag']);
+  const detachedTree = git(['rev-parse', 'HEAD^{tree}']);
+  const detached = git(['commit-tree', detachedTree, '-p', head, '-m', 'detached worktree head']);
+  git(['bundle', 'create', bundle, '--all', detached]);
+  const expectedRefs = git(['for-each-ref', '--sort=refname', '--format=%(objectname)%09%(refname)']);
+  await writeFile(manifest, `${expectedRefs}\n`);
+
+  execFileSync('sh', [
+    '-ceu',
+    renderCandidateGitBootstrapScript(),
+    'hstack-candidate-bootstrap',
+    destination,
+    bundle,
+    manifest,
+    'refs/heads/main',
+    head,
+    staging,
+    detached,
+  ], { encoding: 'utf8' });
+
+  assert.equal(execFileSync('git', ['-C', destination, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), head);
+  assert.equal(
+    execFileSync('git', ['-C', destination, 'for-each-ref', '--sort=refname', '--format=%(objectname)%09%(refname)'], { encoding: 'utf8' }).trim(),
+    expectedRefs,
+  );
+  execFileSync('git', ['-C', destination, 'cat-file', '-e', `${detached}^{commit}`]);
 });
