@@ -8,9 +8,11 @@ import test from 'node:test';
 import { resolveTypeScriptCliInvocation } from '../../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
 const fixtureRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const hasCandidateTarballs = Boolean(
-  process.env.CHANNELS_PROTOCOL_TARBALL && process.env.PLUGIN_SDK_TARBALL,
-);
+const candidateProtocolTarball = process.env.CHANNELS_PROTOCOL_TARBALL ?? '';
+const candidateSdkTarball = process.env.PLUGIN_SDK_TARBALL ?? '';
+const hasCandidateTarballs = Boolean(candidateProtocolTarball && candidateSdkTarball);
+const hasPartialCandidateConfiguration =
+  Boolean(candidateProtocolTarball || candidateSdkTarball) && !hasCandidateTarballs;
 const packFixture = await import('../scripts/pack-fixture.mjs');
 
 async function readFixturePackageJson() {
@@ -104,6 +106,14 @@ test('packed fixture writes portable archive specifiers and invokes npm through 
     packageJson.dependencies['@happier-dev/channels-protocol'],
     /^file:\/[^/]/u,
   );
+  // A release candidate is a prerelease version, which the provider archive's
+  // ordinary registry ranges never accept. Without overrides npm resolves both
+  // public packages from the registry and the candidate under test is never
+  // installed, so the whole proof silently becomes a registry install.
+  assert.deepEqual(packageJson.overrides, {
+    '@happier-dev/channels-protocol': pathToFileURL(protocolTarball).href,
+    '@happier-dev/plugin-sdk': pathToFileURL(sdkTarball).href,
+  });
 
   const invocation = packFixture.resolveFixtureNpmInvocation(['pack', '--ignore-scripts'], {
     platform: 'win32',
@@ -128,6 +138,17 @@ test('packed fixture fails closed when candidate archives are missing', () => {
   });
   assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stderr, /Set CHANNELS_PROTOCOL_TARBALL and PLUGIN_SDK_TARBALL/u);
+});
+
+test('packed external fixture refuses a half-supplied candidate instead of skipping', () => {
+  // The only caller that supplies these archives binds both names at one call
+  // site, so losing one of them is a rename away. Without this the packed proof
+  // silently returns to a skip, which reads as green.
+  assert.equal(
+    hasPartialCandidateConfiguration,
+    false,
+    `exactly one candidate archive was supplied (CHANNELS_PROTOCOL_TARBALL=${JSON.stringify(candidateProtocolTarball)}, PLUGIN_SDK_TARBALL=${JSON.stringify(candidateSdkTarball)})`,
+  );
 });
 
 test('packed external fixture installs the candidate public SDK and Channels protocol', { skip: !hasCandidateTarballs }, () => {

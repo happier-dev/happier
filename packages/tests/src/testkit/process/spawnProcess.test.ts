@@ -493,19 +493,23 @@ describe('runLoggedCommand', () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'happier-run-logged-command-failure-'));
 
     try {
+      const stdoutPath = join(rootDir, 'stdout.log');
+      const stderrPath = join(rootDir, 'stderr.log');
       const error = await runLoggedCommandWithOutcome({
         command: process.execPath,
         args: ['-e', 'process.exit(7)'],
         cwd: rootDir,
-        stdoutPath: join(rootDir, 'stdout.log'),
-        stderrPath: join(rootDir, 'stderr.log'),
+        stdoutPath,
+        stderrPath,
       }).then(
         () => null,
         (reason: unknown) => reason,
       );
 
       expect(error).toMatchObject({
-        message: expect.stringContaining('code 7'),
+        message: expect.stringMatching(new RegExp(
+          `code 7.*${stdoutPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*${stderrPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+        )),
         process: { exitCode: 7, signal: null },
       });
     } finally {

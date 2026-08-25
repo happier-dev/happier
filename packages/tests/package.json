@@ -22,6 +22,7 @@
     "test:plugin-platform:packed-composer": "node scripts/plugin-platform/run-packed-composer-external-dogfood.mjs",
     "test:plugin-platform:packed-voice": "HAPPIER_E2E_PACKED_VOICE_REQUIRE_HANDOFF=1 node scripts/run-vitest-with-heartbeat.mjs --config vitest.core.config.ts suites/core-e2e/plugins.voicePackedInstalledArtifact.e2e.test.ts -t candidate-bound",
     "test:plugin-platform:packed-managed-provider": "node scripts/plugin-platform/run-packed-managed-provider.mjs",
+    "test:plugin-platform:packed-channel-provider": "node scripts/plugin-platform/run-packed-managed-provider.mjs --channel",
     "test:plugin-platform:candidate-agent-continuity": "node scripts/runTsxEntrypoint.mjs src/plugin-platform/runCandidateBoundAgentContinuity.ts",
     "prepare:plugin-platform:triage-github-voice-handoff": "node scripts/plugin-platform/triage-github-voice-qa-handoff.mjs",
     "test:plugin-platform:candidate-browser": "node scripts/plugin-platform/run-packed-candidate-browser-qa.mjs",

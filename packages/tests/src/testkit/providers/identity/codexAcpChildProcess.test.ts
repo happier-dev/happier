@@ -15,7 +15,6 @@ describe('exact Codex ACP child-process observation', () => {
           ppid: 100,
           processStartTimeMs: 1_000,
           command: 'node worker.js --label codex-acp',
-          executablePath: '/usr/bin/node',
         }),
       },
     )).resolves.toBeNull();
@@ -35,14 +34,12 @@ describe('exact Codex ACP child-process observation', () => {
               ppid: 101,
               processStartTimeMs: 2_000,
               command: '/opt/bin/codex-acp --stdio',
-              executablePath: '/opt/bin/codex-acp',
             }
           : {
               pid,
               ppid: 100,
               processStartTimeMs: 1_000,
               command: 'sh wrapper',
-              executablePath: '/bin/sh',
             },
       },
     )).resolves.toEqual({ pid: 102, processStartTimeMs: 2_000 });
@@ -66,7 +63,6 @@ describe('exact Codex ACP child-process observation', () => {
           ppid: 200,
           processStartTimeMs: 3_000,
           command: 'cmd.exe /d /s /c C:\\tools\\private-codex-wrapper.cmd',
-          executablePath: 'C:\\Windows\\System32\\cmd.exe',
         }),
       },
     )).resolves.toEqual({ pid: 201, processStartTimeMs: 3_000 });
@@ -88,7 +84,6 @@ describe('exact Codex ACP child-process observation', () => {
           ppid: 300,
           processStartTimeMs: pid * 10,
           command: '/opt/bin/codex-acp',
-          executablePath: '/opt/bin/codex-acp',
         }),
       },
     )).resolves.toBeNull();

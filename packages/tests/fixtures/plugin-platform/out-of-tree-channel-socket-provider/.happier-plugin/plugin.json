@@ -266,6 +266,46 @@
                   ],
                   "additionalProperties": false
                 },
+                "sharedEndpointInputModes": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "const": "directMentionsOnly"
+                      },
+                      {
+                        "const": "addressedMessages"
+                      },
+                      {
+                        "const": "allAllowedMessages"
+                      }
+                    ]
+                  },
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "uniqueItems": true
+                },
+                "setupGuidance": {
+                  "type": "object",
+                  "properties": {
+                    "externalUrl": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^https://[^\\s]+$",
+                      "x-happier-max-utf8-bytes": 2048
+                    },
+                    "requiredPermissionsLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "externalUrl",
+                    "requiredPermissionsLabel"
+                  ],
+                  "additionalProperties": false
+                },
                 "pairingDeepLinkTemplate": {
                   "type": "string",
                   "minLength": 1,
@@ -464,6 +504,25 @@
                   "type": "string",
                   "minLength": 1,
                   "x-happier-max-utf8-bytes": 512
+                },
+                "sharedEndpointInputModes": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "const": "directMentionsOnly"
+                      },
+                      {
+                        "const": "addressedMessages"
+                      },
+                      {
+                        "const": "allAllowedMessages"
+                      }
+                    ]
+                  },
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "uniqueItems": true
                 }
               },
               "required": [

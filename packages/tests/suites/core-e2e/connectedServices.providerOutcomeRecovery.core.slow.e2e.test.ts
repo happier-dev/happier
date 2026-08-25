@@ -51,10 +51,10 @@ import {
   asRecord,
   CLAUDE_CODE_E2E_OAUTH_SCOPE,
   CLAUDE_SUBSCRIPTION_SERVICE_ID,
-  createConnectedServiceAuthGroup,
+  createQualifiedConnectedAccountGroup,
   createConnectedServiceProfile,
-  fetchConnectedServiceAuthGroup,
-  patchConnectedServiceAuthGroupMemberExhaustion,
+  fetchQualifiedConnectedAccountGroup,
+  patchQualifiedConnectedAccountGroupMemberExhaustion,
   readRuntimeAuthRecoveryIntent,
   recordConnectedServiceTurnLifecycle,
   reportConnectedServiceRuntimeAuthFailure,
@@ -263,27 +263,38 @@ async function seedRecoveryGroup(params: Readonly<{
   // the group and treat a readable, correctly-active group as success.
   await waitFor(async () => {
     try {
-      await createConnectedServiceAuthGroup({
-        fixture: params.fixture,
-        serviceId: SERVICE_ID,
+      await createQualifiedConnectedAccountGroup({
+        serverBaseUrl: params.fixture.serverBaseUrl,
+        authToken: params.fixture.auth.token,
+        legacyServiceId: SERVICE_ID,
         groupId: params.groupId,
-        activeProfileId: ACTIVE_PROFILE_ID,
-        memberProfileIds: [ACTIVE_PROFILE_ID, ...params.extraMemberProfileIds],
+        activeConnectedAccountId: ACTIVE_PROFILE_ID,
+        memberConnectedAccountIds: [ACTIVE_PROFILE_ID, ...params.extraMemberProfileIds],
       });
       return true;
     } catch {
       // The write may have landed despite a serialization error on the response.
       try {
-        const group = await fetchConnectedServiceAuthGroup({ fixture: params.fixture, serviceId: SERVICE_ID, groupId: params.groupId });
-        return group.activeProfileId === ACTIVE_PROFILE_ID;
+        const group = await fetchQualifiedConnectedAccountGroup({
+          serverBaseUrl: params.fixture.serverBaseUrl,
+          authToken: params.fixture.auth.token,
+          legacyServiceId: SERVICE_ID,
+          groupId: params.groupId,
+        });
+        return group.activeConnectedAccountId === ACTIVE_PROFILE_ID;
       } catch {
         return false;
       }
     }
   }, { timeoutMs: 25_000, intervalMs: 250, context: 'connected-service auth group created (or readable after a serialization-only error)' });
   await waitFor(async () => {
-    const group = await fetchConnectedServiceAuthGroup({ fixture: params.fixture, serviceId: SERVICE_ID, groupId: params.groupId });
-    return group.activeProfileId === ACTIVE_PROFILE_ID;
+    const group = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: params.fixture.serverBaseUrl,
+      authToken: params.fixture.auth.token,
+      legacyServiceId: SERVICE_ID,
+      groupId: params.groupId,
+    });
+    return group.activeConnectedAccountId === ACTIVE_PROFILE_ID;
   }, { timeoutMs: 20_000, intervalMs: 200, context: 'connected-service auth group resolvable before spawn' });
 }
 
@@ -330,21 +341,22 @@ async function spawnConnectedClaudeGroupSessionWhenEligible(params: Readonly<{
   return resolvedSessionId;
 }
 
-async function createConnectedServiceAuthGroupWhenReadable(
-  params: Parameters<typeof createConnectedServiceAuthGroup>[0],
+async function createQualifiedConnectedAccountGroupWhenReadable(
+  params: Parameters<typeof createQualifiedConnectedAccountGroup>[0],
 ): Promise<void> {
   await waitFor(async () => {
     try {
-      await createConnectedServiceAuthGroup(params);
+      await createQualifiedConnectedAccountGroup(params);
       return true;
     } catch {
       try {
-        const group = await fetchConnectedServiceAuthGroup({
-          fixture: params.fixture,
-          serviceId: params.serviceId,
+        const group = await fetchQualifiedConnectedAccountGroup({
+          serverBaseUrl: params.serverBaseUrl,
+          authToken: params.authToken,
+          legacyServiceId: params.legacyServiceId,
           groupId: params.groupId,
         });
-        return group.activeProfileId === params.activeProfileId;
+        return group.activeConnectedAccountId === params.activeConnectedAccountId;
       } catch {
         return false;
       }
@@ -355,12 +367,13 @@ async function createConnectedServiceAuthGroupWhenReadable(
     context: 'connected-service auth group created or readable after a serialization-only response error',
   });
   await waitFor(async () => {
-    const group = await fetchConnectedServiceAuthGroup({
-      fixture: params.fixture,
-      serviceId: params.serviceId,
+    const group = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: params.serverBaseUrl,
+      authToken: params.authToken,
+      legacyServiceId: params.legacyServiceId,
       groupId: params.groupId,
     });
-    return group.activeProfileId === params.activeProfileId;
+    return group.activeConnectedAccountId === params.activeConnectedAccountId;
   }, {
     timeoutMs: 20_000,
     intervalMs: 200,
@@ -449,12 +462,13 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
       providerAccountId: 'acct-claude-primary',
       expiresAt: Date.now() + 60 * 60_000,
     });
-    await createConnectedServiceAuthGroupWhenReadable({
-      fixture: claudeFixture,
-      serviceId: CLAUDE_SUBSCRIPTION_SERVICE_ID,
+    await createQualifiedConnectedAccountGroupWhenReadable({
+      serverBaseUrl: claudeFixture.serverBaseUrl,
+      authToken: claudeFixture.auth.token,
+      legacyServiceId: CLAUDE_SUBSCRIPTION_SERVICE_ID,
       groupId,
-      activeProfileId: profileId,
-      memberProfileIds: [profileId],
+      activeConnectedAccountId: profileId,
+      memberConnectedAccountIds: [profileId],
       preTurnProbeMode: 'never',
     });
 
@@ -583,12 +597,13 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
       providerAccountId: 'acct-claude-cancel',
       expiresAt: Date.now() + 60 * 60_000,
     });
-    await createConnectedServiceAuthGroupWhenReadable({
-      fixture: claudeFixture,
-      serviceId: CLAUDE_SUBSCRIPTION_SERVICE_ID,
+    await createQualifiedConnectedAccountGroupWhenReadable({
+      serverBaseUrl: claudeFixture.serverBaseUrl,
+      authToken: claudeFixture.auth.token,
+      legacyServiceId: CLAUDE_SUBSCRIPTION_SERVICE_ID,
       groupId,
-      activeProfileId: profileId,
-      memberProfileIds: [profileId],
+      activeConnectedAccountId: profileId,
+      memberConnectedAccountIds: [profileId],
       preTurnProbeMode: 'never',
     });
 
@@ -674,12 +689,13 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
       providerAccountId: 'acct-claude-primary',
       expiresAt: Date.now() + 60 * 60_000,
     });
-    await createConnectedServiceAuthGroupWhenReadable({
-      fixture: claudeFixture,
-      serviceId: CLAUDE_SUBSCRIPTION_SERVICE_ID,
+    await createQualifiedConnectedAccountGroupWhenReadable({
+      serverBaseUrl: claudeFixture.serverBaseUrl,
+      authToken: claudeFixture.auth.token,
+      legacyServiceId: CLAUDE_SUBSCRIPTION_SERVICE_ID,
       groupId,
-      activeProfileId: profileId,
-      memberProfileIds: [profileId],
+      activeConnectedAccountId: profileId,
+      memberConnectedAccountIds: [profileId],
       preTurnProbeMode: 'never',
     });
     const sessionId = await spawnConnectedClaudeGroupSessionWhenEligible({
@@ -785,9 +801,14 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
     // The outage must not have advanced the normal attempt budget to its cap.
     expect(Number(intent.attemptCount ?? 0)).toBeLessThan(2);
     // The group must NOT have switched (no provider-outcome proof under the outage).
-    const group = await fetchConnectedServiceAuthGroup({ fixture, serviceId: SERVICE_ID, groupId });
-    expect(group.activeProfileId).toBe(ACTIVE_PROFILE_ID);
-    expect(proxy?.activeProfileWriteCount()).toBe(0);
+    const group = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: SERVICE_ID,
+      groupId,
+    });
+    expect(group.activeConnectedAccountId).toBe(ACTIVE_PROFILE_ID);
+    expect(proxy?.activeAccountWriteCount()).toBe(0);
 
     // Give the outage even more time (well past several normal-track backoff
     // cycles). The hard, deterministic invariant for this class is that the
@@ -803,9 +824,14 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
     expect(['waiting', 'checking']).toContain(stillDegraded.status);
     expect(Number(stillDegraded.attemptCount ?? 0)).toBeLessThan(2);
     // Still must not have switched the active profile while the outage persists.
-    const stillGroup = await fetchConnectedServiceAuthGroup({ fixture, serviceId: SERVICE_ID, groupId });
-    expect(stillGroup.activeProfileId).toBe(ACTIVE_PROFILE_ID);
-    expect(proxy?.activeProfileWriteCount()).toBe(0);
+    const stillGroup = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: SERVICE_ID,
+      groupId,
+    });
+    expect(stillGroup.activeConnectedAccountId).toBe(ACTIVE_PROFILE_ID);
+    expect(proxy?.activeAccountWriteCount()).toBe(0);
   }, 360_000);
 
   // FAILURE CLASS: daemon-lifecycle deferral — a runtime-auth failure reported
@@ -962,23 +988,26 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
     });
 
     const resetAtMs = Date.now() + 120_000;
-    const seededGroup = await fetchConnectedServiceAuthGroup({ fixture, serviceId: SERVICE_ID, groupId });
-    const activeExhaustedGroup = await patchConnectedServiceAuthGroupMemberExhaustion({
-      fixture,
-      serviceId: SERVICE_ID,
+    const seededGroup = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: SERVICE_ID,
       groupId,
-      expectedGeneration: Number(seededGroup.generation),
-      expectedRuntimeStateRevision: Number(seededGroup.runtimeStateRevision),
-      memberProfileId: ACTIVE_PROFILE_ID,
+    });
+    const activeExhaustedGroup = await patchQualifiedConnectedAccountGroupMemberExhaustion({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      group: seededGroup,
+      expectedRuntimeStateRevision: seededGroup.runtimeStateRevision,
+      connectedAccountId: ACTIVE_PROFILE_ID,
       quotaExhaustedUntilMs: resetAtMs,
     });
-    await patchConnectedServiceAuthGroupMemberExhaustion({
-      fixture,
-      serviceId: SERVICE_ID,
-      groupId,
-      expectedGeneration: Number(activeExhaustedGroup.generation),
-      expectedRuntimeStateRevision: Number(activeExhaustedGroup.runtimeStateRevision),
-      memberProfileId: backupProfileId,
+    await patchQualifiedConnectedAccountGroupMemberExhaustion({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      group: activeExhaustedGroup,
+      expectedRuntimeStateRevision: activeExhaustedGroup.runtimeStateRevision,
+      connectedAccountId: backupProfileId,
       quotaExhaustedUntilMs: resetAtMs,
     });
 
@@ -1013,7 +1042,7 @@ describe('core e2e: connected-service provider-outcome recovery', () => {
     // A bounded number of backoff-paced reloads is acceptable; a storm would be
     // dozens within 2s at 250ms backoff. Cap generously but well below a storm.
     expect(loadDelta).toBeLessThanOrEqual(12);
-    expect(proxy?.activeProfileWriteCount()).toBe(0);
+    expect(proxy?.activeAccountWriteCount()).toBe(0);
 
     // The recovery intent must NOT be cleared/recovered without a fresh candidate:
     // it stays in a waiting lifecycle state (or dead-letters to a durable exhausted

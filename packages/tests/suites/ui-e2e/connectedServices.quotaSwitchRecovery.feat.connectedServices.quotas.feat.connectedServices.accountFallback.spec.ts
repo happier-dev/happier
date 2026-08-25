@@ -13,6 +13,10 @@ import {
 } from '@happier-dev/protocol';
 
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import {
+    createQualifiedConnectedAccountGroup,
+    fetchQualifiedConnectedAccountGroup,
+} from '../../src/testkit/connectedServicesRecovery';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
@@ -392,56 +396,6 @@ async function patchConnectedServiceCredentialHealth(params: Readonly<{
     expect(response.data?.success).toBe(true);
 }
 
-async function createConnectedServiceAuthGroup(params: Readonly<{
-    baseUrl: string;
-    token: string;
-    serviceId: string;
-    groupId: string;
-    activeProfileId: string;
-    memberProfileIds: readonly string[];
-}>): Promise<UnknownRecord> {
-    const response = await fetchJson<{ group?: unknown }>(`${params.baseUrl}/v3/connect/${params.serviceId}/groups`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${params.token}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            groupId: params.groupId,
-            members: params.memberProfileIds.map((profileId, index) => ({ profileId, priority: (index + 1) * 10 })),
-            activeProfileId: params.activeProfileId,
-            policy: {
-                autoSwitch: true,
-                recoveryMode: 'switch_or_wait',
-            },
-        }),
-        timeoutMs: 20_000,
-    });
-    expect(response.status).toBe(200);
-    const group = asRecord(response.data?.group);
-    if (!group) throw new Error('Expected connected service auth group response');
-    return group;
-}
-
-async function fetchConnectedServiceAuthGroup(params: Readonly<{
-    baseUrl: string;
-    token: string;
-    serviceId: string;
-    groupId: string;
-}>): Promise<UnknownRecord> {
-    const response = await fetchJson<{ group?: unknown }>(
-        `${params.baseUrl}/v3/connect/${params.serviceId}/groups/${params.groupId}`,
-        {
-            headers: { Authorization: `Bearer ${params.token}` },
-            timeoutMs: 20_000,
-        },
-    );
-    expect(response.status).toBe(200);
-    const group = asRecord(response.data?.group);
-    if (!group) throw new Error('Expected connected service auth group response');
-    return group;
-}
-
 async function expectRealSwitchSessionEventRecorded(params: Readonly<{
     baseUrl: string;
     token: string;
@@ -626,6 +580,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             dbProvider: 'sqlite',
             extraEnv: {
                 HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
+                HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
                 ...CONNECTED_SERVICE_FEATURE_ENV,
             },
         });
@@ -753,13 +708,13 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             profileId,
             providerEmail: 'work@example.test',
         });
-        await createConnectedServiceAuthGroup({
-            baseUrl: server.baseUrl,
-            token: authToken,
-            serviceId,
+        await createQualifiedConnectedAccountGroup({
+            serverBaseUrl: server.baseUrl,
+            authToken,
+            legacyServiceId: serviceId,
             groupId,
-            activeProfileId: profileId,
-            memberProfileIds: [profileId],
+            activeConnectedAccountId: profileId,
+            memberConnectedAccountIds: [profileId],
         });
         await patchConnectedServiceCredentialHealth({
             baseUrl: server.baseUrl,
@@ -790,13 +745,13 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             && url.searchParams.get('profileId') === profileId,
         { timeout: 60_000 });
 
-        const groupAfterProfileReconnectNavigation = await fetchConnectedServiceAuthGroup({
-            baseUrl: server.baseUrl,
-            token: authToken,
-            serviceId,
+        const groupAfterProfileReconnectNavigation = await fetchQualifiedConnectedAccountGroup({
+            serverBaseUrl: server.baseUrl,
+            authToken,
+            legacyServiceId: serviceId,
             groupId,
         });
-        expect(readString(groupAfterProfileReconnectNavigation, 'activeProfileId')).toBe(profileId);
+        expect(groupAfterProfileReconnectNavigation.activeConnectedAccountId).toBe(profileId);
 
         const sessionId = await createProfileBoundPlainSession({
             baseUrl: server.baseUrl,
@@ -819,13 +774,13 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             && url.searchParams.get('profileId') === profileId,
         { timeout: 60_000 });
 
-        const groupAfterSessionChipReconnectNavigation = await fetchConnectedServiceAuthGroup({
-            baseUrl: server.baseUrl,
-            token: authToken,
-            serviceId,
+        const groupAfterSessionChipReconnectNavigation = await fetchQualifiedConnectedAccountGroup({
+            serverBaseUrl: server.baseUrl,
+            authToken,
+            legacyServiceId: serviceId,
             groupId,
         });
-        expect(readString(groupAfterSessionChipReconnectNavigation, 'activeProfileId')).toBe(profileId);
+        expect(groupAfterSessionChipReconnectNavigation.activeConnectedAccountId).toBe(profileId);
     });
 
     test('shows connected-service restart status before inactive resume status', async ({ page }) => {
@@ -852,13 +807,13 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             profileId,
             providerEmail: 'restart@example.test',
         });
-        await createConnectedServiceAuthGroup({
-            baseUrl: server.baseUrl,
-            token: authToken,
-            serviceId,
+        await createQualifiedConnectedAccountGroup({
+            serverBaseUrl: server.baseUrl,
+            authToken,
+            legacyServiceId: serviceId,
             groupId,
-            activeProfileId: profileId,
-            memberProfileIds: [profileId],
+            activeConnectedAccountId: profileId,
+            memberConnectedAccountIds: [profileId],
         });
         const sessionId = await createProfileBoundPlainSession({
             baseUrl: server.baseUrl,
@@ -930,13 +885,13 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             profileId: backupProfileId,
             providerEmail: 'backup@example.test',
         });
-        await createConnectedServiceAuthGroup({
-            baseUrl: server.baseUrl,
-            token: authToken,
-            serviceId,
+        await createQualifiedConnectedAccountGroup({
+            serverBaseUrl: server.baseUrl,
+            authToken,
+            legacyServiceId: serviceId,
             groupId,
-            activeProfileId: primaryProfileId,
-            memberProfileIds: [primaryProfileId, backupProfileId],
+            activeConnectedAccountId: primaryProfileId,
+            memberConnectedAccountIds: [primaryProfileId, backupProfileId],
         });
 
         try {
@@ -1002,13 +957,13 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
             await switchAccountNow.click();
 
             await waitFor(async () => {
-                const group = await fetchConnectedServiceAuthGroup({
-                    baseUrl: server!.baseUrl,
-                    token: authToken,
-                    serviceId,
+                const group = await fetchQualifiedConnectedAccountGroup({
+                    serverBaseUrl: server!.baseUrl,
+                    authToken,
+                    legacyServiceId: serviceId,
                     groupId,
                 });
-                return readString(group, 'activeProfileId') === backupProfileId;
+                return group.activeConnectedAccountId === backupProfileId;
             }, {
                 timeoutMs: 30_000,
                 context: 'auth-group switch commits backup active profile',

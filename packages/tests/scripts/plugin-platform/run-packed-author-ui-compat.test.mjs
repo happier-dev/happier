@@ -3852,6 +3852,120 @@ test('scaffold inspection rejects repository links, bare tools, and TypeScript 5
   assert.ok(compilerDriftFailures.some((message) => message.includes('exact repository-selected')));
 });
 
+test('packed author exact vertical owns the portfolio and the distinct production hosted reference', async () => {
+  const products = packedAuthorHarness.PACKED_AUTHOR_EXTERNAL_REFERENCE_PRODUCTS;
+  assert.deepEqual(
+    products.map(({ stageId, packageName }) => ({ stageId, packageName })),
+    [
+      {
+        stageId: 'public-authoring-external-pair',
+        packageName: '@example/happier-public-authoring',
+      },
+      {
+        stageId: 'production-hosted-reference-external-pair',
+        packageName: '@example/happier-production-hosted-reference',
+      },
+    ],
+  );
+  // 03g rejects a monorepo-only reference: each product must be an installable
+  // external package whose declared identity, author lifecycle entry points and
+  // SDK/Plugin UI consumer contract exist on disk exactly as the vertical
+  // asserts them before it installs the exact candidate pair.
+  const roots = new Set();
+  for (const product of products) {
+    assert.equal(isAbsolute(product.sourceRoot), true, product.stageId);
+    assert.equal(roots.has(product.sourceRoot), false, `duplicate reference root: ${product.stageId}`);
+    roots.add(product.sourceRoot);
+    const packageJson = JSON.parse(await readFile(join(product.sourceRoot, 'package.json'), 'utf8'));
+    assert.equal(packageJson.name, product.packageName);
+    assert.equal(packageJson.version, product.packageVersion);
+    assert.equal(typeof packageJson.dependencies?.['@happier-dev/plugin-sdk'], 'string');
+    assert.equal(typeof packageJson.dependencies?.['@happier-dev/plugin-ui'], 'string');
+    // `plugins dev test` runs this exact path, and `plugins dev
+    // typecheck`/`build` compile this exact project config.
+    await access(join(product.sourceRoot, 'test', 'index.test.mjs'));
+    await access(join(product.sourceRoot, 'tsconfig.json'));
+    for (const script of Object.values(packageJson.scripts ?? {})) {
+      assert.doesNotMatch(
+        script,
+        /\.\.[\\/]/u,
+        `${product.packageName} script escapes its own package root: ${script}`,
+      );
+    }
+  }
+  assert.equal(
+    packedAuthorHarness.packedAuthorExternalReferenceProduct(
+      'production-hosted-reference-external-pair',
+    ).hostedWebContributionId,
+    'review-hosted',
+  );
+  assert.ok(
+    VERTICAL_A_REQUIRED_STAGE_IDS.includes('production-hosted-reference-external-pair'),
+    'the production hosted reference stage must be required for vertical-a success',
+  );
+  assert.throws(
+    () => assertVerticalAStageCoverage(
+      VERTICAL_A_REQUIRED_STAGE_IDS
+        .filter((id) => id !== 'production-hosted-reference-external-pair')
+        .map((id) => ({ id, ok: true })),
+    ),
+    /production-hosted-reference-external-pair/u,
+  );
+});
+
+test('packed hostedWeb graph attestation is one owner for every product contribution', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'production-hosted-reference-graph-'));
+  try {
+    const artifactRoot = join(root, 'dist', 'happier-plugin-ui');
+    const entryPath = 'hosted-web/review-hosted/entry.mjs';
+    const entryBytes = Buffer.from('export const reviewHosted = true;\n');
+    const files = [{ relativePath: entryPath, bytes: entryBytes }];
+    await mkdir(dirname(join(artifactRoot, entryPath)), { recursive: true });
+    await writeFile(join(artifactRoot, entryPath), entryBytes);
+    await writeFile(join(artifactRoot, 'ui-artifacts.json'), `${JSON.stringify({
+      version: 1,
+      entries: [{
+        contributionId: 'review-hosted',
+        tier: 'hostedWeb',
+        platform: 'web',
+        entry: entryPath,
+        files: files.map(({ relativePath, bytes }) => ({
+          relativePath,
+          digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+          byteSize: bytes.byteLength,
+        })),
+        digest: computePluginUiArtifactFileSetSha256DigestV1(files),
+        builtWith: { bundler: 'vite', version: '7.3.1' },
+        hostUiApiVersion: '1.0.0',
+        compat: {},
+      }],
+    })}\n`);
+
+    await assert.doesNotReject(attestPackedPublicAuthoringHostedWebGraph({
+      artifactRoot,
+      contributionId: 'review-hosted',
+      label: 'production hosted reference',
+    }));
+    // The portfolio contribution id must not silently accept another product's
+    // graph, and a tampered production reference file must still fail.
+    await assert.rejects(
+      attestPackedPublicAuthoringHostedWebGraph({ artifactRoot }),
+      /public authoring hostedWeb graph must contain exactly one review-web\/web entry/u,
+    );
+    await writeFile(join(artifactRoot, entryPath), 'tampered\n');
+    await assert.rejects(
+      attestPackedPublicAuthoringHostedWebGraph({
+        artifactRoot,
+        contributionId: 'review-hosted',
+        label: 'production hosted reference',
+      }),
+      /production hosted reference hostedWeb file digest mismatch/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('packed author inventory preserves untouched no-UI, React Native, and hosted-web scaffold roots', () => {
   const specs = packedAuthorHarness.createPackedAuthorScaffoldSpecs('/fixture-root');
   const untouched = specs.filter((spec) => spec.mode === 'untouched');
@@ -4453,11 +4567,11 @@ test('packed identity and command envelopes cannot be supplied only by the candi
   ), /published happier bin/u);
 
   assert.deepEqual(
-    parseSuccessfulCommandEnvelope('{"ok":true,"kind":"plugins_author_build","data":{"operation":"build","projectRoot":"/tmp/plugin"}}\n', 'plugins_author_build'),
-    { ok: true, kind: 'plugins_author_build', data: { operation: 'build', projectRoot: '/tmp/plugin' } },
+    parseSuccessfulCommandEnvelope('{"ok":true,"kind":"plugins_dev_build","data":{"operation":"build","projectRoot":"/tmp/plugin"}}\n', 'plugins_dev_build'),
+    { ok: true, kind: 'plugins_dev_build', data: { operation: 'build', projectRoot: '/tmp/plugin' } },
   );
   assert.throws(
-    () => parseSuccessfulCommandEnvelope('{"ok":false,"kind":"plugins_author_build"}\n', 'plugins_author_build'),
+    () => parseSuccessfulCommandEnvelope('{"ok":false,"kind":"plugins_dev_build"}\n', 'plugins_dev_build'),
     /reported failure/u,
   );
 });

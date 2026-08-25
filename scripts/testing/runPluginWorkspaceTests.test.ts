@@ -112,3 +112,36 @@ test('attempts every derived workspace before reporting failed package tests', a
     '@happier-dev/plugins-beta',
   ]);
 });
+
+test('runs independent plugin workspaces with bounded concurrency', async () => {
+  let active = 0;
+  let maxActive = 0;
+  const releases: Array<() => void> = [];
+
+  const run = runPluginWorkspaceTests({
+    maxConcurrent: 2,
+    discoverReport: async () => ({
+      packages: ['alpha', 'beta', 'gamma'].map((id) => ({
+        packageName: `@happier-dev/plugins-${id}`,
+        workspaceDirectory: `packages/plugins/${id}`,
+      })),
+      issues: [],
+    }),
+    runInvocation: async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+    },
+  });
+
+  while (releases.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(active, 2);
+  assert.equal(releases.length, 2);
+  releases.shift()?.();
+  while (releases.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  releases.splice(0).forEach((release) => release());
+  await run;
+
+  assert.equal(maxActive, 2);
+});

@@ -39,23 +39,12 @@ status Resource is ordinary UI state, never reconciliation authority; the
 fixture has no local registry, unqualified Resource lookup, or core/Data
 producer substitute.
 
-The packed journey installs the exact candidate archives and loads the daemon
-entrypoint; host trust/update/LKG/remove, live TLS WebSocket observation, and
-the composed Channels lifecycle gates remain owned by the composed release
-harness.
+The managed source-development journey loads the daemon entrypoint and exercises
+host trust/update/LKG/remove, live TLS WebSocket observation, and the composed
+Channels lifecycle gates on the existing development stack.
 
-`npm run test:public` is the fixture-local static/import boundary check.
-`npm run pack:fixture` packs the exact fixture archive and, when candidate
-public packages are supplied through `CHANNELS_PROTOCOL_TARBALL` and
-`PLUGIN_SDK_TARBALL`, installs those tarballs in a clean temporary consumer.
-`npm run test:pack` always checks the missing-archive failure path and runs the
-positive packed install only when both candidate paths are provided.
-
-That candidate-tarball check is preparation only: it does not establish
-official-origin package availability. The release-owned proof must instead
-install the published SDK and Channels protocol from the approved official
-origin, then build, install, admit, invoke, update, and uninstall this fixture
-without a workspace link, local tarball substitute, or registry stand-in.
-If either published package is unavailable from that origin, report this final
-external-install proof as blocked; a workspace link, candidate tarball, or
-locally built package is not a substitute.
+`npm run test:public` is the fixture-local static/import boundary check. Feature
+QA uses the repository's current source projections and managed development
+lifecycle; it does not create or install local release archives. Official
+publication availability is established only by the release workflow after
+publication and is not a feature-completion gate.

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { RecordedHttpProxyRequest } from './httpRequestRecordingProxy';
 import {
-  readExternalSessionOperationCompletionReceipt,
+  readExternalSessionOperationTerminalReceipt,
   readImportingMaterializeProgressPatch,
   readPlainSessionOwnerOperationProgress,
 } from './externalSessionOperationProgressPatch';
@@ -218,7 +218,7 @@ describe('readImportingMaterializeProgressPatch', () => {
     });
   });
 
-  it('reads the strict minimal completion receipt without treating it as a full operation record', () => {
+  it('reads the strict minimal terminal receipt without treating it as a full operation record', () => {
     const reference = {
       sessionId,
       operationId: 'external-materialize:11111111-1111-4111-8111-111111111111',
@@ -234,29 +234,29 @@ describe('readImportingMaterializeProgressPatch', () => {
     } as const;
     const receipt = {
       v: 1,
-      recordKind: 'completed_receipt',
+      recordKind: 'terminal_receipt',
       reference,
       presentation,
       durableIdempotencyKey: 'materialize-restart-receipt',
       idempotencyIntentDigest: 'a'.repeat(64),
-      completedAtMs: 1_000,
+      terminalAtMs: 1_000,
       expiresAtMs: 1_000 + 24 * 60 * 60 * 1_000,
     } as const;
 
-    expect(readExternalSessionOperationCompletionReceipt(receipt)).toEqual({
+    expect(readExternalSessionOperationTerminalReceipt(receipt)).toEqual({
       reference,
       presentation,
       persistedKeys: Object.keys(receipt).sort(),
     });
-    expect(() => readExternalSessionOperationCompletionReceipt({
+    expect(() => readExternalSessionOperationTerminalReceipt({
       ...receipt,
       request: { sessionId },
-    })).toThrow('strict minimal completion receipt');
-    expect(() => readExternalSessionOperationCompletionReceipt({
+    })).toThrow('strict minimal terminal receipt');
+    expect(() => readExternalSessionOperationTerminalReceipt({
       ...receipt,
       expiresAtMs: receipt.expiresAtMs + 1,
-    })).toThrow('strict minimal completion receipt');
-    expect(() => readExternalSessionOperationCompletionReceipt({
+    })).toThrow('strict minimal terminal receipt');
+    expect(() => readExternalSessionOperationTerminalReceipt({
       ...receipt,
       authorIntent: {
         v: 1,
@@ -265,6 +265,6 @@ describe('readImportingMaterializeProgressPatch', () => {
         sessionId: 'different-session',
         targetStorageMode: 'external-linked',
       },
-    })).toThrow('strict minimal completion receipt');
+    })).toThrow('strict minimal terminal receipt');
   });
 });

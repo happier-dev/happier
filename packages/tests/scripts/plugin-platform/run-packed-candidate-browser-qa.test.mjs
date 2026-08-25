@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -98,7 +99,7 @@ test('candidate browser QA command fails closed when no exact package artifact b
   );
 });
 
-test('candidate browser QA requires the normal Triage/GitHub Voice handoff and always runs the packed targeted projection', () => {
+test('candidate browser QA forwards a supplied Triage/GitHub Voice handoff and always runs the packed targeted projection', () => {
   const inputs = requirePackedCandidateBrowserQaInputs({
     argv: [
       '--candidate',
@@ -228,20 +229,24 @@ test('row-local UCX web proof rejects partial trios and candidate/natural split 
   );
 });
 
-test('candidate browser QA fails before Playwright when the mandatory normal Triage/GitHub Voice handoff is absent', () => {
-  assert.throws(
-    () => requirePackedCandidateBrowserQaInputs({
-      argv: [
-        '--candidate',
-        '/candidate/candidate.json',
-        '--novel-handoff',
-        '/candidate/packed-novel-connected-account-qa.json',
-      ],
-      env: {},
-      cwd: '/workspace/packages/tests',
-    }),
-    /packed_candidate_browser_qa_triage_github_voice_blocked_handoff_required/u,
-  );
+test('candidate browser QA runs the credential-free Action row without a Triage/GitHub/Voice handoff', () => {
+  const inputs = requirePackedCandidateBrowserQaInputs({
+    argv: [
+      '--sdk-tarball', '/row/sdk.tgz',
+      '--plugin-ui-tarball', '/row/plugin-ui.tgz',
+      '--cli-tarball', '/row/cli.tgz',
+    ],
+    env: {},
+    cwd: '/workspace/packages/tests',
+  });
+  assert.equal(inputs.triageGithubVoiceHandoffManifestPath, undefined);
+  const invocation = buildPackedCandidateBrowserQaInvocation({
+    testsPackageRoot: '/workspace/packages/tests',
+    ...inputs,
+    processExecPath: '/runtime/node',
+  });
+  assert.deepEqual(invocation.args.slice(-1), ['plugin.packed-targeted-projection.spec.ts']);
+  assert.equal(Object.hasOwn(invocation.envPatch, 'HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_HANDOFF_MANIFEST'), false);
 
   assert.throws(
     () => requirePackedCandidateBrowserQaInputs({
@@ -256,6 +261,82 @@ test('candidate browser QA fails before Playwright when the mandatory normal Tri
     }),
     /packed_candidate_browser_qa_triage_github_voice_blocked_handoff_value_required/u,
   );
+});
+
+test('candidate browser QA classifies a credential-free Action success as partial evidence', () => {
+  const partial = candidateBrowserQa.buildPackedCandidateBrowserQaRunnerEvidence({
+    hasCompletionHandoff: false,
+    exitCode: 0,
+  });
+  assert.deepEqual(partial, {
+    v: 1,
+    kind: 'packed_candidate_browser_qa_runner_evidence',
+    process: { exitCode: 0 },
+    outcome: 'passed',
+    proofScope: 'credential_free_action_projection_partial',
+    completion: 'partial',
+    fullEu08CompletionCredit: false,
+  });
+
+  const normal = candidateBrowserQa.buildPackedCandidateBrowserQaRunnerEvidence({
+    hasCompletionHandoff: true,
+    exitCode: 0,
+  });
+  assert.deepEqual(normal, {
+    v: 1,
+    kind: 'packed_candidate_browser_qa_runner_evidence',
+    process: { exitCode: 0 },
+    outcome: 'passed',
+    proofScope: 'normal_triage_github_voice_full_receipt_required',
+    completion: 'full_receipt_required',
+    fullEu08CompletionCredit: false,
+  });
+});
+
+test('candidate browser QA runner emits partial evidence after a credential-free successful child', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'packed-candidate-browser-partial-'));
+  const sdkTarballPath = join(root, 'sdk.tgz');
+  const pluginUiTarballPath = join(root, 'plugin-ui.tgz');
+  const cliTarballPath = join(root, 'cli.tgz');
+  try {
+    await Promise.all([
+      writeFile(sdkTarballPath, 'sdk'),
+      writeFile(pluginUiTarballPath, 'plugin-ui'),
+      writeFile(cliTarballPath, 'cli'),
+    ]);
+    const output = [];
+    let spawnedEnv = null;
+    const evidence = await candidateBrowserQa.runPackedCandidateBrowserQa({
+      argv: [
+        '--sdk-tarball', sdkTarballPath,
+        '--plugin-ui-tarball', pluginUiTarballPath,
+        '--cli-tarball', cliTarballPath,
+      ],
+      env: { HAPPIER_E2E_TEST_PARTIAL_EVIDENCE: '1' },
+      cwd: root,
+      processExecPath: '/runtime/node',
+      spawnProcess: (_command, _args, options) => {
+        spawnedEnv = options.env;
+        const child = new EventEmitter();
+        queueMicrotask(() => child.emit('exit', 0, null));
+        return child;
+      },
+      writeStdout: (value) => output.push(value),
+    });
+    assert.equal(spawnedEnv.HAPPIER_E2E_TEST_PARTIAL_EVIDENCE, '1');
+    assert.deepEqual(evidence, {
+      v: 1,
+      kind: 'packed_candidate_browser_qa_runner_evidence',
+      process: { exitCode: 0 },
+      outcome: 'passed',
+      proofScope: 'credential_free_action_projection_partial',
+      completion: 'partial',
+      fullEu08CompletionCredit: false,
+    });
+    assert.deepEqual(output, [`${JSON.stringify(evidence)}\n`]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('normal Triage/GitHub Voice handoff is exact-candidate bound and rejects fixture providers', () => {

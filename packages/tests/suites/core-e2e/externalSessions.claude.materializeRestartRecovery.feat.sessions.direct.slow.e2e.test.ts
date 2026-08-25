@@ -19,7 +19,7 @@ import {
 } from '../../src/testkit/daemon/daemon';
 import { fetchJson } from '../../src/testkit/http';
 import {
-  readExternalSessionOperationCompletionReceipt,
+  readExternalSessionOperationTerminalReceipt,
   readImportingMaterializeProgressPatch,
   readPlainSessionOwnerOperationProgress,
 } from '../../src/testkit/externalSessionOperationProgressPatch';
@@ -320,7 +320,7 @@ async function readDurableOperationReceiptEvidence(params: Readonly<{
   activeServerDir: string;
   operationId: string;
 }>): Promise<ReturnType<
-  typeof readExternalSessionOperationCompletionReceipt
+  typeof readExternalSessionOperationTerminalReceipt
 >> {
   const operationKey = createHash('sha256')
     .update(params.operationId, 'utf8')
@@ -331,7 +331,7 @@ async function readDurableOperationReceiptEvidence(params: Readonly<{
     'records',
     `${operationKey}.json`,
   ), 'utf8');
-  return readExternalSessionOperationCompletionReceipt(
+  return readExternalSessionOperationTerminalReceipt(
     JSON.parse(serialized) as unknown,
   );
 }
@@ -1478,7 +1478,7 @@ describe('core e2e: External Sessions Codex materialize restart recovery', () =>
             completedProgress,
           ),
         persistedKeys: [
-          'completedAtMs',
+          'terminalAtMs',
           'durableIdempotencyKey',
           'expiresAtMs',
           'idempotencyIntentDigest',

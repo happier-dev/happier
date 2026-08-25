@@ -40,6 +40,10 @@ export type ArtifactUpdateRequest = Readonly<{
   expectedBodyVersion?: number;
 }>;
 
+type ArtifactUpdateRequestAccumulator = {
+  -readonly [Key in keyof ArtifactUpdateRequest]: ArtifactUpdateRequest[Key];
+};
+
 export type ArtifactUpdateResult =
   | Readonly<{ success: true; headerVersion?: number; bodyVersion?: number }>
   | Readonly<{
@@ -244,7 +248,7 @@ export async function updateArtifactViaApi(params: Readonly<{
   bodyJson?: unknown;
   expectedBodyVersion?: number;
 }>): Promise<ArtifactUpdateResult> {
-  const request: ArtifactUpdateRequest = {};
+  const request: ArtifactUpdateRequestAccumulator = {};
   if (Object.prototype.hasOwnProperty.call(params, 'headerJson')) {
     request.header = encodeJsonBase64(params.headerJson);
   }

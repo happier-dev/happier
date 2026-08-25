@@ -85,6 +85,17 @@ export type ExternalSessionLiveExpectedObservationIdentity = Readonly<{
   sourceKind: string;
 }>;
 
+/**
+ * Opts the source-local fixture into an Action that consumes the public
+ * External Sessions service. Existing lifecycle fixtures stay producer-only;
+ * mounted consumer coverage explicitly chooses this source path.
+ */
+export type ExternalSessionLivePublicAuthorAction = Readonly<{
+  actionId: string;
+  candidateTitle: string;
+  transcriptText: string;
+}>;
+
 export type IsolatedExternalSessionLiveAccount = Readonly<{
   auth: TestAuth;
   machineKey: Uint8Array;
@@ -619,6 +630,37 @@ export async function reloadTrustedLocalPluginFixture(params: Readonly<{
   );
 }
 
+/** Removes the source-local fixture through the same daemon-owned change path. */
+export async function uninstallTrustedLocalPluginFixture(params: Readonly<{
+  daemonPort: number;
+  controlToken?: string | null;
+  pluginId: string;
+  postJson?: DaemonPluginPostJson;
+}>): Promise<Readonly<Record<string, unknown>>> {
+  const postJson = params.postJson ?? daemonControlPostJson;
+  const committed = requireCommittedPluginChange(
+    await postJson({
+      port: params.daemonPort,
+      path: '/plugins/change/request',
+      controlToken: params.controlToken,
+      timeoutMs: 300_000,
+      body: {
+        kind: 'uninstall',
+        pluginId: params.pluginId,
+      },
+    }),
+    'Local plugin uninstall',
+  );
+  if (committed.pluginId !== params.pluginId || committed.desiredGeneration !== null) {
+    throw new Error(
+      `Local plugin uninstall did not retire '${params.pluginId}' `
+      + `(pluginId=${String(committed.pluginId ?? 'unknown')}, `
+      + `desired=${String(committed.desiredGeneration ?? 'unknown')})`,
+    );
+  }
+  return committed;
+}
+
 export async function writeInstrumentedExternalSessionLivePlugin(
   params: Readonly<{
     pluginRoot: string;
@@ -629,9 +671,11 @@ export async function writeInstrumentedExternalSessionLivePlugin(
     markerPath: string;
     transcriptStatePath?: string;
     transcriptText?: string;
+    publicExternalSessionsAction?: ExternalSessionLivePublicAuthorAction;
   }>,
 ): Promise<void> {
   await mkdir(join(params.pluginRoot, '.happier-plugin'), { recursive: true });
+  const publicExternalSessionsAction = params.publicExternalSessionsAction;
   const manifest = {
     schemaVersion: 2,
     id: params.pluginId,
@@ -642,17 +686,38 @@ export async function writeInstrumentedExternalSessionLivePlugin(
     runtime: { apiVersion: 1 },
     entrypoints: { daemon: './daemon.mjs' },
     activation: { events: [{ kind: 'startup' }] },
-    hostAccess: { required: [], optional: [] },
+    hostAccess: publicExternalSessionsAction
+      ? {
+          required: [{
+            id: 'public-external-sessions-read',
+            capability: 'sessions',
+            reason: 'Read configured External Sessions through the public host service.',
+            scope: { access: ['read'] },
+          }],
+          optional: [],
+        }
+      : { required: [], optional: [] },
     contributes: {
-      actions: [{
-        id: 'pulse',
-        title: 'Emit External Session lifecycle evidence',
-        scopes: ['global'],
-        surfaces: ['cli'],
-        execution: { target: 'daemon' },
-        placementBindings: ['commandPalette'],
-        dangerLevel: 'safe',
-      }],
+      actions: [
+        {
+          id: 'pulse',
+          title: 'Emit External Session lifecycle evidence',
+          scopes: ['global'],
+          surfaces: ['cli'],
+          execution: { target: 'daemon' },
+          placementBindings: ['commandPalette'],
+          dangerLevel: 'safe',
+        },
+        ...(publicExternalSessionsAction ? [{
+          id: publicExternalSessionsAction.actionId,
+          title: 'Read source-loaded External Sessions through the public host service',
+          scopes: ['global'],
+          surfaces: ['cli'],
+          execution: { target: 'daemon' },
+          placementBindings: ['commandPalette'],
+          dangerLevel: 'safe',
+        }] : []),
+      ],
       agents: [{
         id: params.agentId,
         title: 'External Session live fixture Agent',
@@ -724,6 +789,16 @@ export async function writeInstrumentedExternalSessionLivePlugin(
     `const markerPath = ${quoted(params.markerPath)};`,
     `const generation = ${quoted(params.generation)};`,
     `const observationStatus = ${quoted(params.observationStatus)};`,
+    `const publicAgentId = ${quoted(`${params.pluginId}/${params.agentId}`)};`,
+    `const publicExternalSessionsActionId = ${
+      publicExternalSessionsAction ? quoted(publicExternalSessionsAction.actionId) : 'null'
+    };`,
+    `const publicCandidateTitle = ${
+      publicExternalSessionsAction ? quoted(publicExternalSessionsAction.candidateTitle) : 'null'
+    };`,
+    `const publicTranscriptText = ${
+      publicExternalSessionsAction ? quoted(publicExternalSessionsAction.transcriptText) : 'null'
+    };`,
     `const transcriptStatePath = ${
       params.transcriptStatePath ? quoted(params.transcriptStatePath) : 'null'
     };`,
@@ -756,6 +831,7 @@ export async function writeInstrumentedExternalSessionLivePlugin(
     '  }',
     '};',
     'const transcriptTailCursor = (version) => "fixture-live-tail-" + version;',
+    'const publicTranscriptTailCursor = () => "fixture-public-tail-" + generation;',
     'const groupingFor = (request) => {',
     '  const linkKey = "fixture-live-link:" + request.remoteSessionId;',
     '  const linkKeys = linkKeysByResourceKey.get(resourceKey) ?? new Set();',
@@ -798,7 +874,11 @@ export async function writeInstrumentedExternalSessionLivePlugin(
     '    },',
     '    async listCandidates() {',
     '      return { ok: true, value: {',
-    '        candidates: [{ remoteSessionId: "fixture-live-remote", updatedAtMs: Date.now() }],',
+    '        candidates: [{',
+    '          remoteSessionId: "fixture-live-remote",',
+    '          ...(publicCandidateTitle ? { title: publicCandidateTitle } : {}),',
+    '          updatedAtMs: Date.now(),',
+    '        }],',
     '        nextCursor: null,',
     '      } };',
     '    },',
@@ -811,16 +891,28 @@ export async function writeInstrumentedExternalSessionLivePlugin(
     '    async pageTranscript() {',
     '      const transcriptState = readTranscriptState();',
     '      return { ok: true, value: {',
-    '        items: [],',
+    '        items: publicTranscriptText ? [{',
+    '          id: "fixture-live-page-" + generation,',
+    '          createdAtMs: 1_700_000_000_000,',
+    '          raw: {',
+    '            role: "agent",',
+    '            content: { type: "text", text: publicTranscriptText },',
+    '          },',
+    '        }] : [],',
     '        nextCursor: null,',
-    '        tailCursor: transcriptState',
-    '          ? transcriptTailCursor(transcriptState.version)',
-    '          : "fixture-live-tail",',
+    '        tailCursor: publicExternalSessionsActionId',
+    '          ? publicTranscriptTailCursor()',
+    '          : transcriptState',
+    '            ? transcriptTailCursor(transcriptState.version)',
+    '            : "fixture-live-tail",',
     '        hasMore: false,',
     '      } };',
     '    },',
     '    async readAfterTranscript({ cursor, remoteSessionId }) {',
     '      mark("follower_read", { daemonPid: process.pid, remoteSessionId });',
+    '      if (publicExternalSessionsActionId && cursor !== publicTranscriptTailCursor()) {',
+    '        return { ok: true, value: { outcome: "gap_or_cursor_expired" } };',
+    '      }',
     '      const transcriptState = readTranscriptState();',
     '      if (!transcriptState) {',
     '        return { ok: true, value: { outcome: "already_current" } };',
@@ -932,6 +1024,68 @@ export async function writeInstrumentedExternalSessionLivePlugin(
     '    }',
     '    return { available: true, generation };',
     '  });',
+    '  if (publicExternalSessionsActionId) {',
+    '    api.actions.register(publicExternalSessionsActionId, async (input, context) => {',
+    '      const external = context.services.sessions.external;',
+    '      const capabilities = await external.capabilities({ signal: context.signal });',
+    '      if (capabilities.list.status !== "available") {',
+    '        return { outcome: "unavailable", generation, code: capabilities.list.code };',
+    '      }',
+    '      const page = await external.list(',
+    '        { agentId: publicAgentId, limit: 1 },',
+    '        { signal: context.signal },',
+    '      );',
+    '      const candidate = page.items[0];',
+    '      if (!candidate) {',
+    '        return { outcome: "empty", generation };',
+    '      }',
+    '      const requestedReadAfterCursor = typeof input?.readAfterCursor === "string"',
+    '        ? input.readAfterCursor',
+    '        : null;',
+    '      const requestedFollowCursor = typeof input?.followCursor === "string"',
+    '        ? input.followCursor',
+    '        : null;',
+    '      if (requestedFollowCursor) {',
+    '        const follow = await external.followTranscript(',
+    '          candidate.ref,',
+    '          { cursor: requestedFollowCursor, signal: context.signal },',
+    '          async () => {},',
+    '        );',
+    '        if (follow.status === "following") await follow.subscription.dispose();',
+    '        return {',
+    '          outcome: "follow",',
+    '          generation,',
+    '          follow: follow.status === "following"',
+    '            ? { status: follow.status, startingCursor: follow.startingCursor }',
+    '            : { status: follow.status, code: follow.code },',
+    '        };',
+    '      }',
+    '      const transcript = await external.readTranscript(',
+    '        candidate.ref,',
+    '        requestedReadAfterCursor',
+    '          ? { mode: "readAfter", cursor: requestedReadAfterCursor, limit: 10 }',
+    '          : { mode: "page", direction: "newer", limit: 10 },',
+    '        { signal: context.signal },',
+    '      );',
+    '      return {',
+    '        outcome: "read",',
+    '        generation,',
+    '        candidate: {',
+    '          agentId: candidate.ref.agentId,',
+    '          sourceId: candidate.ref.sourceId,',
+    '          remoteSessionId: candidate.ref.remoteSessionId,',
+    '          title: candidate.title ?? null,',
+    '        },',
+    '        transcript: transcript.mode === "page"',
+    '          ? {',
+    '            mode: transcript.mode,',
+    '            itemCount: transcript.items.length,',
+    '            tailCursor: transcript.tailCursor ?? null,',
+    '          }',
+    '          : { mode: transcript.mode, outcome: transcript.outcome },',
+    '      };',
+    '    });',
+    '  }',
     '  return () => {',
     '    currentObserver = null;',
     '  };',

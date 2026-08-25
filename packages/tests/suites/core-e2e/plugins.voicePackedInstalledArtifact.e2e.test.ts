@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import {
+  buildQualifiedPluginContributionKey,
   createFeatureDecision,
   createRecipientContractDigestV1,
   type PluginPermissionGrantRequestV1,
@@ -37,6 +38,21 @@ import {
   registerDaemonContributionRegistryProjectionHandler,
 } from '../../../../apps/cli/src/rpc/handlers/daemonContributionRegistryProjection';
 import { createReactNativeWebLoaderBackend } from '../../../../apps/ui/sources/components/plugins/reactNative/webLoaderBackend.web';
+import { resolvePluginUiClientActionRegistration } from '../../../../apps/ui/sources/components/plugins/reactNative/clientExecutableContributions';
+import { AppPaneProvider } from '../../../../apps/ui/sources/components/appShell/panes/AppPaneProvider';
+import {
+  CurrentUiContextProvider,
+  type CurrentUiContextReader,
+  useOptionalCurrentUiContextReader,
+} from '../../../../apps/ui/sources/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { PluginSurfaceFocusEligibilityProvider } from '../../../../apps/ui/sources/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { PluginSurfacePlacementHost } from '../../../../apps/ui/sources/components/plugins/surfaces/PluginSurfaceHost';
+import {
+  PluginSurfaceDestinationNavigationBindingProvider,
+  type PluginSurfaceDestinationContainerHandler,
+  usePluginSurfaceDestinationNavigationBindingForScope,
+  useRegisterPluginSurfaceDestinationNavigationOwner,
+} from '../../../../apps/ui/sources/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { flushHookEffects, renderScreen, standardCleanup } from '../../../../apps/ui/sources/dev/testkit';
 import { settingsParse } from '../../../../apps/ui/sources/sync/domains/settings/settings';
 import type { VoiceSettings } from '../../../../apps/ui/sources/sync/domains/settings/voiceSettings';
@@ -54,18 +70,21 @@ import {
 import type {
   PluginAccountAvailabilitySnapshot,
 } from '../../../../apps/ui/sources/sync/domains/plugins/availability/reader';
+import type { PluginUiActionProjection } from '../../../../apps/ui/sources/sync/domains/plugins/ui/projection';
 import {
   isAccountVoiceCredentialRecipientApprovalRequired,
 } from '../../../../apps/ui/sources/voice/credentials/accountVoiceCredential';
 import { BundledSpeechDaemonClient } from '../../../../apps/ui/sources/voice/credentials/bundledSpeechClient';
 import { createDefaultVoiceProviderRegistry } from '../../../../apps/ui/sources/voice/registry/defaultRegistry';
 import { getExternalVoiceProviderRegistration } from '../../../../apps/ui/sources/voice/registry/externalVoiceProviderRegistrations';
+import { getVoiceAdapterRegistry } from '../../../../apps/ui/sources/voice/session/voiceAdapterRegistry';
 import { getVoiceSessionLifecycleController } from '../../../../apps/ui/sources/voice/session/voiceSessionLifecycleControllerStore';
 import { loadPackedNovelConnectedAccountQaHandoff } from '../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 import {
   activate as activatePublicAuthoringDaemon,
   manifest as publicAuthoringManifest,
 } from '../../../plugin-sdk/examples/public-authoring';
+import { activate as activatePublicAuthoringReviewClientActions } from '../../../plugin-sdk/examples/public-authoring/ui/reviewClientActions';
 import { activate as activatePublicAuthoringConversationProviders } from '../../../plugin-sdk/examples/public-authoring/voiceProvider';
 
 const FIXTURE_PLUGIN_ID = 'examples.public-sdk-review-assistant';
@@ -82,6 +101,11 @@ const FIXTURE_RAW_PROVIDER_CONTRIBUTION = Object.freeze({
   pluginId: FIXTURE_PLUGIN_ID,
   localId: 'raw-browser',
 });
+const REVIEW_STATUS_ACTION_ID = Object.freeze({
+  pluginId: FIXTURE_PLUGIN_ID,
+  localId: 'open-review-status',
+});
+const REVIEW_STATUS_ACTION_KEY = buildQualifiedPluginContributionKey(REVIEW_STATUS_ACTION_ID);
 const MACHINE_ID = 'machine-packed-voice';
 const SERVER_ID = 'server-packed-voice';
 const SOURCE_CREDENTIAL = 'source-account-secret';
@@ -108,6 +132,7 @@ const composedBoundary = vi.hoisted(() => ({
     machineId: string | null;
     pluginUiProjection: Readonly<{
       generation: number | null;
+      actionsById: Readonly<Record<string, PluginUiActionProjection>>;
       voiceProvidersById: Readonly<Record<string, unknown>>;
     }> | null;
   }> | null,
@@ -335,6 +360,119 @@ function AppShellProjectionProbe(): React.ReactElement | null {
   return null;
 }
 
+function readCurrentReviewActionRegistration() {
+  const projection = composedBoundary.latestAppShellProjection?.pluginUiProjection;
+  const generation = projection?.generation;
+  const action = projection?.actionsById[REVIEW_STATUS_ACTION_KEY];
+  if (typeof generation !== 'number' || !action) return null;
+  return resolvePluginUiClientActionRegistration({
+    action,
+    projectionGeneration: generation,
+    platform: 'web',
+  });
+}
+
+function CurrentUiContextReaderProbe(props: Readonly<{
+  onReader: (reader: CurrentUiContextReader | null) => void;
+}>): null {
+  const reader = useOptionalCurrentUiContextReader();
+  React.useLayoutEffect(() => {
+    props.onReader(reader);
+  }, [props.onReader, reader]);
+  return null;
+}
+
+/**
+ * The Session host is deliberately a thin composition of existing owners:
+ * AppShell projects the exact installed archive, PluginSurfacePlacementHost
+ * mounts its authored surface, CurrentUiContextProvider owns its one record,
+ * and this scope contributes only the existing details-tab navigation edge.
+ */
+function PackedCandidateVoiceCurrentUiSessionHarness(props: Readonly<{
+  contextRevision: number;
+  settingsRevision: number;
+  onReader: (reader: CurrentUiContextReader | null) => void;
+  onOpenDetails: PluginSurfaceDestinationContainerHandler;
+}>): React.ReactElement {
+  const { useAppShellPluginUiProjection } = requireAppShellProjectionModule();
+  const projection = useAppShellPluginUiProjection();
+  const placements = React.useMemo(
+    () => Object.values(projection.pluginUiProjection?.surfacePlacementsById ?? {}),
+    [projection.pluginUiProjection],
+  );
+  const activityPlacement = React.useMemo(() => placements.find((placement) => (
+    placement.binding.targetKind === 'session'
+    && placement.binding.destination.pluginId === FIXTURE_PLUGIN_ID
+    && placement.binding.destination.localId === 'project-companion-activity-log'
+  )) ?? null, [placements]);
+  const navigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
+    placements,
+    targetKind: 'session',
+    scopedLaunchFacts: {
+      serverId: projection.serverId,
+      machineId: projection.machineId,
+      generation: projection.pluginUiProjection?.generation ?? null,
+      interactionEnabled: projection.interactionEnabled,
+    },
+    runtimeAdmission: { platform: 'web', formFactor: 'tablet' },
+  });
+  const detailsOwner = React.useMemo(() => ({
+    container: 'detailsTab' as const,
+    handler: props.onOpenDetails,
+  }), [props.onOpenDetails]);
+  useRegisterPluginSurfaceDestinationNavigationOwner(detailsOwner, navigationBinding);
+
+  return React.createElement(
+    PluginSurfaceDestinationNavigationBindingProvider,
+    { binding: navigationBinding },
+    React.createElement(
+      PluginSurfaceFocusEligibilityProvider,
+      { active: true, currentUiContextActive: true },
+      React.createElement(
+        React.Fragment,
+        null,
+        activityPlacement
+          ? React.createElement(PluginSurfacePlacementHost, {
+              key: `packed-candidate-current-ui-${props.contextRevision}`,
+              placement: activityPlacement,
+              machineId: projection.machineId,
+              serverId: projection.serverId,
+              sessionId: 'packed-candidate-current-ui-session',
+              pluginUiProjection: projection.pluginUiProjection,
+              platform: projection.platform,
+              projectionInteractionEnabled: projection.interactionEnabled,
+            })
+          : null,
+        React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: props.settingsRevision }),
+        React.createElement(CurrentUiContextReaderProbe, { onReader: props.onReader }),
+      ),
+    ),
+  );
+}
+
+function renderPackedCandidateVoiceCurrentUiComposition(input: Readonly<{
+  contextRevision: number;
+  settingsRevision: number;
+  onReader: (reader: CurrentUiContextReader | null) => void;
+  onOpenDetails: PluginSurfaceDestinationContainerHandler;
+}>): React.ReactElement {
+  const { AppShellPluginUiProjectionProvider } = requireAppShellProjectionModule();
+  return React.createElement(
+    AppPaneProvider,
+    null,
+    React.createElement(
+      CurrentUiContextProvider,
+      null,
+      React.createElement(
+        AppShellPluginUiProjectionProvider,
+        null,
+        React.createElement(AppShellProjectionProbe),
+        React.createElement(PackedCandidateVoiceCurrentUiSessionHarness, input),
+      ),
+    ),
+  );
+}
+
 let appShellProjectionModule:
   | typeof import('../../../../apps/ui/sources/components/appShell/plugins/AppShellPluginUiProjection')
   | null = null;
@@ -395,7 +533,7 @@ function record(value: unknown, label: string): Readonly<Record<string, unknown>
 }
 
 describe('retained public-authoring Voice fixture contract', () => {
-  it('registers the shared client Action, exactly two conversation providers, two speech providers, and executes raw materialization', async () => {
+  it('registers the shared client Action separately from the web-only Voice fixture, exactly two conversation providers, two speech providers, and executes raw materialization', async () => {
     const registrations = new Map<string, Readonly<Record<string, unknown>>>();
     const clientActionIds: string[] = [];
     const api = {
@@ -411,8 +549,13 @@ describe('retained public-authoring Voice fixture contract', () => {
         },
       },
     };
-    activatePublicAuthoringConversationProviders(api as never);
+    activatePublicAuthoringReviewClientActions(api as never);
     expect(clientActionIds).toEqual(['open-review-status']);
+    activatePublicAuthoringConversationProviders(api as never);
+    expect(clientActionIds).toEqual([
+      'open-review-status',
+      'open-review-status-web-only-fixture',
+    ]);
     const testkit = await createPluginTestkit({
       manifest: publicAuthoringManifest,
       module: { activate: activatePublicAuthoringDaemon },
@@ -534,6 +677,13 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
       url: string;
       authorization: string | null;
     }>> = [];
+    let currentUiReader: CurrentUiContextReader | null = null;
+    const onCurrentUiReader = (reader: CurrentUiContextReader | null) => {
+      currentUiReader = reader;
+    };
+    const openReviewStatusDetails = vi.fn<PluginSurfaceDestinationContainerHandler>(
+      async () => ({ ok: true as const }),
+    );
 
     try {
       // Keep the selected Voice machine outside the app-wide presence union so
@@ -800,12 +950,12 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
           '../../../../apps/ui/sources/voice/session/VoiceSessionRuntime'
         )).VoiceSessionRuntime,
       };
-      appShell = await renderScreen(React.createElement(
-        appShellProjectionModule.AppShellPluginUiProjectionProvider,
-        null,
-        React.createElement(AppShellProjectionProbe),
-        React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 0 }),
-      ));
+      appShell = await renderScreen(renderPackedCandidateVoiceCurrentUiComposition({
+        contextRevision: 0,
+        settingsRevision: 0,
+        onReader: onCurrentUiReader,
+        onOpenDetails: openReviewStatusDetails,
+      }));
       await flushHookEffects({ cycles: 10 });
       await waitForReact(() => {
         expect(getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID)).not.toBeNull();
@@ -890,13 +1040,24 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
           ],
         },
       });
-      await appShell.update(React.createElement(
-        appShellProjectionModule.AppShellPluginUiProjectionProvider,
-        null,
-        React.createElement(AppShellProjectionProbe),
-        React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 1 }),
-      ));
+      await appShell.update(renderPackedCandidateVoiceCurrentUiComposition({
+        contextRevision: 0,
+        settingsRevision: 1,
+        onReader: onCurrentUiReader,
+        onOpenDetails: openReviewStatusDetails,
+      }));
       await flushHookEffects({ cycles: 5 });
+      await waitForReact(() => {
+        const snapshot = currentUiReader?.readCurrentUiContext();
+        expect(snapshot?.entity?.label).toBe('Project Companion activity');
+        expect(snapshot?.detail).toEqual({
+          source: 'public-authoring-project-companion-activity',
+        });
+        expect(readCurrentReviewActionRegistration()).not.toBeNull();
+      });
+      const commandA = currentUiReader?.readCurrentUiContext()?.commands[0]?.id;
+      if (!commandA) throw new Error('packed_voice_current_ui_command_a_missing');
+      expect(commandA).toMatch(/^current-ui-command:/);
 
       globalThis.fetch = vi.fn(async (input, init) => {
         const url = typeof input === 'string'
@@ -980,6 +1141,65 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
           status: 'connected',
         });
       });
+      // Opening a provider connection remains inert. The exact packed client
+      // artifact receives its conformance turn only through the real adapter.
+      expect(openReviewStatusDetails).not.toHaveBeenCalled();
+      const mediatedAdapter = getVoiceAdapterRegistry().get(FIXTURE_PROVIDER_ID);
+      if (!mediatedAdapter?.sendContextText) {
+        throw new Error('packed_voice_current_ui_adapter_send_text_missing');
+      }
+      mediatedAdapter.sendContextText({
+        sessionId: 'packed-candidate-mediated-session',
+        text: 'run current UI context conformance',
+      });
+      await waitForReact(() => {
+        expect(openReviewStatusDetails).toHaveBeenCalledTimes(1);
+      });
+      expect(openReviewStatusDetails).toHaveBeenCalledWith(expect.objectContaining({
+        placement: expect.objectContaining({
+          binding: expect.objectContaining({
+            destination: {
+              pluginId: FIXTURE_PLUGIN_ID,
+              localId: 'review-session-status-details',
+            },
+          }),
+        }),
+      }));
+      // The provider emits the same stable effect call id for a repeated
+      // normal control. The incumbent barrier must redeliver its outcome
+      // without navigating a second time.
+      mediatedAdapter.sendContextText({
+        sessionId: 'packed-candidate-mediated-session',
+        text: 'run current UI context conformance',
+      });
+      await flushHookEffects({ cycles: 10 });
+      expect(openReviewStatusDetails).toHaveBeenCalledTimes(1);
+
+      // A fresh current-UI command makes the same provider effect call id
+      // conflict with its first arguments. The incumbent barrier rejects that
+      // conflict instead of re-running the navigation effect.
+      await appShell.update(renderPackedCandidateVoiceCurrentUiComposition({
+        contextRevision: 1,
+        settingsRevision: 1,
+        onReader: onCurrentUiReader,
+        onOpenDetails: openReviewStatusDetails,
+      }));
+      await flushHookEffects({ cycles: 5 });
+      await waitForReact(() => {
+        const command = currentUiReader?.readCurrentUiContext()?.commands[0]?.id;
+        expect(command).toMatch(/^current-ui-command:/);
+        expect(command).not.toBe(commandA);
+      });
+      const commandAfterConflict = currentUiReader?.readCurrentUiContext()?.commands[0]?.id;
+      if (!commandAfterConflict) {
+        throw new Error('packed_voice_current_ui_command_after_conflict_missing');
+      }
+      mediatedAdapter.sendContextText({
+        sessionId: 'packed-candidate-mediated-session',
+        text: 'run current UI context conformance',
+      });
+      await flushHookEffects({ cycles: 10 });
+      expect(openReviewStatusDetails).toHaveBeenCalledTimes(1);
       await lifecycle.interrupt('packed-candidate-mediated-session');
       expect(providerRequests).toEqual([
         {
@@ -1074,12 +1294,12 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
         ...settingsBeforeRaw,
         voice: { ...settingsBeforeRaw.voice, providerId: FIXTURE_RAW_PROVIDER_ID },
       });
-      await appShell.update(React.createElement(
-        appShellProjectionModule.AppShellPluginUiProjectionProvider,
-        null,
-        React.createElement(AppShellProjectionProbe),
-        React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 2 }),
-      ));
+      await appShell.update(renderPackedCandidateVoiceCurrentUiComposition({
+        contextRevision: 1,
+        settingsRevision: 2,
+        onReader: onCurrentUiReader,
+        onOpenDetails: openReviewStatusDetails,
+      }));
       await flushHookEffects({ cycles: 4 });
       await lifecycle.toggle('packed-candidate-raw-session');
       await waitForReact(() => {
@@ -1149,6 +1369,12 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
       expect(rawMaterializeRpcInputs).toHaveLength(1);
       expect(rawGrantListInputs).toHaveLength(2);
 
+      const commandBeforeReplacement = currentUiReader?.readCurrentUiContext()?.commands[0]?.id;
+      if (!commandBeforeReplacement) {
+        throw new Error('packed_voice_current_ui_command_before_replacement_missing');
+      }
+      expect(commandBeforeReplacement).toBe(commandAfterConflict);
+
       const replacementArchivePath = await packVoiceFixtureVariant({
         fixtureRoot: installedFixtureRoot,
         temporaryRoot,
@@ -1198,6 +1424,19 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
           canStop: false,
         });
       });
+      await waitForReact(() => {
+        const snapshot = currentUiReader?.readCurrentUiContext();
+        expect(snapshot?.entity?.label).toBe('Project Companion activity');
+        expect(snapshot?.commands).toHaveLength(1);
+        expect(snapshot?.commands[0]?.id).not.toBe(commandA);
+        expect(snapshot?.commands[0]?.id).not.toBe(commandBeforeReplacement);
+        expect(currentUiReader?.resolveCurrentUiCommand(commandA)).toBeNull();
+        expect(currentUiReader?.resolveCurrentUiCommand(commandBeforeReplacement)).toBeNull();
+        expect(readCurrentReviewActionRegistration()).not.toBeNull();
+      });
+      const commandB = currentUiReader?.readCurrentUiContext()?.commands[0]?.id;
+      if (!commandB) throw new Error('packed_voice_current_ui_command_b_missing');
+      expect(commandB).toMatch(/^current-ui-command:/);
       expect(rawMaterializeRpcInputs).toHaveLength(1);
       expect(rawGrantListInputs).toHaveLength(2);
       expect(composedBoundary.audioSessionReleaseCount)
@@ -1303,6 +1542,12 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
         expect(getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID)).toBeNull();
         expect(createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID)).toBeNull();
         expect(createDefaultVoiceProviderRegistry().get(FIXTURE_TTS_PROVIDER_ID)).toBeNull();
+        expect(currentUiReader?.resolveCurrentUiCommand(commandB)).toBeNull();
+        const snapshot = currentUiReader?.readCurrentUiContext();
+        expect(snapshot?.entity).toBeUndefined();
+        expect(snapshot?.detail).toBeUndefined();
+        expect(snapshot?.commands).toEqual([]);
+        expect(readCurrentReviewActionRegistration()).toBeNull();
         expect(lifecycle.getSnapshot()).toMatchObject({
           status: 'disconnected',
           canStop: false,
@@ -1333,6 +1578,7 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
         expect(getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID)).not.toBeNull();
         expect(createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID)).not.toBeNull();
         expect(createDefaultVoiceProviderRegistry().get(FIXTURE_TTS_PROVIDER_ID)).not.toBeNull();
+        expect(readCurrentReviewActionRegistration()).not.toBeNull();
       });
       const reenabledSpeech = createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID);
       if (!reenabledSpeech) throw new Error('packed_voice_reenabled_speech_missing');
@@ -1351,13 +1597,26 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
         ...settingsBeforeReenabledStart,
         voice: { ...settingsBeforeReenabledStart.voice, providerId: FIXTURE_PROVIDER_ID },
       });
-      await appShell.update(React.createElement(
-        appShellProjectionModule.AppShellPluginUiProjectionProvider,
-        null,
-        React.createElement(AppShellProjectionProbe),
-        React.createElement(VoiceNormalSurfaceHarness, { settingsRevision: 3 }),
-      ));
+      await appShell.update(renderPackedCandidateVoiceCurrentUiComposition({
+        contextRevision: 1,
+        settingsRevision: 3,
+        onReader: onCurrentUiReader,
+        onOpenDetails: openReviewStatusDetails,
+      }));
       await flushHookEffects({ cycles: 4 });
+      await waitForReact(() => {
+        const snapshot = currentUiReader?.readCurrentUiContext();
+        expect(snapshot?.entity?.label).toBe('Project Companion activity');
+        expect(snapshot?.detail).toEqual({
+          source: 'public-authoring-project-companion-activity',
+        });
+        expect(snapshot?.commands).toHaveLength(1);
+        expect(snapshot?.commands[0]?.id).not.toBe(commandB);
+        expect(currentUiReader?.resolveCurrentUiCommand(commandB)).toBeNull();
+      });
+      const commandC = currentUiReader?.readCurrentUiContext()?.commands[0]?.id;
+      if (!commandC) throw new Error('packed_voice_current_ui_command_c_missing');
+      expect(commandC).toMatch(/^current-ui-command:/);
       lifecycle.rearmAfterCredentialAuthorityChange();
       await lifecycle.toggle('packed-candidate-mediated-reenabled-session');
       await waitForReact(() => {
@@ -1365,6 +1624,17 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
           adapterId: FIXTURE_PROVIDER_ID,
           status: 'connected',
         });
+      });
+      const reenabledMediatedAdapter = getVoiceAdapterRegistry().get(FIXTURE_PROVIDER_ID);
+      if (!reenabledMediatedAdapter?.sendContextText) {
+        throw new Error('packed_voice_reenabled_current_ui_adapter_send_text_missing');
+      }
+      reenabledMediatedAdapter.sendContextText({
+        sessionId: 'packed-candidate-mediated-reenabled-session',
+        text: 'run current UI context conformance',
+      });
+      await waitForReact(() => {
+        expect(openReviewStatusDetails).toHaveBeenCalledTimes(2);
       });
       expect(providerRequests.filter((request) => request.method === 'POST')).toHaveLength(2);
 
@@ -1389,6 +1659,12 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
         expect(getExternalVoiceProviderRegistration(FIXTURE_RAW_PROVIDER_ID)).toBeNull();
         expect(createDefaultVoiceProviderRegistry().get(FIXTURE_STT_PROVIDER_ID)).toBeNull();
         expect(createDefaultVoiceProviderRegistry().get(FIXTURE_TTS_PROVIDER_ID)).toBeNull();
+        expect(currentUiReader?.resolveCurrentUiCommand(commandC)).toBeNull();
+        const snapshot = currentUiReader?.readCurrentUiContext();
+        expect(snapshot?.entity).toBeUndefined();
+        expect(snapshot?.detail).toBeUndefined();
+        expect(snapshot?.commands).toEqual([]);
+        expect(readCurrentReviewActionRegistration()).toBeNull();
         expect(lifecycle.getSnapshot()).toMatchObject({
           status: 'disconnected',
           canStop: false,

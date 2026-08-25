@@ -25,6 +25,20 @@ function startedDaemon(state: DaemonState): StartedDaemon {
   };
 }
 
+/**
+ * The turn a phase observes as active is the turn that same phase then settles:
+ * the harness owner replaces the daemon while that turn is in flight and rejects
+ * the run when the settled identity differs. Both fixtures below therefore issue
+ * active-turn identities from the one modeled sequence `waitForNextCompletedTurn`
+ * advances, instead of a constant that can only agree with one phase.
+ */
+function nextModeledTurnId(previousTurnId: string | null): string {
+  const previousIndex = previousTurnId === null
+    ? 0
+    : Number.parseInt(previousTurnId.slice('turn-'.length), 10);
+  return `turn-${previousIndex + 1}`;
+}
+
 function retainedAgentBinding(immutableGenerationId: string) {
   return {
     v: 1,
@@ -289,9 +303,10 @@ describe('daemon runner continuity evidence', () => {
         enqueuePrompt: async ({ text }) => {
           lifecycleEvents.push(`enqueue:${text.at(-1)}`);
         },
-        waitForActiveTurn: async () => {
-          lifecycleEvents.push('active:b');
-          return 'turn-2';
+        waitForActiveTurn: async ({ previousTurnId }) => {
+          const activeTurnId = nextModeledTurnId(previousTurnId);
+          lifecycleEvents.push(`active:${activeTurnId === 'turn-2' ? 'b' : 'c'}`);
+          return activeTurnId;
         },
         waitForMatchingEffect: async ({ marker }) => {
           lifecycleEvents.push(`effect:${marker.includes('-b-') ? 'b' : 'c'}`);
@@ -395,9 +410,10 @@ describe('daemon runner continuity evidence', () => {
       'replace:b',
       'output:b',
       'complete:b',
-      'replace:c',
       'enqueue:c',
+      'active:c',
       'effect:c',
+      'replace:c',
       'output:c',
       'complete:c',
       'count-output:b',
@@ -584,7 +600,9 @@ describe('daemon runner continuity evidence', () => {
         replaceDaemon: async ({ phase }: { phase: 'b' | 'c' }) => startedDaemon(daemons[phase]),
         isProcessAlive: (pid: number) => pid === runner.pid,
         enqueuePrompt: async () => {},
-        waitForActiveTurn: async () => 'turn-2',
+        waitForActiveTurn: async (
+          { previousTurnId }: { previousTurnId: string | null },
+        ) => nextModeledTurnId(previousTurnId),
         waitForMatchingEffect: async () => {},
         waitForMatchingAssistantTranscriptOutput: async () => {},
         countMatchingAssistantTranscriptOutputs: async () => 1,

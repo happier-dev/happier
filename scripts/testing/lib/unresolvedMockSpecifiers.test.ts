@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  DECLARED_UNRESOLVED_MOCK_SPECIFIERS,
   collectMockSpecifierIssues,
   collectMockSpecifiers,
   collectUnresolvedMockSpecifiers,
@@ -107,4 +108,14 @@ test('a declared entry for a deleted test file is reported as stale', () => {
 
   assert.equal(issues.length, 1);
   assert.match(issues[0]!.message, /no longer exists/);
+});
+
+test('does not retain a stale exception for the deleted connected-service auth-groups test', () => {
+  assert.equal(
+    Object.hasOwn(
+      DECLARED_UNRESOLVED_MOCK_SPECIFIERS,
+      'apps/cli/src/api/api.connectedServiceAuthGroupsV3.test.ts',
+    ),
+    false,
+  );
 });

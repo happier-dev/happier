@@ -25,7 +25,14 @@ import { connect, type Socket } from 'node:net';
 import { join, resolve } from 'node:path';
 
 import {
+  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
   buildConnectedServiceCredentialRecord,
+  encodeQualifiedConnectedAccountV4StructuredQueryValue,
+  QualifiedConnectedAccountGroupRefSchema,
+  QualifiedConnectedAccountGroupResponseV4Schema,
+  type QualifiedConnectedAccountGroupRef,
+  type QualifiedConnectedAccountGroupV4,
+  type QualifiedConnectedAccountServiceRef,
   sealAccountScopedBlobCiphertext,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
@@ -52,7 +59,7 @@ export type RecoveryTokenServerRequest = Readonly<{
 export type ConnectedServiceRecoveryProxy = Readonly<{
   baseUrl: string;
   groupLoadCount: () => number;
-  activeProfileWriteCount: () => number;
+  activeAccountWriteCount: () => number;
   // Arm `count` consecutive failures on the auth-group GET endpoint using the
   // given transport failure mode. `socket_hangup`/`connection_refused` surface
   // as `network`-classified errors (the degraded-track edge from the live
@@ -76,6 +83,68 @@ type ConnectedServiceCredentialFixture =
 export function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as UnknownRecord;
+}
+
+export function resolveQualifiedConnectedAccountServiceForLegacyServiceId(
+  legacyServiceId: ConnectedServiceId,
+): QualifiedConnectedAccountServiceRef {
+  const match = Object.entries(
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  ).find(([candidateServiceId]) => candidateServiceId === legacyServiceId);
+  if (!match) {
+    throw new Error(`No qualified connected-account service is registered for legacy service ${legacyServiceId}`);
+  }
+  return match[1].service;
+}
+
+export function createQualifiedConnectedAccountGroupRefForLegacyService(params: Readonly<{
+  legacyServiceId: ConnectedServiceId;
+  groupId: string;
+}>): QualifiedConnectedAccountGroupRef {
+  return {
+    service: resolveQualifiedConnectedAccountServiceForLegacyServiceId(params.legacyServiceId),
+    groupId: params.groupId,
+  };
+}
+
+function groupResponseOrThrow(params: Readonly<{
+  operation: string;
+  response: Readonly<{ status: number; data: unknown }>;
+}>): QualifiedConnectedAccountGroupV4 {
+  const parsed = QualifiedConnectedAccountGroupResponseV4Schema.safeParse(params.response.data);
+  if (params.response.status !== 200 || !parsed.success) {
+    throw new Error(
+      `Failed to ${params.operation} (status=${params.response.status}, body=${JSON.stringify(params.response.data)})`,
+    );
+  }
+  return parsed.data.group;
+}
+
+function encodedQualifiedConnectedAccountGroupQuery(
+  group: QualifiedConnectedAccountGroupRef,
+): string {
+  return new URLSearchParams({
+    group: encodeQualifiedConnectedAccountV4StructuredQueryValue(
+      QualifiedConnectedAccountGroupRefSchema,
+      group,
+    ),
+  }).toString();
+}
+
+function requestTargetsQualifiedConnectedAccountGroup(params: Readonly<{
+  body: Buffer;
+  group: QualifiedConnectedAccountGroupRef;
+}>): boolean {
+  try {
+    const payload = asRecord(JSON.parse(params.body.toString('utf8')));
+    const requestGroup = asRecord(payload?.group);
+    const requestService = asRecord(requestGroup?.service);
+    return requestGroup?.groupId === params.group.groupId
+      && requestService?.pluginId === params.group.service.pluginId
+      && requestService?.localId === params.group.service.localId;
+  } catch {
+    return false;
+  }
 }
 
 export const CLAUDE_SUBSCRIPTION_SERVICE_ID = 'claude-subscription' satisfies ConnectedServiceId;
@@ -165,10 +234,18 @@ export async function startConnectedServiceRecoveryProxy(params: Readonly<{
   let groupLoadFailuresRemaining = 0;
   let groupLoadFailureMode: RecoveryProxyGroupFailureMode = 'http_503';
   let groupLoadCount = 0;
-  let activeProfileWriteCount = 0;
+  let activeAccountWriteCount = 0;
   const target = new URL(params.targetBaseUrl);
-  const groupPath = `/v3/connect/${params.serviceId}/groups/${params.groupId}`;
-  const activeProfilePath = `${groupPath}/active-profile`;
+  const group = createQualifiedConnectedAccountGroupRefForLegacyService({
+    legacyServiceId: params.serviceId,
+    groupId: params.groupId,
+  });
+  const encodedGroup = encodeQualifiedConnectedAccountV4StructuredQueryValue(
+    QualifiedConnectedAccountGroupRefSchema,
+    group,
+  );
+  const groupPath = '/v4/connect/qualified/group';
+  const activeAccountPath = '/v4/connect/qualified/group/active-account';
   const sockets = new Set<Socket>();
   const trackSocket = (socket: Socket): Socket => {
     sockets.add(socket);
@@ -182,7 +259,10 @@ export async function startConnectedServiceRecoveryProxy(params: Readonly<{
       const targetUrl = new URL(req.url ?? '/', params.targetBaseUrl);
       const body = await readRequestBody(req);
 
-      if (req.method === 'GET' && targetUrl.pathname === groupPath && groupLoadFailuresRemaining > 0) {
+      const readsGroup = req.method === 'GET'
+        && targetUrl.pathname === groupPath
+        && targetUrl.searchParams.get('group') === encodedGroup;
+      if (readsGroup && groupLoadFailuresRemaining > 0) {
         groupLoadCount += 1;
         groupLoadFailuresRemaining -= 1;
         if (groupLoadFailureMode === 'socket_hangup') {
@@ -203,11 +283,13 @@ export async function startConnectedServiceRecoveryProxy(params: Readonly<{
         res.end(JSON.stringify({ error: 'transient_recovery_proxy_failure' }));
         return;
       }
-      if (req.method === 'GET' && targetUrl.pathname === groupPath) {
+      if (readsGroup) {
         groupLoadCount += 1;
       }
-      if (req.method === 'POST' && targetUrl.pathname === activeProfilePath) {
-        activeProfileWriteCount += 1;
+      if (req.method === 'POST'
+        && targetUrl.pathname === activeAccountPath
+        && requestTargetsQualifiedConnectedAccountGroup({ body, group })) {
+        activeAccountWriteCount += 1;
       }
 
       const headers = new Headers();
@@ -272,7 +354,7 @@ export async function startConnectedServiceRecoveryProxy(params: Readonly<{
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     groupLoadCount: () => groupLoadCount,
-    activeProfileWriteCount: () => activeProfileWriteCount,
+    activeAccountWriteCount: () => activeAccountWriteCount,
     armGroupLoadFailures: (count, mode) => {
       groupLoadFailuresRemaining = Math.max(0, Math.trunc(count));
       groupLoadFailureMode = mode;
@@ -355,108 +437,164 @@ export async function createConnectedServiceProfile(params: Readonly<{
   }
 }
 
-export async function createConnectedServiceAuthGroup(params: Readonly<{
-  fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'serverBaseUrl' | 'auth'>;
-  serviceId: ConnectedServiceId;
+export async function createQualifiedConnectedAccountGroup(params: Readonly<{
+  serverBaseUrl: string;
+  authToken: string;
+  legacyServiceId: ConnectedServiceId;
   groupId: string;
-  activeProfileId: string;
-  memberProfileIds: readonly string[];
+  activeConnectedAccountId: string;
+  memberConnectedAccountIds: readonly string[];
   preTurnProbeMode?: 'never';
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<{ group?: unknown }>(`${params.fixture.serverBaseUrl}/v3/connect/${params.serviceId}/groups`, {
+}>): Promise<QualifiedConnectedAccountGroupV4> {
+  const service = resolveQualifiedConnectedAccountServiceForLegacyServiceId(params.legacyServiceId);
+  const groupRef = { service, groupId: params.groupId };
+  const created = await fetchJson<unknown>(`${params.serverBaseUrl}/v4/connect/qualified/groups`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${params.fixture.auth.token}`,
+      Authorization: `Bearer ${params.authToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      groupId: params.groupId,
-      members: params.memberProfileIds.map((profileId, index) => ({ profileId, priority: (index + 1) * 10 })),
-      activeProfileId: params.activeProfileId,
-      policy: {
-        autoSwitch: true,
-        ...(params.preTurnProbeMode ? { preTurnProbeMode: params.preTurnProbeMode } : {}),
-        recoveryMode: 'switch_or_wait',
+      service,
+      group: {
+        groupId: params.groupId,
+        policy: {
+          autoSwitch: true,
+          ...(params.preTurnProbeMode ? { preTurnProbeMode: params.preTurnProbeMode } : {}),
+          recoveryMode: 'switch_or_wait',
+        },
       },
     }),
     timeoutMs: 20_000,
   });
-  const group = asRecord(response.data?.group);
-  if (response.status !== 200 || !group) {
-    throw new Error(`Failed to create connected service auth group ${params.groupId} (status=${response.status}, body=${JSON.stringify(response.data)})`);
-  }
-  return group;
-}
+  let group = groupResponseOrThrow({
+    operation: `create qualified connected-account group ${params.groupId}`,
+    response: created,
+  });
 
-export async function fetchConnectedServiceAuthGroup(params: Readonly<{
-  fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'serverBaseUrl' | 'auth'>;
-  serviceId: ConnectedServiceId;
-  groupId: string;
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<{ group?: unknown }>(
-    `${params.fixture.serverBaseUrl}/v3/connect/${params.serviceId}/groups/${params.groupId}`,
-    {
-      headers: { Authorization: `Bearer ${params.fixture.auth.token}` },
-      timeoutMs: 20_000,
-    },
-  );
-  const group = asRecord(response.data?.group);
-  if (response.status !== 200 || !group) {
-    throw new Error(`Failed to fetch connected service auth group ${params.groupId} (status=${response.status})`);
+  for (const [index, connectedAccountId] of params.memberConnectedAccountIds.entries()) {
+    const added = await fetchJson<unknown>(
+      `${params.serverBaseUrl}/v4/connect/qualified/group/members`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${params.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          group: groupRef,
+          connectedAccountId,
+          priority: (index + 1) * 10,
+          expectedIncarnation: group.incarnation,
+          expectedRuntimeStateRevision: group.runtimeStateRevision,
+        }),
+        timeoutMs: 20_000,
+      },
+    );
+    group = groupResponseOrThrow({
+      operation: `add qualified connected-account member ${connectedAccountId}`,
+      response: added,
+    });
   }
-  return group;
-}
 
-// Mark a member of a group as quota-exhausted (or clear it) via the server
-// runtime-state endpoint, so the daemon's switch coordinator sees no eligible
-// fresh candidate. Faithful to the live Codex incident where the only sibling
-// account was also exhausted.
-export async function patchConnectedServiceAuthGroupMemberExhaustion(params: Readonly<{
-  fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'serverBaseUrl' | 'auth'>;
-  serviceId: ConnectedServiceId;
-  groupId: string;
-  expectedGeneration: number;
-  expectedRuntimeStateRevision: number;
-  memberProfileId: string;
-  quotaExhaustedUntilMs: number | null;
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<{ group?: unknown }>(
-    `${params.fixture.serverBaseUrl}/v3/connect/${params.serviceId}/groups/${params.groupId}/runtime-state`,
+  const selected = await fetchJson<unknown>(
+    `${params.serverBaseUrl}/v4/connect/qualified/group/active-account`,
     {
-      method: 'PATCH',
+      method: 'POST',
       headers: {
-        Authorization: `Bearer ${params.fixture.auth.token}`,
+        Authorization: `Bearer ${params.authToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        expectedGeneration: params.expectedGeneration,
-        expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
-        state: {
-          status: params.quotaExhaustedUntilMs === null ? 'ready' : 'exhausted',
-          ...(params.quotaExhaustedUntilMs === null ? {} : { lastSwitchReason: 'usage_limit' }),
-        },
-        memberStates: [
-          {
-            profileId: params.memberProfileId,
-            state: params.quotaExhaustedUntilMs === null
-              ? { quotaExhaustedUntilMs: null, lastObservedAtMs: Date.now() }
-              : {
-                  quotaExhaustedUntilMs: params.quotaExhaustedUntilMs,
-                  lastFailureKind: 'usage_limit',
-                  lastFailureCode: 'usage_limit_reached',
-                  lastObservedAtMs: Date.now(),
-                },
-          },
-        ],
+        group: groupRef,
+        connectedAccountId: params.activeConnectedAccountId,
+        expectedGeneration: group.generation,
+        expectedIncarnation: group.incarnation,
+        expectedRuntimeStateRevision: group.runtimeStateRevision,
       }),
       timeoutMs: 20_000,
     },
   );
-  const group = asRecord(response.data?.group);
-  if (response.status !== 200 || !group) {
-    throw new Error(`Failed to patch connected service auth group runtime state (status=${response.status})`);
-  }
-  return group;
+  return groupResponseOrThrow({
+    operation: `select qualified connected-account member ${params.activeConnectedAccountId}`,
+    response: selected,
+  });
+}
+
+export async function fetchQualifiedConnectedAccountGroup(params: Readonly<{
+  serverBaseUrl: string;
+  authToken: string;
+  legacyServiceId: ConnectedServiceId;
+  groupId: string;
+}>): Promise<QualifiedConnectedAccountGroupV4> {
+  const group = createQualifiedConnectedAccountGroupRefForLegacyService({
+    legacyServiceId: params.legacyServiceId,
+    groupId: params.groupId,
+  });
+  const response = await fetchJson<unknown>(
+    `${params.serverBaseUrl}/v4/connect/qualified/group?${encodedQualifiedConnectedAccountGroupQuery(group)}`,
+    {
+      headers: { Authorization: `Bearer ${params.authToken}` },
+      timeoutMs: 20_000,
+    },
+  );
+  return groupResponseOrThrow({
+    operation: `fetch qualified connected-account group ${params.groupId}`,
+    response,
+  });
+}
+
+// Mark a member of a group as quota-exhausted (or clear it) through the
+// canonical qualified runtime-state owner, so the daemon's switch coordinator
+// sees no eligible fresh candidate.
+export async function patchQualifiedConnectedAccountGroupMemberExhaustion(params: Readonly<{
+  serverBaseUrl: string;
+  authToken: string;
+  group: QualifiedConnectedAccountGroupV4;
+  expectedRuntimeStateRevision: number;
+  connectedAccountId: string;
+  quotaExhaustedUntilMs: number | null;
+}>): Promise<QualifiedConnectedAccountGroupV4> {
+  const response = await fetchJson<unknown>(
+    `${params.serverBaseUrl}/v4/connect/qualified/group/runtime-state`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${params.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        service: params.group.ref.service,
+        groupId: params.group.ref.groupId,
+        expectedIncarnation: params.group.incarnation,
+        expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
+        runtimeState: {
+          state: {
+            status: params.quotaExhaustedUntilMs === null ? 'ready' : 'exhausted',
+            ...(params.quotaExhaustedUntilMs === null ? {} : { lastSwitchReason: 'usage_limit' }),
+          },
+          memberStates: [
+            {
+              connectedAccountId: params.connectedAccountId,
+              state: params.quotaExhaustedUntilMs === null
+                ? { quotaExhaustedUntilMs: null, lastObservedAtMs: Date.now() }
+                : {
+                    quotaExhaustedUntilMs: params.quotaExhaustedUntilMs,
+                    lastFailureKind: 'usage_limit',
+                    lastFailureCode: 'usage_limit_reached',
+                    lastObservedAtMs: Date.now(),
+                  },
+            },
+          ],
+        },
+      }),
+      timeoutMs: 20_000,
+    },
+  );
+  return groupResponseOrThrow({
+    operation: 'patch qualified connected-account group runtime state',
+    response,
+  });
 }
 
 function recoveryIntentPath(fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'daemonHomeDir' | 'serverId'>): string {

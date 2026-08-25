@@ -20,6 +20,7 @@ import {
   type FakeTokenServerRequest,
   type StartedConnectedServicesCodexDaemonFixture,
 } from '../../src/testkit/connectedServicesCodexDaemon';
+import { createQualifiedConnectedAccountGroup } from '../../src/testkit/connectedServicesRecovery';
 import { fetchJson } from '../../src/testkit/http';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
@@ -115,36 +116,6 @@ async function createConnectedServiceProfile(params: Readonly<{
   );
   expect(response.status).toBe(200);
   expect(response.data?.success).toBe(true);
-}
-
-async function createConnectedServiceAuthGroup(params: Readonly<{
-  fixture: StartedConnectedServicesCodexDaemonFixture;
-  serviceId: ConnectedServiceId;
-  groupId: string;
-  activeProfileId: string;
-  memberProfileIds: readonly string[];
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<{ group?: unknown }>(`${params.fixture.serverBaseUrl}/v3/connect/${params.serviceId}/groups`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.fixture.auth.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      groupId: params.groupId,
-      members: params.memberProfileIds.map((profileId, index) => ({ profileId, priority: (index + 1) * 10 })),
-      activeProfileId: params.activeProfileId,
-      policy: {
-        autoSwitch: true,
-        recoveryMode: 'switch_or_wait',
-      },
-    }),
-    timeoutMs: 20_000,
-  });
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group response');
-  return group;
 }
 
 async function postSessionTurnMutation(params: Readonly<{
@@ -351,14 +322,15 @@ describe('core e2e: usage-limit recovery operation result roundtrip', () => {
       profileId: 'backup',
       providerEmail: 'usage-limit-backup@example.test',
     });
-    const createdGroup = await createConnectedServiceAuthGroup({
-      fixture,
-      serviceId,
+    const createdGroup = await createQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: serviceId,
       groupId,
-      activeProfileId: 'work',
-      memberProfileIds: ['work', 'backup'],
+      activeConnectedAccountId: 'work',
+      memberConnectedAccountIds: ['work', 'backup'],
     });
-    expect(createdGroup).toMatchObject({ activeProfileId: 'work', generation: 0 });
+    expect(createdGroup).toMatchObject({ activeConnectedAccountId: 'work' });
 
     const sessionId = await createInactiveCodexUsageLimitSession({
       fixture,
@@ -435,12 +407,13 @@ describe('core e2e: usage-limit recovery operation result roundtrip', () => {
       profileId: 'backup',
       providerEmail: 'usage-limit-stale-backup@example.test',
     });
-    await createConnectedServiceAuthGroup({
-      fixture,
-      serviceId,
+    await createQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: serviceId,
       groupId,
-      activeProfileId: 'work',
-      memberProfileIds: ['work', 'backup'],
+      activeConnectedAccountId: 'work',
+      memberConnectedAccountIds: ['work', 'backup'],
     });
     const staleMachineId = `${fixture.machineId}-stale`;
     const sessionId = await createInactiveCodexUsageLimitSession({

@@ -66,10 +66,8 @@ const FLOORED_DANGER_AGENT_VERBS: readonly ActionId[] = RUNTIME_ACTION_IDS_V1.fi
  * (`INTERNAL_ACTION_REASONS` in `actionSpecs.ts`, read here through `isInternalActionId`): an id
  * recorded there is deliberately unreachable from every public surface with a written reason, so it
  * cannot be agent-floored and must not be. Anything else losing `danger`+`agent` is a regression.
- * `browser.session.create` / `browser.session.close` took that route ("No browser session
- * creator is wired through the ActionExecutor; the runtime owner keeps this fail-closed"), which is
- * why the assertion below is a branch on the registry rather than a shortened hand list — deleting
- * an id from this array would have silently retired its guard.
+ * The assertion below is therefore a branch on the registry rather than a shortened hand list —
+ * deleting an id from this array would silently retire its guard.
  */
 const REQUIRED_FLOORED_VERBS: readonly ActionId[] = [
   'browser.navigate',
@@ -77,8 +75,6 @@ const REQUIRED_FLOORED_VERBS: readonly ActionId[] = [
   'browser.goBack',
   'browser.goForward',
   'browser.stop',
-  'browser.session.create',
-  'browser.session.close',
   'browser.view.open',
   'browser.view.close',
   'browser.automation.navigate',
@@ -200,12 +196,15 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
     }
   });
 
-  it('keeps the headline floor overwhelmingly reachable (an internal-registry escape cannot empty it)', () => {
-    // Guards the branch above: if a future edit routed most headline verbs through
-    // `INTERNAL_ACTION_REASONS`, every per-id assertion would still pass while the floor it exists
-    // to protect had quietly disappeared.
+  it('keeps every headline verb reachable (an internal-registry escape cannot empty the floor)', () => {
+    // Guards the branch above: routing a headline verb through `INTERNAL_ACTION_REASONS` satisfies
+    // every per-id assertion (internal ids are legitimately off `agent`/`api` and off the floor),
+    // so without this the floor could be emptied one silent escape at a time. NO headline verb is
+    // internal today, so the ceiling is zero: it is a forward-only gate, not a tolerance. It
+    // previously allowed two, sized for `browser.session.create`/`.close` — the only headline verbs
+    // that ever took the escape — and kept that slack after both ids were contracted away.
     const reachable = REQUIRED_FLOORED_VERBS.filter((id) => !isInternalActionId(id));
-    expect(reachable.length).toBeGreaterThanOrEqual(REQUIRED_FLOORED_VERBS.length - 2);
+    expect(reachable).toEqual([...REQUIRED_FLOORED_VERBS]);
   });
 
   it('floors EVERY danger+agent verb on agent and NEVER on ui (policy contract the executor consults)', () => {

@@ -155,10 +155,12 @@ describe('artifactApi testkit encryption helpers', () => {
       dataEncryptionKeyBytes: new Uint8Array(32).fill(7),
       randomBytes: deterministicRandomBytes,
     });
-    const fetch = vi.fn(async () => new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
+    const fetch = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
     vi.stubGlobal('fetch', fetch);
     try {
       await expect(updateEncryptedArtifactViaApi({
@@ -180,7 +182,7 @@ describe('artifactApi testkit encryption helpers', () => {
         bodyJson: { body: JSON.stringify({ status: 'approved' }) },
       })).resolves.toMatchObject({ success: true });
 
-      const init = fetch.mock.calls[0]?.[1] as RequestInit | undefined;
+      const init = fetch.mock.calls[0]?.[1];
       const requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       expect(requestBody).toMatchObject({
         expectedHeaderVersion: 3,

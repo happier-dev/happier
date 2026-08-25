@@ -12,9 +12,9 @@ import {
   type StartedConnectedServicesCodexDaemonFixture,
 } from '../../src/testkit/connectedServicesCodexDaemon';
 import {
-  createConnectedServiceAuthGroup,
+  createQualifiedConnectedAccountGroup,
   createConnectedServiceProfile,
-  fetchConnectedServiceAuthGroup,
+  fetchQualifiedConnectedAccountGroup,
   startConnectedServiceRecoveryProxy,
   type ConnectedServiceRecoveryProxy,
 } from '../../src/testkit/connectedServicesRecovery';
@@ -245,14 +245,15 @@ describe('core e2e: connected-service runtime-auth recovery requeue', () => {
       profileId: 'backup',
       providerEmail: 'backup@example.test',
     });
-    const createdGroup = await createConnectedServiceAuthGroup({
-      fixture,
-      serviceId,
+    const createdGroup = await createQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: serviceId,
       groupId,
-      activeProfileId: 'work',
-      memberProfileIds: ['work', 'backup'],
+      activeConnectedAccountId: 'work',
+      memberConnectedAccountIds: ['work', 'backup'],
     });
-    expect(createdGroup).toMatchObject({ activeProfileId: 'work', generation: 0 });
+    expect(createdGroup).toMatchObject({ activeConnectedAccountId: 'work' });
 
     const sessionId = await spawnConnectedCodexGroupSession({
       fixture,
@@ -307,7 +308,7 @@ describe('core e2e: connected-service runtime-auth recovery requeue', () => {
     const initialGroupLoadCount = proxy?.groupLoadCount() ?? 0;
     expect(initialGroupLoadCount - baselineGroupLoadCount).toBeGreaterThanOrEqual(3);
     expect(initialGroupLoadCount - baselineGroupLoadCount).toBeLessThanOrEqual(4);
-    expect(proxy?.activeProfileWriteCount()).toBe(0);
+    expect(proxy?.activeAccountWriteCount()).toBe(0);
 
     const intent = await readRecoveryIntent({
       fixture,
@@ -335,20 +336,30 @@ describe('core e2e: connected-service runtime-auth recovery requeue', () => {
 
     await sleep(300);
     expect((proxy?.groupLoadCount() ?? 0) - initialGroupLoadCount).toBeLessThanOrEqual(1);
-    expect(proxy?.activeProfileWriteCount()).toBe(0);
+    expect(proxy?.activeAccountWriteCount()).toBe(0);
 
     await waitFor(async () => {
-      const group = await fetchConnectedServiceAuthGroup({ fixture: fixture!, serviceId, groupId });
-      return readString(group, 'activeProfileId') === 'backup';
+      const group = await fetchQualifiedConnectedAccountGroup({
+        serverBaseUrl: fixture!.serverBaseUrl,
+        authToken: fixture!.auth.token,
+        legacyServiceId: serviceId,
+        groupId,
+      });
+      return group.activeConnectedAccountId === 'backup';
     }, {
       timeoutMs: 30_000,
       intervalMs: 250,
       context: 'runtime-auth recovery retry re-enters the auth-group coordinator and switches once',
     });
 
-    const switchedGroup = await fetchConnectedServiceAuthGroup({ fixture, serviceId, groupId });
-    expect(switchedGroup).toMatchObject({ activeProfileId: 'backup', generation: 1 });
-    expect(proxy?.activeProfileWriteCount()).toBe(1);
+    const switchedGroup = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: serviceId,
+      groupId,
+    });
+    expect(switchedGroup).toMatchObject({ activeConnectedAccountId: 'backup' });
+    expect(proxy?.activeAccountWriteCount()).toBe(1);
     expect(proxy?.groupLoadCount()).toBeLessThanOrEqual(initialGroupLoadCount + 5);
 
     await waitFor(async () => {

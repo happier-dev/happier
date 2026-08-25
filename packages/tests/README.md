@@ -42,7 +42,6 @@ Out of scope for this package:
 - Core deterministic e2e (slow lane): `yarn workspace @happier-dev/tests test:core:slow`
 - Core deterministic e2e (handoff slice): `yarn workspace @happier-dev/tests test:core:handoff`
 - UI E2E (Playwright, web UI): `yarn workspace @happier-dev/tests test:ui:e2e`
-- Plugin Platform exact-candidate native E2E (Maestro, gated): `yarn workspace @happier-dev/tests test:mobile:e2e:plugin-platform-candidate`
 - WSREPL Lima matrix (macOS/Linux host opt-in): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
 - Stress (configuration-driven scale harness): `yarn workspace @happier-dev/tests test:stress`
 - Stress (full Compose topology): `yarn workspace @happier-dev/tests test:stress:full-compose`
@@ -54,85 +53,31 @@ Root aliases may exist (e.g. `yarn test:e2e`), but the workspace commands above 
 
 ### Plugin Platform native QA
 
-This opt-in lane admits one exact package-artifact basis at a time. Candidate
-release QA consumes the daemon-selected packed SDK/Plugin UI/CLI candidate;
-row-local UCX QA instead consumes an exact SDK, Plugin UI, and CLI tarball trio.
-The runner rechecks package identities, materializes the exact CLI, builds the
-native fixture from that exact SDK, and records the fixture archives alongside
-the package identities for its one native row. Do not combine candidate and
-row-local inputs.
-
-Candidate mode retains its release-QA prerequisites: the producer must hand off
-`candidate.json`, issue the literal authorization `G5_GENERATED_INPUTS_GREEN`,
-and provide the existing matching packed-novel and schema-v2 Triage/GitHub/Voice
-handoffs. It fails closed when any candidate prerequisite is absent:
-
-```bash
-export HAPPIER_E2E_PLUGIN_PLATFORM_CANDIDATE=/absolute/path/to/candidate.json
-export HAPPIER_E2E_PLUGIN_PLATFORM_G5_AUTHORIZATION=G5_GENERATED_INPUTS_GREEN
-yarn workspace @happier-dev/tests test:mobile:e2e:ios:plugin-platform-candidate
-yarn workspace @happier-dev/tests test:mobile:e2e:android:plugin-platform-candidate
-```
-
-For a row-local UCX native row, provide the exact matching trio and secure
-schema-v2 Triage/GitHub/Voice handoff instead. Candidate, G5, and packed-novel
-inputs are not part of this mode:
-
-```bash
-export HAPPIER_E2E_UCX_NATIVE_SDK_TARBALL=/absolute/path/plugin-sdk.tgz
-export HAPPIER_E2E_UCX_NATIVE_PLUGIN_UI_TARBALL=/absolute/path/plugin-ui.tgz
-export HAPPIER_E2E_UCX_NATIVE_CLI_TARBALL=/absolute/path/cli.tgz
-export HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_HANDOFF_MANIFEST=/absolute/path/triage-github-voice-qa.json
-yarn workspace @happier-dev/tests test:mobile:e2e:ios:plugin-platform-candidate
-yarn workspace @happier-dev/tests test:mobile:e2e:android:plugin-platform-candidate
-```
+Plugin Platform native feature QA uses the current repository source and the
+existing managed development stack. It must not create or consume a package
+manifest, local release archive, or separately materialized CLI/SDK basis.
+Exercise the same user flows through the source-owned host, plugin, Metro, and
+Maestro entry points; release automation owns publication outputs.
 
 Prerequisites are the normal connected-machine Maestro prerequisites for the
 selected platform: installed native dev client, Maestro, simulator/emulator,
 managed Metro support, and the repository-managed CLI author toolchain. The
 combined command runs iOS and Android sequentially.
 
-Artifact identity/materialization and both fixture generations can be checked
-without launching Metro, Maestro, or a device by adding
-`HAPPIER_E2E_PLUGIN_PLATFORM_PREPARE_ONLY=1` to either platform command.
-
-After Maestro, the runner writes an observed row-local native attestation only
-when it has the selected installed app/APK identity and the selected device
-reports an immutable JavaScript/bundle digest that matches the row's asserted
-served-bundle digest. Managed Metro no-dev full reload, the host-served bundle
-URL/revision, and the app-owned module probe are supporting facts only. A URL,
-host-side warm-up, or “Bundled” log alone remains insufficient. The incumbent
-runner has no selected-device digest-report seam, so it records a typed block
-until that report exists and matches the asserted row.
+After Maestro, record the source revision and loaded app/bundle identity needed
+to show that the current change actually ran. Managed Metro reload, the served
+bundle URL/revision, and the app-owned module probe are supporting facts. This
+identity check observes the loaded development stack; it does not create a
+frozen release representation.
 
 ### Triage/GitHub/Voice browser handoff
 
 The credential-bearing normal-product browser handoff is an opt-in development
-QA input. Its producer accepts exactly one package-identity source: either a
-complete `candidate.json`, or the exact row-local SDK, Plugin UI, and CLI
-tarballs. Do not combine the two forms. The GitHub token is read only from
+QA input. Run it against the current source and existing managed stack. The
+GitHub token is read only from
 `HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN`, never from a command-line
-flag.
-
-```bash
-export HAPPIER_E2E_TRIAGE_GITHUB_VOICE_QA_GITHUB_TOKEN="$GITHUB_TOKEN"
-yarn workspace @happier-dev/tests prepare:plugin-platform:triage-github-voice-handoff create \
-  --sdk-tarball /absolute/path/plugin-sdk.tgz \
-  --plugin-ui-tarball /absolute/path/plugin-ui.tgz \
-  --cli-tarball /absolute/path/cli.tgz \
-  --scope-title owner/repository \
-  --issue-a-title "Stable QA issue A" \
-  --issue-b-title "Stable QA issue B" \
-  --microphone-fixture /absolute/path/microphone.wav
-```
-
-Replace the three tarball flags with `--candidate /absolute/path/candidate.json`
-for a complete candidate. Supplying `--output-root` requires a new absolute
-directory outside the repository; otherwise the producer creates a private OS
-temporary root. Pass its reported `triage-github-voice-qa.json` path to the
-browser QA command with the matching package identity. When the aggregate
-candidate-QA flow consumes that handoff, its finalizer owns marker-authorized
-removal after every product consumer reaches a terminal result.
+flag. Do not create a package-identity manifest or local release archives as
+handoff inputs.
 
 ## Shared platform homes
 

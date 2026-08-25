@@ -292,14 +292,14 @@ test.describe('packed candidate: resources package vertical', () => {
         '--json',
       ],
       timeoutMs: 300_000,
-    }), 'plugins_author_install');
+    }), 'plugins_dev_install');
     for (const operation of ['typecheck', 'build'] as const) {
       requireSuccessfulEnvelope(await runCliJson({
         ...cliParams,
         label: `author-${operation}`,
         args: ['plugins', 'author', operation, pluginRoot, '--json'],
         timeoutMs: 300_000,
-      }), `plugins_author_${operation}`);
+      }), `plugins_dev_${operation}`);
     }
     requireSuccessfulEnvelope(await runCliJson({
       ...cliParams,

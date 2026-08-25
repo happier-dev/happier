@@ -13,6 +13,9 @@ import type {
   PackedManagedProviderScenarioDependencies,
 } from '../../../scripts/plugin-platform/run-packed-managed-provider.mjs';
 import {
+  PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS,
+} from '../../../scripts/plugin-platform/run-packed-managed-provider.mjs';
+import {
   assertPackedAuthorCandidateManifestArtifacts,
   parseCandidateManifest,
 } from '../../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
@@ -602,6 +605,12 @@ describe('packed managed Provider executable entrypoint', () => {
       return packedChannelProviderLifecycleEvidence();
     });
 
+    // The composed server, daemon, and sessions live inside the candidate's
+    // standalone extract root, so they must stop before the work root is gone.
+    const composedCleanup = vi.fn(async () => {
+      expect(existsSync(workRoot)).toBe(true);
+    });
+
     const result = await runPackedChannelProviderContinuityProbe({
       candidateManifestPath: fixture.manifestPath,
       workRoot,
@@ -609,6 +618,7 @@ describe('packed managed Provider executable entrypoint', () => {
     }, {
       composed: {
         probePackedChannelProviderLifecycle: lifecycle,
+        cleanup: composedCleanup,
       },
       artifactOwners: artifactOwners([]),
       candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
@@ -619,6 +629,56 @@ describe('packed managed Provider executable entrypoint', () => {
 
     expect(result.status).toBe('passed');
     expect(lifecycle).toHaveBeenCalledTimes(1);
+    expect(composedCleanup).toHaveBeenCalledTimes(1);
+    expect(existsSync(workRoot)).toBe(false);
+  });
+
+  it('runs the packed Channel provider vertical from the executable candidate command', async () => {
+    const fixture = await writeInputFixture();
+    const workRoot = join(fixture.root, 'channel-command');
+    const lifecycle = vi.fn(
+      async (_input: PackedManagedProviderPreparedInput) =>
+        packedChannelProviderLifecycleEvidence(),
+    );
+    const composedCleanup = vi.fn(async () => {});
+    const startChannelComposedRuntime = vi.fn(async () => ({
+      probePackedChannelProviderLifecycle: lifecycle,
+      cleanup: composedCleanup,
+    }));
+    const stdout: string[] = [];
+
+    await packedManagedProviderContinuity.main([
+      '--channel',
+      '--candidate',
+      fixture.manifestPath,
+      '--work-root',
+      workRoot,
+    ], {
+      startChannelComposedRuntime,
+      artifactOwners: artifactOwners([]),
+      candidateArtifactVerification: TEST_CANDIDATE_ARTIFACT_VERIFICATION,
+      reserveAvailablePort: vi.fn()
+        .mockResolvedValueOnce(45135)
+        .mockResolvedValueOnce(45136),
+      writeStdout: (line) => stdout.push(line),
+    });
+
+    expect(startChannelComposedRuntime).toHaveBeenCalledTimes(1);
+    expect(lifecycle).toHaveBeenCalledTimes(1);
+    expect(composedCleanup).toHaveBeenCalledTimes(1);
+    expect(stdout).toHaveLength(1);
+    const emitted = JSON.parse(stdout[0]!) as {
+      kind: string;
+      status: string;
+      candidate: { channelsProtocol: { packageName: string } };
+      stages: readonly { id: string }[];
+    };
+    expect(emitted.kind).toBe('packed_channel_provider_vertical');
+    expect(emitted.status).toBe('passed');
+    expect(emitted.candidate.channelsProtocol.packageName)
+      .toBe('@happier-dev/channels-protocol');
+    expect(emitted.stages.map((entry) => entry.id))
+      .toEqual([...PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS]);
     expect(existsSync(workRoot)).toBe(false);
   });
 

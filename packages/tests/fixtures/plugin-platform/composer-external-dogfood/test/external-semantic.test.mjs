@@ -252,6 +252,34 @@ test('external mounted Composer uses public pick, inspect, apply, and release wi
     }],
   ]);
 
+  const persistedOperation = calls[3][1].operations[0];
+  assert.deepEqual(persistedOperation.value.value, { issueId: 'EXT-42' });
+  assert.deepEqual(persistedOperation.content.handle.executionTarget, {
+    serverId: 'external-server',
+    machineId: 'external-machine',
+  });
+  assert.deepEqual(persistedOperation.content.handle.owner, {
+    pluginId: 'acme.composer.issue-dogfood',
+    localId: 'issue-media',
+  });
+  const synchronizedAttachmentJson = JSON.stringify(persistedOperation);
+  for (const forbiddenField of [
+    'path',
+    'uri',
+    'bytes',
+    'base64',
+    'credential',
+    'token',
+    'uploadUrl',
+    'transferSessionId',
+  ]) {
+    assert.equal(
+      synchronizedAttachmentJson.includes(`\"${forbiddenField}\"`),
+      false,
+      `synchronized attachment must not contain ${forbiddenField}`,
+    );
+  }
+
   calls.length = 0;
   assert.deepEqual(
     await inspectAndReleaseIssueMediaFromCurrentComposer(composers),

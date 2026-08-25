@@ -5,16 +5,14 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginApi, PluginClientApi } from '@happier-dev/plugin-sdk';
 import type {
   PluginClientActionHandler,
   PluginClientActionUi,
 } from '@happier-dev/plugin-sdk/actions';
-import type {
-  VoiceProviderRuntime,
-  VoiceRealtimeToolResult,
-} from '@happier-dev/plugin-sdk/voice';
-import type { VoiceClientToolDefinition } from '@happier-dev/plugin-sdk/voice/client';
+import type { VoiceClientToolDefinition, VoiceRealtimeToolResult } from '@happier-dev/plugin-sdk/voice/client';
+
+type VoiceProviderRuntime = Parameters<PluginApi['voiceProviders']['register']>[1];
 
 import { activate as activatePackedTargetedClient } from '../../fixtures/plugin-platform/packed-targeted-contribution-projection/contributor/src/clientRuntime';
 import { classifyActionFailure } from '../../fixtures/plugin-platform/packed-targeted-contribution-projection/contributor/ui/providerDetailActionFailure';

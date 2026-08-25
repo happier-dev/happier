@@ -17,7 +17,7 @@ async function fileExists(path) {
   }
 }
 
-async function runLimaVmHelperTest(hostOs) {
+async function runLimaVmHelperTest(hostOs, envOverrides = {}) {
   const root = await mkdtemp(join(tmpdir(), `hstack-lima-vm-test-${hostOs.toLowerCase()}-`));
   const binDir = join(root, 'bin');
   const homeDir = join(root, 'home');
@@ -111,6 +111,7 @@ async function runLimaVmHelperTest(hostOs) {
     HOME: homeDir,
     LIMA_HOME: join(homeDir, '.lima'),
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    ...envOverrides,
   };
 
   const res = spawnSync('bash', [scriptPath, 'happy-test'], {
@@ -130,6 +131,7 @@ async function runLimaVmHelperTest(hostOs) {
 
   const limactlOut = await readFile(limactlLog, 'utf-8');
   assert.match(limactlOut, /limactl (create|stop|start)/, 'expected script to invoke limactl');
+  return { limactlOut, stdout: res.stdout };
 }
 
 test('lima VM helper prints tips without executing backticks on macOS', async () => {
@@ -138,4 +140,24 @@ test('lima VM helper prints tips without executing backticks on macOS', async ()
 
 test('lima VM helper prints tips without executing backticks on Linux', async () => {
   await runLimaVmHelperTest('Linux');
+});
+
+test('lima VM helper can create a bounded mount-free development worker', async () => {
+  const { limactlOut, stdout } = await runLimaVmHelperTest('Darwin', {
+    LIMA_CONTAINERD: 'none',
+    LIMA_CPUS: '10',
+    LIMA_DISK: '160',
+    LIMA_MEMORY: '24GiB',
+    LIMA_MOUNT_NONE: '1',
+    LIMA_VM_TYPE: 'vz',
+  });
+
+  assert.match(
+    limactlOut,
+    /limactl create --name happy-test --tty=false --vm-type vz --cpus 10 --disk 160 --containerd none --mount-none template:ubuntu-24\.04/,
+  );
+  assert.match(stdout, /cpus: 10/);
+  assert.match(stdout, /disk: 160GiB/);
+  assert.match(stdout, /host mounts: disabled/);
+  assert.match(stdout, /containerd: none/);
 });

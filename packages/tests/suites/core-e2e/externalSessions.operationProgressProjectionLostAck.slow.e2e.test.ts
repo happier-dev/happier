@@ -318,7 +318,7 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
         activeServerDir,
         initialRecord.operationId,
       );
-      return current?.kind === 'completion_receipt'
+      return current?.kind === 'terminal_receipt'
         && current.receipt.reference.revision === initialRecord.revision;
     }, {
       timeoutMs: 30_000,
@@ -330,7 +330,7 @@ describe('core e2e: External Sessions operation projection lost acknowledgement'
       initialRecord.operationId,
     );
     expect(repairedEntry).toMatchObject({
-      kind: 'completion_receipt',
+      kind: 'terminal_receipt',
       receipt: {
         reference: {
           sessionId,

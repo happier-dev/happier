@@ -13,15 +13,15 @@ import { connect as connectTls } from 'node:tls';
 import { describe, expect, it } from 'vitest';
 
 import {
-  startPackedManagedProviderTlsRecordingProxy,
-} from '../../plugin-platform/packedManagedProviderComposedRuntime';
+  startConnectedAccountTlsRecordingProxy,
+} from '../providers/connectedAccountTlsRecordingProxy';
 
 describe('packed managed Provider decrypted upstream observer', () => {
   it('records the exact prompt and Authorization fingerprint after CONNECT and TLS', async () => {
     const managedOrigin = new URL('https://chatgpt.com');
     const managedConnectTarget =
       `${managedOrigin.hostname}:${managedOrigin.port || '443'}`;
-    const observer = await startPackedManagedProviderTlsRecordingProxy();
+    const observer = await startConnectedAccountTlsRecordingProxy();
     const proxyUrl = new URL(observer.url);
     const socket = connectTcp({
       host: proxyUrl.hostname,
@@ -82,7 +82,7 @@ describe('packed managed Provider decrypted upstream observer', () => {
   it('holds only the matching request until one explicit release', async () => {
     const managedOrigin = new URL('https://chatgpt.com');
     const managedConnectTarget = 'chatgpt.com:443';
-    const observer = await startPackedManagedProviderTlsRecordingProxy();
+    const observer = await startConnectedAccountTlsRecordingProxy();
     const sockets: Array<ReturnType<typeof connectTcp>> = [];
     const connectObserver = async () => {
       const proxyUrl = new URL(observer.url);
@@ -164,8 +164,70 @@ describe('packed managed Provider decrypted upstream observer', () => {
     }
   });
 
+  it('chooses a response after a held request is released', async () => {
+    const statuses: number[] = [];
+    const observer = await startConnectedAccountTlsRecordingProxy({
+      responseForRequest: (_request, context) => {
+        const statusCode = context.wasHeld ? 401 : 200;
+        statuses.push(statusCode);
+        return { statusCode, body: { status: statusCode } };
+      },
+    });
+    const sockets: Array<ReturnType<typeof connectTcp>> = [];
+    const send = async (body: string): Promise<string> => {
+      const proxyUrl = new URL(observer.url);
+      const socket = connectTcp({
+        host: proxyUrl.hostname,
+        port: Number(proxyUrl.port),
+      });
+      sockets.push(socket);
+      await once(socket, 'connect');
+      socket.write([
+        'CONNECT chatgpt.com:443 HTTP/1.1',
+        'Host: chatgpt.com:443',
+        '',
+        '',
+      ].join('\r\n'));
+      await once(socket, 'data');
+      const tlsSocket = connectTls({
+        socket,
+        servername: 'chatgpt.com',
+        ca: await readFile(observer.caCertPath),
+      });
+      await once(tlsSocket, 'secureConnect');
+      const response = once(tlsSocket, 'data')
+        .then(([chunk]) => (chunk as Buffer).toString('utf8'));
+      tlsSocket.write([
+        'POST /backend-api/codex/responses HTTP/1.1',
+        'Host: chatgpt.com',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        body,
+      ].join('\r\n'));
+      return response;
+    };
+
+    try {
+      const sentinel = 'held-for-currentness-change';
+      const hold = observer.holdNextRequestBodyContaining(sentinel);
+      const heldResponse = send(JSON.stringify({ input: sentinel }));
+      await expect.poll(() => observer.entries().length).toBe(1);
+      hold.release();
+      await expect(heldResponse).resolves.toContain('HTTP/1.1 401');
+      await hold.completed;
+      await expect(send(JSON.stringify({ input: 'retry' })))
+        .resolves.toContain('HTTP/1.1 200');
+      expect(statuses).toEqual([401, 200]);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await observer.stop();
+    }
+  });
+
   it('removes its ephemeral certificate material on idempotent stop', async () => {
-    const observer = await startPackedManagedProviderTlsRecordingProxy();
+    const observer = await startConnectedAccountTlsRecordingProxy();
     const caCertPath = observer.caCertPath;
     await expect(access(caCertPath)).resolves.toBeUndefined();
 
@@ -180,7 +242,7 @@ describe('packed managed Provider decrypted upstream observer', () => {
   it.skipIf(process.platform === 'win32')(
     'retries certificate cleanup after a transient removal failure',
     async () => {
-      const observer = await startPackedManagedProviderTlsRecordingProxy();
+      const observer = await startConnectedAccountTlsRecordingProxy();
       const fixtureDirectoryPath = dirname(observer.caCertPath);
       await chmod(fixtureDirectoryPath, 0o000);
 

@@ -144,7 +144,6 @@ export function collectUnresolvedMockSpecifiers(
  */
 export const DECLARED_UNRESOLVED_MOCK_SPECIFIERS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge.manager.test.ts": ["../../../plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent"],
-  "apps/cli/src/api/api.connectedServiceAuthGroupsV3.test.ts": ["./configuration"],
   "apps/cli/src/api/api.connectedServicesV2.test.ts": ["./configuration"],
   "apps/cli/src/api/api.connectedServicesV3.test.ts": ["./configuration"],
   "apps/ui/sources/__tests__/routes/(app)/index.setupContinuation.native.spec.tsx": ["@/components/onboarding/PreAuthOnboardingWizardEntry"],

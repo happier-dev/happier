@@ -453,19 +453,36 @@ export function requirePackedCandidateBrowserQaInputs({
     ?? (triageGithubVoiceHandoffEnvironmentProvided
       ? triageGithubVoiceHandoffEnvironmentValue
       : null);
-  if (!triageGithubVoiceHandoffValue) {
-    throw new Error(
-      'packed_candidate_browser_qa_triage_github_voice_blocked_handoff_required',
-    );
-  }
-
   return {
     ...artifactInputs,
-    triageGithubVoiceHandoffManifestPath:
-      isAbsolute(triageGithubVoiceHandoffValue)
-        ? triageGithubVoiceHandoffValue
-        : resolve(cwd, triageGithubVoiceHandoffValue),
+    ...(triageGithubVoiceHandoffValue
+      ? {
+        triageGithubVoiceHandoffManifestPath:
+          isAbsolute(triageGithubVoiceHandoffValue)
+            ? triageGithubVoiceHandoffValue
+            : resolve(cwd, triageGithubVoiceHandoffValue),
+      }
+      : {}),
   };
+}
+
+export function buildPackedCandidateBrowserQaRunnerEvidence({
+  hasCompletionHandoff,
+  exitCode,
+}) {
+  return Object.freeze({
+    v: 1,
+    kind: 'packed_candidate_browser_qa_runner_evidence',
+    process: Object.freeze({ exitCode }),
+    outcome: exitCode === 0 ? 'passed' : 'failed',
+    proofScope: hasCompletionHandoff
+      ? 'normal_triage_github_voice_full_receipt_required'
+      : 'credential_free_action_projection_partial',
+    completion: hasCompletionHandoff ? 'full_receipt_required' : 'partial',
+    // This runner never grants EU08 completion credit. The normal-product
+    // path records its stricter completion receipt inside the Playwright row.
+    fullEu08CompletionCredit: false,
+  });
 }
 
 export function buildPackedCandidateBrowserQaInvocation({
@@ -530,16 +547,23 @@ export function buildPackedCandidateBrowserQaInvocation({
   };
 }
 
-async function runPackedCandidateBrowserQa() {
+export async function runPackedCandidateBrowserQa({
+  argv = process.argv.slice(2),
+  env = process.env,
+  cwd = process.cwd(),
+  processExecPath = process.execPath,
+  spawnProcess = spawn,
+  writeStdout = (value) => process.stdout.write(value),
+} = {}) {
   const testsPackageRoot = resolve(
     dirname(fileURLToPath(import.meta.url)),
     '..',
     '..',
   );
   const inputs = requirePackedCandidateBrowserQaInputs({
-    argv: process.argv.slice(2),
-    env: process.env,
-    cwd: process.cwd(),
+    argv,
+    env,
+    cwd,
   });
   await Promise.all(
     inputs.artifactBasis === 'candidate_manifest'
@@ -553,22 +577,30 @@ async function runPackedCandidateBrowserQa() {
         access(inputs.cliTarballPath),
       ],
   );
-  const triageGithubVoiceHandoff = await loadPackedTriageGithubVoiceQaHandoff({
-    manifestPath: inputs.triageGithubVoiceHandoffManifestPath,
-  });
-  assertPackedTriageGithubVoiceQaCompletionHandoff(triageGithubVoiceHandoff);
+  const triageGithubVoiceHandoff = inputs.triageGithubVoiceHandoffManifestPath
+    ? await loadPackedTriageGithubVoiceQaHandoff({
+      manifestPath: inputs.triageGithubVoiceHandoffManifestPath,
+    })
+    : null;
+  if (triageGithubVoiceHandoff) {
+    assertPackedTriageGithubVoiceQaCompletionHandoff(triageGithubVoiceHandoff);
+  }
   const invocation = buildPackedCandidateBrowserQaInvocation({
     testsPackageRoot,
     ...inputs,
-    triageGithubVoiceMicrophoneFixturePath:
-      triageGithubVoiceHandoff.voice.microphoneFixturePath,
-    triageGithubVoiceAdapter:
-      resolvePackedTriageGithubVoiceQaAdapter(triageGithubVoiceHandoff),
-    processExecPath: process.execPath,
+    ...(triageGithubVoiceHandoff
+      ? {
+        triageGithubVoiceMicrophoneFixturePath:
+          triageGithubVoiceHandoff.voice.microphoneFixturePath,
+        triageGithubVoiceAdapter:
+          resolvePackedTriageGithubVoiceQaAdapter(triageGithubVoiceHandoff),
+      }
+      : {}),
+    processExecPath,
   });
-  const child = spawn(invocation.command, invocation.args, {
+  const child = spawnProcess(invocation.command, invocation.args, {
     cwd: invocation.cwd,
-    env: { ...process.env, ...invocation.envPatch },
+    env: { ...env, ...invocation.envPatch },
     stdio: 'inherit',
   });
   const exitCode = await new Promise((resolveExit, reject) => {
@@ -581,15 +613,24 @@ async function runPackedCandidateBrowserQa() {
       resolveExit(code ?? 1);
     });
   });
-  process.exitCode = exitCode;
+  const evidence = buildPackedCandidateBrowserQaRunnerEvidence({
+    hasCompletionHandoff: triageGithubVoiceHandoff !== null,
+    exitCode,
+  });
+  writeStdout(`${JSON.stringify(evidence)}\n`);
+  return evidence;
 }
 
 if (
   process.argv[1]
   && pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  runPackedCandidateBrowserQa().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
-  });
+  runPackedCandidateBrowserQa()
+    .then((evidence) => {
+      process.exitCode = evidence.process.exitCode;
+    })
+    .catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
 }

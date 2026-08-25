@@ -1239,7 +1239,7 @@ async function runPackedPluginsDevUiScenario(params: Readonly<{
       params.sdkRegistryOrigin,
       '--json',
     ],
-    expectedKind: 'plugins_author_install',
+    expectedKind: 'plugins_dev_install',
   });
   const installedPair = await assertPackedPluginsDevInstalledUiPair({
     pluginRoot,
@@ -1428,7 +1428,7 @@ export async function runPackedPluginsDev(candidate: PackedAuthorCandidate): Pro
         registry.origin,
         '--json',
       ],
-      expectedKind: 'plugins_author_install',
+      expectedKind: 'plugins_dev_install',
     });
     stages.push({ id: 'managed-author-dependencies', ok: true, systemPathEmpty: true });
 

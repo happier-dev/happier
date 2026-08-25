@@ -3,6 +3,11 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseHeartbeatArgs, resolveSignalExitCode, runHeartbeatWrappedCommand } from './runPlaywrightWithHeartbeat.shared.mjs';
+import {
+  VITEST_OPTIONS_WITH_VALUES,
+  findUnresolvedVitestPathArgs,
+  formatUnresolvedVitestPathArgs,
+} from './vitestPathArgs.mjs';
 
 import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 
@@ -34,15 +39,6 @@ function normalizeTestsPackagePathArg(value) {
   return value;
 }
 
-const vitestOptionsWithValues = new Set([
-  '-t',
-  '--testNamePattern',
-  '--grep',
-  '--reporter',
-  '--pool',
-  '--environment',
-]);
-
 function normalizeVitestPassThroughArgs(args) {
   const normalized = [];
   let preserveNextValue = false;
@@ -55,7 +51,7 @@ function normalizeVitestPassThroughArgs(args) {
     }
 
     normalized.push(arg.startsWith('-') ? arg : normalizeTestsPackagePathArg(arg));
-    if (vitestOptionsWithValues.has(arg)) {
+    if (VITEST_OPTIONS_WITH_VALUES.has(arg)) {
       preserveNextValue = true;
     }
   }
@@ -71,6 +67,27 @@ if (!config) {
 }
 
 const normalizedConfig = normalizeTestsPackagePathArg(config);
+const normalizedPassThrough = normalizeVitestPassThroughArgs(passThrough);
+
+// F-7. `vitest run <path>` silently ignores a positional path it cannot match and still exits 0, so
+// an explicit path list can under-collect with no signal at all: the lane reports success while the
+// tests never ran. Every `packages/tests` CI lane reaches vitest through this wrapper, and several
+// pass explicit path lists (`test:core:slow` and `test:core:handoff` expand a `find`, the compat and
+// packed-voice lanes name single files), so the check belongs here rather than in each script.
+const unresolvedPathArgs = findUnresolvedVitestPathArgs(normalizedPassThrough, {
+  packageRoot: testsPackageRoot,
+});
+if (unresolvedPathArgs.length > 0) {
+  // eslint-disable-next-line no-console
+  console.error(
+    'Refusing to run vitest: the positional paths below would collect nothing.\n'
+      + 'vitest exits 0 when it silently ignores an unmatched path, so this run would have reported\n'
+      + 'success while those tests never executed.\n'
+      + formatUnresolvedVitestPathArgs(unresolvedPathArgs),
+  );
+  process.exit(2);
+}
+
 const childArgs = [
   '-s',
   'vitest',
@@ -78,7 +95,7 @@ const childArgs = [
   '--no-file-parallelism',
   '-c',
   normalizedConfig,
-  ...normalizeVitestPassThroughArgs(passThrough),
+  ...normalizedPassThrough,
 ];
 const invocation = resolveYarnCommandInvocation(childArgs, { npmExecPath: '' });
 

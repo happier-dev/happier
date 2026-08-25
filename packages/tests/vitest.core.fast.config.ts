@@ -8,7 +8,12 @@ export default mergeConfig(createUiProductionHooksVitestConfig(), defineConfig({
     environment: 'node',
     include: [
       'suites/contracts/**/*.test.ts',
+      // In-process layer suites. They were reachable only through `test:core`, which no CI job and
+      // no root CI-shaped script invokes, so 9 tests — including the agent approval-floor security
+      // assertions and the only automated coverage of QA scenarios L2/L7 — executed nowhere.
+      'suites/core-layer/**/*.test.ts',
       'suites/core-e2e/**/*.test.ts',
+      'suites/runtime-unification/**/*.test.ts',
       'src/testkit/**/*.{test,spec}.ts',
     ],
     globalSetup: ['src/testkit/vitest/globalSetup.coreFast.ts'],

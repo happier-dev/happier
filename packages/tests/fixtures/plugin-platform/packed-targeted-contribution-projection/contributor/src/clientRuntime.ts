@@ -1,12 +1,13 @@
-import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginApi, PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type {
-  VoiceProviderRuntime,
+  VoiceRealtimeCanonicalEvent,
   VoiceRealtimeJsonValue,
   VoiceRealtimeToolResult,
-} from '@happier-dev/plugin-sdk/voice';
-import type { VoiceRealtimeCanonicalEvent } from '@happier-dev/plugin-sdk/voice/client';
+} from '@happier-dev/plugin-sdk/voice/client';
+
+type VoiceProviderRuntime = Parameters<PluginApi['voiceProviders']['register']>[1];
 
 const READ_CURRENT_UI_CONTEXT = 'readCurrentUiContext';
 const INVOKE_CURRENT_UI_COMMAND = 'invokeCurrentUiCommand';
@@ -325,6 +326,10 @@ const applyLocalEffect: PluginClientActionHandler = async (_input, context) => {
   };
 };
 
+let activePackedInputCapture: Readonly<{
+  setMuted(muted: boolean): void;
+}> | null = null;
+
 const packedConversationRuntime = {
   kind: 'conversation',
   microphoneMode: 'provider_managed',
@@ -350,6 +355,18 @@ const packedConversationRuntime = {
     let state: 'idle' | 'connecting' | 'open' | 'closed' = 'idle';
     let stage: PackedConversationStage = 'idle';
     let automaticMetadataObserved = false;
+    let inputCaptureMuted = false;
+    const inputCapture = Object.freeze({
+      setMuted(muted: boolean) {
+        // This fixture's provider-owned capture handle keeps its own input
+        // state, matching the public provider-managed mute contract.
+        inputCaptureMuted = muted;
+      },
+      isMuted() {
+        return inputCaptureMuted;
+      },
+    });
+    activePackedInputCapture = inputCapture;
     return {
       kind: 'sdk_handle',
       async connect(connectionSignal: AbortSignal) {
@@ -430,6 +447,7 @@ const packedConversationRuntime = {
       async close() {
         state = 'closed';
         stage = 'closed';
+        if (activePackedInputCapture === inputCapture) activePackedInputCapture = null;
         queue.close();
       },
       state: () => state,
@@ -449,6 +467,11 @@ const packedConversationRuntime = {
   encodeContextUpdate: (text) => [{ kind: 'packed_automatic_context_metadata', text }],
   encodeTextTurn: () => [],
   outputLevelMeter: 'unavailable',
+  setInputMuted(muted) {
+    const inputCapture = activePackedInputCapture;
+    if (!inputCapture) throw new Error('packed_provider_input_capture_unavailable');
+    inputCapture.setMuted(muted);
+  },
 } satisfies VoiceProviderRuntime;
 
 export function activate(api: PluginClientApi): void {

@@ -10,6 +10,11 @@ import {
 } from '@happier-dev/protocol';
 
 import { createTestAuth } from '../../src/testkit/auth';
+import {
+  createQualifiedConnectedAccountGroup,
+  fetchQualifiedConnectedAccountGroup,
+  patchQualifiedConnectedAccountGroupMemberExhaustion,
+} from '../../src/testkit/connectedServicesRecovery';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -113,96 +118,6 @@ async function createConnectedServiceProfile(params: Readonly<{
   expect(response.data?.success).toBe(true);
 }
 
-async function createConnectedServiceAuthGroup(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  serviceId: string;
-  groupId: string;
-  activeProfileId: string;
-  memberProfileIds: readonly string[];
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<{ group?: unknown }>(`${params.baseUrl}/v3/connect/${params.serviceId}/groups`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      groupId: params.groupId,
-      members: params.memberProfileIds.map((profileId, index) => ({ profileId, priority: (index + 1) * 10 })),
-      activeProfileId: params.activeProfileId,
-    }),
-    timeoutMs: 20_000,
-  });
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group response');
-  return group;
-}
-
-async function patchConnectedServiceAuthGroupRuntimeState(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  serviceId: string;
-  groupId: string;
-  expectedGeneration: number;
-  expectedRuntimeStateRevision: number;
-  memberProfileId: string;
-  quotaExhaustedUntilMs: number | null;
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<{ group?: unknown }>(
-    `${params.baseUrl}/v3/connect/${params.serviceId}/groups/${params.groupId}/runtime-state`,
-    {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${params.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        expectedGeneration: params.expectedGeneration,
-        expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
-        memberStates: [
-          {
-            profileId: params.memberProfileId,
-            state: params.quotaExhaustedUntilMs === null
-              ? { quotaExhaustedUntilMs: null, lastObservedAtMs: Date.now() }
-              : {
-                  quotaExhaustedUntilMs: params.quotaExhaustedUntilMs,
-                  lastFailureKind: 'usage_limit',
-                  lastFailureCode: 'usage_limit_reached',
-                  lastObservedAtMs: Date.now(),
-                },
-          },
-        ],
-      }),
-      timeoutMs: 20_000,
-    },
-  );
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group runtime-state response');
-  return group;
-}
-
-async function fetchConnectedServiceAuthGroup(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  serviceId: string;
-  groupId: string;
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<{ group?: unknown }>(
-    `${params.baseUrl}/v3/connect/${params.serviceId}/groups/${params.groupId}`,
-    {
-      headers: { Authorization: `Bearer ${params.token}` },
-      timeoutMs: 20_000,
-    },
-  );
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group response');
-  return group;
-}
-
 describe('core e2e: connected-service quota switch and recovery contracts', () => {
   let server: StartedServer | null = null;
 
@@ -237,25 +152,23 @@ describe('core e2e: connected-service quota switch and recovery contracts', () =
       profileId: 'backup',
       providerEmail: 'backup@example.test',
     });
-    const created = await createConnectedServiceAuthGroup({
-      baseUrl: server.baseUrl,
-      token: auth.token,
-      serviceId,
+    const created = await createQualifiedConnectedAccountGroup({
+      serverBaseUrl: server.baseUrl,
+      authToken: auth.token,
+      legacyServiceId: serviceId,
       groupId,
-      activeProfileId: 'backup',
-      memberProfileIds: ['primary', 'backup'],
+      activeConnectedAccountId: 'backup',
+      memberConnectedAccountIds: ['primary', 'backup'],
     });
-    expect(created).toMatchObject({ activeProfileId: 'backup', generation: 0 });
+    expect(created).toMatchObject({ activeConnectedAccountId: 'backup' });
 
     const resetAtMs = Date.now() + 60_000;
-    await patchConnectedServiceAuthGroupRuntimeState({
-      baseUrl: server.baseUrl,
-      token: auth.token,
-      serviceId,
-      groupId,
-      expectedGeneration: 0,
-      expectedRuntimeStateRevision: 0,
-      memberProfileId: 'primary',
+    await patchQualifiedConnectedAccountGroupMemberExhaustion({
+      serverBaseUrl: server.baseUrl,
+      authToken: auth.token,
+      group: created,
+      expectedRuntimeStateRevision: created.runtimeStateRevision,
+      connectedAccountId: 'primary',
       quotaExhaustedUntilMs: resetAtMs,
     });
 
@@ -268,57 +181,70 @@ describe('core e2e: connected-service quota switch and recovery contracts', () =
     });
     const restartedAuth = await reauth(server.baseUrl);
 
-    const restarted = await fetchConnectedServiceAuthGroup({
-      baseUrl: server.baseUrl,
-      token: restartedAuth.token,
-      serviceId,
+    const restarted = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: server.baseUrl,
+      authToken: restartedAuth.token,
+      legacyServiceId: serviceId,
       groupId,
     });
     expect(restarted).toMatchObject({
-      activeProfileId: 'backup',
+      activeConnectedAccountId: 'backup',
       members: expect.arrayContaining([
         expect.objectContaining({
-          profileId: 'primary',
+          connectedAccountId: 'primary',
           state: expect.objectContaining({ quotaExhaustedUntilMs: resetAtMs }),
         }),
       ]),
     });
 
-    const blocked = await fetchJson<unknown>(`${server.baseUrl}/v3/connect/${serviceId}/groups/${groupId}/active-profile`, {
+    const blocked = await fetchJson<unknown>(`${server.baseUrl}/v4/connect/qualified/group/active-account`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${restartedAuth.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ profileId: 'primary', expectedGeneration: 0 }),
+      body: JSON.stringify({
+        group: restarted.ref,
+        connectedAccountId: 'primary',
+        expectedGeneration: restarted.generation,
+        expectedIncarnation: restarted.incarnation,
+        expectedRuntimeStateRevision: restarted.runtimeStateRevision,
+      }),
       timeoutMs: 20_000,
     });
     expect(blocked.status).toBe(409);
     expect(blocked.data).toEqual({ error: 'connect_group_profile_runtime_cooldown', resetAtMs });
 
-    await patchConnectedServiceAuthGroupRuntimeState({
-      baseUrl: server.baseUrl,
-      token: restartedAuth.token,
-      serviceId,
-      groupId,
-      expectedGeneration: 0,
-      expectedRuntimeStateRevision: Number(restarted.runtimeStateRevision),
-      memberProfileId: 'primary',
+    const cleared = await patchQualifiedConnectedAccountGroupMemberExhaustion({
+      serverBaseUrl: server.baseUrl,
+      authToken: restartedAuth.token,
+      group: restarted,
+      expectedRuntimeStateRevision: restarted.runtimeStateRevision,
+      connectedAccountId: 'primary',
       quotaExhaustedUntilMs: null,
     });
-    const switched = await fetchJson<{ group?: unknown }>(
-      `${server.baseUrl}/v3/connect/${serviceId}/groups/${groupId}/active-profile`,
+    const switched = await fetchJson<unknown>(
+      `${server.baseUrl}/v4/connect/qualified/group/active-account`,
       {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${restartedAuth.token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ profileId: 'primary', expectedGeneration: 0 }),
+        body: JSON.stringify({
+          group: cleared.ref,
+          connectedAccountId: 'primary',
+          expectedGeneration: cleared.generation,
+          expectedIncarnation: cleared.incarnation,
+          expectedRuntimeStateRevision: cleared.runtimeStateRevision,
+        }),
         timeoutMs: 20_000,
       },
     );
     expect(switched.status).toBe(200);
-    expect(switched.data?.group).toMatchObject({ activeProfileId: 'primary', generation: 1 });
+    expect(asRecord(switched.data)?.group).toMatchObject({
+      activeConnectedAccountId: 'primary',
+      generation: cleared.generation + 1,
+    });
   }, 240_000);
 });

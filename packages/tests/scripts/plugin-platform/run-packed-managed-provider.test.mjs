@@ -249,6 +249,87 @@ test('dispatches the current-source External Sessions packed proof without candi
   );
 });
 
+test('dispatches the packed Channel provider vertical as its own executable candidate mode', () => {
+  const parsed = parsePackedManagedProviderArgs([
+    '--channel',
+    '--candidate',
+    '/candidate/manifest.json',
+  ]);
+
+  assert.deepEqual(parsed, {
+    mode: 'channel',
+    candidateManifestPath: '/candidate/manifest.json',
+    enableOpenCodeLive: false,
+  });
+
+  const invocation = buildPackedManagedProviderEntrypointInvocation({
+    packageRoot: '/repo/packages/tests',
+    parsed,
+  });
+  assert.deepEqual(invocation.args, [
+    '/repo/packages/tests/scripts/runTsxEntrypoint.mjs',
+    'src/plugin-platform/runPackedManagedProviderContinuity.ts',
+    '--channel',
+    '--candidate',
+    '/candidate/manifest.json',
+  ]);
+
+  assert.deepEqual(
+    parsePackedManagedProviderArgs([
+      '--channel',
+      '--candidate',
+      '/candidate/manifest.json',
+      '--work-root',
+      '/candidate/work',
+    ]),
+    {
+      mode: 'channel',
+      candidateManifestPath: '/candidate/manifest.json',
+      enableOpenCodeLive: false,
+      workRoot: '/candidate/work',
+    },
+  );
+
+  // The Channel vertical reverifies a candidate channels-protocol archive, so it
+  // can never run from the candidate-free recipe or current-source modes.
+  assert.throws(
+    () => parsePackedManagedProviderArgs(['--channel']),
+    /packed_managed_provider_candidate_required/u,
+  );
+  assert.throws(
+    () => parsePackedManagedProviderArgs(['--channel', '--current-source']),
+    /packed_managed_provider_current_source_must_be_candidate_free/u,
+  );
+  assert.throws(
+    () => parsePackedManagedProviderArgs(['--recipe', '--channel']),
+    /packed_managed_provider_recipe_must_be_candidate_free/u,
+  );
+  assert.throws(
+    () => parsePackedManagedProviderArgs([
+      '--channel',
+      '--channel',
+      '--candidate',
+      '/candidate/manifest.json',
+    ]),
+    /packed_managed_provider_channel_repeated/u,
+  );
+});
+
+test('advertises the packed Channel provider command and its stage list in the dry-run recipe', () => {
+  const recipe = buildPackedManagedProviderRecipe({
+    packageRoot: '/repo/packages/tests',
+  });
+
+  assert.equal(
+    recipe.channelCommand,
+    'yarn workspace @happier-dev/tests test:plugin-platform:packed-channel-provider --candidate <candidate-manifest.json>',
+  );
+  assert.deepEqual(
+    recipe.channelProviderStageIds,
+    PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS,
+  );
+});
+
 test('explicitly disables the separate Local Services product in every packed Provider launcher', () => {
   const harnessSources = [
     './run-packed-managed-provider.mjs',
@@ -506,6 +587,10 @@ test('keeps one canonical package command wired to the daemon continuity entrypo
   assert.equal(
     packageManifest.scripts['test:plugin-platform:packed-managed-provider'],
     'node scripts/plugin-platform/run-packed-managed-provider.mjs',
+  );
+  assert.equal(
+    packageManifest.scripts['test:plugin-platform:packed-channel-provider'],
+    'node scripts/plugin-platform/run-packed-managed-provider.mjs --channel',
   );
 
   const invocation = buildPackedManagedProviderEntrypointInvocation({

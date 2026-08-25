@@ -1,10 +1,6 @@
 import { once } from 'node:events';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { createServer } from 'node:http';
-import {
-  TLSSocket,
-} from 'node:tls';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   chmod,
@@ -65,6 +61,14 @@ import type {
 } from '../../scripts/plugin-platform/run-packed-managed-provider.mjs';
 import { createTestAuth, type TestAuth } from '../testkit/auth';
 import { seedCliAuthForServer } from '../testkit/cliAuth';
+import {
+  resolveObservedProcessExecutablePath,
+} from '../testkit/providers/identity/processCommand';
+import {
+  startConnectedAccountTlsRecordingProxy,
+  type ConnectedAccountTlsRecordingProxy,
+  type RecordedConnectedAccountTlsRequest,
+} from '../testkit/providers/connectedAccountTlsRecordingProxy';
 import { daemonControlPostJson } from '../testkit/daemon/controlServerClient';
 import {
   readDaemonState,
@@ -135,9 +139,6 @@ import {
 import {
   readCompletedTurnId,
 } from '../testkit/providers/harness/harnessSignals';
-import {
-  createEphemeralTlsServerFixture,
-} from '../testkit/tls/ephemeralTlsServerFixture.mjs';
 import {
   createArchiveBoundPackedChannelProviderFixture,
 } from './archiveBoundChannelProviderFixture.mjs';
@@ -210,8 +211,8 @@ const PACKED_CHANNEL_PROVIDER_STRICT_RESULT_SENTINEL =
   'packed-channel-provider-strict-result';
 const PACKED_CHANNEL_CONNECTION_CREATE_ACTION_ID =
   `${PACKED_CHANNELS_CORE_PLUGIN_ID}/connection/create-v1`;
-const PACKED_CHANNEL_CONNECTION_SET_ENABLED_ACTION_ID =
-  `${PACKED_CHANNELS_CORE_PLUGIN_ID}/connection/set-enabled-v1`;
+const PACKED_CHANNEL_CONNECTION_UPDATE_ACTION_ID =
+  `${PACKED_CHANNELS_CORE_PLUGIN_ID}/connection/update-v1`;
 const PACKED_CHANNEL_CONNECTION_DELETE_ACTION_ID =
   `${PACKED_CHANNELS_CORE_PLUGIN_ID}/connection/delete-v1`;
 const PACKED_CHANNEL_BINDING_CREATE_ACTION_ID =
@@ -782,30 +783,8 @@ export function assertPackedManagedProviderCandidateDaemonRunning(
   }
 }
 
-type RecordedTlsUpstreamRequest = Readonly<{
-  connectTarget: string;
-  method: string;
-  path: string;
-  observedAtMs: number;
-  body: string;
-  authorizationFingerprint: string | null;
-  accountHeader: string | null;
-}>;
-
-type TlsRecordingProxy = Readonly<{
-  url: string;
-  caCertPath: string;
-  entries: () => readonly RecordedTlsUpstreamRequest[];
-  connectTargets: () => readonly string[];
-  holdNextRequestBodyContaining(
-    value: string,
-  ): Readonly<{
-    release(): void;
-    completed: Promise<void>;
-  }>;
-  clear: () => void;
-  stop: () => Promise<void>;
-}>;
+type RecordedTlsUpstreamRequest = RecordedConnectedAccountTlsRequest;
+type TlsRecordingProxy = ConnectedAccountTlsRecordingProxy;
 
 type StockListenerSnapshot = Readonly<{
   port: 8317;
@@ -814,178 +793,6 @@ type StockListenerSnapshot = Readonly<{
 
 function assert(condition: unknown, code: string): asserts condition {
   if (!condition) throw new Error(code);
-}
-
-function scalarHeader(
-  value: string | readonly string[] | undefined,
-): string | null {
-  if (typeof value === 'string') return value;
-  return value?.[0] ?? null;
-}
-
-function authorizationFingerprint(
-  value: string | readonly string[] | undefined,
-): string | null {
-  const header = scalarHeader(value);
-  if (!header) return null;
-  const bearer = /^Bearer\s+(.+)$/iu.exec(header);
-  return fingerprintSecret(bearer?.[1] ?? header);
-}
-
-export async function startPackedManagedProviderTlsRecordingProxy():
-Promise<TlsRecordingProxy> {
-  const tlsFixture = await createEphemeralTlsServerFixture({
-    additionalDnsNames: ['chatgpt.com'],
-  });
-  const requests: RecordedTlsUpstreamRequest[] = [];
-  const connectTargets: string[] = [];
-  const holds: Array<{
-    bodyValue: string;
-    matched: boolean;
-    release(): void;
-    released: Promise<void>;
-    complete(): void;
-    completed: Promise<void>;
-  }> = [];
-  const sockets = new Set<import('node:stream').Duplex>();
-  const targetsBySocket = new WeakMap<object, string>();
-  const decryptedServer = createServer(async (request, response) => {
-    const body = await readRequestBody(request)
-      .catch(() => Buffer.alloc(0));
-    const entry: RecordedTlsUpstreamRequest = {
-      connectTarget: targetsBySocket.get(request.socket) ?? '',
-      method: request.method ?? '',
-      path: request.url ?? '',
-      observedAtMs: Date.now(),
-      body: body.toString('utf8'),
-      authorizationFingerprint:
-        authorizationFingerprint(request.headers.authorization),
-      accountHeader:
-        scalarHeader(request.headers['chatgpt-account-id'])
-        ?? scalarHeader(request.headers['x-openai-account-id'])
-        ?? scalarHeader(request.headers['openai-account-id']),
-    };
-    requests.push(entry);
-    const hold = holds.find(
-      (candidate) =>
-        !candidate.matched && entry.body.includes(candidate.bodyValue),
-    );
-    if (hold) {
-      hold.matched = true;
-      await hold.released;
-    }
-    response.statusCode = hold ? 400 : 502;
-    response.setHeader('content-type', 'application/json');
-    const finished = once(response, 'finish').catch(() => {});
-    response.end(JSON.stringify({
-      error: {
-        type: hold
-          ? 'packed_managed_provider_held_attempt_completed'
-          : 'packed_managed_provider_upstream_observed',
-        message: 'The isolated test observer does not forward upstream.',
-      },
-    }));
-    await finished;
-    hold?.complete();
-  });
-  const server = createServer((_request, response) => {
-    response.statusCode = 400;
-    response.end('CONNECT required');
-  });
-  let stopPromise: Promise<void> | null = null;
-  const stopProxy = (): Promise<void> => {
-    stopPromise ??= (async () => {
-      for (const hold of holds) hold.release();
-      const closed = server.listening
-        ? new Promise<void>((resolveClosed) => {
-          server.close(() => resolveClosed());
-        })
-        : Promise.resolve();
-      for (const socket of sockets) socket.destroy();
-      try {
-        await closed;
-      } finally {
-        await tlsFixture.cleanup();
-      }
-    })().catch((error) => {
-      stopPromise = null;
-      throw error;
-    });
-    return stopPromise;
-  };
-  server.on('connect', (request, socket, head) => {
-    const connectTarget = request.url ?? '';
-    connectTargets.push(connectTarget);
-    sockets.add(socket);
-    socket.once('close', () => sockets.delete(socket));
-    socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-    if (head.length > 0) socket.unshift(head);
-    const tlsSocket = new TLSSocket(socket, {
-      isServer: true,
-      secureContext: tlsFixture.secureContext,
-      ALPNProtocols: ['http/1.1'],
-    });
-    sockets.add(tlsSocket);
-    targetsBySocket.set(tlsSocket, connectTarget);
-    tlsSocket.once('close', () => sockets.delete(tlsSocket));
-    tlsSocket.once('secure', () => {
-      decryptedServer.emit('connection', tlsSocket);
-    });
-    tlsSocket.once('error', () => {
-      tlsSocket.destroy();
-    });
-  });
-  let address;
-  try {
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    address = server.address();
-    assert(
-      address && typeof address === 'object',
-      'packed_managed_provider_connect_proxy_address_missing',
-    );
-  } catch (error) {
-    await stopProxy();
-    throw error;
-  }
-  return {
-    url: `http://127.0.0.1:${address.port}`,
-    entries: () => requests.map((entry) => ({ ...entry })),
-    connectTargets: () => [...connectTargets],
-    caCertPath: tlsFixture.caCertificatePath,
-    holdNextRequestBodyContaining: (bodyValue) => {
-      assert(
-        bodyValue.length > 0,
-        'packed_managed_provider_upstream_hold_value_missing',
-      );
-      let release!: () => void;
-      const released = new Promise<void>((resolveRelease) => {
-        release = resolveRelease;
-      });
-      let complete!: () => void;
-      const completed = new Promise<void>((resolveCompleted) => {
-        complete = resolveCompleted;
-      });
-      const hold = {
-        bodyValue,
-        matched: false,
-        release,
-        released,
-        complete,
-        completed,
-      };
-      holds.push(hold);
-      return {
-        release,
-        completed,
-      };
-    },
-    clear: () => {
-      requests.length = 0;
-      connectTargets.length = 0;
-    },
-    stop: stopProxy,
-  };
 }
 
 type PackedChannelProviderLoopback = Readonly<{
@@ -1368,23 +1175,6 @@ function fingerprintSecret(value: string): string {
   return `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
 }
 
-async function readRequestBody(
-  request: import('node:http').IncomingMessage,
-): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let length = 0;
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    length += bytes.length;
-    assert(
-      length <= 512 * 1024,
-      'packed_managed_provider_upstream_request_too_large',
-    );
-    chunks.push(bytes);
-  }
-  return Buffer.concat(chunks);
-}
-
 function connectTargetForRequestAuthOrigin(origin: string): string {
   const parsed = new URL(origin);
   assert(
@@ -1640,7 +1430,9 @@ async function listCandidateWrapperProcesses(
     }
     const identity = await readProcessIdentityByPid(entry.pid);
     const processStartTimeMs = identity?.processStartTimeMs;
-    const executablePath = identity?.executablePath;
+    const executablePath = identity
+      ? resolveObservedProcessExecutablePath(identity.command)
+      : null;
     if (
       !identity
       || typeof processStartTimeMs !== 'number'
@@ -1836,7 +1628,7 @@ async function initializeRuntime(
     serverProxy = await startHttpRequestRecordingProxy({
       targetBaseUrl: server.baseUrl,
     });
-    connectProxy = await startPackedManagedProviderTlsRecordingProxy();
+    connectProxy = await startConnectedAccountTlsRecordingProxy();
     const trustedCertificatePath =
       await writePackedManagedProviderTrustedCertificateBundle({
         testDir,
@@ -3382,13 +3174,13 @@ async function preparePackedChannelProviderAuthoring(input: Readonly<{
         registry.origin,
         '--json',
       ],
-    }, 'plugins_author_install');
+    }, 'plugins_dev_install');
     await runPackedCliJson({
       cliEntrypoint,
       cwd: fixtureRoot,
       env,
       args: ['plugins', 'author', 'typecheck', pluginRoot, '--json'],
-    }, 'plugins_author_typecheck');
+    }, 'plugins_dev_typecheck');
     const archivePath = join(
       fixtureRoot,
       'out-of-tree-channel-socket-provider.happier-plugin.tgz',
@@ -3546,7 +3338,7 @@ async function prepareCandidateHandoffAuthoring(
           registry.origin,
           '--json',
         ],
-      }, 'plugins_author_install');
+      }, 'plugins_dev_install');
     }
     return {
       cliEntrypoint,
@@ -3656,7 +3448,7 @@ async function packAndInstallCandidateHandoffGeneration(input: Readonly<{
     await runCandidateHandoffCliJson({
       authoring: input.authoring,
       args: ['plugins', 'author', operation, pluginRoot, '--json'],
-      expectedKind: `plugins_author_${operation}`,
+      expectedKind: `plugins_dev_${operation}`,
     });
   }
   const archivePath = join(
@@ -3733,7 +3525,9 @@ async function listCandidateHandoffWrapperProcesses(
     }
     const identity = await readProcessIdentityByPid(entry.pid);
     const processStartTimeMs = identity?.processStartTimeMs;
-    const executablePath = identity?.executablePath;
+    const executablePath = identity
+      ? resolveObservedProcessExecutablePath(identity.command)
+      : null;
     if (
       !identity
       || typeof processStartTimeMs !== 'number'
@@ -4479,7 +4273,7 @@ export async function runPackedCurrentSourceExternalSessions(): Promise<
         registry.origin,
         '--json',
       ],
-      expectedKind: 'plugins_author_install',
+      expectedKind: 'plugins_dev_install',
     });
     const sourceCliLaunchSpec = cliLaunchSpec;
     assert(
@@ -8871,16 +8665,18 @@ async function runPackedChannelProviderLifecycleProbe(input: Readonly<{
         requirePackedChannelActionSuccess(
           await executePackedChannelAction({
             runtime: input.runtime,
-            actionId: PACKED_CHANNEL_CONNECTION_SET_ENABLED_ACTION_ID,
+            actionId: PACKED_CHANNEL_CONNECTION_UPDATE_ACTION_ID,
             actionInput: {
               connectionId,
               expectedRevision: connectionBeforeDisable.revision,
               enabled: false,
+              maximumObservationAgeMs:
+                connectionBeforeDisable.maximumObservationAgeMs,
             },
           }),
-          PACKED_CHANNEL_CONNECTION_SET_ENABLED_ACTION_ID,
+          PACKED_CHANNEL_CONNECTION_UPDATE_ACTION_ID,
         ),
-        PACKED_CHANNEL_CONNECTION_SET_ENABLED_ACTION_ID,
+        PACKED_CHANNEL_CONNECTION_UPDATE_ACTION_ID,
       );
       assert(
         disableResult.kind === 'updated',
@@ -8905,16 +8701,18 @@ async function runPackedChannelProviderLifecycleProbe(input: Readonly<{
         requirePackedChannelActionSuccess(
           await executePackedChannelAction({
             runtime: input.runtime,
-            actionId: PACKED_CHANNEL_CONNECTION_SET_ENABLED_ACTION_ID,
+            actionId: PACKED_CHANNEL_CONNECTION_UPDATE_ACTION_ID,
             actionInput: {
               connectionId,
               expectedRevision: connectionBeforeEnable.revision,
               enabled: true,
+              maximumObservationAgeMs:
+                connectionBeforeEnable.maximumObservationAgeMs,
             },
           }),
-          PACKED_CHANNEL_CONNECTION_SET_ENABLED_ACTION_ID,
+          PACKED_CHANNEL_CONNECTION_UPDATE_ACTION_ID,
         ),
-        PACKED_CHANNEL_CONNECTION_SET_ENABLED_ACTION_ID,
+        PACKED_CHANNEL_CONNECTION_UPDATE_ACTION_ID,
       );
       assert(
         enableResult.kind === 'updated',

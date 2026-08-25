@@ -318,6 +318,35 @@ function hasAnyCommand(text: string, commands: readonly string[]): boolean {
   return commands.length === 0 ? true : commands.some((command) => text.includes(command));
 }
 
+const FINITE_PUBLIC_SDK_SCRIPT_NAME = 'check:public-sdk:finite:local';
+const FINITE_PUBLIC_SDK_WORKSPACE_TEST_TASK = 'test:finite';
+
+/**
+ * The workflow substitutes one aggregate command for the per-workspace test steps, so its unit
+ * coverage is exactly what that root script runs. Reading the turbo tasks and `--filter` targets out
+ * of the script body keeps the allowance removal-sensitive: dropping the workspace test task, or
+ * dropping a workspace from the filter, withdraws the credit instead of leaving a mirrored list that
+ * cannot notice either change.
+ */
+function resolveFinitePublicSdkTestWorkspaces(
+  scripts: Readonly<Record<string, string>>,
+): ReadonlySet<string> {
+  const tokens = (scripts[FINITE_PUBLIC_SDK_SCRIPT_NAME] ?? '').split(/\s+/u).filter((token) => token.length > 0);
+  const runIndex = tokens.indexOf('run');
+  if (runIndex === -1) return new Set();
+  const tasks: string[] = [];
+  for (const token of tokens.slice(runIndex + 1)) {
+    if (token.startsWith('-')) break;
+    tasks.push(token);
+  }
+  if (!tasks.includes(FINITE_PUBLIC_SDK_WORKSPACE_TEST_TASK)) return new Set();
+  const workspaces = new Set<string>();
+  for (const token of tokens) {
+    if (token.startsWith('--filter=')) workspaces.add(token.slice('--filter='.length));
+  }
+  return workspaces;
+}
+
 /**
  * The root unit lane runs one workspace test script per workspace. CI must run the same set, so the
  * expected commands are read out of the root script instead of a parallel maintained list.
@@ -330,6 +359,8 @@ function collectRootUnitLaneWorkflowIssues(
   const workflowTargets = scanYarnInvocations(input.workflowText).workspaceTargets
     .filter((target) => target.scriptName.startsWith('test'));
   const seen = new Set<string>();
+  const finitePublicSdkTaskRuns = /\byarn(?:\s+-s)?\s+check:public-sdk:finite(?:\s|$)/u.test(input.workflowText);
+  const finitePublicSdkWorkspaces = resolveFinitePublicSdkTestWorkspaces(scripts);
 
   for (const target of resolveRootScriptWorkspaceTargets(scripts, ROOT_UNIT_LANE_SCRIPT_NAME)) {
     if (!target.scriptName.startsWith('test')) continue;
@@ -337,7 +368,10 @@ function collectRootUnitLaneWorkflowIssues(
     if (seen.has(workspaceLabel)) continue;
     seen.add(workspaceLabel);
 
-    if (!workflowTargets.some((candidate) => matchesWorkspaceScriptTarget(target, candidate))) {
+    if (
+      !workflowTargets.some((candidate) => matchesWorkspaceScriptTarget(target, candidate))
+      && !(finitePublicSdkTaskRuns && target.packageName !== null && finitePublicSdkWorkspaces.has(target.packageName))
+    ) {
       issues.push({
         laneId: 'test',
         message: `Workflow coverage is missing for test: no CI step runs the ${workspaceLabel} test script.`,

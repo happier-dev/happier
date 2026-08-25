@@ -134,6 +134,10 @@ type RunLoggedCommandParams = {
   abortSignal?: AbortSignal;
 };
 
+function describeCapturedCommandLogs(params: Pick<RunLoggedCommandParams, 'stdoutPath' | 'stderrPath'>): string {
+  return `(stdout=${params.stdoutPath} stderr=${params.stderrPath})`;
+}
+
 export async function runLoggedCommandWithOutcome(
   params: RunLoggedCommandParams,
 ): Promise<LoggedCommandProcessOutcome> {
@@ -182,7 +186,7 @@ export async function runLoggedCommandWithOutcome(
   const normalizeAbortError = (reason: unknown): Error => {
     if (reason instanceof Error) return reason;
     if (typeof reason === 'string' && reason.trim()) return new Error(reason);
-    return new Error(`${params.command} ${params.args.join(' ')} aborted`);
+    return new Error(`${params.command} aborted ${describeCapturedCommandLogs(params)}`);
   };
 
   const outcome = await new Promise<
@@ -205,7 +209,10 @@ export async function runLoggedCommandWithOutcome(
         void terminateProcessTreeByPid(child.pid, { graceMs: 0, pollMs: 25 });
       }
       closeLogStreams();
-      settle({ ok: false, error: new Error(`${params.command} ${params.args.join(' ')} timed out after ${timeoutMs}ms`) });
+      settle({
+        ok: false,
+        error: new Error(`${params.command} timed out after ${timeoutMs}ms ${describeCapturedCommandLogs(params)}`),
+      });
     }, timeoutMs);
 
     const abortHandler = () => {
@@ -228,7 +235,11 @@ export async function runLoggedCommandWithOutcome(
       clearTimeout(timer);
       detachCleanup();
       closeLogStreams();
-      settle({ ok: false, error: err instanceof Error ? err : new Error(String(err)) });
+      const cause = err instanceof Error ? err : new Error(String(err));
+      settle({
+        ok: false,
+        error: new Error(`${cause.message} ${describeCapturedCommandLogs(params)}`, { cause }),
+      });
     });
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
@@ -243,7 +254,7 @@ export async function runLoggedCommandWithOutcome(
       settle({
         ok: false,
         error: new LoggedCommandProcessError(
-          `${params.command} exited with ${detail}`,
+          `${params.command} exited with ${detail} ${describeCapturedCommandLogs(params)}`,
           processOutcome,
         ),
       });
@@ -262,11 +273,11 @@ export async function runLoggedCommandWithOutcome(
       const processOutcome = readLoggedCommandProcessOutcome(outcome.error);
       if (processOutcome) {
         throw new LoggedCommandProcessError(
-          `${outcome.error.message}; ${drainError.message}`,
+          `${outcome.error.message}; ${drainError.message} ${describeCapturedCommandLogs(params)}`,
           processOutcome,
         );
       }
-      throw new Error(`${outcome.error.message}; ${drainError.message}`);
+      throw new Error(`${outcome.error.message}; ${drainError.message} ${describeCapturedCommandLogs(params)}`);
     }
     throw new LoggedCommandProcessError(drainError.message, outcome.process);
   }

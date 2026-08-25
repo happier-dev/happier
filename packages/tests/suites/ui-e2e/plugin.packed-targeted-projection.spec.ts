@@ -544,7 +544,7 @@ async function authorAndPackFixtureProject(params: Readonly<{
       '--json',
     ],
     timeoutMs: 300_000,
-  }), 'plugins_author_install');
+  }), 'plugins_dev_install');
   for (const operation of ['typecheck', 'build'] as const) {
     requireSuccessfulEnvelope(await runCliJson({
       testDir: params.testDir,
@@ -556,7 +556,7 @@ async function authorAndPackFixtureProject(params: Readonly<{
       label: `author-${operation}-${params.projectRoot.split('/').at(-1) ?? 'fixture'}`,
       args: ['plugins', 'author', operation, params.projectRoot, '--json'],
       timeoutMs: 300_000,
-    }), `plugins_author_${operation}`);
+    }), `plugins_dev_${operation}`);
   }
   requireSuccessfulEnvelope(await runCliJson({
     testDir: params.testDir,

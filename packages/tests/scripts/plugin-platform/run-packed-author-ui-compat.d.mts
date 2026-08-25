@@ -601,10 +601,29 @@ export function assertPackedPluginUiSdkDependency(
   sdkArtifact: PackedAuthorCandidate['sdk'],
 ): string;
 
+export type PackedAuthorExternalReferenceProduct = Readonly<{
+  stageId: 'public-authoring-external-pair' | 'production-hosted-reference-external-pair';
+  label: string;
+  directoryName: string;
+  sourceRoot: string;
+  packageName: string;
+  packageVersion: string;
+  hostedWebContributionId?: string;
+}>;
+
+export const PACKED_AUTHOR_EXTERNAL_REFERENCE_PRODUCTS:
+  readonly PackedAuthorExternalReferenceProduct[];
+
+export function packedAuthorExternalReferenceProduct(
+  stageId: PackedAuthorExternalReferenceProduct['stageId'],
+): PackedAuthorExternalReferenceProduct;
+
 export function attestPackedPublicAuthoringHostedWebGraph(input: Readonly<{
   artifactRoot: string;
+  contributionId?: string;
+  label?: string;
 }>): Promise<Readonly<{
-  contributionId: 'review-web';
+  contributionId: string;
   entry: string;
   digest: string;
   files: readonly Readonly<{

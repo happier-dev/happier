@@ -947,10 +947,10 @@ function describeCliSharedDepsHealth(
 export function resolveCliDistBuildInvocation(params: { repoRoot?: string } = {}): CliDistBuildInvocation {
   const rootDir = params.repoRoot ?? repoRootDir();
   const cwd = resolve(rootDir, 'apps', 'cli');
-  // Use the canonical workspace build script. Some E2E lanes run multiple daemons concurrently and
-  // rely on hashed-chunk stability; building via pkgroll directly can leave partial dist folders.
-  // The workspace build is expected to produce a fully coherent dist/ output.
-  return { command: yarnCommand(), args: ['-s', 'workspace', '@happier-dev/cli', 'build'], cwd: rootDir };
+  // Shared dependencies are prepared before this invocation. Call the same canonical CLI build
+  // script without re-running Yarn's `prebuild` lifecycle: that lifecycle calls build:shared and
+  // would otherwise acquire the shared-deps lock after this helper owns the CLI dist lock.
+  return { command: yarnCommand(), args: ['-s', 'workspace', '@happier-dev/cli', 'build:prepared'], cwd: rootDir };
 }
 
 export async function ensureCliSharedDepsBuilt(
@@ -1054,6 +1054,10 @@ export async function ensureCliBundledPluginProjectionsCurrent(
   mkdirSync(params.testDir, { recursive: true });
   const rootDir = options.repoRoot ?? repoRootDir();
   const runCommand = options.runCommand ?? runLoggedCommand;
+  const env: NodeJS.ProcessEnv = { ...process.env, ...params.env, CI: '1' };
+  if (typeof env.TSX_TSCONFIG_PATH === 'string' && env.TSX_TSCONFIG_PATH.trim().length > 0) {
+    env.TSX_TSCONFIG_PATH = resolve(process.cwd(), env.TSX_TSCONFIG_PATH);
+  }
   await runCommand({
     command: process.execPath,
     args: [
@@ -1065,7 +1069,7 @@ export async function ensureCliBundledPluginProjectionsCurrent(
       'check',
     ],
     cwd: rootDir,
-    env: { ...process.env, ...params.env, CI: '1' },
+    env,
     stdoutPath: resolve(params.testDir, 'cli.bundledPluginProjectionsCheck.stdout.log'),
     stderrPath: resolve(params.testDir, 'cli.bundledPluginProjectionsCheck.stderr.log'),
     timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,

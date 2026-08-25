@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { cp, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
@@ -10,6 +10,7 @@ import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundle
 import {
   __cliDistTestHooks,
   ensureCliDistBuilt,
+  ensureCliBundledPluginProjectionsCurrent,
   ensureCliDistSnapshotEntrypoint,
   ensureCliSharedDepsBuilt,
   ensureCliSourceDevSharedDepsCurrent,
@@ -19,6 +20,16 @@ import { CLI_SHARED_DEP_TEST_FIXTURE_PACKAGE_NAMES } from './workspacePackageRes
 import { sleep } from '../timing';
 
 const createdDirs: string[] = [];
+
+function createSignal(): { promise: Promise<void>; resolve: () => void } {
+  let resolveSignal!: () => void;
+  return {
+    promise: new Promise<void>((resolve) => {
+      resolveSignal = resolve;
+    }),
+    resolve: () => resolveSignal(),
+  };
+}
 
 async function createRepoRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'happier-cli-dist-test-'));
@@ -143,6 +154,27 @@ describe('ensureCliDistBuilt', () => {
     expect(invocations[0]?.args).not.toContain('build:shared');
   });
 
+  it('resolves caller-relative TSX configuration before checking bundled plugin projections from the repository root', async () => {
+    const repoRoot = await createRepoRoot();
+    let invocation: { cwd: string; env?: NodeJS.ProcessEnv } | undefined;
+
+    await ensureCliBundledPluginProjectionsCurrent(
+      {
+        testDir: join(repoRoot, '.project'),
+        env: { TSX_TSCONFIG_PATH: 'tsconfig.json' },
+      },
+      {
+        repoRoot,
+        runCommand: async (currentInvocation) => {
+          invocation = currentInvocation;
+        },
+      },
+    );
+
+    expect(invocation).toMatchObject({ cwd: repoRoot });
+    expect(invocation?.env?.TSX_TSCONFIG_PATH).toBe(resolve(process.cwd(), 'tsconfig.json'));
+  });
+
   it('does not rebuild when only src test files are newer than dist', async () => {
     const repoRoot = await createRepoRoot();
     const srcTestPath = join(repoRoot, 'apps', 'cli', 'src', 'cliDistBehavior.test.ts');
@@ -201,6 +233,82 @@ describe('ensureCliDistBuilt', () => {
     );
 
     expect(nestedInherited).toBe(true);
+  });
+
+  it('does not reacquire shared dependencies while the test build owns the CLI dist lock', async () => {
+    const repoRoot = await createRepoRoot();
+    const sharedDepsLockPath = join(repoRoot, '.project', 'tmp', 'cli-shared-deps.lock');
+    const distLockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+    const sourcePath = join(repoRoot, 'apps', 'cli', 'src', 'index.ts');
+    const distEntrypoint = join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs');
+    const older = new Date('2030-03-09T01:00:00.000Z');
+    const newer = new Date('2030-03-09T01:05:00.000Z');
+    utimesSync(distEntrypoint, older, older);
+    utimesSync(sourcePath, newer, newer);
+
+    const sharedDepsHeld = createSignal();
+    const distHeld = createSignal();
+    const stackWaitingForDist = createSignal();
+    const stackBuild = withWorkspaceBundleLock(
+      async () => {
+        sharedDepsHeld.resolve();
+        await distHeld.promise;
+        return await withWorkspaceBundleLock(
+          async () => 'stack build completed',
+          {
+            lockPath: distLockPath,
+            timeoutMs: 1_000,
+            pollIntervalMs: 5,
+            staleAfterMs: 1_000,
+            onWait: () => stackWaitingForDist.resolve(),
+          },
+        );
+      },
+      {
+        lockPath: sharedDepsLockPath,
+        timeoutMs: 1_000,
+        pollIntervalMs: 5,
+        staleAfterMs: 1_000,
+      },
+    );
+    await sharedDepsHeld.promise;
+
+    const invocations: string[][] = [];
+    try {
+      const entrypoint = await ensureCliDistBuilt(
+        { testDir: join(repoRoot, '.project'), env: process.env },
+        {
+          repoRoot,
+          lockPath: distLockPath,
+          runCommand: async (invocation) => {
+            invocations.push(invocation.args);
+            // The package-manager `build` lifecycle runs `prebuild`, which runs
+            // build:shared. Model that real external lifecycle boundary so the
+            // test fails by lock timeout on the old dist -> shared order.
+            distHeld.resolve();
+            if (invocation.args.includes('build')) {
+              await stackWaitingForDist.promise;
+              await withWorkspaceBundleLock(
+                async () => undefined,
+                {
+                  lockPath: sharedDepsLockPath,
+                  timeoutMs: 200,
+                  pollIntervalMs: 5,
+                  staleAfterMs: 1_000,
+                },
+              );
+            }
+            utimesSync(distEntrypoint, newer, newer);
+          },
+        },
+      );
+
+      expect(entrypoint).toBe(distEntrypoint);
+      expect(invocations).toEqual([['-s', 'workspace', '@happier-dev/cli', 'build:prepared']]);
+      await expect(stackBuild).resolves.toBe('stack build completed');
+    } finally {
+      await stackBuild.catch(() => {});
+    }
   });
 
   it('creates a replacement snapshot instead of mutating a stale ready shared snapshot', async () => {

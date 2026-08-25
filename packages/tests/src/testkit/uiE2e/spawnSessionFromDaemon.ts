@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { StartedDaemon } from '../daemon/daemon';
+import { daemonControlPostJson } from '../daemon/controlServerClient';
 import { normalizeSpawnSessionRequestBody } from '../daemon/normalizeSpawnSessionRequestBody';
 import { assertBrowserCanAccessSession, type BrowserSessionAccessPage } from './assertBrowserCanAccessSession';
 
@@ -26,19 +27,26 @@ export async function spawnSessionFromDaemon(params: Readonly<{
         : randomUUID(),
   });
 
-  const res = await fetch(`http://127.0.0.1:${params.daemon.state.httpPort}/spawn-session`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-happier-daemon-token': token,
-    },
-    body: JSON.stringify(body),
+  const response = await daemonControlPostJson<unknown>({
+    port: params.daemon.state.httpPort,
+    path: '/spawn-session',
+    controlToken: token,
+    body,
   });
-  const json = (await res.json().catch(() => null)) as any;
-  if (!res.ok || !json || json.success !== true || typeof json.sessionId !== 'string') {
-    throw new Error(`Failed to spawn session (status=${res.status}): ${JSON.stringify(json)}`);
+  const json = response.data;
+  if (
+    response.status < 200
+    || response.status >= 300
+    || typeof json !== 'object'
+    || json === null
+    || !('success' in json)
+    || json.success !== true
+    || !('sessionId' in json)
+    || typeof json.sessionId !== 'string'
+  ) {
+    throw new Error(`Failed to spawn session (status=${response.status}): ${JSON.stringify(json)}`);
   }
-  const sessionId = json.sessionId as string;
+  const sessionId = json.sessionId;
   if (params.browserAccess) {
     await assertBrowserCanAccessSession({
       page: params.browserAccess.page,

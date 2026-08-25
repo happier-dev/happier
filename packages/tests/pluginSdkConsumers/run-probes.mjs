@@ -73,9 +73,6 @@ const REMOVED_NORMAL_SYMBOL_IMPORTS = [
   ['./ui', 'PluginHostedWebContributionV1'],
   ['./ui', 'PluginUiSurfaceModule'],
   ['./ui/client', 'CreatePluginUiHostApiClientOptions'],
-  ['./ui/build', 'PluginUiArtifactPlatform'],
-  ['./ui/build', 'PluginUiBuildConfig'],
-  ['./ui/build', 'PluginUiBuildTarget'],
   ['./ui/build', 'HostedWebViteBuildPresetInputV1'],
   ['./ui/build', 'defineHostedWebViteBuildPreset'],
   ['./testing', 'createPluginContextV1Fixture'],
@@ -87,9 +84,41 @@ const REMOVED_NORMAL_SYMBOL_IMPORTS = [
   ['./testing', 'PluginTestkitInvokeOptions'],
 ];
 
-const PACKED_GENERIC_TYPE_ARGUMENTS = new Map([
-  ['PluginProtocolClientHandle', ["'jsonRpc'"]],
-  ['PluginProtocolClientSpecByKind', ["'jsonRpc'"]],
+export const PACKED_GENERIC_TYPE_ARGUMENTS = new Map([
+  ['.:PluginProtocolClientHandle', ["'jsonRpc'"]],
+  ['.:PluginProtocolClientSpecByKind', ["'jsonRpc'"]],
+  [
+    '.:UiSurfaceAppPageDefinitionFor',
+    [
+      "Readonly<{ id: 'packed-app-page'; container: 'appPage' }>",
+      'UiSurfaceRendererDefinition',
+    ],
+  ],
+  [
+    '.:UiSurfaceDetailedDefinitionFor',
+    [
+      "Readonly<{ id: 'packed-detail'; container: 'detailsPanel'; target: 'session' }>",
+      'UiSurfaceRendererDefinition',
+    ],
+  ],
+  ['./contributions:PublicContributionProtocol', ['ContributionProtocol']],
+  [
+    './contributions:RequiredSurfaceRoles',
+    ["Readonly<{ primary: ContributionSurfaceDefinition & Readonly<{ required: true }> }>"],
+  ],
+  ['./protocol:ProtocolSchemaInput', ['ProtocolComposableSchema<string, number>']],
+  ['./protocol:ProtocolSchemaOutput', ['ProtocolComposableSchema<string, number>']],
+]);
+
+export const PACKED_OPAQUE_TYPE_EXPORTS = new Map([
+  [
+    './browser:BrowserAvailabilityDescriptor',
+    'Browser availability is intentionally opaque at the public SDK boundary.',
+  ],
+  [
+    './manifest:PluginAvailabilityDescriptor',
+    'Plugin availability is intentionally opaque at the public SDK boundary.',
+  ],
 ]);
 
 function packageSpecifier(entrypoint) {
@@ -139,6 +168,18 @@ export async function assertPackedPublishReadyPackageMetadata(packageRoot) {
     throw new Error('Packed SDK package must not remain private at publication readiness');
   }
   return packageJson;
+}
+
+function isTypeOnlyExportAlias(symbol) {
+  if (!(symbol.flags & ts.SymbolFlags.Alias)) return false;
+  return symbol.declarations?.some((declaration) => {
+    if (!ts.isExportSpecifier(declaration)) return false;
+    if (declaration.isTypeOnly) return true;
+    const namedExports = declaration.parent;
+    return ts.isNamedExports(namedExports)
+      && ts.isExportDeclaration(namedExports.parent)
+      && namedExports.parent.isTypeOnly;
+  }) ?? false;
 }
 
 export async function classifyPackedNormalSurface(packageRoot, { inventory }) {
@@ -209,7 +250,12 @@ export async function classifyPackedNormalSurface(packageRoot, { inventory }) {
       const target = symbol.flags & ts.SymbolFlags.Alias
         ? checker.getAliasedSymbol(symbol)
         : symbol;
-      const runtime = Boolean(target.flags & ts.SymbolFlags.Value);
+      // A type-only re-export can name a declaration class, whose underlying
+      // symbol has Value flags despite the published barrel intentionally
+      // omitting every runtime binding. The external contract is the alias at
+      // the package boundary, not that private declaration target.
+      const runtime = !isTypeOnlyExportAlias(symbol)
+        && Boolean(target.flags & ts.SymbolFlags.Value);
       const expectedKind = expectedSymbolsByName.get(name).kind;
       const actualKind = runtime ? 'value' : 'type';
       if (actualKind !== expectedKind) {
@@ -222,7 +268,17 @@ export async function classifyPackedNormalSurface(packageRoot, { inventory }) {
         ? undefined
         : target.declarations?.find((declaration) => declaration.typeParameters?.length);
       const declaredTypeParameters = genericDeclaration?.typeParameters;
-      const typeArguments = PACKED_GENERIC_TYPE_ARGUMENTS.get(name)
+      const surfaceSymbolKey = `${entrypoint.specifier}:${name}`;
+      const opaqueReason = PACKED_OPAQUE_TYPE_EXPORTS.get(surfaceSymbolKey);
+      if (opaqueReason) {
+        const declaredType = checker.getDeclaredTypeOfSymbol(target);
+        if (!(declaredType.flags & ts.TypeFlags.Unknown)) {
+          throw new Error(
+            `Packed SDK opaque type contract mismatch for ${surfaceSymbolKey}: ${opaqueReason}`,
+          );
+        }
+      }
+      const typeArguments = PACKED_GENERIC_TYPE_ARGUMENTS.get(surfaceSymbolKey)
         ?? (
           declaredTypeParameters?.every((parameter) => parameter.default)
             ? []
@@ -239,6 +295,7 @@ export async function classifyPackedNormalSurface(packageRoot, { inventory }) {
       return {
         name,
         runtime,
+        ...(opaqueReason ? { opaqueReason } : {}),
         ...(typeArguments.length > 0 ? { typeArguments } : {}),
       };
     });
@@ -363,9 +420,11 @@ export function renderRuntimeBehaviorConsumer(contractKey, reference, index) {
     case '@happier-dev/plugin-sdk/ui/build:createReactNativeWebVitePlugins':
       return [
         `const __vitePlugins${index} = ${reference}();`,
-        `if (__vitePlugins${index}.length !== 1`,
+        `if (__vitePlugins${index}.length !== 2`,
         `  || __vitePlugins${index}[0].name !== "happier-plugin-ui-host-runtime-externals"`,
-        `  || __vitePlugins${index}[0].resolveId("react") === null) {`,
+        `  || __vitePlugins${index}[0].resolveId("react") === null`,
+        `  || __vitePlugins${index}[1].name !== "happier-plugin-ui-package-instance"`,
+        `  || __vitePlugins${index}[1].enforce !== "post") {`,
         '  throw new Error("createReactNativeWebVitePlugins contract mismatch");',
         '}',
       ];
@@ -407,7 +466,7 @@ export function renderRuntimeBehaviorConsumer(contractKey, reference, index) {
         '    id: "com.example.packed-consumer",',
         '    version: "1.0.0",',
         '    displayName: "Packed consumer",',
-        `    runtime: { apiVersion: Number(__publicToolchain${index}.framework.runtime) },`,
+        `    runtime: { apiVersion: Number(__publicToolchain${index}.framework.runtime) as 1 },`,
         '    activation: { events: [{ kind: "startup" }] },',
         '    hostAccess: { required: [], optional: [] },',
         '    contributes: {},',
@@ -459,11 +518,15 @@ export function renderNormalSurfaceProbeSource(surface) {
     if (runtimeNames.length > 0) {
       importLines.push(`import * as ${runtimeNamespace} from "${specifier}";`);
     }
-    for (const { name, typeArguments = [] } of typeSymbols) {
+    for (const { name, opaqueReason, typeArguments = [] } of typeSymbols) {
       const typeReference = typeArguments.length > 0
         ? `${name}<${typeArguments.join(', ')}>`
         : name;
-      contractTypes.push(`__Assert<__IsConcrete<${typeReference}>>`);
+      contractTypes.push(
+        opaqueReason
+          ? `__Assert<__IsUnknown<${typeReference}>>`
+          : `__Assert<__IsConcrete<${typeReference}>>`,
+      );
       if (
         entrypoint === './runtime'
         && name === 'PluginConnectedAccountAuthenticationModeRuntime'
@@ -723,7 +786,9 @@ async function runNodeNextConsumer(workDir, tarballPath) {
   const runResult = runCommand(process.execPath, [join(consumerDir, 'dist', 'index.js')], {
     cwd: consumerDir,
     stage: 'nodenext-runtime',
-    timeout: 30_000,
+    // This adversarial probe imports every runtime entrypoint in one process;
+    // it is intentionally much broader than a real plugin's import graph.
+    timeout: 120_000,
   });
   if (!runResult.stdout.includes('normal-surface:contract-ok')) {
     throw new Error(`Unexpected NodeNext consumer output: ${runResult.stdout}`);

@@ -945,7 +945,7 @@ async function authorAndPackExternalTargetedFixture(params: Readonly<{
       '--sdk-registry', params.registryOrigin,
       '--json',
     ],
-  }, 'plugins_author_install');
+  }, 'plugins_dev_install');
   const installationData = requireRecord(
     requireRecord(installation, 'packed_targeted_author_install').data,
     'packed_targeted_author_install_data',
@@ -968,7 +968,7 @@ async function authorAndPackExternalTargetedFixture(params: Readonly<{
       cwd: params.cwd,
       env: params.env,
       args: ['plugins', 'author', operation, params.projectRoot, '--json'],
-    }, `plugins_author_${operation}`);
+    }, `plugins_dev_${operation}`);
     const data = requireRecord(
       requireRecord(result, `packed_targeted_author_${operation}`).data,
       `packed_targeted_author_${operation}_data`,

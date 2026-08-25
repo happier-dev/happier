@@ -19,6 +19,16 @@ test('collectWiringReport counts lanes and feature tagged files', async () => {
   assert.equal(report.issues.length, 0);
 });
 
+test('wires the public-authoring dist-import test through the SDK root unit lane', async () => {
+  const report = await collectWiringReport([
+    'packages/plugin-sdk/examples/public-authoring/test/index.test.mjs',
+  ]);
+
+  assert.deepEqual(report.declaredUnwiredFiles, []);
+  assert.equal(report.laneCounts.test, 1);
+  assert.deepEqual(report.issues, []);
+});
+
 test('collectWiringReport surfaces invalid feature tags and miswired lane names', async () => {
   const report = await collectWiringReport([
     'apps/server/sources/app/features/example.feat.not-real.spec.ts',

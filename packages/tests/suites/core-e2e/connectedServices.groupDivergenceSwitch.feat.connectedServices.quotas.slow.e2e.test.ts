@@ -5,6 +5,7 @@ import {
   buildConnectedServiceCredentialRecord,
   sealAccountScopedBlobCiphertext,
   type ConnectedServiceId,
+  type QualifiedConnectedAccountGroupV4,
 } from '@happier-dev/protocol';
 
 import {
@@ -13,6 +14,11 @@ import {
   type FakeTokenServerRequest,
   type StartedConnectedServicesCodexDaemonFixture,
 } from '../../src/testkit/connectedServicesCodexDaemon';
+import {
+  createQualifiedConnectedAccountGroup,
+  fetchQualifiedConnectedAccountGroup,
+  patchQualifiedConnectedAccountGroupMemberExhaustion,
+} from '../../src/testkit/connectedServicesRecovery';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { fetchJson } from '../../src/testkit/http';
 import { type StartedServer } from '../../src/testkit/process/serverLight';
@@ -23,11 +29,6 @@ const run = createRunDirs({ runLabel: 'core' });
 const serviceId: ConnectedServiceId = 'openai-codex';
 
 type UnknownRecord = Record<string, unknown>;
-type AuthGroupResponse = Readonly<{
-  group?: unknown;
-  error?: unknown;
-  generation?: unknown;
-}>;
 
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -104,14 +105,14 @@ async function createConnectedServiceProfile(params: Readonly<{
   expect(response.data?.success).toBe(true);
 }
 
-async function createConnectedServiceAuthGroup(params: Readonly<{
+async function switchActiveAccount(params: Readonly<{
   fixture: StartedConnectedServicesCodexDaemonFixture;
-  groupId: string;
-  activeProfileId: string;
-  memberProfileIds: readonly string[];
+  group: QualifiedConnectedAccountGroupV4;
+  connectedAccountId: string;
+  expectedGeneration: number;
 }>): Promise<UnknownRecord> {
-  const response = await fetchJson<AuthGroupResponse>(
-    `${params.fixture.serverBaseUrl}/v3/connect/${serviceId}/groups`,
+  const response = await fetchJson<unknown>(
+    `${params.fixture.serverBaseUrl}/v4/connect/qualified/group/active-account`,
     {
       method: 'POST',
       headers: {
@@ -119,115 +120,18 @@ async function createConnectedServiceAuthGroup(params: Readonly<{
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        groupId: params.groupId,
-        members: params.memberProfileIds.map((profileId, index) => ({
-          profileId,
-          priority: (index + 1) * 10,
-        })),
-        activeProfileId: params.activeProfileId,
-        policy: {
-          autoSwitch: true,
-          recoveryMode: 'switch_or_wait',
-        },
-      }),
-      timeoutMs: 20_000,
-    },
-  );
-
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group response');
-  return group;
-}
-
-async function switchActiveProfile(params: Readonly<{
-  fixture: StartedConnectedServicesCodexDaemonFixture;
-  groupId: string;
-  profileId: string;
-  expectedGeneration: number;
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<AuthGroupResponse>(
-    `${params.fixture.serverBaseUrl}/v3/connect/${serviceId}/groups/${params.groupId}/active-profile`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${params.fixture.auth.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        profileId: params.profileId,
+        group: params.group.ref,
+        connectedAccountId: params.connectedAccountId,
         expectedGeneration: params.expectedGeneration,
+        expectedIncarnation: params.group.incarnation,
+        expectedRuntimeStateRevision: params.group.runtimeStateRevision,
       }),
       timeoutMs: 20_000,
     },
   );
 
   expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group response');
-  return group;
-}
-
-async function patchMemberQuotaState(params: Readonly<{
-  fixture: StartedConnectedServicesCodexDaemonFixture;
-  groupId: string;
-  expectedGeneration: number;
-  expectedRuntimeStateRevision: number;
-  profileId: string;
-  quotaExhaustedUntilMs: number;
-}>): Promise<UnknownRecord> {
-  const now = Date.now();
-  const response = await fetchJson<AuthGroupResponse>(
-    `${params.fixture.serverBaseUrl}/v3/connect/${serviceId}/groups/${params.groupId}/runtime-state`,
-    {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${params.fixture.auth.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        expectedGeneration: params.expectedGeneration,
-        expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
-        state: {
-          status: 'exhausted',
-          lastSwitchReason: 'usage_limit',
-        },
-        memberStates: [
-          {
-            profileId: params.profileId,
-            state: {
-              quotaExhaustedUntilMs: params.quotaExhaustedUntilMs,
-              lastFailureKind: 'usage_limit',
-              lastFailureCode: 'usage_limit_reached',
-              lastObservedAtMs: now,
-            },
-          },
-        ],
-      }),
-      timeoutMs: 20_000,
-    },
-  );
-
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group runtime-state response');
-  return group;
-}
-
-async function fetchConnectedServiceAuthGroup(params: Readonly<{
-  fixture: StartedConnectedServicesCodexDaemonFixture;
-  groupId: string;
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<AuthGroupResponse>(
-    `${params.fixture.serverBaseUrl}/v3/connect/${serviceId}/groups/${params.groupId}`,
-    {
-      headers: { Authorization: `Bearer ${params.fixture.auth.token}` },
-      timeoutMs: 20_000,
-    },
-  );
-
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
+  const group = asRecord(asRecord(response.data)?.group);
   if (!group) throw new Error('Expected connected service auth group response');
   return group;
 }
@@ -338,14 +242,16 @@ describe('core e2e: connected-service group divergence switching', () => {
       providerEmail: 'eligible@example.test',
     });
 
-    const created = await createConnectedServiceAuthGroup({
-      fixture,
+    const created = await createQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: serviceId,
       groupId,
-      activeProfileId: originalProfileId,
-      memberProfileIds: [originalProfileId, exhaustedActiveProfileId, eligibleProfileId],
+      activeConnectedAccountId: originalProfileId,
+      memberConnectedAccountIds: [originalProfileId, exhaustedActiveProfileId, eligibleProfileId],
     });
-    expect(readString(created, 'activeProfileId')).toBe(originalProfileId);
-    expect(readNumber(created, 'generation')).toBe(0);
+    expect(created.activeConnectedAccountId).toBe(originalProfileId);
+    const initialGeneration = created.generation;
 
     const sessionId = await spawnConnectedCodexGroupSession({
       fixture,
@@ -353,21 +259,28 @@ describe('core e2e: connected-service group divergence switching', () => {
       sessionId: 'connected-services-group-divergence-1',
     });
 
-    const diverged = await switchActiveProfile({
+    const diverged = await switchActiveAccount({
       fixture,
-      groupId,
-      profileId: exhaustedActiveProfileId,
-      expectedGeneration: 0,
+      group: created,
+      connectedAccountId: exhaustedActiveProfileId,
+      expectedGeneration: initialGeneration,
     });
-    expect(readString(diverged, 'activeProfileId')).toBe(exhaustedActiveProfileId);
-    expect(readNumber(diverged, 'generation')).toBe(1);
+    expect(readString(diverged, 'activeConnectedAccountId')).toBe(exhaustedActiveProfileId);
+    expect(readNumber(diverged, 'generation')).toBe(initialGeneration + 1);
 
-    await patchMemberQuotaState({
-      fixture,
+    const divergedGroup = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: serviceId,
       groupId,
-      expectedGeneration: 1,
-      expectedRuntimeStateRevision: 0,
-      profileId: exhaustedActiveProfileId,
+    });
+
+    await patchQualifiedConnectedAccountGroupMemberExhaustion({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      group: divergedGroup,
+      expectedRuntimeStateRevision: divergedGroup.runtimeStateRevision,
+      connectedAccountId: exhaustedActiveProfileId,
       quotaExhaustedUntilMs: Date.now() + 60_000,
     });
 
@@ -419,15 +332,25 @@ describe('core e2e: connected-service group divergence switching', () => {
     });
 
     await waitFor(async () => {
-      const group = await fetchConnectedServiceAuthGroup({ fixture: fixture!, groupId });
-      return readString(group, 'activeProfileId') === eligibleProfileId;
+      const group = await fetchQualifiedConnectedAccountGroup({
+        serverBaseUrl: fixture!.serverBaseUrl,
+        authToken: fixture!.auth.token,
+        legacyServiceId: serviceId,
+        groupId,
+      });
+      return group.activeConnectedAccountId === eligibleProfileId;
     }, {
       timeoutMs: 30_000,
       context: 'diverged runtime-auth recovery commits the eligible connected-service group profile',
     });
 
-    const group = await fetchConnectedServiceAuthGroup({ fixture, groupId });
-    expect(readString(group, 'activeProfileId')).toBe(eligibleProfileId);
-    expect(readNumber(group, 'generation')).toBe(2);
+    const group = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: fixture.serverBaseUrl,
+      authToken: fixture.auth.token,
+      legacyServiceId: serviceId,
+      groupId,
+    });
+    expect(group.activeConnectedAccountId).toBe(eligibleProfileId);
+    expect(group.generation).toBe(initialGeneration + 2);
   }, 300_000);
 });

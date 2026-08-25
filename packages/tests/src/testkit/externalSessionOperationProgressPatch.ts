@@ -14,7 +14,7 @@ import {
 
 import type { RecordedHttpProxyRequest } from './httpRequestRecordingProxy';
 
-const EXTERNAL_SESSION_OPERATION_COMPLETION_RECEIPT_RETENTION_MS =
+const EXTERNAL_SESSION_OPERATION_TERMINAL_RECEIPT_RETENTION_MS =
   24 * 60 * 60 * 1_000;
 
 function parseJson(value: string): unknown {
@@ -29,18 +29,18 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function invalidCompletionReceipt(): never {
-  throw new Error('Expected a strict minimal completion receipt.');
+function invalidTerminalReceipt(): never {
+  throw new Error('Expected a strict minimal terminal receipt.');
 }
 
-export function readExternalSessionOperationCompletionReceipt(
+export function readExternalSessionOperationTerminalReceipt(
   value: unknown,
 ): Readonly<{
   reference: ExternalSessionOperationReferenceV1;
   presentation: ExternalSessionOperationSharedPresentationV1;
   persistedKeys: readonly string[];
 }> {
-  if (!isRecord(value)) invalidCompletionReceipt();
+  if (!isRecord(value)) invalidTerminalReceipt();
   const allowedKeys = new Set([
     'v',
     'recordKind',
@@ -49,13 +49,13 @@ export function readExternalSessionOperationCompletionReceipt(
     'durableIdempotencyKey',
     'idempotencyIntentDigest',
     'authorIntent',
-    'completedAtMs',
+    'terminalAtMs',
     'expiresAtMs',
   ]);
   const persistedKeys = Object.keys(value).sort();
   if (
     value.v !== 1
-    || value.recordKind !== 'completed_receipt'
+    || value.recordKind !== 'terminal_receipt'
     || persistedKeys.some((key) => !allowedKeys.has(key))
     || typeof value.durableIdempotencyKey !== 'string'
     || value.durableIdempotencyKey.length < 1
@@ -63,18 +63,18 @@ export function readExternalSessionOperationCompletionReceipt(
     || value.durableIdempotencyKey !== value.durableIdempotencyKey.trim()
     || typeof value.idempotencyIntentDigest !== 'string'
     || !/^[a-f0-9]{64}$/u.test(value.idempotencyIntentDigest)
-    || typeof value.completedAtMs !== 'number'
-    || !Number.isSafeInteger(value.completedAtMs)
-    || value.completedAtMs < 0
+    || typeof value.terminalAtMs !== 'number'
+    || !Number.isSafeInteger(value.terminalAtMs)
+    || value.terminalAtMs < 0
     || typeof value.expiresAtMs !== 'number'
     || !Number.isSafeInteger(value.expiresAtMs)
     || value.expiresAtMs < 0
-    || value.completedAtMs > Number.MAX_SAFE_INTEGER
-      - EXTERNAL_SESSION_OPERATION_COMPLETION_RECEIPT_RETENTION_MS
-    || value.expiresAtMs !== value.completedAtMs
-      + EXTERNAL_SESSION_OPERATION_COMPLETION_RECEIPT_RETENTION_MS
+    || value.terminalAtMs > Number.MAX_SAFE_INTEGER
+      - EXTERNAL_SESSION_OPERATION_TERMINAL_RECEIPT_RETENTION_MS
+    || value.expiresAtMs !== value.terminalAtMs
+      + EXTERNAL_SESSION_OPERATION_TERMINAL_RECEIPT_RETENTION_MS
   ) {
-    invalidCompletionReceipt();
+    invalidTerminalReceipt();
   }
   const reference = ExternalSessionOperationReferenceV1Schema.safeParse(
     value.reference,
@@ -106,14 +106,14 @@ export function readExternalSessionOperationCompletionReceipt(
     || authorIntentMismatch
     || reference.data.operationId !== presentation.data.operationId
     || reference.data.revision !== presentation.data.revision
-    // Independently restated, not imported: a completion receipt records a
+    // Independently restated, not imported: a terminal receipt records a
     // settled operation, so its presentation carries the settled status the
     // record ended on.
     || !['completed', 'cancelled', 'discarded'].includes(
       presentation.data.status,
     )
   ) {
-    invalidCompletionReceipt();
+    invalidTerminalReceipt();
   }
   return {
     reference: reference.data,

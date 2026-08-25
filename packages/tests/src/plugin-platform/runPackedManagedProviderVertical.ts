@@ -829,6 +829,12 @@ export type PackedChannelProviderEntrypointDependencies = Readonly<{
   runPackedChannelProviderLifecycle(
     input: PackedManagedProviderPreparedInput,
   ): Promise<PackedChannelProviderLifecycleEvidence>;
+  /**
+   * Torn down before the private work root is removed, because the composed
+   * runtime's server, daemon, and sessions live inside the candidate's
+   * standalone extract root.
+   */
+  cleanup?: () => Promise<void>;
   artifactOwners?: PackedManagedProviderArtifactOwners;
   candidateArtifactVerification?: Readonly<{
     trustedMinisignPublicKey: string;
@@ -861,7 +867,13 @@ export async function runPackedChannelProviderEntrypoint(
       assertNotAborted(input.signal, preparation.evidence);
       return await deps.runPackedChannelProviderLifecycle(lifecycleInput);
     },
-    cleanup: async () => await preparation.dispose(),
+    cleanup: async () => {
+      try {
+        await deps.cleanup?.();
+      } finally {
+        await preparation.dispose();
+      }
+    },
   });
 }
 

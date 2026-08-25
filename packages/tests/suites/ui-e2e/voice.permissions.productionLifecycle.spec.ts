@@ -42,6 +42,66 @@ async function readMediaSnapshot(page: Page): Promise<Record<string, unknown>> {
   return JSON.parse((await page.getByTestId('voiceQa.media.snapshot').textContent()) ?? '{}') as Record<string, unknown>;
 }
 
+type ActiveMicrophonePermissionRevocationCapability = Readonly<{
+  readyState: string | null;
+  supported: boolean;
+}>;
+
+async function probeActiveMicrophonePermissionRevocationCapability(params: Readonly<{
+  context: BrowserContext;
+  page: Page;
+  origin: string;
+}>): Promise<ActiveMicrophonePermissionRevocationCapability> {
+  await params.context.grantPermissions(['microphone'], { origin: params.origin });
+  await expect.poll(() => params.page.evaluate(async () => (
+    await navigator.permissions.query({ name: 'microphone' as PermissionName })
+  ).state)).toBe('granted');
+
+  await params.page.evaluate(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const audioTracks = stream.getAudioTracks();
+    const [track] = audioTracks;
+    if (!track || audioTracks.length !== 1 || track.readyState !== 'live') {
+      for (const capturedTrack of stream.getTracks()) capturedTrack.stop();
+      throw new Error('voice permission QA capability probe did not acquire one live audio track');
+    }
+    (window as typeof window & { __happierVoicePermissionRevocationProbe?: MediaStream })
+      .__happierVoicePermissionRevocationProbe = stream;
+  });
+
+  try {
+    await setMicrophonePermission({
+      context: params.context,
+      page: params.page,
+      origin: params.origin,
+      setting: 'denied',
+    });
+    await params.page.waitForTimeout(2_000);
+    const current = await params.page.evaluate(() => {
+      const stream = (window as typeof window & {
+        __happierVoicePermissionRevocationProbe?: MediaStream;
+      }).__happierVoicePermissionRevocationProbe;
+      const audioTracks = stream?.getAudioTracks() ?? [];
+      const [track] = audioTracks;
+      return {
+        audioTrackCount: audioTracks.length,
+        readyState: track?.readyState ?? null,
+        supported: track?.readyState === 'ended',
+      };
+    });
+    return current;
+  } finally {
+    await params.page.evaluate(() => {
+      const pageWindow = window as typeof window & {
+        __happierVoicePermissionRevocationProbe?: MediaStream;
+      };
+      const stream = pageWindow.__happierVoicePermissionRevocationProbe;
+      delete pageWindow.__happierVoicePermissionRevocationProbe;
+      for (const track of stream?.getTracks() ?? []) track.stop();
+    });
+  }
+}
+
 test.describe('voice Q3: browser permission lifecycle', () => {
   test.describe.configure({ mode: 'serial' });
   const suiteDir = run.testDir('voice-permissions-production-lifecycle');
@@ -138,7 +198,7 @@ test.describe('voice Q3: browser permission lifecycle', () => {
     });
   });
 
-  test('revoking permission after capture surfaces active-session recovery when Chromium propagates it', async ({ context, page }, testInfo) => {
+  test('revoking permission after capture surfaces active-session recovery', async ({ context, page }, testInfo) => {
     test.setTimeout(360_000);
     if (!stack || !boundary) throw new Error('voice permission harness missing');
     await prepareVoiceBrowserQaPage({
@@ -148,6 +208,16 @@ test.describe('voice Q3: browser permission lifecycle', () => {
       routeQuery: { voiceQaMode: 'media' },
     });
     const origin = new URL(page.url()).origin;
+    const revocationCapability = await probeActiveMicrophonePermissionRevocationCapability({ context, page, origin });
+    await testInfo.attach('voice-q3-revocation-capability.json', {
+      body: Buffer.from(JSON.stringify(revocationCapability, null, 2)),
+      contentType: 'application/json',
+    });
+    test.skip(
+      !revocationCapability.supported,
+      `Chromium did not propagate active microphone permission revocation in the capability probe (track: ${revocationCapability.readyState ?? 'missing'}).`,
+    );
+
     await context.grantPermissions(['microphone'], { origin });
     await expect.poll(() => page.evaluate(async () => (
       await navigator.permissions.query({ name: 'microphone' as PermissionName })
@@ -164,9 +234,6 @@ test.describe('voice Q3: browser permission lifecycle', () => {
       body: Buffer.from(JSON.stringify({ snapshot, instrumentation }, null, 2)),
       contentType: 'application/json',
     });
-    if (snapshot.errorCode !== 'mic_permission_revoked') {
-      test.skip(true, 'Chromium/Expo recorded-audio capture did not propagate active permission revocation to the canonical runtime error owner.');
-    }
     expect(snapshot).toMatchObject({
       status: 'error',
       errorCode: 'mic_permission_revoked',

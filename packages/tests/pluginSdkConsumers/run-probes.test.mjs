@@ -70,16 +70,6 @@ function createSyntheticInventory(
         },
       },
       {
-        specifier: './host/targeted-contributions',
-        sourceModule: 'src/host/targeted-contributions/index.ts',
-        visibility: 'host',
-        realm: 'daemon',
-        conditions: {
-          types: './dist/host/targeted-contributions/index.d.ts',
-          default: './dist/host/targeted-contributions/index.js',
-        },
-      },
-      {
         specifier: './host/fs/json-owner-file-lock',
         sourceModule: 'src/host/fs/jsonOwnerFileLock.ts',
         visibility: 'host',
@@ -98,7 +88,6 @@ function createSyntheticInventory(
         sourceModule: 'src/contracts.ts',
         sourceExport: exportName,
         realm: 'any',
-        stability: 'preview',
       })),
       ...[
         ['createPluginRegistrationScope', 'value'],
@@ -112,22 +101,6 @@ function createSyntheticInventory(
         sourceModule: 'src/host/registration/contract.ts',
         sourceExport: exportName,
         realm: 'any',
-        stability: 'host-internal',
-      })),
-      ...[
-        ['decodeTargetedContributionPointSemantics', 'value'],
-        ['readTargetedContributionPointSemanticRefs', 'value'],
-        ['TargetedContributionPointSemanticInput', 'type'],
-        ['TargetedContributionPointSemanticProjection', 'type'],
-        ['TargetedContributionPointSemanticSurface', 'type'],
-      ].map(([exportName, kind]) => ({
-        specifier: './host/targeted-contributions',
-        exportName,
-        kind,
-        sourceModule: 'src/targetedContributionAuthoring.ts',
-        sourceExport: exportName,
-        realm: 'daemon',
-        stability: 'host-internal',
       })),
       ...[
         'reclaimJsonOwnerFileLockSnapshot',
@@ -139,7 +112,6 @@ function createSyntheticInventory(
         sourceModule: 'src/host/fs/jsonOwnerFileLockContract.ts',
         sourceExport: exportName,
         realm: 'daemon',
-        stability: 'host-internal',
       })),
     ],
   };
@@ -155,14 +127,6 @@ async function writeSyntheticPackedSdk(
       'export interface PluginRegistrationRight {}',
       'export interface PluginAgentRuntimeRegistration {}',
       'export interface PluginRuntimeRegistration {}',
-      '',
-    ].join('\n'),
-    targetedContributionsDeclaration = [
-      'export declare function decodeTargetedContributionPointSemantics(): unknown;',
-      'export declare function readTargetedContributionPointSemanticRefs(): unknown;',
-      'export interface TargetedContributionPointSemanticInput {}',
-      'export interface TargetedContributionPointSemanticProjection {}',
-      'export interface TargetedContributionPointSemanticSurface {}',
       '',
     ].join('\n'),
     fileLockDeclaration = [
@@ -182,7 +146,6 @@ async function writeSyntheticPackedSdk(
   for (const [relativePath, declaration] of [
     ['dist/index.d.ts', authorDeclaration],
     ['dist/host/registration/index.d.ts', registrationDeclaration],
-    ['dist/host/targeted-contributions/index.d.ts', targetedContributionsDeclaration],
     ['dist/host/fs/jsonOwnerFileLock.d.ts', fileLockDeclaration],
   ]) {
     if (declaration === null) continue;
@@ -223,6 +186,11 @@ test('normal-surface source generation compiles types, resolves values, and beha
         name: 'GenericType',
         runtime: false,
         typeArguments: ['unknown'],
+      },
+      {
+        name: 'OpaqueDescriptor',
+        runtime: false,
+        opaqueReason: 'The public contract intentionally leaves this descriptor opaque.',
       },
       { name: 'RootTypeOnly', runtime: false },
       { name: 'PluginError', runtime: true },
@@ -278,6 +246,15 @@ test('normal-surface source generation compiles types, resolves values, and beha
   assert.match(
     source,
     /__IsConcrete<GenericType<unknown>>/u,
+  );
+  assert.match(
+    source,
+    /__IsUnknown<OpaqueDescriptor>/u,
+    'intentionally opaque public descriptors must remain exactly unknown instead of weakening all type checks',
+  );
+  assert.doesNotMatch(
+    source,
+    /__IsConcrete<OpaqueDescriptor>/u,
   );
   assert.match(
     source,
@@ -515,6 +492,9 @@ test('packed negative consumer does not mislabel retained normal exports as reti
     'AgentRuntimeSurfaces',
     'AgentSessionMcpTransport',
     'AgentTerminalLaunchRequest',
+    'PluginUiArtifactPlatform',
+    'PluginUiBuildConfig',
+    'PluginUiBuildTarget',
   ]) {
     assert.equal(
       source.includes(`import type { ${name} }`),
@@ -588,6 +568,82 @@ test('Vite consumer compiles against the retained UI render-surface contract', a
   assert.doesNotMatch(source, /definePluginUiBuildConfig/u);
 });
 
+test('packed declaration classifier uses representative generic inputs and named opaque descriptors', () => {
+  assert.deepEqual(
+    [...probeHarness.PACKED_GENERIC_TYPE_ARGUMENTS],
+    [
+      ['.:PluginProtocolClientHandle', ["'jsonRpc'"]],
+      ['.:PluginProtocolClientSpecByKind', ["'jsonRpc'"]],
+      [
+        '.:UiSurfaceAppPageDefinitionFor',
+        [
+          "Readonly<{ id: 'packed-app-page'; container: 'appPage' }>",
+          'UiSurfaceRendererDefinition',
+        ],
+      ],
+      [
+        '.:UiSurfaceDetailedDefinitionFor',
+        [
+          "Readonly<{ id: 'packed-detail'; container: 'detailsPanel'; target: 'session' }>",
+          'UiSurfaceRendererDefinition',
+        ],
+      ],
+      ['./contributions:PublicContributionProtocol', ['ContributionProtocol']],
+      [
+        './contributions:RequiredSurfaceRoles',
+        ["Readonly<{ primary: ContributionSurfaceDefinition & Readonly<{ required: true }> }>"],
+      ],
+      ['./protocol:ProtocolSchemaInput', ['ProtocolComposableSchema<string, number>']],
+      ['./protocol:ProtocolSchemaOutput', ['ProtocolComposableSchema<string, number>']],
+    ],
+    'generic declaration utilities need valid representative inputs; unknown fallback inputs do not prove closure',
+  );
+  assert.deepEqual(
+    [...probeHarness.PACKED_OPAQUE_TYPE_EXPORTS],
+    [
+      [
+        './browser:BrowserAvailabilityDescriptor',
+        'Browser availability is intentionally opaque at the public SDK boundary.',
+      ],
+      [
+        './manifest:PluginAvailabilityDescriptor',
+        'Plugin availability is intentionally opaque at the public SDK boundary.',
+      ],
+    ],
+    'only the two explicitly opaque availability descriptors may use unknown assertions',
+  );
+});
+
+test('packed runtime consumers track the current manifest literal and Vite plugin tuple', () => {
+  const testkitSource = probeHarness.renderRuntimeBehaviorConsumer(
+    '@happier-dev/plugin-sdk/testing:createPluginTestkit',
+    'createPluginTestkit',
+    0,
+  ).join('\n');
+  assert.match(
+    testkitSource,
+    /runtime: \{ apiVersion: Number\(__publicToolchain0\.framework\.runtime\) as 1 \}/u,
+    'the manifest API version must come from the generated public toolchain without widening its literal type',
+  );
+  assert.match(
+    testkitSource,
+    /PUBLIC_TOOLCHAIN_COMPATIBILITY_V1/u,
+    'the probe must consume the generated public toolchain packet',
+  );
+  assert.doesNotMatch(testkitSource, /runtime: \{ apiVersion: 1 \}/u);
+  assert.doesNotMatch(testkitSource, /framework\.runtime !== "1"/u);
+
+  const viteSource = probeHarness.renderRuntimeBehaviorConsumer(
+    '@happier-dev/plugin-sdk/ui/build:createReactNativeWebVitePlugins',
+    'createReactNativeWebVitePlugins',
+    0,
+  ).join('\n');
+  assert.match(viteSource, /__vitePlugins0\.length !== 2/u);
+  assert.match(viteSource, /__vitePlugins0\[1\]\.name !== "happier-plugin-ui-package-instance"/u);
+  assert.match(viteSource, /__vitePlugins0\[1\]\.enforce !== "post"/u);
+  assert.doesNotMatch(viteSource, /__vitePlugins0\.length !== 1/u);
+});
+
 test('packed declaration classification distinguishes runtime values from type-only exports', async () => {
   assert.equal(typeof probeHarness.classifyPackedNormalSurface, 'function');
   const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-classifier-'));
@@ -601,6 +657,7 @@ test('packed declaration classification distinguishes runtime values from type-o
       ['PluginProtocolClientSpecByKind', 'type'],
       ['RuntimeValue', 'value'],
       ['TypeOnly', 'type'],
+      ['TypeOnlyDeclaredClass', 'type'],
     ];
     const inventoryPath = join(fixtureRoot, 'api-surface.json');
     await writeFile(inventoryPath, JSON.stringify(createSyntheticInventory(expectedSymbols)));
@@ -616,10 +673,21 @@ test('packed declaration classification distinguishes runtime values from type-o
         '  readonly kind: K;',
         '}',
         'export type TypeOnly = Readonly<{ value: string }>;',
+        "export type { TypeOnlyDeclaredClass } from './opaque.js';",
         'export declare const RuntimeValue: Readonly<{ value: string }>;',
         '',
       ].join('\n'),
     });
+    await writeFile(
+      join(fixtureRoot, 'dist', 'opaque.d.ts'),
+      [
+        'export declare abstract class TypeOnlyDeclaredClass<T = string> {',
+        '  protected readonly opaque: T;',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    await writeFile(join(fixtureRoot, 'dist', 'opaque.js'), 'export {};\n');
 
     assert.deepEqual(
       await probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
@@ -655,6 +723,7 @@ test('packed declaration classification distinguishes runtime values from type-o
           },
           { name: 'RuntimeValue', runtime: true },
           { name: 'TypeOnly', runtime: false },
+          { name: 'TypeOnlyDeclaredClass', runtime: false },
         ],
       },
     );

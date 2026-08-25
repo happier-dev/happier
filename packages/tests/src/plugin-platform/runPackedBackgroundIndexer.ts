@@ -55,6 +55,8 @@ const BACKGROUND_INDEXER_PROJECT_ROOT = resolve(
 const BACKGROUND_INDEXER_PACKAGE_NAME = '@example/happier-background-indexer';
 const SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
 const MIGRATION_ARRAY_TAIL = '        })]),\n        incumbentQueryFixture:';
+const SOURCE_BASE_PLUGIN_VERSION = '0.1.0';
+const SOURCE_DATABASE_DECLARATION = "const WORKSPACE_INDEX_DATABASE = 'workspace-index';";
 const V1_FIXTURE_ID = 'workspace-index-v1';
 const V2_FIXTURE_ID = 'workspace-index-v2';
 const V2_FIXTURE_QUERY = 'SELECT path, content_digest, label FROM workspace_documents ORDER BY path LIMIT 1';
@@ -101,6 +103,16 @@ function requireRecord(value: unknown, label: string): JsonObject {
 
 function isNotFound(error: unknown): boolean {
   return isRecord(error) && error.code === 'ENOENT';
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isNotFound(error)) return false;
+    throw error;
+  }
 }
 
 async function readJsonObject(path: string, label: string): Promise<JsonObject> {
@@ -203,10 +215,10 @@ export function makeCancellationObservable(source: string): string {
     'const runWorkspaceIndexerCore: BackgroundServiceRunner = async (context) => {',
     'runner_core_extraction',
   );
-  const activate = "export function activate(api: Pick<PluginApi, 'backgroundServices'>): void {";
+  const definition = 'export const { manifest, activate } = definePlugin({';
   return replaceExactly(
     core,
-    activate,
+    definition,
     [
       '/**',
       ' * This candidate-only probe leaves the real one-shot indexer intact, then',
@@ -225,12 +237,20 @@ export function makeCancellationObservable(source: string): string {
       '    });',
       '};',
       '',
-      activate,
+      definition,
     ].join('\n'),
     'runner_cancellation_probe',
   );
 }
 
+/**
+ * The Background Indexer authors its cold manifest through the single public
+ * `definePlugin(...)` path, so this preparer owns exactly one authoring
+ * artifact: the source module. The plugin version, migration ledger and
+ * incumbent fixture identity all come from that one module, which is why the
+ * declared/runtime halves cannot drift here the way a hand-written second
+ * manifest spelling could.
+ */
 async function prepareBackgroundIndexerProject(params: Readonly<{
   root: string;
   source: string;
@@ -250,35 +270,32 @@ async function prepareBackgroundIndexerProject(params: Readonly<{
   ]);
 
   const packagePath = join(params.root, 'package.json');
-  const manifestPath = join(params.root, '.happier-plugin', 'plugin.json');
   const sourcePath = join(params.root, 'src', 'index.ts');
-  const [packageJson, manifest] = await Promise.all([
-    readJsonObject(packagePath, 'background_indexer_package'),
-    readJsonObject(manifestPath, 'background_indexer_manifest'),
-  ]);
+  const packageJson = await readJsonObject(packagePath, 'background_indexer_package');
   if (packageJson.name !== BACKGROUND_INDEXER_PACKAGE_NAME) {
     throw new Error('background_indexer_package_identity_changed');
   }
-  if (manifest.id !== BACKGROUND_INDEXER_PLUGIN_ID) {
-    throw new Error('background_indexer_manifest_identity_changed');
+  if (await pathExists(join(params.root, '.happier-plugin', 'plugin.json'))) {
+    throw new Error('background_indexer_reintroduced_a_handwritten_manifest');
   }
   const dependencies = requireRecord(
     packageJson.dependencies,
     'background_indexer_package_dependencies',
   );
-  const contributes = requireRecord(
-    manifest.contributes,
-    'background_indexer_manifest_contributes',
-  );
-  if (!Array.isArray(contributes.daemonDatabases) || contributes.daemonDatabases.length !== 1) {
-    throw new Error('background_indexer_manifest_database_declaration_changed');
+  if (!params.source.includes(`id: '${BACKGROUND_INDEXER_PLUGIN_ID}'`)) {
+    throw new Error('background_indexer_manifest_identity_changed');
   }
-  const databaseDeclaration = requireRecord(
-    contributes.daemonDatabases[0],
-    'background_indexer_manifest_database',
-  );
-  if (databaseDeclaration.id !== 'workspace-index') {
+  if (!params.source.includes(SOURCE_DATABASE_DECLARATION)) {
     throw new Error('background_indexer_manifest_database_identity_changed');
+  }
+  for (const migration of params.migrations) {
+    if (!params.source.includes(`id: '${migration.id}'`)
+      || !params.source.includes(`version: ${migration.version},`)) {
+      throw new Error(`background_indexer_source_missing_migration_${migration.version}`);
+    }
+  }
+  if (!params.source.includes(`id: '${params.fixtureId}'`)) {
+    throw new Error('background_indexer_source_missing_incumbent_fixture');
   }
 
   await Promise.all([
@@ -290,22 +307,16 @@ async function prepareBackgroundIndexerProject(params: Readonly<{
         [SDK_PACKAGE_NAME]: params.sdkVersion,
       },
     }),
-    writeJsonObject(manifestPath, {
-      ...manifest,
-      version: params.version,
-      contributes: {
-        ...contributes,
-        daemonDatabases: [{
-          ...databaseDeclaration,
-          migrations: params.migrations.map((migration) => ({
-            version: migration.version,
-            id: migration.id,
-          })),
-          incumbentQueryFixtureId: params.fixtureId,
-        }],
-      },
-    }),
-    writeFile(sourcePath, params.source, 'utf8'),
+    writeFile(
+      sourcePath,
+      replaceExactly(
+        params.source,
+        `version: '${SOURCE_BASE_PLUGIN_VERSION}',`,
+        `version: '${params.version}',`,
+        'plugin_version',
+      ),
+      'utf8',
+    ),
   ]);
 }
 
@@ -478,7 +489,7 @@ async function authorAndPackBackgroundIndexer(params: Readonly<{
       '--sdk-registry', params.registryOrigin,
       '--json',
     ],
-  }, 'plugins_author_install');
+  }, 'plugins_dev_install');
   const installData = requireRecord(
     requireRecord(install, 'background_indexer_author_install').data,
     'background_indexer_author_install_data',
@@ -497,7 +508,7 @@ async function authorAndPackBackgroundIndexer(params: Readonly<{
       cwd: params.cwd,
       env: params.env,
       args: ['plugins', 'author', operation, params.projectRoot, '--json'],
-    }, `plugins_author_${operation}`);
+    }, `plugins_dev_${operation}`);
     const data = requireRecord(
       requireRecord(result, `background_indexer_author_${operation}`).data,
       `background_indexer_author_${operation}_data`,

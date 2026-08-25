@@ -5,19 +5,19 @@ import {
   buildConnectedServiceCredentialRecord,
   sealAccountScopedBlobCiphertext,
   type ConnectedServiceId,
+  type QualifiedConnectedAccountGroupV4,
 } from '@happier-dev/protocol';
 
 import { createTestAuth } from '../../src/testkit/auth';
+import {
+  createQualifiedConnectedAccountGroup,
+  fetchQualifiedConnectedAccountGroup,
+} from '../../src/testkit/connectedServicesRecovery';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
 
 type UnknownRecord = Record<string, unknown>;
-type AuthGroupResponse = Readonly<{
-  group?: unknown;
-  error?: unknown;
-  generation?: unknown;
-}>;
 
 const run = createRunDirs({ runLabel: 'core' });
 const serviceId: ConnectedServiceId = 'openai-codex';
@@ -97,49 +97,15 @@ async function createConnectedServiceProfile(params: Readonly<{
   expect(response.data?.success).toBe(true);
 }
 
-async function createConnectedServiceAuthGroup(params: Readonly<{
+async function switchActiveAccount(params: Readonly<{
   baseUrl: string;
   token: string;
-  groupId: string;
-  activeProfileId: string;
-  memberProfileIds: readonly string[];
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<AuthGroupResponse>(`${params.baseUrl}/v3/connect/${serviceId}/groups`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      groupId: params.groupId,
-      members: params.memberProfileIds.map((profileId, index) => ({
-        profileId,
-        priority: (index + 1) * 10,
-      })),
-      activeProfileId: params.activeProfileId,
-      policy: {
-        autoSwitch: true,
-        recoveryMode: 'switch_or_wait',
-      },
-    }),
-    timeoutMs: 20_000,
-  });
-
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group response');
-  return group;
-}
-
-async function switchActiveProfile(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  groupId: string;
-  profileId: string;
+  group: QualifiedConnectedAccountGroupV4;
+  connectedAccountId: string;
   expectedGeneration: number;
-}>): Promise<Readonly<{ status: number; data: AuthGroupResponse }>> {
-  const response = await fetchJson<AuthGroupResponse>(
-    `${params.baseUrl}/v3/connect/${serviceId}/groups/${params.groupId}/active-profile`,
+}>): Promise<Readonly<{ status: number; data: unknown }>> {
+  const response = await fetchJson<unknown>(
+    `${params.baseUrl}/v4/connect/qualified/group/active-account`,
     {
       method: 'POST',
       headers: {
@@ -147,26 +113,28 @@ async function switchActiveProfile(params: Readonly<{
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        profileId: params.profileId,
+        group: params.group.ref,
+        connectedAccountId: params.connectedAccountId,
         expectedGeneration: params.expectedGeneration,
+        expectedIncarnation: params.group.incarnation,
+        expectedRuntimeStateRevision: params.group.runtimeStateRevision,
       }),
       timeoutMs: 20_000,
     },
   );
 
-  return { status: response.status, data: response.data ?? {} };
+  return { status: response.status, data: response.data };
 }
 
 async function patchRuntimeState(params: Readonly<{
   baseUrl: string;
   token: string;
-  groupId: string;
-  expectedGeneration: number;
+  group: QualifiedConnectedAccountGroupV4;
   expectedRuntimeStateRevision: number;
-  profileId: string;
-}>): Promise<Readonly<{ status: number; data: AuthGroupResponse }>> {
-  const response = await fetchJson<AuthGroupResponse>(
-    `${params.baseUrl}/v3/connect/${serviceId}/groups/${params.groupId}/runtime-state`,
+  connectedAccountId: string;
+}>): Promise<Readonly<{ status: number; data: unknown }>> {
+  const response = await fetchJson<unknown>(
+    `${params.baseUrl}/v4/connect/qualified/group/runtime-state`,
     {
       method: 'PATCH',
       headers: {
@@ -174,48 +142,33 @@ async function patchRuntimeState(params: Readonly<{
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        expectedGeneration: params.expectedGeneration,
+        service: params.group.ref.service,
+        groupId: params.group.ref.groupId,
+        expectedIncarnation: params.group.incarnation,
         expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
-        state: {
-          status: 'exhausted',
-          lastSwitchReason: 'usage_limit',
-        },
-        memberStates: [
-          {
-            profileId: params.profileId,
-            state: {
-              quotaExhaustedUntilMs: Date.now() + 60_000,
-              lastFailureKind: 'usage_limit',
-              lastFailureCode: 'usage_limit_reached',
-              lastObservedAtMs: Date.now(),
-            },
+        runtimeState: {
+          state: {
+            status: 'exhausted',
+            lastSwitchReason: 'usage_limit',
           },
-        ],
+          memberStates: [
+            {
+              connectedAccountId: params.connectedAccountId,
+              state: {
+                quotaExhaustedUntilMs: Date.now() + 60_000,
+                lastFailureKind: 'usage_limit',
+                lastFailureCode: 'usage_limit_reached',
+                lastObservedAtMs: Date.now(),
+              },
+            },
+          ],
+        },
       }),
       timeoutMs: 20_000,
     },
   );
 
-  return { status: response.status, data: response.data ?? {} };
-}
-
-async function fetchConnectedServiceAuthGroup(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  groupId: string;
-}>): Promise<UnknownRecord> {
-  const response = await fetchJson<AuthGroupResponse>(
-    `${params.baseUrl}/v3/connect/${serviceId}/groups/${params.groupId}`,
-    {
-      headers: { Authorization: `Bearer ${params.token}` },
-      timeoutMs: 20_000,
-    },
-  );
-
-  expect(response.status).toBe(200);
-  const group = asRecord(response.data?.group);
-  if (!group) throw new Error('Expected connected service auth group response');
-  return group;
+  return { status: response.status, data: response.data };
 }
 
 describe('core e2e: connected-service auth group CAS', () => {
@@ -257,84 +210,107 @@ describe('core e2e: connected-service auth group CAS', () => {
       providerEmail: 'standby@example.test',
     });
 
-    const created = await createConnectedServiceAuthGroup({
-      baseUrl: server.baseUrl,
-      token: auth.token,
+    const created = await createQualifiedConnectedAccountGroup({
+      serverBaseUrl: server.baseUrl,
+      authToken: auth.token,
+      legacyServiceId: serviceId,
       groupId,
-      activeProfileId: 'primary',
-      memberProfileIds: ['primary', 'backup', 'standby'],
+      activeConnectedAccountId: 'primary',
+      memberConnectedAccountIds: ['primary', 'backup', 'standby'],
     });
-    const initialGeneration = readNumber(created, 'generation');
-    expect(initialGeneration).toBe(0);
+    const initialGeneration = created.generation;
 
-    const firstWriter = await switchActiveProfile({
+    const firstWriter = await switchActiveAccount({
       baseUrl: server.baseUrl,
       token: auth.token,
-      groupId,
-      profileId: 'backup',
+      group: created,
+      connectedAccountId: 'backup',
       expectedGeneration: initialGeneration,
     });
     expect(firstWriter.status).toBe(200);
-    const firstWriterGroup = asRecord(firstWriter.data.group);
+    const firstWriterGroup = asRecord(asRecord(firstWriter.data)?.group);
     if (!firstWriterGroup) throw new Error('Expected first writer group response');
-    expect(readString(firstWriterGroup, 'activeProfileId')).toBe('backup');
-    expect(readNumber(firstWriterGroup, 'generation')).toBe(1);
+    expect(readString(firstWriterGroup, 'activeConnectedAccountId')).toBe('backup');
+    const firstWriterGeneration = readNumber(firstWriterGroup, 'generation');
+    expect(firstWriterGeneration).toBe(initialGeneration + 1);
 
-    const staleSelection = await switchActiveProfile({
+    const staleSelection = await switchActiveAccount({
       baseUrl: server.baseUrl,
       token: auth.token,
-      groupId,
-      profileId: 'standby',
+      group: created,
+      connectedAccountId: 'standby',
       expectedGeneration: initialGeneration,
     });
     expect(staleSelection.status).toBe(409);
     expect(staleSelection.data).toEqual({
       error: 'connect_group_generation_conflict',
-      generation: 1,
+      generation: firstWriterGeneration,
     });
 
-    const afterStaleSelection = await fetchConnectedServiceAuthGroup({
-      baseUrl: server.baseUrl,
-      token: auth.token,
+    const afterStaleSelection = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: server.baseUrl,
+      authToken: auth.token,
+      legacyServiceId: serviceId,
       groupId,
     });
-    expect(readString(afterStaleSelection, 'activeProfileId')).toBe('backup');
-    expect(readNumber(afterStaleSelection, 'generation')).toBe(1);
+    expect(afterStaleSelection.activeConnectedAccountId).toBe('backup');
+    expect(afterStaleSelection.generation).toBe(firstWriterGeneration);
 
-    const retry = await switchActiveProfile({
+    const retry = await switchActiveAccount({
       baseUrl: server.baseUrl,
       token: auth.token,
-      groupId,
-      profileId: 'standby',
-      expectedGeneration: 1,
+      group: afterStaleSelection,
+      connectedAccountId: 'standby',
+      expectedGeneration: afterStaleSelection.generation,
     });
     expect(retry.status).toBe(200);
-    const retryGroup = asRecord(retry.data.group);
+    const retryGroup = asRecord(asRecord(retry.data)?.group);
     if (!retryGroup) throw new Error('Expected retry group response');
-    expect(readString(retryGroup, 'activeProfileId')).toBe('standby');
-    expect(readNumber(retryGroup, 'generation')).toBe(2);
+    expect(readString(retryGroup, 'activeConnectedAccountId')).toBe('standby');
+    const retryGeneration = readNumber(retryGroup, 'generation');
+    expect(retryGeneration).toBe(afterStaleSelection.generation + 1);
+
+    const afterRetry = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: server.baseUrl,
+      authToken: auth.token,
+      legacyServiceId: serviceId,
+      groupId,
+    });
+    const runtimeWriter = await patchRuntimeState({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      group: afterRetry,
+      connectedAccountId: 'primary',
+      expectedRuntimeStateRevision: afterRetry.runtimeStateRevision,
+    });
+    expect(runtimeWriter.status).toBe(200);
+    const runtimeWriterGroup = asRecord(asRecord(runtimeWriter.data)?.group);
+    if (!runtimeWriterGroup) throw new Error('Expected runtime writer group response');
+    const runtimeWriterRevision = readNumber(runtimeWriterGroup, 'runtimeStateRevision');
+    expect(runtimeWriterRevision).toBe(afterRetry.runtimeStateRevision + 1);
 
     const staleRuntimeState = await patchRuntimeState({
       baseUrl: server.baseUrl,
       token: auth.token,
-      groupId,
-      profileId: 'primary',
-      expectedGeneration: 1,
-      expectedRuntimeStateRevision: 0,
+      group: afterRetry,
+      connectedAccountId: 'primary',
+      expectedRuntimeStateRevision: afterRetry.runtimeStateRevision,
     });
     expect(staleRuntimeState.status).toBe(409);
     expect(staleRuntimeState.data).toEqual({
-      error: 'connect_group_generation_conflict',
-      generation: 2,
+      error: 'connect_group_runtime_state_revision_conflict',
+      runtimeStateRevision: runtimeWriterRevision,
     });
 
-    const afterStaleRuntimeState = await fetchConnectedServiceAuthGroup({
-      baseUrl: server.baseUrl,
-      token: auth.token,
+    const afterStaleRuntimeState = await fetchQualifiedConnectedAccountGroup({
+      serverBaseUrl: server.baseUrl,
+      authToken: auth.token,
+      legacyServiceId: serviceId,
       groupId,
     });
-    expect(readString(afterStaleRuntimeState, 'activeProfileId')).toBe('standby');
-    expect(readNumber(afterStaleRuntimeState, 'generation')).toBe(2);
-    expect(afterStaleRuntimeState.state).toEqual({});
+    expect(afterStaleRuntimeState.activeConnectedAccountId).toBe('standby');
+    expect(afterStaleRuntimeState.generation).toBe(retryGeneration);
+    expect(afterStaleRuntimeState.runtimeStateRevision).toBe(runtimeWriterRevision);
+    expect(afterStaleRuntimeState.state).toMatchObject({ status: 'exhausted' });
   });
 });

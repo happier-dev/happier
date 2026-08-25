@@ -51,6 +51,13 @@ const PUBLIC_AUTHORING_PROJECT_ROOT = resolve(
 const PUBLIC_AUTHORING_PLUGIN_ID = 'examples.public-sdk-review-assistant';
 const PUBLIC_AUTHORING_PLUGIN_VERSION = '0.1.0';
 const PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID = 'review-web';
+const PRODUCTION_HOSTED_REFERENCE_PROJECT_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../plugin-sdk/examples/production-hosted-reference',
+);
+const PRODUCTION_HOSTED_REFERENCE_PLUGIN_ID = 'examples.production-hosted-reference';
+const PRODUCTION_HOSTED_REFERENCE_PLUGIN_VERSION = '0.1.0';
+const PRODUCTION_HOSTED_REFERENCE_HOSTED_WEB_CONTRIBUTION_ID = 'review-hosted';
 export const PACKED_AUTHOR_NATIVE_TARGETS = Object.freeze([
   'linux-x64',
   'linux-arm64',
@@ -172,6 +179,7 @@ export const VERTICAL_A_REQUIRED_STAGE_IDS = Object.freeze([
   'public-authoring-external-pair',
   'public-authoring-hosted-web-artifact',
   'public-authoring-account-artifact',
+  'production-hosted-reference-external-pair',
   'plugin-pack',
   'public-registry-profile-lifecycle',
   'marketplace-exact-daemon-lifecycle',
@@ -234,6 +242,7 @@ export const VERTICAL_A_EVIDENCE_LAYER_STAGE_IDS = Object.freeze({
     'public-authoring-external-pair',
     'public-authoring-hosted-web-artifact',
     'public-authoring-account-artifact',
+    'production-hosted-reference-external-pair',
     'plugin-pack',
     'public-registry-profile-lifecycle',
     'marketplace-exact-daemon-lifecycle',
@@ -1794,6 +1803,11 @@ function isPathInsideRoot(root, target) {
 
 export async function attestPackedPublicAuthoringHostedWebGraph({
   artifactRoot,
+  // One owner attests every packed hostedWeb product graph. The defaults keep
+  // the portfolio public-authoring contract exactly as it was; a production
+  // reference names its own renderer contribution and diagnostic label.
+  contributionId = PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID,
+  label = 'public authoring',
   readFileImpl = readFile,
   lstatImpl = lstat,
   realpathImpl = realpath,
@@ -1808,40 +1822,40 @@ export async function attestPackedPublicAuthoringHostedWebGraph({
     Buffer.from(rawManifest).toString('utf8'),
   ));
   const entries = graph.entries.filter((entry) => (
-    entry.contributionId === PUBLIC_AUTHORING_HOSTED_WEB_CONTRIBUTION_ID
+    entry.contributionId === contributionId
     && entry.tier === 'hostedWeb'
     && entry.platform === 'web'
   ));
   if (entries.length !== 1) {
-    fail('public authoring hostedWeb graph must contain exactly one review-web/web entry');
+    fail(`${label} hostedWeb graph must contain exactly one ${contributionId}/web entry`);
   }
   const entry = entries[0];
   const verifiedFiles = [];
   for (const file of entry.files) {
     const filePath = resolve(resolvedArtifactRoot, file.relativePath);
     if (!isPathInsideRoot(resolvedArtifactRoot, filePath)) {
-      fail(`public authoring hostedWeb file escaped the artifact root: ${file.relativePath}`);
+      fail(`${label} hostedWeb file escaped the artifact root: ${file.relativePath}`);
     }
     const fileStats = await lstatImpl(filePath);
     if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
-      fail(`public authoring hostedWeb file is not an exact regular file: ${file.relativePath}`);
+      fail(`${label} hostedWeb file is not an exact regular file: ${file.relativePath}`);
     }
     const physicalFilePath = await realpathImpl(filePath);
     if (!isPathInsideRoot(physicalArtifactRoot, physicalFilePath)) {
-      fail(`public authoring hostedWeb file escaped the physical artifact root: ${file.relativePath}`);
+      fail(`${label} hostedWeb file escaped the physical artifact root: ${file.relativePath}`);
     }
     const bytes = Buffer.from(await readFileImpl(filePath));
     const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
     if (digest !== file.digest) {
-      fail(`public authoring hostedWeb file digest mismatch: ${file.relativePath}`);
+      fail(`${label} hostedWeb file digest mismatch: ${file.relativePath}`);
     }
     if (bytes.byteLength !== file.byteSize) {
-      fail(`public authoring hostedWeb file size mismatch: ${file.relativePath}`);
+      fail(`${label} hostedWeb file size mismatch: ${file.relativePath}`);
     }
     verifiedFiles.push({ relativePath: file.relativePath, bytes });
   }
   if (computePluginUiArtifactFileSetSha256DigestV1(verifiedFiles) !== entry.digest) {
-    fail('public authoring hostedWeb graph digest mismatch');
+    fail(`${label} hostedWeb graph digest mismatch`);
   }
   return Object.freeze({
     contributionId: entry.contributionId,
@@ -6333,6 +6347,178 @@ export async function installVerticalAHealthyControlFixture({
   };
 }
 
+/**
+ * The copied portfolio package and the 03g `UI-AP-REQ-17` production references
+ * are separately owned, complete external packages that must each survive the
+ * exact candidate boundary. They share one lifecycle owner so a new reference
+ * cannot drift into a similar-but-different install/typecheck/build/test path.
+ */
+export const PACKED_AUTHOR_EXTERNAL_REFERENCE_PRODUCTS = Object.freeze([
+  Object.freeze({
+    stageId: 'public-authoring-external-pair',
+    label: 'Public authoring',
+    directoryName: 'external-public-authoring',
+    sourceRoot: PUBLIC_AUTHORING_PROJECT_ROOT,
+    packageName: '@example/happier-public-authoring',
+    packageVersion: PUBLIC_AUTHORING_PLUGIN_VERSION,
+  }),
+  Object.freeze({
+    stageId: 'production-hosted-reference-external-pair',
+    label: 'Production hosted reference',
+    directoryName: 'external-production-hosted-reference',
+    sourceRoot: PRODUCTION_HOSTED_REFERENCE_PROJECT_ROOT,
+    packageName: '@example/happier-production-hosted-reference',
+    packageVersion: PRODUCTION_HOSTED_REFERENCE_PLUGIN_VERSION,
+    hostedWebContributionId: PRODUCTION_HOSTED_REFERENCE_HOSTED_WEB_CONTRIBUTION_ID,
+  }),
+]);
+
+export function packedAuthorExternalReferenceProduct(stageId) {
+  const product = PACKED_AUTHOR_EXTERNAL_REFERENCE_PRODUCTS
+    .find((entry) => entry.stageId === stageId);
+  if (!product) fail(`Unknown packed external reference product: ${stageId}`);
+  return product;
+}
+
+/**
+ * Installs one externally owned reference package from the exact candidate
+ * registry and runs its public author lifecycle. The copy is deliberately made
+ * outside the repository tree so the SDK/Plugin UI pair can only resolve to the
+ * installed archives, never to workspace source.
+ */
+async function runPackedExternalReferencePackageLifecycle({
+  product,
+  tempRoot,
+  cliEntrypoint,
+  fixtureRoot,
+  authorEnv,
+  registry,
+  candidate,
+}) {
+  const projectRoot = join(tempRoot, product.directoryName);
+  await cp(product.sourceRoot, projectRoot, { recursive: true, force: false });
+  const packagePath = join(projectRoot, 'package.json');
+  const packageJson = JSON.parse(await readFile(packagePath, 'utf8'));
+  if (
+    packageJson?.name !== product.packageName
+    || packageJson?.version !== product.packageVersion
+    || typeof packageJson?.dependencies?.[SDK_PACKAGE_NAME] !== 'string'
+    || typeof packageJson?.dependencies?.[PLUGIN_UI_PACKAGE_NAME] !== 'string'
+  ) {
+    fail(`${product.label} fixture did not declare its canonical SDK/Plugin UI consumer contract`);
+  }
+  await writeFile(packagePath, `${JSON.stringify({
+    ...packageJson,
+    dependencies: {
+      ...packageJson.dependencies,
+      [SDK_PACKAGE_NAME]: candidate.sdk.version,
+      [PLUGIN_UI_PACKAGE_NAME]: candidate.pluginUi.version,
+    },
+    devDependencies: {
+      ...packageJson.devDependencies,
+      typescript: CONFIG_LOADER_TYPESCRIPT_DEPENDENCY_SPEC,
+    },
+  }, null, 2)}\n`);
+  await rm(join(projectRoot, 'dist'), { recursive: true, force: true });
+  const install = await runPackedCliJson({
+    cliEntrypoint,
+    cwd: fixtureRoot,
+    env: authorEnv,
+    args: [
+      'plugins', 'dev', 'install', projectRoot,
+      '--sdk-registry', registry.origin,
+      '--json',
+    ],
+  }, 'plugins_dev_install');
+  if (
+    install.data?.operation !== 'install'
+    || install.data?.projectRoot !== projectRoot
+  ) {
+    fail(`Packed CLI author install did not admit the ${product.label} project`);
+  }
+  for (const operation of ['typecheck', 'build', 'test']) {
+    const envelope = await runPackedCliJson({
+      cliEntrypoint,
+      cwd: fixtureRoot,
+      env: authorEnv,
+      args: ['plugins', 'dev', operation, projectRoot, '--json'],
+    }, `plugins_dev_${operation}`);
+    if (
+      envelope.data?.operation !== operation
+      || envelope.data?.projectRoot !== projectRoot
+    ) {
+      fail(`Packed CLI author ${operation} did not complete for the ${product.label} project`);
+    }
+  }
+  const [sdkPhysicalRoot, pluginUiPhysicalRoot] = await Promise.all([
+    realpath(join(projectRoot, 'node_modules', ...SDK_PACKAGE_NAME.split('/'))),
+    realpath(join(projectRoot, 'node_modules', ...PLUGIN_UI_PACKAGE_NAME.split('/'))),
+  ]);
+  if (
+    !isPathInsideRoot(projectRoot, sdkPhysicalRoot)
+    || !isPathInsideRoot(projectRoot, pluginUiPhysicalRoot)
+    || isPathInsideRoot(product.sourceRoot, sdkPhysicalRoot)
+    || isPathInsideRoot(product.sourceRoot, pluginUiPhysicalRoot)
+  ) {
+    fail(`${product.label} fixture resolved the SDK/Plugin UI pair through workspace source`);
+  }
+  const [sdkManifest, pluginUiManifest] = await Promise.all([
+    readFile(join(sdkPhysicalRoot, 'package.json'), 'utf8').then(JSON.parse),
+    readFile(join(pluginUiPhysicalRoot, 'package.json'), 'utf8').then(JSON.parse),
+  ]);
+  assertPackedPackageIdentity(sdkManifest, candidate.sdk, `${product.label} packed SDK`);
+  assertPackedPackageIdentity(
+    pluginUiManifest,
+    candidate.pluginUi,
+    `${product.label} packed Plugin UI`,
+  );
+  assertPackedPluginUiSdkDependency(pluginUiManifest, candidate.sdk);
+  const toolchainModulePath = await realpath(join(
+    sdkPhysicalRoot,
+    'dist',
+    'browser',
+    'index.js',
+  ));
+  if (!isPathInsideRoot(sdkPhysicalRoot, toolchainModulePath)) {
+    fail(`${product.label} toolchain packet escaped the installed SDK package`);
+  }
+  const toolchainModule = await import(pathToFileURL(toolchainModulePath).href);
+  const toolchainPacket = assertPackedPublicToolchainCompatibilityCandidate({
+    packet: toolchainModule.PUBLIC_TOOLCHAIN_COMPATIBILITY_V1,
+    candidate,
+  });
+  return {
+    projectRoot,
+    packageJson,
+    sdkPhysicalRoot,
+    pluginUiPhysicalRoot,
+    sdkManifest,
+    pluginUiManifest,
+    toolchainPacket,
+  };
+}
+
+/**
+ * Resolves the installed SDK's public UI builder without letting the lookup
+ * escape the archive it came from.
+ */
+async function resolvePackedExternalReferenceUiBuildBin({ label, sdkPhysicalRoot, sdkManifest }) {
+  const uiBuildRelativePath = sdkManifest.bin?.['happier-plugin-build-ui'];
+  if (typeof uiBuildRelativePath !== 'string' || isAbsolute(uiBuildRelativePath)) {
+    fail(`${label} did not expose a relative happier-plugin-build-ui entrypoint`);
+  }
+  const uiBuildBin = await realpath(resolve(sdkPhysicalRoot, uiBuildRelativePath));
+  const containedPath = relative(sdkPhysicalRoot, uiBuildBin);
+  if (
+    containedPath === '..'
+    || containedPath.startsWith(`..${sep}`)
+    || isAbsolute(containedPath)
+  ) {
+    fail(`${label} happier-plugin-build-ui entrypoint escaped the installed package`);
+  }
+  return uiBuildBin;
+}
+
 export function createPackedAuthorScaffoldSpecs(fixtureRoot) {
   return Object.freeze([
     Object.freeze({
@@ -6621,8 +6807,8 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     for (const plugin of pluginSpecs) {
       const envelope = await runPackedCliJson({
         cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: ['plugins', 'author', 'install', plugin.root, '--sdk-registry', registry.origin, '--json'],
-      }, 'plugins_author_install');
+        args: ['plugins', 'dev', 'install', plugin.root, '--sdk-registry', registry.origin, '--json'],
+      }, 'plugins_dev_install');
       if (envelope.data?.operation !== 'install' || envelope.data?.projectRoot !== plugin.root) {
         fail(`packed CLI author install reported the wrong project for ${plugin.pluginId}`);
       }
@@ -6634,8 +6820,8 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
         if (plugin.descriptorOnly && operation !== 'typecheck') continue;
         const envelope = await runPackedCliJson({
           cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-          args: ['plugins', 'author', operation, plugin.root, '--json'],
-        }, `plugins_author_${operation}`);
+          args: ['plugins', 'dev', operation, plugin.root, '--json'],
+        }, `plugins_dev_${operation}`);
         if (envelope.data?.operation !== operation || envelope.data?.projectRoot !== plugin.root) {
           fail(`packed CLI author ${operation} reported the wrong project for ${plugin.pluginId}`);
         }
@@ -6690,131 +6876,20 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       pluginSdkVersion: candidate.pluginUi.pluginSdkVersion,
     });
 
-    const publicAuthoringRoot = join(tempRoot, 'external-public-authoring');
-    await cp(PUBLIC_AUTHORING_PROJECT_ROOT, publicAuthoringRoot, {
-      recursive: true,
-      force: false,
-    });
-    const publicAuthoringPackagePath = join(publicAuthoringRoot, 'package.json');
-    const publicAuthoringPackage = JSON.parse(await readFile(
-      publicAuthoringPackagePath,
-      'utf8',
-    ));
-    if (
-      publicAuthoringPackage?.name !== '@example/happier-public-authoring'
-      || publicAuthoringPackage?.version !== PUBLIC_AUTHORING_PLUGIN_VERSION
-      || typeof publicAuthoringPackage?.dependencies?.[SDK_PACKAGE_NAME] !== 'string'
-      || typeof publicAuthoringPackage?.dependencies?.[PLUGIN_UI_PACKAGE_NAME] !== 'string'
-    ) {
-      fail('Public authoring fixture did not declare its canonical SDK/Plugin UI consumer contract');
-    }
-    const publicAuthoringDependencies = {
-      ...publicAuthoringPackage.dependencies,
-      [SDK_PACKAGE_NAME]: candidate.sdk.version,
-      [PLUGIN_UI_PACKAGE_NAME]: candidate.pluginUi.version,
-    };
-    await writeFile(publicAuthoringPackagePath, `${JSON.stringify({
-      ...publicAuthoringPackage,
-      dependencies: publicAuthoringDependencies,
-      devDependencies: {
-        ...publicAuthoringPackage.devDependencies,
-        typescript: CONFIG_LOADER_TYPESCRIPT_DEPENDENCY_SPEC,
-      },
-    }, null, 2)}\n`);
-    await rm(join(publicAuthoringRoot, 'dist'), { recursive: true, force: true });
-    const publicAuthoringInstall = await runPackedCliJson({
+    const publicAuthoringReference = await runPackedExternalReferencePackageLifecycle({
+      product: packedAuthorExternalReferenceProduct('public-authoring-external-pair'),
+      tempRoot,
       cliEntrypoint,
-      cwd: fixtureRoot,
-      env: authorEnv,
-      args: [
-        'plugins', 'author', 'install', publicAuthoringRoot,
-        '--sdk-registry', registry.origin,
-        '--json',
-      ],
-    }, 'plugins_author_install');
-    if (
-      publicAuthoringInstall.data?.operation !== 'install'
-      || publicAuthoringInstall.data?.projectRoot !== publicAuthoringRoot
-    ) {
-      fail('Packed CLI author install did not admit the public authoring project');
-    }
-    for (const operation of ['typecheck', 'build', 'test']) {
-      const envelope = await runPackedCliJson({
-        cliEntrypoint,
-        cwd: fixtureRoot,
-        env: authorEnv,
-        args: ['plugins', 'author', operation, publicAuthoringRoot, '--json'],
-      }, `plugins_author_${operation}`);
-      if (
-        envelope.data?.operation !== operation
-        || envelope.data?.projectRoot !== publicAuthoringRoot
-      ) {
-        fail(`Packed CLI author ${operation} did not complete for the public authoring project`);
-      }
-    }
-    const publicAuthoringSdkRoot = join(
-      publicAuthoringRoot,
-      'node_modules',
-      ...SDK_PACKAGE_NAME.split('/'),
-    );
-    const publicAuthoringPluginUiRoot = join(
-      publicAuthoringRoot,
-      'node_modules',
-      ...PLUGIN_UI_PACKAGE_NAME.split('/'),
-    );
-    const [
-      publicAuthoringSdkPhysicalRoot,
-      publicAuthoringPluginUiPhysicalRoot,
-    ] = await Promise.all([
-      realpath(publicAuthoringSdkRoot),
-      realpath(publicAuthoringPluginUiRoot),
-    ]);
-    if (
-      !isPathInsideRoot(publicAuthoringRoot, publicAuthoringSdkPhysicalRoot)
-      || !isPathInsideRoot(publicAuthoringRoot, publicAuthoringPluginUiPhysicalRoot)
-      || isPathInsideRoot(PUBLIC_AUTHORING_PROJECT_ROOT, publicAuthoringSdkPhysicalRoot)
-      || isPathInsideRoot(PUBLIC_AUTHORING_PROJECT_ROOT, publicAuthoringPluginUiPhysicalRoot)
-    ) {
-      fail('Public authoring fixture resolved the SDK/Plugin UI pair through workspace source');
-    }
-    const [
-      publicAuthoringSdkManifest,
-      publicAuthoringPluginUiManifest,
-    ] = await Promise.all([
-      readFile(join(publicAuthoringSdkPhysicalRoot, 'package.json'), 'utf8').then(JSON.parse),
-      readFile(join(publicAuthoringPluginUiPhysicalRoot, 'package.json'), 'utf8').then(JSON.parse),
-    ]);
-    assertPackedPackageIdentity(
-      publicAuthoringSdkManifest,
-      candidate.sdk,
-      'Public authoring packed SDK',
-    );
-    assertPackedPackageIdentity(
-      publicAuthoringPluginUiManifest,
-      candidate.pluginUi,
-      'Public authoring packed Plugin UI',
-    );
-    assertPackedPluginUiSdkDependency(publicAuthoringPluginUiManifest, candidate.sdk);
-    const publicAuthoringToolchainModulePath = await realpath(join(
-      publicAuthoringSdkPhysicalRoot,
-      'dist',
-      'browser',
-      'index.js',
-    ));
-    if (!isPathInsideRoot(
-      publicAuthoringSdkPhysicalRoot,
-      publicAuthoringToolchainModulePath,
-    )) {
-      fail('Public authoring toolchain packet escaped the installed SDK package');
-    }
-    const publicAuthoringToolchainModule = await import(
-      pathToFileURL(publicAuthoringToolchainModulePath).href,
-    );
-    const publicAuthoringToolchainPacket =
-      assertPackedPublicToolchainCompatibilityCandidate({
-        packet: publicAuthoringToolchainModule.PUBLIC_TOOLCHAIN_COMPATIBILITY_V1,
-        candidate,
-      });
+      fixtureRoot,
+      authorEnv,
+      registry,
+      candidate,
+    });
+    const publicAuthoringRoot = publicAuthoringReference.projectRoot;
+    const publicAuthoringPackage = publicAuthoringReference.packageJson;
+    const publicAuthoringSdkPhysicalRoot = publicAuthoringReference.sdkPhysicalRoot;
+    const publicAuthoringSdkManifest = publicAuthoringReference.sdkManifest;
+    const publicAuthoringToolchainPacket = publicAuthoringReference.toolchainPacket;
     stages.push({
       id: 'public-authoring-external-pair',
       ok: true,
@@ -6828,29 +6903,11 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
         pluginUiVersion: publicAuthoringToolchainPacket.pluginUi.version,
       },
     });
-    const publicAuthoringUiBuildRelativePath =
-      publicAuthoringSdkManifest.bin?.['happier-plugin-build-ui'];
-    if (
-      typeof publicAuthoringUiBuildRelativePath !== 'string'
-      || isAbsolute(publicAuthoringUiBuildRelativePath)
-    ) {
-      fail('Public authoring packed SDK did not expose a relative happier-plugin-build-ui entrypoint');
-    }
-    const publicAuthoringUiBuildBin = await realpath(resolve(
-      publicAuthoringSdkPhysicalRoot,
-      publicAuthoringUiBuildRelativePath,
-    ));
-    const publicAuthoringUiBuildRelativeContainedPath = relative(
-      publicAuthoringSdkPhysicalRoot,
-      publicAuthoringUiBuildBin,
-    );
-    if (
-      publicAuthoringUiBuildRelativeContainedPath === '..'
-      || publicAuthoringUiBuildRelativeContainedPath.startsWith(`..${sep}`)
-      || isAbsolute(publicAuthoringUiBuildRelativeContainedPath)
-    ) {
-      fail('Public authoring happier-plugin-build-ui entrypoint escaped the installed SDK package');
-    }
+    const publicAuthoringUiBuildBin = await resolvePackedExternalReferenceUiBuildBin({
+      label: 'Public authoring packed SDK',
+      sdkPhysicalRoot: publicAuthoringSdkPhysicalRoot,
+      sdkManifest: publicAuthoringSdkManifest,
+    });
     const publicAuthoringUiBuild = await run(process.execPath, [
       publicAuthoringUiBuildBin,
       '--project-root',
@@ -6969,29 +7026,92 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       archiveBytes: publicAuthoringArchiveBytes,
       hostedWeb: publicAuthoringHostedWebGraph,
     });
-    const retainedUiBuildRelativePath =
-      installedSdkManifest.bin?.['happier-plugin-build-ui'];
-    if (
-      typeof retainedUiBuildRelativePath !== 'string'
-      || isAbsolute(retainedUiBuildRelativePath)
-    ) {
-      fail('Packed SDK did not expose a relative happier-plugin-build-ui entrypoint');
-    }
-    const retainedUiBuildBin = await realpath(resolve(
-      installedSdkPhysicalRoot,
-      retainedUiBuildRelativePath,
-    ));
-    const retainedUiBuildBinRelativePath = relative(
-      installedSdkPhysicalRoot,
-      retainedUiBuildBin,
+
+    // 03g `UI-AP-REQ-17` requires the separately owned production hosted
+    // reference to survive the same exact archive boundary as the portfolio
+    // package: it installs the candidate pair from the candidate registry, runs
+    // its public author lifecycle, emits its own hostedWeb graph, and packs.
+    const productionHostedReferenceProduct = packedAuthorExternalReferenceProduct(
+      'production-hosted-reference-external-pair',
     );
-    if (
-      retainedUiBuildBinRelativePath === '..'
-      || retainedUiBuildBinRelativePath.startsWith(`..${sep}`)
-      || isAbsolute(retainedUiBuildBinRelativePath)
-    ) {
-      fail('Packed SDK happier-plugin-build-ui entrypoint escaped the installed package');
-    }
+    const productionHostedReference = await runPackedExternalReferencePackageLifecycle({
+      product: productionHostedReferenceProduct,
+      tempRoot,
+      cliEntrypoint,
+      fixtureRoot,
+      authorEnv,
+      registry,
+      candidate,
+    });
+    const productionHostedReferenceUiBuildBin =
+      await resolvePackedExternalReferenceUiBuildBin({
+        label: `${productionHostedReferenceProduct.label} packed SDK`,
+        sdkPhysicalRoot: productionHostedReference.sdkPhysicalRoot,
+        sdkManifest: productionHostedReference.sdkManifest,
+      });
+    assertCommandSucceeded(
+      await run(process.execPath, [
+        productionHostedReferenceUiBuildBin,
+        '--project-root',
+        productionHostedReference.projectRoot,
+      ], {
+        cwd: productionHostedReference.projectRoot,
+        env: authorEnv,
+      }),
+      'packed production hosted reference hostedWeb UI build',
+    );
+    const productionHostedReferenceGraph = await attestPackedPublicAuthoringHostedWebGraph({
+      artifactRoot: join(
+        productionHostedReference.projectRoot,
+        'dist',
+        'happier-plugin-ui',
+      ),
+      contributionId: productionHostedReferenceProduct.hostedWebContributionId,
+      label: 'production hosted reference',
+    });
+    const productionHostedReferenceArchivePath = join(
+      tempRoot,
+      'production-hosted-reference.happier-plugin.tgz',
+    );
+    await runPackedCliJson({
+      cliEntrypoint,
+      cwd: fixtureRoot,
+      env: authorEnv,
+      args: [
+        'plugins', 'pack', productionHostedReference.projectRoot,
+        '--out', productionHostedReferenceArchivePath,
+        '--json',
+      ],
+    }, 'plugins_pack');
+    const productionHostedReferenceArchiveBytes = await readFile(
+      productionHostedReferenceArchivePath,
+    );
+    stages.push({
+      id: productionHostedReferenceProduct.stageId,
+      ok: true,
+      pluginId: PRODUCTION_HOSTED_REFERENCE_PLUGIN_ID,
+      packageName: productionHostedReference.packageJson.name,
+      packageVersion: productionHostedReference.packageJson.version,
+      sdk: `${candidate.sdk.packageName}@${candidate.sdk.version}`,
+      pluginUi: `${candidate.pluginUi.packageName}@${candidate.pluginUi.version}`,
+      hostedWeb: {
+        contributionId: productionHostedReferenceGraph.contributionId,
+        entry: productionHostedReferenceGraph.entry,
+        digest: productionHostedReferenceGraph.digest,
+        fileCount: productionHostedReferenceGraph.files.length,
+      },
+      archiveIntegrity: sha512Sri(productionHostedReferenceArchiveBytes),
+      toolchain: {
+        hostBuildIdentity: productionHostedReference.toolchainPacket.host.buildIdentity,
+        pluginSdkVersion: productionHostedReference.toolchainPacket.pluginSdk.version,
+        pluginUiVersion: productionHostedReference.toolchainPacket.pluginUi.version,
+      },
+    });
+    const retainedUiBuildBin = await resolvePackedExternalReferenceUiBuildBin({
+      label: 'Packed SDK',
+      sdkPhysicalRoot: installedSdkPhysicalRoot,
+      sdkManifest: installedSdkManifest,
+    });
     const retainedUiBuild = await run(process.execPath, [
       retainedUiBuildBin,
       '--project-root',
@@ -7594,8 +7714,8 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       for (const operation of ['typecheck', 'build']) {
         await runPackedCliJson({
           cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-          args: ['plugins', 'author', operation, privatePlugin.root, '--json'],
-        }, `plugins_author_${operation}`);
+          args: ['plugins', 'dev', operation, privatePlugin.root, '--json'],
+        }, `plugins_dev_${operation}`);
       }
       const privateArchivePath = join(tempRoot, `${privatePlugin.name}-${version}.tgz`);
       await runPackedCliJson({
@@ -9096,8 +9216,8 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     for (const operation of ['typecheck', 'build']) {
       await runPackedCliJson({
         cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: ['plugins', 'author', operation, plugin.root, '--json'],
-      }, `plugins_author_${operation}`);
+        args: ['plugins', 'dev', operation, plugin.root, '--json'],
+      }, `plugins_dev_${operation}`);
     }
     const takeoverCandidateArtifact = await replacePackedArchive('takeover-pending-v1.1');
     const oldDaemonState = await readPackedDaemonState(childEnv.HAPPIER_HOME_DIR);
@@ -9914,8 +10034,8 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     for (const operation of ['typecheck', 'build']) {
       await runPackedCliJson({
         cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: ['plugins', 'author', operation, plugin.root, '--json'],
-      }, `plugins_author_${operation}`);
+        args: ['plugins', 'dev', operation, plugin.root, '--json'],
+      }, `plugins_dev_${operation}`);
     }
     const failedUpdateArtifact = await replacePackedArchive('rejected-v2');
     const failedUpdateEnvelope = await runReviewedInstall([
@@ -9966,8 +10086,8 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     for (const operation of ['typecheck', 'build', 'test']) {
       await runPackedCliJson({
         cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: ['plugins', 'author', operation, plugin.root, '--json'],
-      }, `plugins_author_${operation}`);
+        args: ['plugins', 'dev', operation, plugin.root, '--json'],
+      }, `plugins_dev_${operation}`);
     }
     const replacementArtifact = await replacePackedArchive('accepted-v2');
     if (replacementArtifact.integrity === failedUpdateArtifact.integrity) {
@@ -10291,8 +10411,8 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     for (const operation of ['typecheck', 'build', 'test']) {
       await runPackedCliJson({
         cliEntrypoint, cwd: fixtureRoot, env: authorEnv,
-        args: ['plugins', 'author', operation, plugin.root, '--json'],
-      }, `plugins_author_${operation}`);
+        args: ['plugins', 'dev', operation, plugin.root, '--json'],
+      }, `plugins_dev_${operation}`);
     }
     const prepareVerticalAAuthorVersion = async (version, failActivation = false) => {
       await configureVerticalAPlugin({
@@ -10309,8 +10429,8 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
           cliEntrypoint,
           cwd: fixtureRoot,
           env: authorEnv,
-          args: ['plugins', 'author', operation, plugin.root, '--json'],
-        }, 'plugins_author_' + operation);
+          args: ['plugins', 'dev', operation, plugin.root, '--json'],
+        }, 'plugins_dev_' + operation);
       }
     };
 

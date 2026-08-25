@@ -301,15 +301,6 @@ function resolveExplicitlyNamedUnitLane(context: TestLaneContext, relativePath: 
  * reason clears. This is not a place to silence a test that merely needs wiring.
  */
 export const DECLARED_UNWIRED_TEST_FILES: Readonly<Record<string, string>> = Object.freeze({
-  // Blocked on a build prerequisite no unit lane provides: this is the code-defined example, so it
-  // owns no handwritten `.happier-plugin/plugin.json` (its own first assertion requires that file to
-  // be absent) and its manifest exists only after `happier plugins dev build .` emits
-  // `dist/index.js`. Measured 2026-08-21 without that build:
-  // `ERR_MODULE_NOT_FOUND: Cannot find module packages/plugin-sdk/examples/public-authoring/dist/index.js`.
-  // Its ten build-free sibling example tests are named by the plugin-sdk `test` chain and run there.
-  'packages/plugin-sdk/examples/public-authoring/test/index.test.mjs':
-    'Requires `happier plugins dev build .` to emit dist/index.js; no unit lane builds the example.',
-
   // Red where they would be wired. Measured 2026-08-23 with `node --test <file>` from `apps/ui`:
   // `tauri_desktop_autostart` 0 pass / 1 fail (Cargo.toml no longer matches
   // `tauri = { version = "2.8.2", features = [… "tray-icon"`), `tauri_mcp_bridge` 0 pass / 1 fail
@@ -457,10 +448,16 @@ export function classifyTestFile(context: TestLaneContext, relativePath: string)
       return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
     }
     if (relativePath.includes('/suites/contracts/')) return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
+    // In-process layer suites and the runtime-mode parity bench. `vitest.core.config.ts` collected
+    // both, but only `test:core` uses that config and no CI job or root CI-shaped script invokes it
+    // — the workspace's own `test` script is not named by any root lane either. They are now in
+    // `vitest.core.fast.config.ts`, which the `e2e-core` job runs.
+    if (relativePath.includes('/suites/core-layer/')) return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
+    if (relativePath.includes('/suites/runtime-unification/')) return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
     if (relativePath.includes('/src/testkit/') && /\.(?:test|spec)\.ts$/.test(relativePath)) return 'test:e2e:core:fast';
-    // Everything else in the workspace (`suites/core-layer`, `suites/runtime-unification`,
-    // `pluginSdkConsumers`, `fixtures/**`, `src/testkit/**/*.test.mjs`) runs through the
-    // @happier-dev/tests workspace `test` script, so it resolves through the derived workspace lane.
+    // Everything else in the workspace (`pluginSdkConsumers`, `fixtures/**`,
+    // `src/testkit/**/*.test.mjs`) runs through the @happier-dev/tests workspace `test` script, so
+    // it resolves through the derived workspace lane.
   }
 
   if (relativePath.startsWith('packages/release-runtime/')) {

@@ -350,6 +350,11 @@ test('wires shared SDK packages into the default root validation lanes', () => {
   assert.match(unitLane, /yarn workspace @happier-dev\/peer-mediation test/);
   assert.match(unitLane, /yarn workspace @happier-dev\/plugin-sdk test/);
   assert.match(unitLane, /yarn workspace @happier-dev\/plugin-ui test/);
+  // The published Channels protocol package sat outside every ordinary lane while the lane-map
+  // unit fixture asserted the opposite from a root command it wrote itself. These two assertions
+  // read the real root script and the real workflow, so the fixture can no longer be friendlier
+  // than the commands CI actually runs.
+  assert.match(unitLane, /yarn workspace @happier-dev\/channels-protocol test/);
   assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /turbo run typecheck:source:finite/);
   assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /--filter=@happier-dev\/terminal-native/);
   assert.match(
@@ -363,6 +368,7 @@ test('wires shared SDK packages into the default root validation lanes', () => {
   assert.match(workflowText, /yarn workspace @happier-dev\/sherpa-native test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/support test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/peer-mediation test/);
+  assert.match(workflowText, /yarn workspace @happier-dev\/channels-protocol test/);
   assert.match(workflowText, /yarn -s check:public-sdk:finite/);
   assert.doesNotMatch(workflowText, /yarn workspace @happier-dev\/plugin-sdk test/);
   assert.doesNotMatch(workflowText, /yarn workspace @happier-dev\/plugin-ui test/);
@@ -397,6 +403,7 @@ test('runs every direct natural-artifact packed Plugin Platform script from CI',
     'test:plugin-platform:packed-targeted-projection',
     'test:plugin-platform:packed-background-indexer',
     'test:plugin-platform:packed-composer',
+    'test:plugin-platform:out-of-tree-channel-socket-provider',
   ];
 
   for (const scriptName of directNaturalArtifactScripts) {

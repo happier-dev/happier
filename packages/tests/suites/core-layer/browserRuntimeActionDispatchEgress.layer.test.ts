@@ -13,6 +13,7 @@ import type { SocketCollector } from '../../src/testkit/socketClient';
 
 import { resolveExecutionRunPolicy } from '../../../../apps/cli/src/agent/executionRuns/policy/executionRunPolicy';
 import type { ExecutionRunHostBridgeContract } from '../../../../apps/cli/src/agent/runtime/bridges/executionRun/executionRunBridgeContract';
+import type { ExecutionRunState } from '../../../../apps/cli/src/agent/runtime/bridges/executionRun/executionRunTypes';
 import { RpcHandlerManager } from '../../../../apps/cli/src/api/rpc/RpcHandlerManager';
 import { createBrowserDiagnosticsActionRoutes } from '../../../../apps/cli/src/daemon/browser/diagnostics/actionRoutes';
 import { redactBrowserDiagnosticsSnapshotForViewer } from '../../../../apps/cli/src/daemon/browser/diagnostics/snapshotEgress';
@@ -21,8 +22,29 @@ import type { CliServerFeaturesSnapshot } from '../../../../apps/cli/src/feature
 import { createExecutionRunRpcActionExecutor } from '../../../../apps/cli/src/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 import { registerExecutionRunRpcHandlers } from '../../../../apps/cli/src/rpc/handlers/executionRuns/registerExecutionRunRpcHandlers';
 
-const SESSION_ID = 'session_browser_dispatch_e2e';
-const RUN_ID = 'run_browser_dispatch_e2e';
+/**
+ * Layer coverage for the browser runtime-action DISPATCH + agent-egress REDACTION path
+ * (BRW-F9 read half).
+ *
+ * WHAT THIS PROVES. A `browser.diagnostics.snapshot` dispatch travels the real cross-boundary
+ * chain in-process: the encrypted execution-run RPC envelope (`RpcHandlerManager` with a real
+ * key), the real handler registration, the real execution-run action executor, the real daemon
+ * diagnostics action routes, the real daemon diagnostics store, and the real protocol redaction
+ * owner. The `owner` projection keeps the seeded reset token; the `agent` projection must not
+ * contain it anywhere in its serialization.
+ *
+ * WHAT THIS DOES NOT PROVE — read this before citing it. The diagnostic event is HAND-AUTHORED
+ * and injected straight into the daemon store; no collector, page, or browser produced it. The
+ * "socket" is a fake whose `rpcCall` calls `rpc.handleRequest` in the same process, and the
+ * execution-run bridge is a stub whose non-read methods throw. So this closes the dispatch and
+ * redaction half of BRW-F9 and says nothing about the producer half — that is
+ * `suites/core-e2e/browserAutomationProducer.slow.e2e.test.ts`, which is still unimplemented.
+ * The file was previously named `browserProducerBacked.l6LiveQa.slow.e2e.test.ts` and tiered as a
+ * slow e2e; both claimed a producer and a process boundary it never had.
+ */
+
+const SESSION_ID = 'session_browser_dispatch_layer';
+const RUN_ID = 'run_browser_dispatch_layer';
 const BROWSER_SESSION_ID = 'browser_session_dispatch_e2e';
 const VIEW_ID = 'browser_view_dispatch_e2e';
 
@@ -45,8 +67,31 @@ function createExecutionRunBridgeWithRun(): ExecutionRunHostBridgeContract {
     startedAtMs: 1,
   } satisfies ExecutionRunPublicState;
 
+  // `executionRunAction` admits the dispatch through `getRunInAuthoritativeScope`, which reads
+  // `manager.get(runId)` and requires `sessionId` to match the RPC scope; it then reads
+  // `permissionMode` off that state to build the runtime-action caller context. The predecessor
+  // file stubbed `get` as `() => null`, so every dispatch short-circuited to
+  // `execution_run_not_found` and the redaction assertions below were never reached.
+  const runState = {
+    runId: RUN_ID,
+    callId: run.callId,
+    sidechainId: run.sidechainId,
+    sessionId: SESSION_ID,
+    depth: 0,
+    intent: run.intent,
+    backendTarget: run.backendTarget,
+    backendId: 'codex',
+    instructions: 'browser runtime-action dispatch layer coverage',
+    permissionMode: run.permissionMode,
+    retentionPolicy: run.retentionPolicy,
+    runClass: run.runClass,
+    ioMode: run.ioMode,
+    status: run.status,
+    startedAtMs: run.startedAtMs,
+  } satisfies ExecutionRunState;
+
   return {
-    get: () => null,
+    get: (runId: string) => (runId === RUN_ID ? runState : null),
     getRunningCount: () => 0,
     getStructuredMeta: () => null,
     getLatestToolResult: () => null,
@@ -142,30 +187,12 @@ function createRuntimeActionSocket(params: Readonly<{
   return ui as unknown as SocketCollector;
 }
 
-describe('core e2e: browser runtime-action dispatch via execution.run.action', () => {
+describe('core layer: browser runtime-action dispatch and agent-egress redaction', () => {
   afterEach(() => {
     delete process.env.HAPPIER_BROWSER_ENABLED;
   });
 
-  it.skip('TODO real managed Chrome sidecar: navigates, clicks, types, and snapshots through real browser automation producers', async () => {
-    throw new Error(
-      [
-        'TODO real managed Chrome sidecar: run browser.automation.navigate/click/type/snapshot against',
-        'a launched Chromium sidecar and assert snapshot.interactiveElements[].selector is producer output.',
-      ].join(' '),
-    );
-  });
-
-  it.skip('TODO real managed Chrome recording producer: records to an artifact using browser.recording.start/stop', async () => {
-    throw new Error(
-      [
-        'TODO real managed Chrome recording producer: run browser.recording.start/stop with a live',
-        'Chromium/CDP screencast-capable sidecar and assert the finalized recording artifact exists.',
-      ].join(' '),
-    );
-  });
-
-  it('dispatches browser.diagnostics.snapshot through the L6 helper and redacts agent egress', async () => {
+  it('dispatches browser.diagnostics.snapshot through the encrypted execution-run RPC and redacts agent egress', async () => {
     const secret = new Uint8Array(randomBytes(32));
     const token = `tok_${randomUUID().replaceAll('-', '')}`;
     const tokenUrl = `https://app.example/reset/${token}?token=${token}`;

@@ -2,13 +2,29 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { URL } from 'node:url';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import { createRunDirs } from '../../src/testkit/runDir';
-import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
+import {
+  renderServerLightSqliteDatabaseUrl,
+  resolveTestDbProvider,
+  startServerLight,
+  type StartedServer,
+} from '../../src/testkit/process/serverLight';
+import {
+  acquireServerLightPostgresVoiceMintLock,
+  countServerLightPostgresVoiceMintLockWaiters,
+  readServerLightVoiceLeaseRows,
+  resolveServerLightAccountId,
+  type ServerLightQueryableDbProvider,
+} from '../../src/testkit/process/serverLightDatabase';
 import { createTestAuth } from '../../src/testkit/auth';
+import { sleep, waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
+const configuredDbProvider = resolveTestDbProvider(process.env, {
+  fallbackProvider: 'sqlite',
+});
+const suiteDbProvider = configuredDbProvider;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -33,6 +49,57 @@ function getString(record: UnknownRecord, key: string): string {
   return value;
 }
 
+function serverDatabaseTarget(server: StartedServer): Readonly<{
+  provider: ServerLightQueryableDbProvider;
+  databaseUrl: string;
+}> {
+  if (suiteDbProvider === 'pglite') {
+    throw new Error('Voice lease database inspection requires sqlite, postgres, or mysql; PGlite is intentionally skipped.');
+  }
+  if (suiteDbProvider === 'sqlite') {
+    return {
+      provider: 'sqlite',
+      databaseUrl: renderServerLightSqliteDatabaseUrl({
+        dbPath: join(server.dataDir, 'happier-server-light.sqlite'),
+      }),
+    };
+  }
+
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    throw new Error(`Missing DATABASE_URL for ${suiteDbProvider} Voice lease inspection.`);
+  }
+  return { provider: suiteDbProvider, databaseUrl };
+}
+
+async function expectPromiseStillPending(promise: Promise<unknown>): Promise<void> {
+  const settled = await Promise.race([
+    promise.then(() => true, () => true),
+    sleep(250).then(() => false),
+  ]);
+  expect(settled).toBe(false);
+}
+
+async function mintVoiceLease(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  path: '/v1/voice/token' | '/v1/voice/lease/mint';
+  sessionId?: string;
+}>): Promise<Readonly<{ response: Response; body: UnknownRecord }>> {
+  const response = await fetch(`${params.baseUrl}${params.path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  const body = asRecord(payload);
+  if (!body) throw new Error('Expected JSON object response');
+  return { response, body };
+}
+
 async function startElevenLabsStub(): Promise<{ server: Server; baseUrl: string }> {
   const server = createServer((req, res) => {
     const u = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -55,7 +122,7 @@ async function startElevenLabsStub(): Promise<{ server: Server; baseUrl: string 
   return { server, baseUrl };
 }
 
-describe('core e2e: voice lease mint (account-scoped)', () => {
+describe.skipIf(suiteDbProvider === 'pglite')('core e2e: voice lease mint (account-scoped)', () => {
   let elevenStub: Server | null = null;
   let server: StartedServer | null = null;
 
@@ -80,11 +147,11 @@ describe('core e2e: voice lease mint (account-scoped)', () => {
 
     server = await startServerLight({
       testDir,
-      dbProvider: 'sqlite',
+      dbProvider: suiteDbProvider,
       extraEnv: {
         HAPPIER_FEATURE_VOICE__ENABLED: 'true',
         HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
-        VOICE_TOKEN_MAX_PER_MINUTE: '0',
+        HAPPIER_VOICE_TOKEN_RATE_LIMIT_MAX: '100',
         VOICE_MAX_CONCURRENT_SESSIONS: '1',
         VOICE_MAX_SESSION_SECONDS: '60',
         ELEVENLABS_API_KEY: 'e2e-elevenlabs-key',
@@ -94,27 +161,126 @@ describe('core e2e: voice lease mint (account-scoped)', () => {
     });
 
     const auth = await createTestAuth(server.baseUrl);
-    const res = await fetch(`${server.baseUrl}/v1/voice/lease/mint`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({}),
+    const expectedAccountId = await resolveServerLightAccountId({
+      ...serverDatabaseTarget(server),
+      publicKey: auth.publicKeyBase64,
     });
-    expect(res.ok).toBe(true);
-
-    const payload: unknown = await res.json().catch(() => null);
-    const json = asRecord(payload);
-    if (!json) throw new Error('Expected JSON object response');
-    expect(getBoolean(json, 'allowed')).toBe(true);
-    expect(getString(json, 'token')).toBe('e2e_elevenlabs_token');
-    const leaseId = getString(json, 'leaseId');
+    const mint = await mintVoiceLease({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      path: '/v1/voice/lease/mint',
+    });
+    expect(mint.response.ok).toBe(true);
+    expect(getBoolean(mint.body, 'allowed')).toBe(true);
+    expect(getString(mint.body, 'token')).toBe('e2e_elevenlabs_token');
+    const leaseId = getString(mint.body, 'leaseId');
     expect(leaseId.length).toBeGreaterThan(0);
 
-    const dbPath = join(server.dataDir, 'happier-server-light.sqlite');
-    const sqlite = new DatabaseSync(dbPath);
-    const row: unknown = sqlite.prepare('select sessionId from VoiceSessionLease where id = ?').get(leaseId);
-    expect(row).toEqual({ sessionId: null });
+    const rows = await readServerLightVoiceLeaseRows({
+      ...serverDatabaseTarget(server),
+      leaseId,
+      expectedAccountId,
+    });
+    expect(rows.lease).toEqual({ accountId: expectedAccountId, sessionId: null });
+    expect(rows.accountLeaseCount).toBe(1);
   }, 240_000);
+
+  it.skipIf(suiteDbProvider !== 'postgres')(
+    'blocks both aliases on the exact account advisory lock, then serializes their durable admission',
+    async () => {
+      if (!server) throw new Error('Expected the PostgreSQL Voice server to be started.');
+
+      const accountA = await createTestAuth(server.baseUrl);
+      const database = serverDatabaseTarget(server);
+      const accountAId = await resolveServerLightAccountId({
+        ...database,
+        publicKey: accountA.publicKeyBase64,
+      });
+      const accountALock = await acquireServerLightPostgresVoiceMintLock({
+        databaseUrl: database.databaseUrl,
+        accountId: accountAId,
+      });
+      const tokenMint = mintVoiceLease({
+        baseUrl: server.baseUrl,
+        token: accountA.token,
+        path: '/v1/voice/token',
+        sessionId: 'postgres-concurrent-token',
+      });
+      const aliasMint = mintVoiceLease({
+        baseUrl: server.baseUrl,
+        token: accountA.token,
+        path: '/v1/voice/lease/mint',
+        sessionId: 'postgres-concurrent-alias',
+      });
+      try {
+        await waitFor(
+          async () => await countServerLightPostgresVoiceMintLockWaiters({
+            databaseUrl: database.databaseUrl,
+            accountId: accountAId,
+          }) === 2,
+          { timeoutMs: 10_000, context: 'both Voice mint aliases waiting on Account A advisory lock' },
+        );
+        await expectPromiseStillPending(tokenMint);
+        await expectPromiseStillPending(aliasMint);
+      } finally {
+        await accountALock.release();
+      }
+      const [tokenResult, aliasResult] = await Promise.all([
+        tokenMint,
+        aliasMint,
+      ]);
+      const sameAccountResults = [tokenResult, aliasResult];
+      expect(sameAccountResults.map(({ response }) => response.status).sort()).toEqual([200, 429]);
+      const admitted = sameAccountResults.find(({ response }) => response.status === 200);
+      const rejected = sameAccountResults.find(({ response }) => response.status === 429);
+      if (!admitted || !rejected) throw new Error('Expected one admitted and one rejected same-account mint.');
+      expect(getBoolean(admitted.body, 'allowed')).toBe(true);
+      expect(getBoolean(rejected.body, 'allowed')).toBe(false);
+      expect(getString(rejected.body, 'reason')).toBe('too_many_sessions');
+
+      const accountARows = await readServerLightVoiceLeaseRows({
+        ...database,
+        leaseId: getString(admitted.body, 'leaseId'),
+        expectedAccountId: accountAId,
+      });
+      expect(accountARows.lease).toMatchObject({ accountId: accountAId });
+      expect(accountARows.accountLeaseCount).toBe(1);
+
+      const [accountB, accountC] = await Promise.all([
+        createTestAuth(server.baseUrl),
+        createTestAuth(server.baseUrl),
+      ]);
+      const accountBId = await resolveServerLightAccountId({
+        ...database,
+        publicKey: accountB.publicKeyBase64,
+      });
+      const accountCId = await resolveServerLightAccountId({
+        ...database,
+        publicKey: accountC.publicKeyBase64,
+      });
+      const accountBLock = await acquireServerLightPostgresVoiceMintLock({
+        databaseUrl: database.databaseUrl,
+        accountId: accountBId,
+      });
+      try {
+        const accountCMint = await mintVoiceLease({
+          baseUrl: server.baseUrl,
+          token: accountC.token,
+          path: '/v1/voice/token',
+          sessionId: 'postgres-account-c',
+        });
+        expect(accountCMint.response.status).toBe(200);
+        const accountCRows = await readServerLightVoiceLeaseRows({
+          ...database,
+          leaseId: getString(accountCMint.body, 'leaseId'),
+          expectedAccountId: accountCId,
+        });
+        expect(accountCRows.lease).toMatchObject({ accountId: accountCId });
+        expect(accountCRows.accountLeaseCount).toBe(1);
+      } finally {
+        await accountBLock.release();
+      }
+    },
+    240_000,
+  );
 });

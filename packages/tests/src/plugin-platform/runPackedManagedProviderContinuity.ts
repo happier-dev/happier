@@ -35,11 +35,11 @@ const PACKED_MANAGED_PROVIDER_SAFE_CODE_PATTERN =
 
 type PackedChannelProviderContinuityProbeDependencies = Omit<
   PackedChannelProviderEntrypointDependencies,
-  'runPackedChannelProviderLifecycle'
+  'runPackedChannelProviderLifecycle' | 'cleanup'
 > & Readonly<{
   composed: Pick<
     Awaited<ReturnType<typeof startPackedManagedProviderComposedRuntime>>,
-    'probePackedChannelProviderLifecycle'
+    'probePackedChannelProviderLifecycle' | 'cleanup'
   >;
 }>;
 
@@ -52,6 +52,7 @@ export async function runPackedChannelProviderContinuityProbe(
     ...entrypointDeps,
     runPackedChannelProviderLifecycle: async (lifecycleInput) =>
       await composed.probePackedChannelProviderLifecycle(lifecycleInput),
+    cleanup: async () => await composed.cleanup(),
   });
 }
 
@@ -252,14 +253,50 @@ export async function runPackedExternalSessionsCandidateContinuity(
   };
 }
 
-async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+/**
+ * Process-level seams this command owns. The composed runtime launches a real
+ * server/daemon pair and the artifact owners read, verify, and extract real
+ * candidate archives, so a candidate-shaped test supplies its own.
+ */
+export type PackedManagedProviderContinuityCommandDependencies = Omit<
+  PackedChannelProviderEntrypointDependencies,
+  'runPackedChannelProviderLifecycle' | 'cleanup'
+> & Readonly<{
+  startChannelComposedRuntime?: () => Promise<
+    PackedChannelProviderContinuityProbeDependencies['composed']
+  >;
+  writeStdout?: (line: string) => void;
+}>;
+
+export async function main(
+  argv: readonly string[] = process.argv.slice(2),
+  dependencies: PackedManagedProviderContinuityCommandDependencies = {},
+): Promise<void> {
+  const {
+    startChannelComposedRuntime = startPackedManagedProviderComposedRuntime,
+    writeStdout = (line: string) => {
+      process.stdout.write(line);
+    },
+    ...candidateDependencies
+  } = dependencies;
   const parsed = parsePackedManagedProviderArgs(argv);
   if (parsed.mode === 'current-source') {
-    process.stdout.write(
+    writeStdout(
       `${serializePackedCurrentSourceExternalSessionsSuccess(
         await runPackedCurrentSourceExternalSessions(),
       )}\n`,
     );
+    return;
+  }
+  if (parsed.mode === 'channel') {
+    // The vertical result is already the complete stage evidence document, so
+    // it is written as-is rather than through a second summarizing projection.
+    writeStdout(`${JSON.stringify(
+      await runPackedChannelProviderContinuityProbe(parsed, {
+        ...candidateDependencies,
+        composed: await startChannelComposedRuntime(),
+      }),
+    )}\n`);
     return;
   }
   if (parsed.mode !== 'run') {
@@ -273,7 +310,7 @@ async function main(argv: readonly string[] = process.argv.slice(2)): Promise<vo
     candidateHandoff,
     recoveryRefusal,
   } = await runPackedExternalSessionsCandidateContinuity(parsed, { composed });
-  process.stdout.write(`${serializePackedManagedProviderContinuitySuccess({
+  writeStdout(`${serializePackedManagedProviderContinuitySuccess({
     result,
     continuity,
     candidateHandoff,

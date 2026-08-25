@@ -12,6 +12,10 @@ set -euo pipefail
 # - LIMA_TEMPLATE (default: ubuntu-24.04)
 # - LIMA_MEMORY (default: 8GiB)
 # - LIMA_VM_TYPE (optional: vz|qemu|krunkit)
+# - LIMA_CPUS (optional positive integer; applied on create and reconfigure)
+# - LIMA_DISK (optional positive GiB number; applied when creating the instance)
+# - LIMA_CONTAINERD (optional: user|system|user+system|none; applied on create)
+# - LIMA_MOUNT_NONE=1 (disable all host mounts when creating the instance)
 # - HAPPIER_LIMA_STACK_PORT_RANGE (default: 13000-13999)
 # - HAPPIER_LIMA_EXPO_PORT_RANGE  (default: 18000-19099)
 
@@ -56,6 +60,30 @@ VM_NAME="${1:-happy-test}"
 TEMPLATE="${LIMA_TEMPLATE:-ubuntu-24.04}"
 LIMA_MEMORY="${LIMA_MEMORY:-8GiB}"
 LIMA_VM_TYPE="${LIMA_VM_TYPE:-}" # optional: vz|qemu|krunkit (see: limactl create --list-drivers)
+LIMA_CPUS="${LIMA_CPUS:-}"
+LIMA_DISK="${LIMA_DISK:-}"
+LIMA_CONTAINERD="${LIMA_CONTAINERD:-}"
+LIMA_MOUNT_NONE="${LIMA_MOUNT_NONE:-0}"
+
+if [[ -n "${LIMA_CPUS}" && (! "${LIMA_CPUS}" =~ ^[0-9]+$ || "${LIMA_CPUS}" == "0") ]]; then
+  echo "[lima] invalid LIMA_CPUS: ${LIMA_CPUS} (expected a positive integer)" >&2
+  exit 1
+fi
+if [[ -n "${LIMA_DISK}" && (! "${LIMA_DISK}" =~ ^[0-9]+([.][0-9]+)?$ || "${LIMA_DISK}" == "0") ]]; then
+  echo "[lima] invalid LIMA_DISK: ${LIMA_DISK} (expected a positive GiB number)" >&2
+  exit 1
+fi
+case "${LIMA_CONTAINERD}" in
+  ''|user|system|user+system|none) ;;
+  *)
+    echo "[lima] invalid LIMA_CONTAINERD: ${LIMA_CONTAINERD}" >&2
+    exit 1
+    ;;
+esac
+if [[ "${LIMA_MOUNT_NONE}" != "0" && "${LIMA_MOUNT_NONE}" != "1" ]]; then
+  echo "[lima] invalid LIMA_MOUNT_NONE: ${LIMA_MOUNT_NONE} (expected 0 or 1)" >&2
+  exit 1
+fi
 
 STACK_PORT_RANGE="${HAPPIER_LIMA_STACK_PORT_RANGE:-13000-13999}"
 EXPO_PORT_RANGE="${HAPPIER_LIMA_EXPO_PORT_RANGE:-18000-19099}"
@@ -75,6 +103,18 @@ LIMA_YAML="${LIMA_DIR}/lima.yaml"
 echo "[lima] vm: ${VM_NAME}"
 echo "[lima] template: ${TEMPLATE}"
 echo "[lima] memory: ${LIMA_MEMORY} (override with LIMA_MEMORY=...)"
+if [[ -n "${LIMA_CPUS}" ]]; then
+  echo "[lima] cpus: ${LIMA_CPUS}"
+fi
+if [[ -n "${LIMA_DISK}" ]]; then
+  echo "[lima] disk: ${LIMA_DISK}GiB (creation-time setting)"
+fi
+if [[ "${LIMA_MOUNT_NONE}" == "1" ]]; then
+  echo "[lima] host mounts: disabled (creation-time setting)"
+fi
+if [[ -n "${LIMA_CONTAINERD}" ]]; then
+  echo "[lima] containerd: ${LIMA_CONTAINERD} (creation-time setting)"
+fi
 echo "[lima] stack ports: ${STACK_PORT_RANGE}"
 echo "[lima] expo ports:  ${EXPO_PORT_RANGE}"
 echo "[lima] LIMA_HOME: ${LIMA_HOME_DIR}"
@@ -95,6 +135,18 @@ if [[ ! -f "${LIMA_YAML}" ]]; then
   if [[ -n "${LIMA_VM_TYPE}" ]]; then
     create_args+=(--vm-type "${LIMA_VM_TYPE}")
   fi
+  if [[ -n "${LIMA_CPUS}" ]]; then
+    create_args+=(--cpus "${LIMA_CPUS}")
+  fi
+  if [[ -n "${LIMA_DISK}" ]]; then
+    create_args+=(--disk "${LIMA_DISK}")
+  fi
+  if [[ -n "${LIMA_CONTAINERD}" ]]; then
+    create_args+=(--containerd "${LIMA_CONTAINERD}")
+  fi
+  if [[ "${LIMA_MOUNT_NONE}" == "1" ]]; then
+    create_args+=(--mount-none)
+  fi
   create_args+=("${TEMPLATE_LOCATOR}")
   limactl "${create_args[@]}"
 fi
@@ -113,6 +165,7 @@ cp -a "${LIMA_YAML}" "${LIMA_YAML}.bak.$(date +%Y%m%d-%H%M%S)"
 VM_NAME="${VM_NAME}" \
 LIMA_YAML="${LIMA_YAML}" \
 LIMA_MEMORY="${LIMA_MEMORY}" \
+LIMA_CPUS="${LIMA_CPUS}" \
 STACK_PORT_RANGE="${STACK_PORT_RANGE}" \
 EXPO_PORT_RANGE="${EXPO_PORT_RANGE}" \
 python3 - <<'PY'
@@ -122,6 +175,7 @@ from pathlib import Path
 vm_name = os.environ["VM_NAME"]
 path = Path(os.environ["LIMA_YAML"])
 memory = os.environ.get("LIMA_MEMORY", "8GiB")
+cpus = os.environ.get("LIMA_CPUS", "").strip()
 
 def parse_range(s: str):
   m = re.match(r"^\s*(\d+)\s*-\s*(\d+)\s*$", s or "")
@@ -180,6 +234,12 @@ else:
     text = re.sub(r"^memory:\s*.*$", f'memory: "{memory}"', text, flags=re.MULTILINE)
   else:
     text = text.rstrip() + mem_block
+
+if cpus:
+  if re.search(r"^cpus:\s*.*$", text, flags=re.MULTILINE):
+    text = re.sub(r"^cpus:\s*.*$", f"cpus: {cpus}", text, flags=re.MULTILINE)
+  else:
+    text = text.rstrip() + f"\ncpus: {cpus}\n"
 
 if MARK_BEGIN in text and MARK_END in text:
   text = re.sub(

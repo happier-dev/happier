@@ -176,6 +176,7 @@ function readFlagValue(argv, index, flag) {
 export function parsePackedManagedProviderArgs(argv) {
   let recipe = false;
   let currentSource = false;
+  let channel = false;
   let candidateManifestPath = null;
   let enableOpenCodeLive = false;
   let workRoot = null;
@@ -184,6 +185,11 @@ export function parsePackedManagedProviderArgs(argv) {
     if (argument === '--recipe') {
       if (recipe) fail('packed_managed_provider_recipe_repeated');
       recipe = true;
+      continue;
+    }
+    if (argument === '--channel') {
+      if (channel) fail('packed_managed_provider_channel_repeated');
+      channel = true;
       continue;
     }
     if (argument === '--current-source') {
@@ -211,8 +217,8 @@ export function parsePackedManagedProviderArgs(argv) {
   if (recipe) {
     if (
       currentSource
-      ||
-      candidateManifestPath
+      || channel
+      || candidateManifestPath
       || workRoot
       || enableOpenCodeLive
     ) {
@@ -221,14 +227,14 @@ export function parsePackedManagedProviderArgs(argv) {
     return { mode: 'recipe', candidateManifestPath: null };
   }
   if (currentSource) {
-    if (candidateManifestPath || workRoot || enableOpenCodeLive) {
+    if (channel || candidateManifestPath || workRoot || enableOpenCodeLive) {
       fail('packed_managed_provider_current_source_must_be_candidate_free');
     }
     return { mode: 'current-source', candidateManifestPath: null };
   }
   if (!candidateManifestPath) fail('packed_managed_provider_candidate_required');
   return {
-    mode: 'run',
+    mode: channel ? 'channel' : 'run',
     candidateManifestPath,
     enableOpenCodeLive,
     ...(workRoot ? { workRoot } : {}),
@@ -242,9 +248,15 @@ export function buildPackedManagedProviderRecipe({ packageRoot }) {
     packageRoot: resolve(packageRoot),
     command:
       'yarn workspace @happier-dev/tests test:plugin-platform:packed-managed-provider --candidate <candidate-manifest.json>',
+    // The Channel provider lifecycle reverifies a candidate channels-protocol
+    // archive and drives its own stage list, so it is a sibling command against
+    // the same candidate manifest rather than an extra stage of the run above.
+    channelCommand:
+      'yarn workspace @happier-dev/tests test:plugin-platform:packed-channel-provider --candidate <candidate-manifest.json>',
     requiredStageIds: PACKED_MANAGED_PROVIDER_REQUIRED_STAGE_IDS,
     candidateHandoffStageIds:
       PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
+    channelProviderStageIds: PACKED_CHANNEL_PROVIDER_REQUIRED_STAGE_IDS,
     inputs: Object.freeze({
       candidateManifest:
         'one exact candidate manifest from the canonical candidate creator binding the sole SDK, CLI, and five-target standalone CLI archive matrix to one run',
@@ -289,10 +301,14 @@ export function buildPackedManagedProviderEntrypointInvocation({
   packageRoot,
   parsed,
 }) {
-  if (parsed?.mode !== 'run' && parsed?.mode !== 'current-source') {
+  if (
+    parsed?.mode !== 'run'
+    && parsed?.mode !== 'channel'
+    && parsed?.mode !== 'current-source'
+  ) {
     fail('packed_managed_provider_continuity_requires_candidate');
   }
-  if (parsed.mode === 'run' && !parsed.candidateManifestPath) {
+  if (parsed.mode !== 'current-source' && !parsed.candidateManifestPath) {
     fail('packed_managed_provider_continuity_requires_candidate');
   }
   const resolvedPackageRoot = resolve(packageRoot);
@@ -304,6 +320,7 @@ export function buildPackedManagedProviderEntrypointInvocation({
       ...(parsed.mode === 'current-source'
         ? ['--current-source']
         : [
+          ...(parsed.mode === 'channel' ? ['--channel'] : []),
           '--candidate',
           parsed.candidateManifestPath,
           ...(parsed.workRoot ? ['--work-root', parsed.workRoot] : []),

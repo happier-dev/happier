@@ -22,14 +22,25 @@ export function buildFixtureConsumerPackageJson({
   sdkTarball,
   fixtureArchive,
 }) {
+  const protocolSpecifier = archiveFileSpecifier(protocolTarball);
+  const sdkSpecifier = archiveFileSpecifier(sdkTarball);
   return {
     name: 'happier-channel-fixture-consumer',
     private: true,
     type: 'module',
     dependencies: {
-      [CHANNELS_PROTOCOL_PACKAGE_NAME]: archiveFileSpecifier(protocolTarball),
-      [PLUGIN_SDK_PACKAGE_NAME]: archiveFileSpecifier(sdkTarball),
+      [CHANNELS_PROTOCOL_PACKAGE_NAME]: protocolSpecifier,
+      [PLUGIN_SDK_PACKAGE_NAME]: sdkSpecifier,
       'happier-out-of-tree-channel-socket-provider': archiveFileSpecifier(fixtureArchive),
+    },
+    // The provider archive declares ordinary registry ranges, as a real external
+    // author's package does. A release candidate is a prerelease version, which
+    // no plain range accepts, so without these overrides npm silently resolves
+    // the two public packages from the registry instead of the candidate under
+    // test - and the whole proof becomes a registry install.
+    overrides: {
+      [CHANNELS_PROTOCOL_PACKAGE_NAME]: protocolSpecifier,
+      [PLUGIN_SDK_PACKAGE_NAME]: sdkSpecifier,
     },
   };
 }

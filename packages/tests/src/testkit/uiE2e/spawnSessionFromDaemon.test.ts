@@ -64,4 +64,41 @@ describe('spawnSessionFromDaemon', () => {
     });
     expect(parsedBody.spawnNonce).toEqual(expect.any(String));
   });
+
+  it('settles accepted asynchronous spawn responses before returning the session id', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/spawn-session')) {
+        return new Response(JSON.stringify({
+          success: true,
+          status: 'pending',
+          sessionIdStatus: 'pending',
+          spawnNonce: 'spawn-nonce-1',
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.endsWith('/spawn-session/resolve')) {
+        return new Response(JSON.stringify({
+          success: true,
+          status: 'success',
+          sessionId: 'session-123',
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`Unexpected test URL: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const daemon = {
+      state: {
+        httpPort: 4231,
+        controlToken: 'daemon-token',
+      },
+    } as StartedDaemon;
+
+    await expect(spawnSessionFromDaemon({
+      daemon,
+      directory: '/tmp/workspace',
+      agent: 'codex',
+    })).resolves.toBe('session-123');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

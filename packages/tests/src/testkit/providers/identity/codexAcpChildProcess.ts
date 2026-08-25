@@ -7,6 +7,7 @@ import {
 import {
   readProcessIdentityByPid,
 } from '../../../../../../apps/cli/src/daemon/processIdentity';
+import { tokenizeObservedProcessCommand } from './processCommand';
 
 type ExactProcessIdentity = NonNullable<Awaited<ReturnType<typeof readProcessIdentityByPid>>>;
 
@@ -43,12 +44,6 @@ function normalizedExecutableBasename(value: string): string {
   return basename(value.replaceAll('\\', '/')).toLowerCase();
 }
 
-function commandTokens(command: string): string[] {
-  return command.match(/"[^"]+"|'[^']+'|\S+/gu)?.map((token) => (
-    token.replace(/^["']|["']$/gu, '')
-  )) ?? [];
-}
-
 function isExactCodexAcpIdentity(
   identity: ExactProcessIdentity,
   expectedExecutable: string,
@@ -61,13 +56,12 @@ function isExactCodexAcpIdentity(
     `${expectedStem}.cmd`,
     `${expectedStem}.exe`,
   ]);
-  const executableName = identity.executablePath
-    ? normalizedExecutableBasename(identity.executablePath)
+  const tokens = tokenizeObservedProcessCommand(identity.command);
+  const executableName = tokens[0]
+    ? normalizedExecutableBasename(tokens[0])
     : '';
   if (allowedNames.has(executableName)) return true;
 
-  const tokens = commandTokens(identity.command);
-  if (tokens[0] && allowedNames.has(normalizedExecutableBasename(tokens[0]))) return true;
   if (executableName === 'node' || executableName === 'node.exe') {
     return Boolean(tokens[1] && allowedNames.has(normalizedExecutableBasename(tokens[1])));
   }

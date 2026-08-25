@@ -266,7 +266,7 @@ export function resolvePackedManagedWrapperExecutable(params: Readonly<{
 export function parsePackedManagedProviderArgs(argv: readonly string[]):
   | Readonly<{ mode: 'recipe'; candidateManifestPath: null }>
   | PackedManagedProviderCurrentSourceInput
-  | (PackedManagedProviderRunInput & Readonly<{ mode: 'run' }>);
+  | (PackedManagedProviderRunInput & Readonly<{ mode: 'run' | 'channel' }>);
 
 export function buildPackedManagedProviderRecipe(params: Readonly<{
   packageRoot: string;
@@ -276,7 +276,7 @@ export function buildPackedManagedProviderEntrypointInvocation(params: Readonly<
   packageRoot: string;
   parsed:
     | PackedManagedProviderCurrentSourceInput
-    | (PackedManagedProviderRunInput & Readonly<{ mode: 'run' }>);
+    | (PackedManagedProviderRunInput & Readonly<{ mode: 'run' | 'channel' }>);
 }>): Readonly<{
   command: string;
   args: readonly string[];
