@@ -42,7 +42,7 @@ export async function moveConnectedServiceHomeEntryAside(path: string): Promise<
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err?.code === 'ENOENT') return;
-      if (err?.code === 'EEXIST') continue;
+      if (err?.code === 'EEXIST' || err?.code === 'ENOTEMPTY' || err?.code === 'EISDIR') continue;
       throw error;
     }
   }

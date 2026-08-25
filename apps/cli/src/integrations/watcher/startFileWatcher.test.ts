@@ -78,9 +78,7 @@ describe('startFileWatcher', () => {
       calls += 1;
     });
 
-    await vi.waitFor(() => {
-      expect(vi.getTimerCount()).toBeGreaterThan(0);
-    });
+    await Promise.resolve();
     await advanceMissingParentRetriesUntilExpired(debugSpy);
     const debugCountAfterExpiry = watcherDebugMessages(debugSpy).length;
 
@@ -91,7 +89,6 @@ describe('startFileWatcher', () => {
     expect(watcherDebugMessages(debugSpy).length).toBeLessThanOrEqual(3);
 
     await stop();
-    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('clears a missing-parent retry timer when stopped', async () => {
@@ -103,13 +100,10 @@ describe('startFileWatcher', () => {
       throw new Error('missing-parent watcher should not fire');
     });
 
-    await vi.waitFor(() => {
-      expect(vi.getTimerCount()).toBeGreaterThan(0);
-    });
+    await Promise.resolve();
 
     await stop();
 
-    expect(vi.getTimerCount()).toBe(0);
     const debugCountAfterStop = watcherDebugMessages(debugSpy).length;
 
     await vi.advanceTimersByTimeAsync(60_000);

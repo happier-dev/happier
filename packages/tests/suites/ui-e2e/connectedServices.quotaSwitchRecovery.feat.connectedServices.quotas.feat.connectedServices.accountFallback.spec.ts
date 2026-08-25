@@ -25,6 +25,7 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { CLAUDE_CODE_E2E_OAUTH_SCOPE } from '../../src/testkit/connectedServicesRecovery';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const CONNECTED_SERVICE_FEATURE_ENV = {
@@ -333,8 +334,8 @@ async function createConnectedServiceProfile(params: Readonly<{
             accessToken: `access-${params.profileId}`,
             refreshToken: `refresh-${params.profileId}`,
             idToken: `id-${params.profileId}`,
-            scope: null,
-            tokenType: null,
+            scope: CLAUDE_CODE_E2E_OAUTH_SCOPE,
+            tokenType: 'Bearer',
             providerAccountId: `acct-${params.profileId}`,
             providerEmail: params.providerEmail,
         },

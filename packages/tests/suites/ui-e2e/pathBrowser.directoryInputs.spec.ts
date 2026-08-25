@@ -191,17 +191,17 @@ async function selectDirectoryFromPathBrowser(
 
 async function openPathBrowserFromNewSession(page: Page): Promise<void> {
     const modernPathChip = page.getByTestId('agent-input-path-chip').first();
+    const legacyTrigger = page.getByTestId('path-browser-trigger').first();
+    await expect(modernPathChip.or(legacyTrigger).first()).toHaveCount(1, { timeout: 180_000 });
     if (await modernPathChip.count()) {
-        await modernPathChip.click();
+        await modernPathChip.click({ force: true });
         const treeBrowserButton = page.getByTestId('path-selection-list:open-tree-browser').first();
         await expect(treeBrowserButton).toHaveCount(1, { timeout: 60_000 });
-        await treeBrowserButton.click();
+        await treeBrowserButton.click({ force: true });
         return;
     }
 
-    const legacyTrigger = page.getByTestId('path-browser-trigger').first();
-    await expect(legacyTrigger).toHaveCount(1, { timeout: 180_000 });
-    await legacyTrigger.click();
+    await legacyTrigger.click({ force: true });
 }
 
 async function ensureNewSessionBackendIsReady(page: Page): Promise<void> {

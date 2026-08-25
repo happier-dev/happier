@@ -74,8 +74,8 @@ describe('buildSessionAgentInputActionChips', () => {
         });
 
         const expectations = [
-            { key: 'session-action:review.start', actionId: 'review.start', permissionMode: 'read-only' },
-            { key: 'session-action:subagents.delegate.start', actionId: 'subagents.delegate.start', permissionMode: 'safe-yolo' },
+            { key: 'session-action:review.start', actionId: 'review.start', permissionMode: 'read_only' },
+            { key: 'session-action:subagents.delegate.start', actionId: 'subagents.delegate.start', permissionMode: 'workspace_write' },
         ] as const;
 
         for (const expectation of expectations) {

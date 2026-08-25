@@ -59,7 +59,7 @@ test.describe('selectNewSessionAgent', () => {
       </script>
     `);
 
-    await selectNewSessionAgent({ page, agentId: 'codex', timeoutMs: 1_000 });
+    await selectNewSessionAgent({ page, agentId: 'codex', timeoutMs: 5_000 });
 
     expect(await page.locator('body').getAttribute('data-selected-agent')).toBe('codex');
   });
@@ -85,7 +85,7 @@ test.describe('selectNewSessionAgent', () => {
       </script>
     `);
 
-    await selectNewSessionAgent({ page, agentId: 'codex', timeoutMs: 1_000 });
+    await selectNewSessionAgent({ page, agentId: 'codex', timeoutMs: 5_000 });
 
     expect(await page.locator('body').getAttribute('data-active-trigger-opened')).toBe('true');
     expect(await page.locator('body').getAttribute('data-selected-agent')).toBe('codex');

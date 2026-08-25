@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { fetchJson } from '../http';
 import { mutateUiE2eLocalSettings } from './localSettingsStorage';
 import { gotoDomContentLoadedWithRetries } from './pageNavigation';
-import { mutateUiE2eScopedAccountSettings } from './scopedAccountSettingsStorage';
+import {
+  mutateUiE2eScopedAccountSettings,
+  readUiE2eScopedAccountSettings,
+} from './scopedAccountSettingsStorage';
 import {
   buildSessionOrganizationImportRequestFromFolderSettings,
   fetchSessionOrganizationSnapshot,
@@ -84,6 +87,20 @@ export function sessionOrderKey(serverId: string, sessionId: string): string {
 
 export function folderOrderKey(folderId: string): string {
   return `folder:${folderId}`;
+}
+
+export async function ensureSessionFolderTreeView(page: Page): Promise<void> {
+  const settings = await readUiE2eScopedAccountSettings({ page });
+  if (settings.sessionFolderViewModeV1 === 'tree') return;
+
+  await page.getByTestId('session-list-ordering-menu-trigger').first().click();
+  const toggle = page.getByTestId('session-folder-view-toggle');
+  await expect(toggle).toHaveCount(1, { timeout: 60_000 });
+  await toggle.click();
+  await expect.poll(async () => {
+    const nextSettings = await readUiE2eScopedAccountSettings({ page });
+    return nextSettings.sessionFolderViewModeV1;
+  }, { timeout: 60_000 }).toBe('tree');
 }
 
 function readOrderIndex(

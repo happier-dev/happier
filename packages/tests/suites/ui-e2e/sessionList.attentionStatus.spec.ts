@@ -176,11 +176,27 @@ async function connectWorkingSessionInProgress(params: Readonly<{
   token: string;
   sessionId: string;
 }>): Promise<Readonly<{ close: () => void }>> {
-  await updateSessionRuntimeStatus({
-    ...params,
-    latestTurnStatus: 'in_progress',
-  });
-  return { close: () => {} };
+  const socket = createSessionScopedSocketCollector(params.baseUrl, params.token, params.sessionId);
+  socket.connect();
+  try {
+    await waitFor(async () => socket.isConnected(), {
+      timeoutMs: 20_000,
+      context: `connect working session socket for ${params.sessionId}`,
+    });
+    socket.emit('session-alive', {
+      sid: params.sessionId,
+      time: Date.now(),
+      thinking: false,
+    });
+    await updateSessionRuntimeStatus({
+      ...params,
+      latestTurnStatus: 'in_progress',
+    });
+    return socket;
+  } catch (error) {
+    socket.close();
+    throw error;
+  }
 }
 
 async function updateSessionRuntimeStatus(params: Readonly<{

@@ -229,6 +229,36 @@ describe('createClaudeSessionTranscriptProjector model adoption', () => {
     expect(settled).toBe(true);
   });
 
+  it('serializes live transcript observations across exact custody acknowledgements', async () => {
+    const fixture = createSessionFixture();
+    let acknowledgeFirst!: () => void;
+    const firstAcknowledgement = new Promise<void>((resolve) => {
+      acknowledgeFirst = resolve;
+    });
+    vi.mocked(fixture.session.client.sendClaudeSessionMessageCommittedExact!)
+      .mockReturnValueOnce(firstAcknowledgement);
+    const projector = createClaudeSessionTranscriptProjector({
+      session: fixture.session,
+      logPrefix: '[test]',
+    });
+
+    const first = projector.observe(buildAssistantRow({
+      uuid: 'live-assistant-first',
+      model: 'claude-fable-5',
+    }));
+    const second = projector.observe(buildAssistantRow({
+      uuid: 'live-assistant-second',
+      model: 'claude-sonnet-5',
+    }));
+
+    await Promise.resolve();
+    expect(fixture.session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenCalledTimes(1);
+
+    acknowledgeFirst();
+    await Promise.all([first, second]);
+    expect(fixture.session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenCalledTimes(2);
+  });
+
   it('durably projects historical rows without adopting stale live runtime state', async () => {
     const fixture = createSessionFixture();
     const projector = createClaudeSessionTranscriptProjector({

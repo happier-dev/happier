@@ -189,7 +189,11 @@ export default memo(function PublicShareViewerScreen() {
                 headers['Authorization'] = authHeader;
             }
 
-            const response = await serverFetch(path, { method: 'GET', headers }, { includeAuth: false });
+            const response = await serverFetch(
+                path,
+                { method: 'GET', headers },
+                { includeAuth: false, retry: 'none' },
+            );
             if (!isCurrentLoad()) return;
             if (!response.ok) {
                 if (response.status === 403) {
@@ -219,7 +223,7 @@ export default memo(function PublicShareViewerScreen() {
             const messagesResponse = await serverFetch(
                 messagesPath,
                 { method: 'GET', headers: messagesHeaders },
-                { includeAuth: false },
+                { includeAuth: false, retry: 'none' },
             );
             if (!isCurrentLoad()) return;
             if (!messagesResponse.ok) {

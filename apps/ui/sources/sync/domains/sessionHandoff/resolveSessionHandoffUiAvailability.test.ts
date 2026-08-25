@@ -43,7 +43,7 @@ const HANDOFF_ELIGIBLE_SESSION = {
 } as const;
 
 describe('resolveSessionHandoffUiAvailability', () => {
-    it('fails closed when server-routed transfer is the only transport the selected server can truthfully offer', () => {
+    it('allows handoff when server-routed transfer is the only transport the selected server can truthfully offer', () => {
         expect(resolveSessionHandoffUiAvailability({
             session: HANDOFF_ELIGIBLE_SESSION,
             sessionHandoffFeatureEnabled: true,
@@ -51,10 +51,7 @@ describe('resolveSessionHandoffUiAvailability', () => {
                 directPeerEnabled: false,
                 serverRoutedEnabled: true,
             }),
-        })).toEqual({
-            available: false,
-            reason: 'runtime_direct_peer_unavailable',
-        });
+        })).toEqual({ available: true, reason: 'available' });
     });
 
     it('fails closed when direct peer requires runtime truth but only server-routed fallback is statically known', () => {

@@ -118,8 +118,9 @@ test.describe('ui e2e: custom theme profiles', () => {
 
     await openThemeProfiles({ page, uiBaseUrl });
 
-    await expectVisibleTestId(page, 'settings-theme-profile-built-in-premiumDark');
-    await expectVisibleTestId(page, 'settings-theme-profile-built-in-premiumLight');
+    await (await expectVisibleTestId(page, 'settings-theme-profile-built-in-dropdown-trigger')).click();
+    await expectVisibleTestId(page, 'settings-theme-profile-built-in-option-premiumDark');
+    await expectVisibleTestId(page, 'settings-theme-profile-built-in-option-premiumLight');
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/appearance/themes/premiumDark?happier_hmr=0`, 180_000);
     await expectVisibleTestId(page, 'settings-theme-profile-editor');
     await expect(visibleTestId(page, 'settings-theme-profile-save')).toHaveCount(0, { timeout: 60_000 });

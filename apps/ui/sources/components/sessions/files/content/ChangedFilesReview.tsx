@@ -510,6 +510,40 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         return resolved as any;
     }, []);
 
+    const toggleCollapsedPreservingWebAnchor = React.useCallback((path: string) => {
+        if (Platform.OS !== 'web') {
+            toggleCollapsed(path);
+            return;
+        }
+
+        const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+        const doc = (globalThis as any).window?.document as Document | undefined;
+        const rowTestId = `scm-change-row-${toTestIdSafeValue(path)}`;
+        const row = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;
+        const anchorY = row?.getBoundingClientRect?.().y;
+        toggleCollapsed(path);
+
+        if (!scrollRoot || typeof anchorY !== 'number') return;
+        const raf: (cb: FrameRequestCallback) => number =
+            typeof globalThis.requestAnimationFrame === 'function'
+                ? globalThis.requestAnimationFrame.bind(globalThis)
+                : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+        let remainingFrames = 12;
+        const restoreAnchor = () => {
+            const currentRow = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;
+            const currentY = currentRow?.getBoundingClientRect?.().y;
+            if (typeof currentY === 'number') {
+                const delta = currentY - anchorY;
+                if (Math.abs(delta) > 1) {
+                    scrollRoot.scrollTop += delta;
+                }
+            }
+            remainingFrames -= 1;
+            if (remainingFrames > 0) raf(restoreAnchor);
+        };
+        raf(restoreAnchor);
+    }, [resolveWebScrollRoot, toggleCollapsed]);
+
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
         let cancelled = false;
@@ -874,7 +908,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 testID="scm-review-list"
                 files={diffFiles as any}
                 expandedKeys={expandedKeys}
-                onToggleExpanded={toggleCollapsed}
+                onToggleExpanded={toggleCollapsedPreservingWebAnchor}
                 canRenderInlineDiffs={true}
                 wrapLines={true}
                 showLineNumbers={true}

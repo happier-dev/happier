@@ -9,6 +9,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
@@ -224,6 +225,7 @@ async function forkFromTranscriptMessage(params: {
   const forkButton = params.page.getByTestId(`transcript-message-fork:${params.messageId}`);
   await expect(forkButton).toHaveCount(1, { timeout: 120_000 });
   await forkButton.click();
+  await selectSessionForkStrategy(params.page, 'replay');
   await params.page.waitForURL(
     (url) => {
       try {

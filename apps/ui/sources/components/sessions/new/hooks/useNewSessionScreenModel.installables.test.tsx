@@ -9,8 +9,17 @@ import {
 } from '@/dev/testkit';
 import { storage as storageStore } from '@/sync/domains/state/storageStore';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import { buildNewSessionAuthoringDraftFromPersistedDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import {
+    deleteSessionDraft,
+    writeNewSessionDraft,
+    writeSessionDraftLocalSupplement,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
+import { buildNewSessionDraftPatch } from './screenModel/newSessionDraftRepositoryAdapter';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -195,12 +204,35 @@ const persistedDraft = vi.hoisted(() => ({
     agentNewSessionOptionStateByAgentId: {},
     updatedAt: 123,
 }));
+const TEST_DRAFT_ID = 'installables-test-draft';
+const TEST_DRAFT_SCOPE = { serverId: 's_active', accountId: 'acct_active' } as const;
 
 const initialHookFlushOptions = { cycles: 2, turns: 2 } as const;
 
 async function renderNewSessionScreenModel() {
+    await deleteSessionDraft({
+        scope: TEST_DRAFT_SCOPE,
+        address: { kind: 'newSession', draftId: TEST_DRAFT_ID },
+    });
+    const draft = persistedDraft as unknown as NewSessionDraft;
+    writeNewSessionDraft({
+        scope: TEST_DRAFT_SCOPE,
+        draftId: TEST_DRAFT_ID,
+        patch: buildNewSessionDraftPatch({
+            authoringDraft: buildNewSessionAuthoringDraftFromPersistedDraft(draft),
+            machineId: draft.selectedMachineId,
+            serverId: draft.targetServerId ?? null,
+            text: draft.input,
+        }),
+        materializationIntent: 'userEdit',
+    });
+    writeSessionDraftLocalSupplement({
+        scope: TEST_DRAFT_SCOPE,
+        address: { kind: 'newSession', draftId: TEST_DRAFT_ID },
+        patch: { newSessionLocalState: buildNewSessionDraftLocalState(draft) },
+    });
     const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-    return renderHook<any>(() => useNewSessionScreenModel() as any, {
+    return renderHook<any>(() => useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }) as any, {
         flushOptions: initialHookFlushOptions,
     });
 }
@@ -327,15 +359,6 @@ vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => true,
     useFocusEffect: (_fn: any) => {},
 }));
-
-vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        loadNewSessionDraft: () => persistedDraft,
-        saveNewSessionDraft: () => {},
-    };
-});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -662,7 +685,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         settingsState.lastUsedPermissionMode = 'default';
         settingsState.sessionDefaultPermissionModeByTargetKey = {};
         settingsState.backendEnabledByTargetKey = {};
-        storageStore.getState().activateProfileScope({ serverId: 's_active', accountId: 'acct_active' });
+        storageStore.getState().activateProfileScope(TEST_DRAFT_SCOPE);
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [],
@@ -709,6 +732,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         preflightSessionModeOptionsByTargetKeyState.value = {};
         preflightConfigOptionsByTargetKeyState.value = {};
         chromeSafeAreaInsetsState.value = { top: 0, bottom: 0, left: 0, right: 0 };
+
     });
 
     it('renders without throwing during initial new-session screen model setup', async () => {
@@ -1640,7 +1664,7 @@ describe('useNewSessionScreenModel (installables)', () => {
             expect.objectContaining({
                 actionId: 'review.start',
                 input: expect.objectContaining({
-                    permissionMode: 'read-only',
+                        permissionMode: 'read_only',
                     changeType: 'uncommitted',
                 }),
             }),

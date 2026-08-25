@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import {
@@ -16,6 +16,7 @@ import {
 } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { selectNewSessionAgent } from '../../src/testkit/uiE2e/selectNewSessionAgent';
+import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -218,7 +219,7 @@ test.describe('ui e2e: Codex app-server fork from session info', () => {
     let daemon: StartedDaemon | null = null;
 
     test.beforeAll(async () => {
-        test.setTimeout(420_000);
+        test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
         await mkdir(cliHomeDir, { recursive: true });
         await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -304,6 +305,7 @@ test.describe('ui e2e: Codex app-server fork from session info', () => {
         await expect(page.getByTestId('session-info-fork-session')).toHaveCount(1, { timeout: 60_000 });
 
         await page.getByTestId('session-info-fork-session').click();
+        await selectSessionForkStrategy(page, 'native');
 
         const childSessionId = await waitForForkedChildSessionId({
             suiteDir,

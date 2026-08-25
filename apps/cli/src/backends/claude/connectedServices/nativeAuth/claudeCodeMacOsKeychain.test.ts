@@ -126,6 +126,7 @@ describe('claudeCodeMacOsKeychain', () => {
       readClaudeCodeMacOsKeychainCredential({
         claudeConfigDir: '/Users/tester/.claude',
         homeDir: '/Users/tester',
+        username: 'tester',
       }),
     ).resolves.toEqual({
       claudeAiOauth: {
@@ -138,7 +139,7 @@ describe('claudeCodeMacOsKeychain', () => {
 
     expect(spawnSpy).toHaveBeenCalledWith(
       'security',
-      ['find-generic-password', '-a', 'leeroy', '-s', 'Claude Code-credentials', '-w'],
+      ['find-generic-password', '-a', 'tester', '-s', 'Claude Code-credentials', '-w'],
       expect.objectContaining({ stdio: ['pipe', 'pipe', 'pipe'] }),
     );
   });

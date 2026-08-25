@@ -320,51 +320,62 @@ export function createClaudeSessionTranscriptProjector(params: Readonly<{
       }
   };
 
+  let observationTail: Promise<void> = Promise.resolve();
+  const enqueueObservation = (observe: () => Promise<void>): Promise<void> => {
+    const current = observationTail.then(observe);
+    observationTail = current.catch(() => {});
+    return current;
+  };
+
   return {
     async observe(message) {
-      const commits: Promise<void>[] = [];
-      observeWithVisibleSender(message, (visibleMessage) => {
-        const commit = params.session.client.sendClaudeSessionMessageCommittedExact;
-        if (!commit) {
-          throw new Error('Claude live transcript ordering requires exact committed custody');
-        }
-        commits.push(commit.call(params.session.client, visibleMessage));
+      return enqueueObservation(async () => {
+        const commits: Promise<void>[] = [];
+        observeWithVisibleSender(message, (visibleMessage) => {
+          const commit = params.session.client.sendClaudeSessionMessageCommittedExact;
+          if (!commit) {
+            throw new Error('Claude live transcript ordering requires exact committed custody');
+          }
+          commits.push(commit.call(params.session.client, visibleMessage));
+        });
+        await Promise.all(commits);
       });
-      await Promise.all(commits);
     },
     async observeCommitted(message) {
-      if (!buildClaudeJsonlMessageKey(message)) {
-        logger.debug(`${params.logPrefix}: skipped historical Claude transcript row without trustworthy provider identity`, {
-          type: message.type,
-        });
-        return;
-      }
-      const sourceTimestampMs = readClaudeJsonlTimestampMs(message);
-      if (sourceTimestampMs === null) {
-        logger.debug(`${params.logPrefix}: skipped historical Claude transcript row without trustworthy source chronology`, {
-          type: message.type,
-          uuid: readString((message as Record<string, unknown>).uuid),
-        });
-        return;
-      }
-      const commits: Promise<unknown>[] = [];
-      observeWithVisibleSender(message, (visibleMessage) => {
-        const commit = params.session.client.sendClaudeSessionMessageCommitted;
-        if (!commit) {
-          throw new Error('Claude transcript committed-custody transport is unavailable');
+      return enqueueObservation(async () => {
+        if (!buildClaudeJsonlMessageKey(message)) {
+          logger.debug(`${params.logPrefix}: skipped historical Claude transcript row without trustworthy provider identity`, {
+            type: message.type,
+          });
+          return;
         }
-        const visibleTimestampMs = readClaudeJsonlTimestampMs(visibleMessage) ?? sourceTimestampMs;
-        commits.push(commit.call(params.session.client, visibleMessage, {
-          createdAt: visibleTimestampMs,
-          updatedAt: visibleTimestampMs,
-          provenance: { kind: 'non_dependent', source: 'history' },
-        }).then((result) => {
-          if (!result.persisted) {
-            throw new Error('Claude historical transcript observation did not reach durable custody');
+        const sourceTimestampMs = readClaudeJsonlTimestampMs(message);
+        if (sourceTimestampMs === null) {
+          logger.debug(`${params.logPrefix}: skipped historical Claude transcript row without trustworthy source chronology`, {
+            type: message.type,
+            uuid: readString((message as Record<string, unknown>).uuid),
+          });
+          return;
+        }
+        const commits: Promise<unknown>[] = [];
+        observeWithVisibleSender(message, (visibleMessage) => {
+          const commit = params.session.client.sendClaudeSessionMessageCommitted;
+          if (!commit) {
+            throw new Error('Claude transcript committed-custody transport is unavailable');
           }
-        }));
-      }, { historicalReplay: true });
-      await Promise.all(commits);
+          const visibleTimestampMs = readClaudeJsonlTimestampMs(visibleMessage) ?? sourceTimestampMs;
+          commits.push(commit.call(params.session.client, visibleMessage, {
+            createdAt: visibleTimestampMs,
+            updatedAt: visibleTimestampMs,
+            provenance: { kind: 'non_dependent', source: 'history' },
+          }).then((result) => {
+            if (!result.persisted) {
+              throw new Error('Claude historical transcript observation did not reach durable custody');
+            }
+          }));
+        }, { historicalReplay: true });
+        await Promise.all(commits);
+      });
     },
     // Raw transcript channel (plan H7): the scanner forwards every parsed JSONL
     // value here BEFORE its visible-transcript filtering, so `attachment`

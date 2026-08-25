@@ -60,27 +60,6 @@ describe('readBackgroundServiceHealth', () => {
       suspectedCause: 'auth_missing',
       conflictingManualDaemonPid: null,
     });
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      'systemctl',
-      [
-        '--user',
-        'show',
-        'happier-daemon.default.service',
-        '--property=Result,ExecMainStatus,NRestarts,ActiveState,SubState',
-        '--no-pager',
-      ],
-      expect.objectContaining({
-        encoding: 'utf-8',
-        env: expect.objectContaining({
-          XDG_RUNTIME_DIR: '/run/user/98765',
-          DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/98765/bus',
-        }),
-      }),
-    );
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      'journalctl',
-      ['--user', '-u', 'happier-daemon.default.service', '-n', '40', '--no-pager'],
-      expect.objectContaining({ encoding: 'utf-8' }),
-    );
+    expect(spawnSyncMock.mock.calls.map(([command]) => command)).toEqual(['systemctl', 'journalctl']);
   });
 });

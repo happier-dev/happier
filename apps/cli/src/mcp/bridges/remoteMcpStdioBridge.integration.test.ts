@@ -259,7 +259,7 @@ describe('remoteMcpStdioBridge', () => {
       );
       const rememberText = readFirstTextContent(rememberRes);
       expect(rememberText).toBe('store this:trace-http');
-      expect(progressEvents).toEqual([{ progress: 1, total: 2, message: 'trace-http' }]);
+      await expect.poll(() => progressEvents).toEqual([{ progress: 1, total: 2, message: 'trace-http' }]);
 
       const closeStartedAt = Date.now();
       await client.close();

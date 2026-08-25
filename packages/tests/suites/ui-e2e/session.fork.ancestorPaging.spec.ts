@@ -9,6 +9,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
@@ -95,6 +96,7 @@ async function forkFromFirstMessageMatching(params: { page: Page; containsText: 
   const messageId = wrapperTestId.replace(/^transcript-message-/, '');
   await expect(params.page.getByTestId(`transcript-message-fork:${messageId}`)).toHaveCount(1, { timeout: 120_000 });
   await params.page.getByTestId(`transcript-message-fork:${messageId}`).click();
+  await selectSessionForkStrategy(params.page, 'replay');
   const deadlineMs = Date.now() + 180_000;
   while (Date.now() < deadlineMs) {
     try {

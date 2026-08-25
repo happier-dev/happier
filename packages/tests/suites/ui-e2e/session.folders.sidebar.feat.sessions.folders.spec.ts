@@ -12,6 +12,7 @@ import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi
 import { createTestAuthMtls } from '../../src/testkit/auth';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import {
+  ensureSessionFolderTreeView,
   createPlainSession,
   resolveCanonicalServerIdForUi,
   setSessionFolderDragSettings,
@@ -176,9 +177,7 @@ test.describe('ui e2e: session folders sidebar', () => {
 
     await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
 
-    await page.getByTestId('session-list-ordering-menu-trigger').first().click();
-    await expect(page.getByTestId('session-folder-view-toggle')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('session-folder-view-toggle').click();
+    await ensureSessionFolderTreeView(page);
 
     await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(1, { timeout: 120_000 });
 
